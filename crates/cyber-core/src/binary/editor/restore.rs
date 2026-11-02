@@ -82,6 +82,7 @@ impl Editor {
             return Ok(SavePreparation::Existing(prior));
         }
         self.available()?;
+        self.publish_last_version()?;
         let current = self.restore_review(&cancelled)?;
         if current.fingerprint != review {
             return Err(Error::Changed);
@@ -130,6 +131,24 @@ impl Editor {
             reason: None,
             notification_pending: false,
         };
+        let ranges = if current.draft.range_count == 0 {
+            vec![]
+        } else {
+            vec![(
+                0,
+                current.draft.base_length.0,
+                0,
+                current.draft.proposed_length.0,
+            )]
+        };
+        let evidence = versions::Evidence::prepared(
+            self,
+            &operation,
+            &current.draft,
+            after.clone(),
+            &after_draft,
+            ranges,
+        )?;
         let intent = Intent {
             operation,
             prior: target,
@@ -137,6 +156,7 @@ impl Editor {
             new_base: BaseRef::of(after_draft.base()),
             after_draft: after_draft.snapshot(),
             stage: stage_name,
+            evidence: Some(evidence),
         };
         Ok(SavePreparation::Ready(Box::new(PreparedSave {
             intent,

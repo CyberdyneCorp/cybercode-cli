@@ -43,3 +43,31 @@ pub struct SaveReview {
     pub effects: String,
     pub fingerprint: String,
 }
+
+/// Shared saved-source metadata. It never contains unsaved command buffers.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "BinaryVersion")]
+pub struct Version {
+    pub version_id: String,
+    pub document_id: String,
+    pub operation_id: String,
+    pub kind: String,
+    pub path: String,
+    pub before_sha256: String,
+    pub after_sha256: String,
+    pub before_length: super::Offset,
+    pub after_length: super::Offset,
+    pub original_bytes: super::Offset,
+    pub proposed_bytes: super::Offset,
+    pub range_count: usize,
+    pub created_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "BinaryVersions")]
+pub struct Versions {
+    pub versions: Vec<Version>,
+    pub next_cursor: Option<String>,
+}

@@ -19,7 +19,10 @@ use std::path::PathBuf;
 mod catalog;
 #[path = "editor/restore.rs"]
 mod restore;
+#[path = "editor/versions.rs"]
+mod versions;
 pub use catalog::{StoredDocument, StoredDocuments};
+pub use versions::VersionView;
 
 const MAX_OPERATIONS: usize = 4096;
 const EFFECTS: &str = "Permissions, executable bits, owner/group, supported extended attributes and ACL are preserved. Native replacement changes file identity and updates modification time. Save checkpoints draft undo/redo; Restore Last Save uses the retained preimage. External checksums, signatures and irreversible observer effects are not repaired. Uncooperative writers can leave an unknown outcome; evidence is retained.";
@@ -66,6 +69,8 @@ struct LastSave {
     preimage: BaseRef,
     installed_sha256: String,
     operation: String,
+    #[serde(default)]
+    evidence: Option<versions::Evidence>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,6 +81,8 @@ struct Intent {
     new_base: BaseRef,
     after_draft: DraftState,
     stage: String,
+    #[serde(default)]
+    evidence: Option<versions::Evidence>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -428,6 +435,7 @@ impl Editor {
             return Ok(SavePreparation::Existing(prior));
         }
         self.available()?;
+        self.publish_last_version()?;
         let current = self.review(0, 128, &cancelled)?;
         if current.fingerprint != review {
             return Err(Error::Changed);
@@ -489,6 +497,14 @@ impl Editor {
             reason: None,
             notification_pending: false,
         };
+        let evidence = versions::Evidence::prepared(
+            self,
+            &operation,
+            &current.draft,
+            after.clone(),
+            &after_draft,
+            self.draft.ranges(),
+        )?;
         let intent = Intent {
             operation,
             prior: target,
@@ -496,6 +512,7 @@ impl Editor {
             new_base: BaseRef::of(after_draft.base()),
             after_draft: after_draft.snapshot(),
             stage: stage_name,
+            evidence: Some(evidence),
         };
         Ok(SavePreparation::Ready(Box::new(PreparedSave {
             intent,
@@ -538,6 +555,19 @@ impl Editor {
         &mut self,
         prepared: PreparedSave,
         cancelled: impl Fn() -> bool,
+    ) -> Result<Operation, Error> {
+        self.commit_save_checked(prepared, cancelled, || Ok(()))
+    }
+    /// The host rechecks trusted current read/edit/Mode and ancestor authority
+    /// after content verification and capacity reservation, before native intent.
+    /// The check must not prompt, invoke hooks/models, or release mutation owners.
+    /// A refusal has no native effect and leaves the operation eligible for an
+    /// explicit newly authorized attempt. It does not manufacture a save receipt.
+    pub fn commit_save_checked(
+        &mut self,
+        prepared: PreparedSave,
+        cancelled: impl Fn() -> bool,
+        authorize: impl FnOnce() -> Result<(), Error>,
     ) -> Result<Operation, Error> {
         if let Some(prior) = self.prior(
             &prepared.intent.operation.id,
@@ -609,6 +639,10 @@ impl Editor {
                 .0
                 .saturating_sub(prepared.intent.after.length.0),
         )?;
+        authorize()?;
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
         self.record.pending = Some(prepared.intent);
         persist(&mut self.store, &self.record)?;
         let intent = self.record.pending.as_ref().ok_or(Error::Invalid)?;
@@ -686,6 +720,11 @@ impl Editor {
         operation.file_effect = FileEffect::Changed;
         operation.reason = None;
         operation.notification_pending = true;
+        let mut evidence = intent.evidence.clone();
+        if let Some(evidence) = &mut evidence {
+            evidence.target = target.clone();
+            evidence.operation = operation.clone();
+        }
         let record = Record {
             version: 1,
             owner: self.record.owner.clone(),
@@ -704,6 +743,7 @@ impl Editor {
                 preimage: self.record.base.clone(),
                 installed_sha256: intent.new_base.sha256.clone(),
                 operation: operation.id.clone(),
+                evidence,
             }),
         };
         (record, operation)
@@ -780,6 +820,54 @@ mod tests {
             SavePreparation::Ready(ready) => ready,
             _ => panic!("new save must prepare"),
         }
+    }
+    #[test]
+    fn final_save_authority_refusal_preserves_source_draft_and_receipt_absence() {
+        let (_root, mut editor, path, _owner) = setup();
+        patch(&mut editor, "patch_one");
+        let revision = editor.draft().revision();
+        let prepared = ready(&mut editor, "save_checked");
+        let called = std::cell::Cell::new(false);
+        let result = editor.commit_save_checked(
+            *prepared,
+            || false,
+            || {
+                called.set(true);
+                Err(Error::Changed)
+            },
+        );
+        assert!(called.get());
+        assert!(matches!(result, Err(Error::Changed)));
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        assert_eq!(editor.draft().revision(), revision);
+        assert_eq!(editor.draft().read(0, 4).unwrap(), [0, 255, 128, 27]);
+        assert!(!editor.unresolved());
+        assert!(editor.lookup_operation("save_checked").unwrap().is_none());
+        // A stricter check can also observe Stop while checking authority.
+        let cancelled = std::cell::Cell::new(false);
+        let prepared = ready(&mut editor, "save_checked");
+        assert!(matches!(
+            editor.commit_save_checked(
+                *prepared,
+                || cancelled.get(),
+                || {
+                    cancelled.set(true);
+                    Ok(())
+                }
+            ),
+            Err(Error::Cancelled)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"original");
+        assert!(!editor.unresolved());
+        let prepared = ready(&mut editor, "save_checked");
+        assert_eq!(
+            editor
+                .commit_save_checked(*prepared, || false, || Ok(()))
+                .unwrap()
+                .outcome,
+            Outcome::Acknowledged
+        );
+        assert_eq!(std::fs::read(path).unwrap(), [0, 255, 128, 27]);
     }
     #[test]
     fn prepared_editors_keep_native_source_and_directory_pins_after_the_live_view_is_dropped() {

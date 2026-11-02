@@ -402,3 +402,49 @@ the actual acknowledgement record shape in the capacity forecast, lock-file bind
 and refusal to recreate missing recovery locks. Linux/macOS/Windows CI must still
 validate this follow-up. PR #97 merged at `d6a9b1ae` after all 24 current-head checks
 passed, including its Windows-specific live-view/unsupported-edit regression.
+
+## Acknowledged saved-version evidence
+
+Native save/restore intents now retain the proposed immutable before/after base
+references and original-offset range mapping. Only a durably acknowledged changed
+operation can publish an immutable saved-version record. Publication is idempotent;
+an existing different/corrupt record refuses replacement. The next native operation
+must preserve the preceding acknowledged evidence before replacing Last Save.
+Interrupted/unknown intents cannot publish successful history. Evidence contains
+offsets, hashes and source-version metadata, never transient draft command buffers.
+
+The core exposes bounded, cancellable saved-version discovery, byte pages and
+original-coordinate review under a currently authorized source's pinned root/path.
+These views do not acquire another owner's draft lock or read their journal. Both
+immutable images are verified on open, including for non-git binary sources.
+Private namespace traversal and mismatched source paths refuse access. Identical
+full byte content checkpoints without native replacement or a saved-change record,
+even when piece-table edits changed the internal layout.
+
+The local binary suite passes 65 tests (one child helper invoked by parent tests
+is ignored by the ordinary selector), and core library/test Clippy passes. New
+regressions cover repeated saves/restart, excluded transient bytes, private dirty
+draft isolation, source binding, pagination/cancellation, no-op saves and refusal
+to publish unknown/corrupt evidence. This is core history infrastructure: public
+save/restore/history integration, retention, durable FileChanged dispatch and the
+remaining terminal/model/acceptance work are still outstanding. Platform CI remains
+required for this increment.
+
+## Final worker authority checkpoint
+
+The retained filesystem worker now carries its captured ancestor authority,
+original Turn/Location, frozen resource, granted read/edit decisions and Stop token.
+Its trusted policy-only checkpoint refreshes current Turn and both decisions on
+the actual blocking worker while keeping native Location, workspace/path and
+lifecycle ownership. This query cannot prompt or run hooks/models/subprocesses.
+Patch/history invoke it before their private journal effects. Core native commit
+accepts a final checkpoint after full source/stage verification and capacity
+reservation, immediately before intent publication, and rechecks cancellation.
+Production save routes must supply the retained worker checkpoint there.
+
+Regressions verify policy revocation after preparation while path ownership stays
+held, refusal without source changes/pending intent/fabricated receipts, Stop at
+the final check and an explicitly authorized successful follow-up. Local results:
+66 binary core tests, five runtime worker/proof tests and all 23 production file
+route tests passed; affected core/server library/test Clippy passed. This does not
+activate public save or complete the outstanding history/notification integrations.

@@ -101,6 +101,11 @@ impl Document {
         Ok(doc)
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn project_identity(&self) -> Result<String, Error> {
+        super::native::id(self.directories.first().ok_or(Error::File)?.as_file())
+    }
+
     /// Preparation requires the caller's fresh read+edit admission. It refuses
     /// mutation aliases and creates an immutable private base, never changing the target.
     #[cfg(any(target_os = "macos", target_os = "linux"))]
