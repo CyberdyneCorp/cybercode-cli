@@ -1595,6 +1595,10 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             .located().body::<super::binary_files::recovery::RecoverRequest>(g).ok::<Located<super::binary_files::editing::Status>>(g),
         op("get", "/files/binary/documents/{id}/operations/{operation}", "v1.fs.binaryOperation", "Query the durable receipt; absence is refused while journal storage is fenced")
             .located().query(&["session_id"]).ok::<Located<Option<cyber_core::binary::receipts::Operation>>>(g),
+        op("get", "/files/binary/documents/{id}/versions", "v1.fs.binaryVersions", "List acknowledged source history across Sessions without exposing private drafts")
+            .located().query(&["session_id","after","limit"]).ok::<Located<cyber_core::binary::receipts::Versions>>(g),
+        op("get", "/files/binary/documents/{id}/versions/{document}/{version}/review", "v1.fs.binaryVersionReview", "Read an immutable saved-source byte diff under fresh source read authority")
+            .located().query(&["session_id","start","limit"]).ok::<Located<cyber_core::binary::draft::Review>>(g),
         op("post", "/files/binary/documents/{id}/save", "v1.fs.binarySave", "Install a separately reviewed native binary draft under fresh authority")
             .located().body::<super::binary_files::saving::SaveRequest>(g).ok::<Located<super::binary_files::editing::Edited>>(g),
         op("post", "/files/binary/documents/{id}/restore-review", "v1.fs.binaryRestoreReview", "Review the protected preimage for Restore Last Save")

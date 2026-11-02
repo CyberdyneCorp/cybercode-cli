@@ -272,6 +272,28 @@ export type BinaryStatus = {
   edit_decision: FileDecision;
 };
 
+/** Shared saved-source metadata. It never contains unsaved command buffers. */
+export type BinaryVersion = {
+  version_id: string;
+  document_id: string;
+  operation_id: string;
+  kind: string;
+  path: string;
+  before_sha256: string;
+  after_sha256: string;
+  before_length: Offset;
+  after_length: Offset;
+  original_bytes: Offset;
+  proposed_bytes: Offset;
+  range_count: number;
+  created_ms: number;
+};
+
+export type BinaryVersions = {
+  versions: BinaryVersion[];
+  next_cursor?: string | null;
+};
+
 /** What to check out: a message ID or a label, and whether to restore code. */
 export type BranchCheckout = {
   message_id?: string | null;
@@ -2560,6 +2582,12 @@ export type Located_BinaryRecoveryList = {
 };
 
 /** A Location-scoped response. */
+export type Located_BinaryReview = {
+  location: LocationInfo;
+  data: BinaryReview;
+};
+
+/** A Location-scoped response. */
 export type Located_BinarySaveReview = {
   location: LocationInfo;
   data: BinarySaveReview;
@@ -2569,6 +2597,12 @@ export type Located_BinarySaveReview = {
 export type Located_BinaryStatus = {
   location: LocationInfo;
   data: BinaryStatus;
+};
+
+/** A Location-scoped response. */
+export type Located_BinaryVersions = {
+  location: LocationInfo;
+  data: BinaryVersions;
 };
 
 /** A Location-scoped response. */

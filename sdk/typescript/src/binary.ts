@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CyberClient } from "./client.js";
-import type { OpenedDocument, SearchResult, BinaryStatus, BinaryEdited, BinarySplice, BinarySaveReview, BinaryOperation, BinaryHistoryAction } from "./generated/types.js";
+import type { OpenedDocument, SearchResult, BinaryStatus, BinaryEdited, BinarySplice, BinarySaveReview, BinaryOperation, BinaryHistoryAction, BinaryVersions, BinaryReview } from "./generated/types.js";
 import type { RequestOptions } from "./generated/operations.js";
 
 const MAX_OFFSET = (1n << 64n) - 1n;
@@ -23,6 +23,8 @@ export interface BinaryDocument {
   bytes(offset: bigint | string, limit?: number, options?: RequestOptions): Promise<Uint8Array>;
   search(hex: string, offset?: bigint | string, options?: RequestOptions): Promise<SearchResult>;
   status(options?: RequestOptions): Promise<BinaryStatus>;
+  versions(after?: string, limit?: number, options?: RequestOptions): Promise<BinaryVersions>;
+  versionReview(documentId: string, versionId: string, start?: number, limit?: number, options?: RequestOptions): Promise<BinaryReview>;
   prepare(options?: RequestOptions): Promise<BinaryStatus>;
   patch(operationId: string, batch: { revision: string; splices: BinarySplice[] }, options?: RequestOptions): Promise<BinaryEdited>;
   history(operationId: string, command: { revision: string; action: BinaryHistoryAction }, options?: RequestOptions): Promise<BinaryEdited>;
@@ -116,6 +118,26 @@ function binaryHandle(client: CyberClient, sessionId: string, id: string, fields
       if (result.next_offset !== null && result.next_offset !== undefined) byteOffset(result.next_offset);
       byteOffset(result.scanned);
       return result;
+    },
+    async versions(after, limit = 64, options) {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64) throw new RangeError("Invalid binary history page");
+      const expected = generation;
+      const response = await client.request("v1.fs.binaryVersions", { path: scope, query: { ...query, after, limit } }, options);
+      if (generation !== expected) throw new Error("Binary history response superseded");
+      for (const version of response.data.versions) {
+        if (version.path !== metadata.path) throw new Error("Binary history source changed");
+        byteOffset(version.before_length); byteOffset(version.after_length);
+        byteOffset(version.original_bytes); byteOffset(version.proposed_bytes);
+      }
+      return response.data;
+    },
+    async versionReview(documentId, versionId, start = 0, limit = 128, options) {
+      if (!/^bin_[a-zA-Z0-9_]{1,96}$/.test(documentId) || !/^ver_[a-f0-9]{64}$/.test(versionId)) throw new TypeError("Invalid saved binary identity");
+      if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 128) throw new RangeError("Invalid binary review page");
+      const expected = generation;
+      const response = await client.request("v1.fs.binaryVersionReview", { path: { ...scope, document: documentId, version: versionId }, query: { ...query, start, limit } }, options);
+      if (generation !== expected) throw new Error("Saved binary review superseded");
+      return response.data;
     },
     async status(options) {
       const expected = ++generation;
