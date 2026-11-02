@@ -21,10 +21,13 @@ mod catalog;
 mod changes;
 #[path = "editor/restore.rs"]
 mod restore;
+#[path = "editor/retention.rs"]
+mod retention;
 #[path = "editor/versions.rs"]
 mod versions;
 pub use catalog::{StoredDocument, StoredDocuments};
 pub use changes::AcknowledgedChange;
+pub use retention::Cleanup;
 pub use versions::VersionView;
 
 const MAX_OPERATIONS: usize = 4096;
@@ -126,6 +129,7 @@ pub struct PreparedSave {
     intent: Intent,
     after: Draft<Base>,
     expected_revision: String,
+    _history: File,
 }
 pub enum SavePreparation {
     Existing(Operation),
@@ -509,6 +513,7 @@ impl Editor {
             after.clone(),
             &after_draft,
             self.draft.ranges(),
+            &stage_name,
         )?;
         let intent = Intent {
             operation,
@@ -523,6 +528,7 @@ impl Editor {
             intent,
             after: after_draft,
             expected_revision: self.draft.revision(),
+            _history: self.store.history_lease(false)?,
         })))
     }
     fn conflict(

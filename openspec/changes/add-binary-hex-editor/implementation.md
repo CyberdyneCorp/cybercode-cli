@@ -516,3 +516,19 @@ replacement by a later save remains compatible with reading prior versions.
 The binary core suite passes 72 tests locally, with the usual parent-invoked child
 helper ignored in the ordinary selector. Cleanup selection, reference preservation,
 crash-safe retirement/reclamation and production integration are still in progress.
+
+Cleanup now retires eligible acknowledged versions to compact tombstones before
+reclaiming unreferenced images. Tombstones retain exact candidate references for
+idempotent recovery after interrupted publication. Current/dirty bases, Last Save,
+checkpoint-protected versions, pending notification evidence and live prepared save
+tokens remain protected. Altered displaced files keep their complete version and
+both preimages. Native intents and uncertain journals refuse cleanup.
+
+An exclusive history lease plus complete acknowledged-version/stage-ticket coverage
+can identify allocator-owned preparation artifacts that never reached native intent;
+these can be reclaimed after their token closes while preserving the durable draft.
+Unclassified names, incomplete evidence and older ticketless histories are retained.
+Trusted authority and cancellation are rechecked before each namespace change.
+The core suite passes 79 tests, including seven cleanup regressions; core library/
+test Clippy passes. The configured seven-day policy, checkpoint reference adapter,
+owner routes and operator UX still need integration before production activation.

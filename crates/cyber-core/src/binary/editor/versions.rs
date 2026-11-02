@@ -10,11 +10,15 @@ pub(super) struct Evidence {
     pub info: Version,
     pub operation: Operation,
     pub(super) owner: Owner,
-    before: BaseRef,
-    after: BaseRef,
+    pub(super) before: BaseRef,
+    pub(super) after: BaseRef,
     pub target: Target,
-    revision: String,
-    ranges: Vec<(u64, u64, u64, u64)>,
+    pub(super) revision: String,
+    pub(super) ranges: Vec<(u64, u64, u64, u64)>,
+    #[serde(default)]
+    pub(super) retired: bool,
+    #[serde(default)]
+    pub(super) displaced: Option<super::retention::Displaced>,
 }
 impl Evidence {
     pub fn prepared(
@@ -24,6 +28,7 @@ impl Evidence {
         target: Target,
         after: &Draft<Base>,
         ranges: Vec<(u64, u64, u64, u64)>,
+        stage: &str,
     ) -> Result<Self, Error> {
         if ranges.len() > super::super::draft::MAX_HISTORY * super::super::draft::MAX_SPLICES {
             return Err(Error::Limit);
@@ -62,9 +67,14 @@ impl Evidence {
             target,
             revision: review.revision.clone(),
             ranges,
+            retired: false,
+            displaced: Some(super::retention::Displaced::prepared(editor, stage)),
         })
     }
-    fn validate_common(&self, document: &str) -> Result<(), Error> {
+    pub(super) fn validate_common(&self, document: &str) -> Result<(), Error> {
+        if !valid_base(&self.before) || !valid_base(&self.after) {
+            return Err(Error::Changed);
+        }
         let operation = &self.operation;
         let expected = format!(
             "ver_{}",
@@ -99,11 +109,18 @@ impl Evidence {
             || self.info.after_length != self.after.length
             || !self.before.name.starts_with("base_")
             || !self.after.name.starts_with("base_")
-            || self.info.range_count > self.ranges.len()
+            || (!self.retired && self.info.range_count > self.ranges.len())
             || self.ranges.len()
                 > crate::binary::draft::MAX_HISTORY * crate::binary::draft::MAX_SPLICES
         {
             return Err(Error::Changed);
+        }
+        if self.retired {
+            return if self.ranges.is_empty() && self.revision.is_empty() {
+                Ok(())
+            } else {
+                Err(Error::Changed)
+            };
         }
         let (mut before, mut after) = (0, 0);
         for &(at, removed, to, inserted) in &self.ranges {
@@ -136,12 +153,27 @@ impl Evidence {
         Ok(())
     }
 }
+pub(super) fn valid_base(base: &BaseRef) -> bool {
+    base.name.len() <= 100
+        && base.name.starts_with("base_")
+        && base
+            .name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && base.sha256.len() == 64
+        && base.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        && base.length.0 <= crate::binary::MAX_EDIT_SIZE
+}
 impl Editor {
     /// Publish only after native acknowledgement is durable. The current journal
     /// retains the evidence if publication fails; the next save cannot discard it.
     pub fn publish_last_version(&mut self) -> Result<Option<Version>, Error> {
         self.store.validate()?;
         let _readers = self.store.history_lease(false)?;
+        self.publish_last_version_locked()
+    }
+    pub(super) fn publish_last_version_locked(&mut self) -> Result<Option<Version>, Error> {
+        self.store.validate()?;
         let Some(last) = &self.record.last_save else {
             return Ok(None);
         };
@@ -341,8 +373,11 @@ impl crate::binary::storage::StorageRoot {
             if after.is_some_and(|after| version <= after) {
                 continue;
             }
-            let evidence = read_evidence(&dir, document, version)?;
+            let evidence = read_any_evidence(&dir, document, version)?;
             bind_source(&evidence, source)?;
+            if evidence.retired {
+                continue;
+            }
             found.push(evidence.info);
             found.sort_by(|a, b| a.version_id.cmp(&b.version_id));
             found.truncate(limit + 1);
@@ -418,12 +453,23 @@ fn valid_document(document: &str) -> Result<(), Error> {
     }
     Ok(())
 }
-fn valid_version(version: &str) -> bool {
+pub(super) fn valid_version(version: &str) -> bool {
     version.len() == 68
         && version.starts_with("ver_")
         && version[4..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 pub(super) fn read_evidence(
+    dir: &cap_std::fs::Dir,
+    document: &str,
+    version: &str,
+) -> Result<Evidence, Error> {
+    let evidence = read_any_evidence(dir, document, version)?;
+    if evidence.retired {
+        return Err(Error::Changed);
+    }
+    Ok(evidence)
+}
+pub(super) fn read_any_evidence(
     dir: &cap_std::fs::Dir,
     document: &str,
     version: &str,

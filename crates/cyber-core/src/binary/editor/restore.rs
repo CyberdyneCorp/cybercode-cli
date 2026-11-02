@@ -148,6 +148,7 @@ impl Editor {
             after.clone(),
             &after_draft,
             ranges,
+            &stage_name,
         )?;
         let intent = Intent {
             operation,
@@ -162,6 +163,7 @@ impl Editor {
             intent,
             after: after_draft,
             expected_revision: self.draft.revision(),
+            _history: self.store.history_lease(false)?,
         })))
     }
 }

@@ -17,6 +17,13 @@ pub const MAX_STORAGE: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_RECORD: u64 = 256 * 1024 * 1024;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 const HISTORY_LOCK: &str = "history.lock";
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(super) fn preparation_name(name: &str) -> bool {
+    ["base_", "stage_"].iter().any(|prefix| {
+        name.strip_prefix(prefix)
+            .is_some_and(|id| id.len() == 26 && id.parse::<ulid::Ulid>().is_ok())
+    })
+}
 
 fn open_data_directory(path: &Path) -> Result<Dir, Error> {
     #[cfg(windows)]
@@ -442,6 +449,96 @@ fn existing_lock(dir: &Dir) -> Result<File, Error> {
 }
 
 impl Store {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn remove_preparation(
+        &mut self,
+        name: &str,
+        stage_uid: u32,
+    ) -> Result<Option<u64>, Error> {
+        self.validate()?;
+        if !preparation_name(name) {
+            return Err(Error::Invalid);
+        }
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+        let file = self
+            .dir
+            .open_with(name, &options)
+            .map_err(|_| Error::File)?
+            .into_std();
+        use std::os::unix::fs::MetadataExt;
+        let metadata = file.metadata().map_err(|_| Error::Io)?;
+        let owner = self
+            .dir
+            .try_clone()
+            .map_err(|_| Error::Io)?
+            .into_std_file()
+            .metadata()
+            .map_err(|_| Error::Io)?
+            .uid();
+        let uid = if name.starts_with("stage_") {
+            stage_uid
+        } else {
+            owner
+        };
+        if !metadata.is_file()
+            || metadata.nlink() != 1
+            || metadata.uid() != uid
+            || metadata.len() > MAX_EDIT_SIZE
+        {
+            return Err(Error::Changed);
+        }
+        if name.starts_with("base_") {
+            private(&self.dir, &file, false)?;
+        }
+        let id = super::native::id(&file)?;
+        Ok(self.remove_known(name, &id)?.then_some(metadata.len()))
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn remove_known(&mut self, name: &str, expected: &str) -> Result<bool, Error> {
+        component(name)?;
+        self.validate()?;
+        match self.dir.symlink_metadata(name) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(_) => return Err(Error::Io),
+            Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => {
+                return Err(Error::Changed);
+            }
+            Ok(_) => {}
+        }
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+        let file = self
+            .dir
+            .open_with(name, &options)
+            .map_err(|_| Error::Io)?
+            .into_std();
+        use std::os::unix::fs::MetadataExt;
+        if file.metadata().map_err(|_| Error::Io)?.nlink() != 1
+            || super::native::id(&file)? != expected
+        {
+            return Err(Error::Changed);
+        }
+        self.dir.remove_file(name).map_err(|_| Error::Io)?;
+        if flush_dir(&self.dir).is_err() {
+            self.fenced = true;
+            return Err(Error::Io);
+        }
+        self.validate()?;
+        Ok(true)
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn remove_base(&mut self, base: &Base) -> Result<bool, Error> {
+        if generation(&base.inner.file)? != base.inner.generation {
+            return Err(Error::Changed);
+        }
+        let id = super::native::id(&base.inner.file)?;
+        self.remove_known(base.name(), &id)
+    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(super) fn ensure_history_lock(&mut self) -> Result<(), Error> {
         self.validate()?;
