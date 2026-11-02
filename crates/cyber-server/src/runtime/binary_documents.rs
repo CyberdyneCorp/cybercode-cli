@@ -83,7 +83,31 @@ impl BinaryWork {
     /// leaves its notification pending and never changes a staged edit's receipt.
     pub fn resume_notifications(&self, editor: &mut cyber_core::binary::editor::Editor) {
         let result = editor.pending_notification_change().and_then(|change| {
-            change.map_or(Ok(()), |change| self.acknowledge_source(Arc::new(change)))
+            let Some(change) = change else {
+                return Ok(());
+            };
+            if self
+                .runtime
+                .binary_handoff(change.key())
+                .map_err(|_| Error::Io)?
+                .is_some()
+            {
+                let handoff = self
+                    .runtime
+                    .reconcile_binary_handoff(change.key())
+                    .map_err(|_| Error::Io)?;
+                match handoff.state {
+                    super::binary_effects::State::Observed { .. } => {
+                        return editor.notified(&change.version().operation_id);
+                    }
+                    super::binary_effects::State::Suppressed { reason } => {
+                        return editor
+                            .notification_suppressed(&change.version().operation_id, &reason);
+                    }
+                    _ => {}
+                }
+            }
+            self.acknowledge_source(Arc::new(change))
         });
         if result.is_err() {
             self.runtime.hook_notice(

@@ -3,7 +3,7 @@ source: crates/cyber-tui/src/screens_explorer.rs
 expression: "shown.replace(&revision, \"obs_revision\")"
 ---
  HEX  fixture.bin   256 bytes
-LIVE VIEW  ·  observed obs_revision  ·  read only
+LIVE VIEW  ·  revision obs_revision  ·  view mode
 OFFSET            HEX BYTES                  ASCII
 0000000000000000  >00 01 02 03 04 05 06 07   ........
 0000000000000008   08 09 0A 0B 0C 0D 0E 0F   ........

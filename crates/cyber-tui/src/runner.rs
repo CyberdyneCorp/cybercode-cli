@@ -757,7 +757,9 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         | Msg::Insights { .. }
         | Msg::Limits { .. }
         | Msg::Recap { .. }) => settings_reply(app, msg),
-        msg @ (Msg::Hex { .. } | Msg::HexSearch { .. }) => return crate::hex::apply(app, msg),
+        msg @ (Msg::Hex { .. } | Msg::HexSearch { .. } | Msg::HexEdit { .. }) => {
+            return crate::hex::apply(app, msg);
+        }
         msg @ (Msg::Dir { .. } | Msg::FileHits { .. } | Msg::Preview { .. }) => {
             explorer_reply(app, msg)
         }

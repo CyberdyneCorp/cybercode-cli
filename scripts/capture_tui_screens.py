@@ -473,8 +473,8 @@ def capture(env):
 
 
 
-def capture_hex(env):
-    """Capture an actual read-only byte view with synthetic, non-executable data."""
+def capture_hex(env, edit=False):
+    """Capture a live view or an unsaved edit review of synthetic bytes."""
     relative = "fixtures/firmware.bin"
     path = os.path.join(env.project, relative)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -486,12 +486,28 @@ def capture_hex(env):
         f.write(payload)
     env.tui_config("cyber", "dark")
     # The embedded server belongs to this PTY; cleanup cannot leave a daemon behind.
-    tui = env.launch("--embedded", "hex", relative, "--offset", "0x20", "--read-only", cols=140, rows=36)
+    if edit:
+        env.edit_config(lambda cfg: cfg.update({"permissions": {"read": "allow", "edit": "allow"}}))
+    args = ["--embedded", "hex", relative, "--offset", "0x20"]
+    if not edit:
+        args.append("--read-only")
+    tui = env.launch(*args, cols=140, rows=36)
     wait("binary page and inspector", lambda: (
         relative in tui.text() and "offset 0x20 / 32" in tui.text()
         and "u16 65280" in tui.text() and "loading…" not in tui.text()
     ), 30, tui=tui)
-    env.shot(tui, "binary-hex.png")
+    if edit:
+        tui.key("\x1bOQ")  # xterm F2; this calls the real private prepare route.
+        wait("private draft admission", lambda: "EDIT · explicit save" in tui.text(), 30, tui=tui)
+        tui.type("ff")
+        wait("acknowledged draft patch", lambda: ">FF FF 80 1B" in tui.text() and "loading…" not in tui.text(), 30, tui=tui)
+        tui.key("\x13")  # Ctrl+S reviews; a second press would apply.
+        wait("byte save review", lambda: "SAVE REVIEW" in tui.text() and "BASE SHA256" in tui.text(), 30, tui=tui)
+        if open(path, "rb").read() != payload:
+            raise AssertionError("review capture changed source bytes")
+        env.shot(tui, "binary-hex-edit.png")
+    else:
+        env.shot(tui, "binary-hex.png")
     tui.close()
 
 
@@ -500,7 +516,7 @@ def main():
     parser.add_argument("--binary", default=os.path.join(REPO, "target", "debug", "cyber"))
     parser.add_argument("--out", default=os.path.join(REPO, "docs", "screenshots"))
     parser.add_argument("--chrome", default=os.environ.get("CYBER_SHOTS_CHROME", CHROME))
-    parser.add_argument("--only", choices=["hex"], help="capture just the binary hex workspace")
+    parser.add_argument("--only", choices=["hex", "hex-edit"], help="capture just the binary hex workspace")
     args = parser.parse_args()
     if not os.path.exists(args.chrome):
         sys.exit(f"Chrome not found at {args.chrome}; pass --chrome or set CYBER_SHOTS_CHROME. Skipping the capture.")
@@ -509,11 +525,11 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     env = Env(os.path.abspath(args.binary), args.out, args.chrome)
     try:
-        if args.only == "hex":
+        if args.only in ("hex", "hex-edit"):
             env.machine_fixture()
             env.project_fixture()
             env.config(env.start_provider())
-            capture_hex(env)
+            capture_hex(env, edit=args.only == "hex-edit")
         else:
             capture(env)
     finally:

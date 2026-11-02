@@ -532,3 +532,34 @@ Trusted authority and cancellation are rechecked before each namespace change.
 The core suite passes 79 tests, including seven cleanup regressions; core library/
 test Clippy passes. The configured seven-day policy, checkpoint reference adapter,
 owner routes and operator UX still need integration before production activation.
+
+
+### Reviewed owner save and terminal editing (work in progress)
+
+Owner save/Restore Last Save routes bind the review fingerprint to a stable
+operation ID. The actual retained worker rechecks authority immediately before
+publishing native intent. The production-router regression covers save retry,
+restoration and no inference; negative checks cover stale fingerprints,
+cross-Session scope and revoked edit permission. TUI controls now exercise real
+prepare/patch/history/review/save/restore routes with explicit second-step save,
+partial-nibble cancellation, stale replies and retained-state reconciliation.
+Shared snapshot/history adapters and model binary operations are still pending;
+this update does not complete issue #94.
+
+Local verification on macOS arm64: 82 binary-core tests passed (one child helper
+ignored), 24 file-router tests passed, 12 binary-runtime tests passed, 15 targeted
+hex/TUI tests passed, and the OpenAPI current-artifact test passed. The SDK passed
+type checking and 125 unit/mock tests (ten external tests skipped in that selector);
+the separate real-binary binary SDK test passed, including reviewed save, stable
+retry and Restore Last Save with zero inference. Strict OpenSpec validated all
+114 items. Core/server/TUI all-target Clippy passed after splitting command,
+selection and response decoding helpers. Eleven screenshot-harness tests passed.
+The README includes actual synthetic-fixture live-view and reviewed-edit terminal
+captures. Remaining platforms rely on subsequent PR CI, not this local report.
+
+Notification disposition lookup now uses immutable acknowledged version identity
+without requiring the old source inode to still occupy the path. It can settle an
+existing durable observed/suppressed result after a later save; it cannot enqueue
+an observation or mint callback authority. Current native observation still needs
+its retained source proof. Review pages preserve the full fingerprint while the
+terminal can visit every returned range and request subsequent bounded pages.
