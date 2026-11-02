@@ -9,7 +9,7 @@ pub(super) struct Evidence {
     version: u32,
     pub info: Version,
     pub operation: Operation,
-    owner: Owner,
+    pub(super) owner: Owner,
     before: BaseRef,
     after: BaseRef,
     pub target: Target,
@@ -409,7 +409,11 @@ fn valid_version(version: &str) -> bool {
         && version.starts_with("ver_")
         && version[4..].bytes().all(|b| b.is_ascii_hexdigit())
 }
-fn read_evidence(dir: &cap_std::fs::Dir, document: &str, version: &str) -> Result<Evidence, Error> {
+pub(super) fn read_evidence(
+    dir: &cap_std::fs::Dir,
+    document: &str,
+    version: &str,
+) -> Result<Evidence, Error> {
     let bytes =
         crate::binary::storage::small_record(dir, &format!("{version}.json"), 16 * 1024 * 1024)?;
     let evidence: Evidence = serde_json::from_slice(&bytes).map_err(|_| Error::Invalid)?;

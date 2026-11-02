@@ -964,6 +964,13 @@ impl ToolHost for BuiltinHost {
             serde_json::json!({"requires_confirmation": true}),
         ))
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn binary_file_changed(
+        &self,
+        change: Arc<cyber_core::binary::editor::AcknowledgedChange>,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move { self.file_observers.binary_changed(self, change) })
+    }
     fn authorize_binary_edit<'a>(
         &'a self,
         turn: &'a TurnContext,

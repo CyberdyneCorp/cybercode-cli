@@ -16,8 +16,23 @@ impl ModelResolver for Models {
 struct Host(
     Arc<tokio::sync::Semaphore>,
     Arc<std::sync::atomic::AtomicBool>,
+    Arc<std::sync::atomic::AtomicUsize>,
 );
 impl ToolHost for Host {
+    fn binary_file_changed(
+        &self,
+        _: Arc<cyber_core::binary::editor::AcknowledgedChange>,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async {
+            assert_eq!(
+                self.0.available_permits(),
+                1,
+                "notification ran under the path mutation owner"
+            );
+            self.2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+    }
     fn definitions(&self, _: &TurnContext) -> Vec<ToolDef> {
         vec![]
     }
@@ -51,7 +66,7 @@ impl ToolHost for Host {
         })
     }
 }
-async fn fixture() -> (
+pub(super) async fn fixture() -> (
     tempfile::TempDir,
     Runtime,
     String,
@@ -62,6 +77,18 @@ async fn fixture() -> (
 }
 async fn fixture_with_policy(
     denied: Arc<std::sync::atomic::AtomicBool>,
+) -> (
+    tempfile::TempDir,
+    Runtime,
+    String,
+    cyber_core::binary::Resource,
+    Arc<tokio::sync::Semaphore>,
+) {
+    fixture_with_observer(denied, Arc::new(std::sync::atomic::AtomicUsize::new(0))).await
+}
+async fn fixture_with_observer(
+    denied: Arc<std::sync::atomic::AtomicBool>,
+    observed: Arc<std::sync::atomic::AtomicUsize>,
 ) -> (
     tempfile::TempDir,
     Runtime,
@@ -85,7 +112,7 @@ async fn fixture_with_policy(
             .unwrap(),
         ),
         resolver: Arc::new(Models),
-        tools: Arc::new(Host(paths.clone(), denied)),
+        tools: Arc::new(Host(paths.clone(), denied, observed)),
         global_config_dir: root.join("config"),
         shell: "test".into(),
         claude_compat: false,
@@ -219,6 +246,111 @@ async fn disposed_binary_request_retains_worker_ownership_until_actual_exit() {
         .unwrap();
     assert_eq!(paths.available_permits(), 1);
     assert!(runtime.inner.activities.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn disposed_saved_binary_worker_hands_off_only_after_releasing_mutation_owners() {
+    use cyber_core::binary::{
+        Document, Offset,
+        draft::{PatchBatch, Splice},
+        editor::{DraftScope, Editor, Owner, SavePreparation},
+        storage::StorageRoot,
+    };
+    let observed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (temp, runtime, session, resource, paths) = fixture_with_observer(
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        observed.clone(),
+    )
+    .await;
+    let data = tempfile::tempdir().unwrap();
+    let storage = Arc::new(StorageRoot::prepare(data.path()).unwrap());
+    runtime.configure_binary_storage(storage.clone()).unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let mut source = Document::open(&root, "bytes").unwrap();
+    let mut editor = Editor::create(
+        storage.open("bin_post_commit").unwrap(),
+        Owner {
+            session_id: session.clone(),
+            directory: root.clone(),
+            root,
+            scope: DraftScope::Manual,
+        },
+        &mut source,
+        || false,
+    )
+    .unwrap();
+    let turn = runtime
+        .file_turn(Some(&session), temp.path())
+        .await
+        .unwrap();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let (finish, wait) = std::sync::mpsc::channel();
+    let task = {
+        let runtime = runtime.clone();
+        tokio::spawn(async move {
+            runtime
+                .binary_file_work(
+                    turn,
+                    "bin_post_commit".into(),
+                    resource,
+                    (FileDecision::Allow, FileDecision::Allow),
+                    move |work| {
+                        editor
+                            .patch(
+                                "patch_one",
+                                &PatchBatch {
+                                    revision: editor.draft().revision(),
+                                    splices: vec![Splice {
+                                        offset: Offset(0),
+                                        delete_length: Offset(1),
+                                        expected_hex: "00".into(),
+                                        insert_hex: "01".into(),
+                                    }],
+                                },
+                            )
+                            .unwrap();
+                        let review = editor.review(0, 128, || false).unwrap();
+                        let SavePreparation::Ready(prepared) = editor
+                            .prepare_save("save_one", &review.fingerprint, || false)
+                            .unwrap()
+                        else {
+                            panic!("save");
+                        };
+                        editor
+                            .commit_save_checked(
+                                *prepared,
+                                || work.is_cancelled(),
+                                || work.verify(),
+                            )
+                            .unwrap();
+                        work.acknowledge_source(Arc::new(
+                            editor.acknowledged_change("save_one").unwrap().unwrap(),
+                        ))
+                        .unwrap();
+                        started.send(()).unwrap();
+                        wait.recv().unwrap();
+                    },
+                )
+                .await
+        })
+    };
+    running.await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert_eq!(paths.available_permits(), 0);
+    assert_eq!(observed.load(std::sync::atomic::Ordering::SeqCst), 0);
+    finish.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while observed.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(paths.available_permits(), 1);
+    assert_eq!(observed.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(std::fs::read(temp.path().join("bytes")).unwrap(), [1, 255]);
+    runtime.shutdown().await;
 }
 
 #[tokio::test]

@@ -391,6 +391,13 @@ impl ToolHost for AppHost {
         self.builtin
             .authorize_binary_read(turn, resource, asker, cancel)
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn binary_file_changed(
+        &self,
+        change: Arc<cyber_core::binary::editor::AcknowledgedChange>,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        self.builtin.binary_file_changed(change)
+    }
     fn authorize_binary_edit<'a>(
         &'a self,
         turn: &'a TurnContext,

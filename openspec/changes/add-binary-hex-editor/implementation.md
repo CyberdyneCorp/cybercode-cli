@@ -448,3 +448,52 @@ the final check and an explicitly authorized successful follow-up. Local results
 66 binary core tests, five runtime worker/proof tests and all 23 production file
 route tests passed; affected core/server library/test Clippy passed. This does not
 activate public save or complete the outstanding history/notification integrations.
+
+## Native observation handoff
+
+Only a durable acknowledged changed source operation can mint an opaque handoff
+proof. It retains native pins and the configured private-root identity, publishes
+its immutable saved-version evidence first, and confirms the installed source's
+metadata before the producer claims it. Draft-only/no-effect/unknown operations
+cannot manufacture this proof; another configured private namespace is refused.
+
+The SQL handoff journal records queued, claimed and terminal observed/suppressed
+states. Claims bind the existing native watch generation, Location, relative path
+and exact stamp. An observed disposition references a real durable matching native
+delta/checkpoint; unrelated paths and fabricated references are rejected. Repeated
+publication/recovery links retained evidence without dispatching another callback.
+An unobserved claim whose original native generation is gone is suppressed as
+interrupted, with no new UserInput or callback replay.
+
+The BuiltinHost queues bounded metadata hints on its existing observation actor.
+Its normal privacy scan, committed delta, feedback budget, membership incarnation
+and hook admission checks remain the producer. No configured observer, expired
+membership, a superseded source and incomplete observation have explicit pending
+or suppressed dispositions. Production callers must publish after the filesystem
+worker releases mutation ownership. Owner save routes and core notification receipt
+settlement are not yet connected.
+
+Actual workers durably queue known acknowledgements and retain their proof through
+a post-commit handoff even if the HTTP future is dropped. They release native
+Location/path mutation owners before enqueueing with the observation actor; the
+lifecycle/capacity owners remain until enqueue finishes. A worker regression verifies
+both HTTP disposal and that the host receives the handoff only after path release.
+Explicit private staging can resume pending metadata for a previously acknowledged
+source save; draft-only operations never mint a source change. Native pins remain
+retained through the actor's reconciliation and durable reference settlement.
+
+The real BuiltinHost/HTTP-hook integration regression passes: an actual native
+binary replacement produces one callback, three receipt retries produce no extra
+observations/callbacks, the bytes remain exact and inference is unused. Runtime
+regressions cover durable reference linking, terminal-state fencing, wrong-path
+references and superseded sources. Further recovery/negative cases and final scoped
+checks are being completed; this does not claim full editor acceptance or retention.
+
+Current local checks pass 68 binary core tests (one parent-invoked child helper is
+ignored by the ordinary selector), 11 runtime worker/handoff tests, all 23 production
+file-route tests and the real native producer/HTTP-hook integration. Affected four-
+crate library/test Clippy, formatting/diff checks and all 114 strict OpenSpec items
+passed after the post-commit lifetime changes. The independent namespace regression
+was split from the larger source-proof test to keep the complexity gate enabled.
+PR #98 merged at `69372bab` after all 22 checks passed. PR #100 carries the independent
+saved-version/commit-authority predecessor; the producer follow-up is not merged.

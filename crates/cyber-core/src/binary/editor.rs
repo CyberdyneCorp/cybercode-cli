@@ -17,11 +17,14 @@ use std::path::PathBuf;
 
 #[path = "editor/catalog.rs"]
 mod catalog;
+#[path = "editor/changes.rs"]
+mod changes;
 #[path = "editor/restore.rs"]
 mod restore;
 #[path = "editor/versions.rs"]
 mod versions;
 pub use catalog::{StoredDocument, StoredDocuments};
+pub use changes::AcknowledgedChange;
 pub use versions::VersionView;
 
 const MAX_OPERATIONS: usize = 4096;
@@ -775,7 +778,7 @@ mod tests {
         storage::Store,
     };
     use std::path::Path;
-    fn setup() -> (tempfile::TempDir, Editor, PathBuf, Owner) {
+    pub(super) fn setup() -> (tempfile::TempDir, Editor, PathBuf, Owner) {
         let root = tempfile::tempdir().unwrap();
         let data = root.path().join("data");
         let project = root.path().join("project");
@@ -799,7 +802,7 @@ mod tests {
         .unwrap();
         (root, editor, path, owner)
     }
-    fn patch(editor: &mut Editor, id: &str) -> Operation {
+    pub(super) fn patch(editor: &mut Editor, id: &str) -> Operation {
         let batch = PatchBatch {
             revision: editor.draft().revision(),
             splices: vec![Splice {
@@ -811,7 +814,7 @@ mod tests {
         };
         editor.patch(id, &batch).unwrap()
     }
-    fn ready(editor: &mut Editor, id: &str) -> Box<PreparedSave> {
+    pub(super) fn ready(editor: &mut Editor, id: &str) -> Box<PreparedSave> {
         let review = editor.review(0, 128, || false).unwrap();
         match editor
             .prepare_save(id, &review.fingerprint, || false)
