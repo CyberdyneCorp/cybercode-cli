@@ -125,7 +125,9 @@ current prepared edit admission; recovery itself never grants it. Stable operati
 IDs bind exact request payloads, including the original revision. Query the receipt
 after a lost response, then refresh status; never manufacture a new operation ID to
 retry an uncertain operation. Binary responses are excluded from generic HTTP
-idempotency replay, and SDK binary POSTs do not retry transport failures automatically.
+idempotency replay. The TypeScript SDK and Rust owner client do not automatically
+retry binary mutations after transport failures; query the stable operation receipt
+and refresh status before explicitly choosing a follow-up.
 
 Closing releases the in-memory handle, retaining private commands and receipts.
 Use discovery in the same Session Location, recover the selected ID, then prepare

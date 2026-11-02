@@ -216,14 +216,17 @@ impl Client {
 
     /// Send one request to `/api/v1{path}`. Mutations carry a fresh `Idempotency-Key` and
     /// are retried up to 3 times on transport failure with the same key, except through a
-    /// peer attach, whose routes keep no idempotency keys.
+    /// peer attach or binary routes, whose routes keep no generic idempotency
+    /// keys. After a binary transport failure, query the stable operation receipt
+    /// and refresh document status before explicitly deciding what to do next.
     pub async fn request(
         &self,
         method: &str,
         path: &str,
         body: Option<Value>,
     ) -> Result<Value, ClientError> {
-        let retried = !matches!(self.transport, Transport::Peer(_));
+        let retried =
+            !matches!(self.transport, Transport::Peer(_)) && !path.starts_with("/files/binary/");
         let key = (method != "GET" && retried).then(|| ulid::Ulid::new().to_string());
         let mut attempt = 0;
         loop {
@@ -663,6 +666,90 @@ fn encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn binary_transport_failures_are_not_retried_but_ordinary_mutations_keep_their_key() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (stop, mut stopping) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let mut requests = vec![];
+            loop {
+                let accepted = tokio::select! {
+                    result = listener.accept() => result.unwrap(),
+                    _ = &mut stopping => break,
+                };
+                let mut stream = accepted.0;
+                let mut request = vec![];
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let count = stream.read(&mut buffer).await.unwrap();
+                    assert!(count > 0);
+                    request.extend_from_slice(&buffer[..count]);
+                    assert!(request.len() < 8192);
+                }
+                requests.push(String::from_utf8(request).unwrap());
+                // Fail while reading a response body, after the server has
+                // accepted the mutation. Its effect cannot be inferred locally.
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{",
+                    )
+                    .await
+                    .unwrap();
+                stream.shutdown().await.unwrap();
+            }
+            requests
+        });
+        let client = Client::http(&format!("http://{address}"), None);
+        for path in [
+            "/files/binary/documents",
+            "/files/binary/documents/bin_one/patches",
+        ] {
+            assert!(matches!(
+                client
+                    .post(path, serde_json::json!({"operation_id":"stable_one"}))
+                    .await,
+                Err(ClientError::Transport(_))
+            ));
+        }
+        assert!(matches!(
+            client
+                .delete("/files/binary/documents/bin_one?session_id=ses_one")
+                .await,
+            Err(ClientError::Transport(_))
+        ));
+        assert!(matches!(
+            client.post("/files/binaryish", serde_json::json!({})).await,
+            Err(ClientError::Transport(_))
+        ));
+        stop.send(()).unwrap();
+        let requests = server.await.unwrap();
+        assert_eq!(
+            requests.len(),
+            7,
+            "three binary requests and four ordinary attempts"
+        );
+        for request in &requests[..3] {
+            assert!(!request.to_ascii_lowercase().contains("idempotency-key:"));
+        }
+        let keys: Vec<_> = requests[3..]
+            .iter()
+            .map(|request| {
+                request
+                    .lines()
+                    .find_map(|line| {
+                        line.split_once(':')
+                            .filter(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                            .map(|(_, value)| value.trim())
+                    })
+                    .unwrap()
+            })
+            .collect();
+        assert!(!keys[0].is_empty());
+        assert!(keys.iter().all(|key| key == &keys[0]));
+    }
 
     #[cfg(unix)]
     #[tokio::test]
