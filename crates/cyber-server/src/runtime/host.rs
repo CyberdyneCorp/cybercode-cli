@@ -1220,6 +1220,16 @@ pub trait ToolHost: Send + Sync {
     ) -> BoxFuture<'a, FileDecision> {
         Box::pin(async { FileDecision::Deny })
     }
+    /// Queue acknowledged source evidence with the existing native producer.
+    /// Call only after filesystem mutation owners are released. This must never
+    /// manufacture UserInput, directly execute a hook or replay an old callback.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn binary_file_changed(
+        &self,
+        _change: Arc<cyber_core::binary::editor::AcknowledgedChange>,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Err("Binary observation producer is unavailable".into()) })
+    }
     fn authorize_binary_read<'a>(
         &'a self,
         _turn: &'a TurnContext,

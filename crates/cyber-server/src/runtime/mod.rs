@@ -52,6 +52,7 @@ mod hooks;
 mod installation;
 pub use installation::{InstallationNotice, UpdateStatus};
 pub(crate) mod binary_documents;
+pub mod binary_effects;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod binary_recovery;
 mod file_observation_hooks;

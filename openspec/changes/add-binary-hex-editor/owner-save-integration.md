@@ -8,8 +8,11 @@ acceptance or an expansion of the model/plugin scope.
 ## Execution and file outcome are separate
 
 A filesystem-only worker retains the native Location, workspace/path, lifecycle and
-capacity owners until the actual blocking worker finishes. No subprocess or hook may
-escape that worker. The worker's tagged SQL activity records execution ownership;
+capacity owners through the actual source work and journal settlement. A following
+metadata-only handoff releases native Location/path mutation owners first, retaining
+lifecycle/capacity ownership until enqueue finishes, including after HTTP disposal.
+It cannot launch or wait for a hook callback. No subprocess escapes source work.
+The worker's tagged SQL activity records execution ownership;
 the private document journal records acknowledged/conflict/unknown file outcomes.
 
 Explicit document recovery obtains the real exclusive private document lock. Its

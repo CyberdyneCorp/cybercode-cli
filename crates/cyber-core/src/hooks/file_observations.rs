@@ -188,6 +188,11 @@ fn generation(value: &str) -> Result<(), String> {
         .map_err(|_| "invalid file watcher generation".into())
 }
 
+/// Validate a retained generation token without minting observation authority.
+pub fn validate_generation(value: &str) -> Result<(), String> {
+    generation(value)
+}
+
 fn bounded<T: Serialize>(value: &T) -> Result<(), String> {
     let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
     if bytes.len() > MAX_RECORD_BYTES {

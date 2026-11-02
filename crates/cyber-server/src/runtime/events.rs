@@ -548,6 +548,7 @@ pub fn registry() -> EventRegistry {
     super::reservations::register(&mut registry);
     super::hooks::register(&mut registry);
     super::file_observations::register(&mut registry);
+    super::binary_effects::register(&mut registry);
     super::jobs::register(&mut registry);
     super::delegations::register(&mut registry);
     super::mcp::register(&mut registry);
@@ -573,6 +574,7 @@ fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
     super::admission_authority::project(tx, e)?;
     super::hooks::project(tx, e)?;
     super::file_observations::project(tx, e)?;
+    super::binary_effects::project(tx, e)?;
     super::auto_statistics::project(tx, e)?;
     super::auto_override::project(tx, e)?;
     project_event(tx, e).map_err(|err| err.to_string())?;

@@ -246,6 +246,9 @@ pub(super) async fn prepare(
                         entry.editing.store(true, Ordering::Release);
                     }
                     *entry.edit_admission.lock().map_err(|_| Error::Io)? = Some(admission);
+                    if let Content::Draft(editor) = &mut *content {
+                        cancel.resume_notifications(editor);
+                    }
                     Ok(describe(&entry, &content, true, grant))
                 },
             )
@@ -347,6 +350,7 @@ pub(super) async fn patch(
                             splices: input.splices,
                         },
                     )?;
+                    cancel.resume_notifications(editor);
                     Ok(Edited {
                         operation,
                         status: describe(&entry, &content, true, grant),
@@ -413,6 +417,7 @@ pub(super) async fn history(
                             editor.discard(&input.operation_id, &input.revision)?
                         }
                     };
+                    cancel.resume_notifications(editor);
                     Ok(Edited {
                         operation,
                         status: describe(&entry, &content, true, grant),

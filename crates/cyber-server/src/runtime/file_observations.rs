@@ -325,6 +325,34 @@ impl Runtime {
 }
 
 impl FileWatch {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn binary_source_binding(
+        &self,
+        owner: &Runtime,
+    ) -> Result<(&str, i64, &Checkpoint), RuntimeError> {
+        let runtime = self.runtime()?;
+        if !Arc::ptr_eq(&runtime.inner, &owner.inner) {
+            return Err(RuntimeError::Invalid(
+                "Binary observation has a different runtime owner".into(),
+            ));
+        }
+        let root = self.pinned_root.as_ref().ok_or_else(|| {
+            RuntimeError::Invalid("Binary source requires a native observation owner".into())
+        })?;
+        if !self.current()?
+            || !runtime
+                .inner
+                .file_observation_roots
+                .get(&self.state.generation)
+                .is_some_and(|current| Arc::ptr_eq(&current, root))
+            || !root.matches(std::path::Path::new(&self.state.directory))
+        {
+            return Err(RuntimeError::Conflict(
+                "Binary observation generation changed".into(),
+            ));
+        }
+        Ok((&self.aggregate, self.sequence, &self.state))
+    }
     pub(super) fn validate_native_scope(&self, directory: &str) -> Result<(), RuntimeError> {
         if let Some(root) = &self.pinned_root {
             if !root.matches(std::path::Path::new(directory)) {

@@ -182,6 +182,104 @@ fn automatic_hooks(flow: &support::flow::Flow, recorder: &Recorder) {
     }]}]}));
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn acknowledged_binary_save_uses_the_native_producer_once_without_inference() {
+    use cyber_core::binary::{
+        Document, Offset,
+        draft::{PatchBatch, Splice},
+        editor::{DraftScope, Editor, Owner, SavePreparation},
+        storage::StorageRoot,
+    };
+    use cyber_server::runtime::binary_effects::State;
+    let flow = support::flow::Flow::new(vec![], false);
+    let private = tempfile::tempdir().unwrap();
+    let storage = Arc::new(StorageRoot::prepare(private.path()).unwrap());
+    flow.runtime
+        .configure_binary_storage(storage.clone())
+        .unwrap();
+    let root = flow.f.repo.canonicalize().unwrap();
+    std::fs::write(root.join("binary.fixture"), [0, 255, 128, 27]).unwrap();
+    let recorder = Recorder::start().await;
+    automatic_hooks(&flow, &recorder);
+    let session = flow.session("default").await;
+    await_condition("binary source baseline", || {
+        journal_count(&flow, records::CHECKPOINT) == 1
+    })
+    .await;
+    let mut source = Document::open(&root, "binary.fixture").unwrap();
+    let mut editor = Editor::create(
+        storage.open("bin_native_save").unwrap(),
+        Owner {
+            session_id: session,
+            directory: root.clone(),
+            root: root.clone(),
+            scope: DraftScope::Manual,
+        },
+        &mut source,
+        || false,
+    )
+    .unwrap();
+    editor
+        .patch(
+            "patch_one",
+            &PatchBatch {
+                revision: editor.draft().revision(),
+                splices: vec![Splice {
+                    offset: Offset(0),
+                    delete_length: Offset(2),
+                    expected_hex: "00ff".into(),
+                    insert_hex: "7f00".into(),
+                }],
+            },
+        )
+        .unwrap();
+    let review = editor.review(0, 128, || false).unwrap();
+    let SavePreparation::Ready(prepared) = editor
+        .prepare_save("native_save", &review.fingerprint, || false)
+        .unwrap()
+    else {
+        panic!("native save");
+    };
+    editor.commit_save(*prepared).unwrap();
+    let change = Arc::new(editor.acknowledged_change("native_save").unwrap().unwrap());
+    flow.runtime
+        .publish_binary_change(change.clone())
+        .await
+        .unwrap();
+    await_condition("acknowledged binary native observation",|| {
+        matches!(flow.runtime.binary_handoff(change.key()).unwrap(),Some((_,ref handoff)) if matches!(handoff.state,State::Observed {..}))
+    }).await;
+    await_condition("binary FileChanged callback", || {
+        recorder
+            .seen
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event["file_path"] == "binary.fixture")
+    })
+    .await;
+    let observations = journal_count(&flow, records::CHANGED);
+    let callbacks = recorder.seen.lock().unwrap().len();
+    for _ in 0..3 {
+        let handoff = flow
+            .runtime
+            .publish_binary_change(change.clone())
+            .await
+            .unwrap();
+        assert!(matches!(handoff.state, State::Observed { .. }));
+    }
+    assert_eq!(journal_count(&flow, records::CHANGED), observations);
+    assert_eq!(recorder.seen.lock().unwrap().len(), callbacks);
+    assert_eq!(callbacks, 1);
+    assert_eq!(
+        std::fs::read(root.join("binary.fixture")).unwrap(),
+        [127, 0, 128, 27]
+    );
+    assert!(flow.requests("test/main").is_empty());
+    flow.runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn native_owner_delivers_external_edits_rename_removal_to_shared_sessions_and_joins() {
     let flow = support::flow::Flow::new(vec![], false);

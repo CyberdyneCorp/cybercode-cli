@@ -75,9 +75,52 @@ pub(crate) struct BinaryWork {
     grants: (super::FileDecision, super::FileDecision),
     authority: super::AdmissionAuthority,
     cancel: tokio_util::sync::CancellationToken,
+    post: Arc<Mutex<Option<Arc<cyber_core::binary::editor::AcknowledgedChange>>>>,
 }
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl BinaryWork {
+    /// Metadata recovery of a previously acknowledged source change. Failure
+    /// leaves its notification pending and never changes a staged edit's receipt.
+    pub fn resume_notifications(&self, editor: &mut cyber_core::binary::editor::Editor) {
+        let result = editor.pending_notification_change().and_then(|change| {
+            change.map_or(Ok(()), |change| self.acknowledge_source(Arc::new(change)))
+        });
+        if result.is_err() {
+            self.runtime.hook_notice(
+                &self.turn.session_id,
+                "FileChanged",
+                "A previously acknowledged binary save still has pending notification metadata",
+            );
+        }
+    }
+    /// Retain known source acknowledgement for publication after path/checkout
+    /// ownership is released, including when the HTTP future was disposed.
+    pub fn acknowledge_source(
+        &self,
+        change: Arc<cyber_core::binary::editor::AcknowledgedChange>,
+    ) -> Result<(), Error> {
+        if change.owner().session_id != self.turn.session_id
+            || change.resource().path() != self.resource.path()
+        {
+            return Err(Error::Changed);
+        }
+        let storage = self.runtime.binary_documents().storage()?;
+        change.belongs_to(&storage)?;
+        {
+            let mut post = self.post.lock().map_err(|_| Error::Io)?;
+            if post
+                .as_ref()
+                .is_some_and(|prior| prior.key() != change.key())
+            {
+                return Err(Error::Limit);
+            }
+            *post = Some(change.clone());
+        }
+        self.runtime
+            .queue_binary_change(&change)
+            .map_err(|_| Error::Io)?;
+        Ok(())
+    }
     pub fn is_cancelled(&self) -> bool {
         self.cancel.is_cancelled()
     }
@@ -351,7 +394,7 @@ impl super::Runtime {
             ));
         }
         // This scope owns no subprocess. The retained proof keeps the native
-        // checkout lock through every synchronous filesystem call, including crash.
+        // checkout lock through source mutation and journal settlement, including crash.
         let location = location
             .settle_retained()
             .map_err(super::RuntimeError::Invalid)?;
@@ -376,6 +419,9 @@ impl super::Runtime {
             .binary_documents()
             .worker()
             .map_err(|error| super::RuntimeError::Invalid(error.to_string()))?;
+        let post = Arc::new(Mutex::new(None));
+        let executor = tokio::runtime::Handle::current();
+        let runtime = self.clone();
         let context = BinaryWork {
             runtime: self.clone(),
             executor: tokio::runtime::Handle::current(),
@@ -384,6 +430,7 @@ impl super::Runtime {
             grants,
             authority,
             cancel,
+            post: post.clone(),
         };
         tokio::task::spawn_blocking(move || {
             let (_lifecycle, _location, _paths, _permit, _edit_permit) =
@@ -392,7 +439,27 @@ impl super::Runtime {
             let result = work(context);
             // A returned unknown file outcome is not a live/unowned native process.
             // Its durable intent remains unresolved in the document journal.
-            activity.settle()?;
+            let settlement = activity.settle();
+            // Keep lifecycle/capacity ownership until the post-commit handoff
+            // finishes, but release every filesystem mutation owner first.
+            drop((_location, _paths));
+            let change = post
+                .lock()
+                .map_err(|_| {
+                    super::RuntimeError::Invalid("Binary handoff registry unavailable".into())
+                })?
+                .take();
+            if let Some(change) = change {
+                let session = change.owner().session_id.clone();
+                if let Err(error) = executor.block_on(runtime.publish_binary_change(change)) {
+                    runtime.hook_notice(
+                        &session,
+                        "FileChanged",
+                        &format!("Binary save notification remains pending: {error}"),
+                    );
+                }
+            }
+            settlement?;
             Ok(result)
         })
         .await

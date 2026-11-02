@@ -25,6 +25,9 @@ const MAX_LOCATIONS: usize = 32;
 const MAX_SESSIONS: usize = 256;
 const TICK: Duration = Duration::from_millis(150);
 const RECONCILE: Duration = Duration::from_secs(3);
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "owner/binary.rs"]
+mod binary;
 #[derive(Default)]
 struct Membership {
     sessions: BTreeMap<String, CancellationToken>,
@@ -36,6 +39,8 @@ struct Membership {
     renewals: BTreeMap<String, Renewal>,
     scopes: BTreeSet<String>,
     explicit: Hints,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    binary: BTreeMap<String, binary::Pending>,
 }
 type Members = Arc<Mutex<Membership>>;
 impl Membership {
@@ -144,6 +149,8 @@ impl Observers {
             renewals: BTreeMap::new(),
             scopes: BTreeSet::new(),
             explicit: Hints::default(),
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            binary: BTreeMap::new(),
         }));
         let weak = host.weak.clone();
         let root = path.clone();
@@ -777,6 +784,8 @@ impl RunState {
             return false;
         }
         if !host.observes_files(directory, &sessions).await {
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            binary::suppress_pending(host, membership);
             self.observer = None;
             return true;
         }
@@ -790,7 +799,12 @@ impl RunState {
         };
         current.refresh_scopes(host, membership, cancel).await;
         current.renew(host, membership, cancel).await;
-        if let Err(error) = current.reconcile(host, &sessions, membership, cancel).await {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let binary = current.claim_binary(host, membership);
+        let result = current.reconcile(host, &sessions, membership, cancel).await;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        current.finish_binary(host, &binary);
+        if let Err(error) = result {
             if cancel.is_cancelled() {
                 return false;
             }

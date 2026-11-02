@@ -90,6 +90,14 @@ pub struct StorageRoot {
     root: Dir,
 }
 impl StorageRoot {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn same_namespace(&self, other: &Self) -> Result<(), Error> {
+        if self.data != other.data || identity(self.directory()?)? != identity(other.directory()?)?
+        {
+            return Err(Error::Changed);
+        }
+        Ok(())
+    }
     pub fn prepare(data: &Path) -> Result<Self, Error> {
         let (data, _parent, root) = open_root(data)?;
         Ok(Self { data, root })
@@ -432,6 +440,14 @@ fn existing_lock(dir: &Dir) -> Result<File, Error> {
 }
 
 impl Store {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn storage_root(&self) -> Result<StorageRoot, Error> {
+        self.validate()?;
+        Ok(StorageRoot {
+            data: self.data_path.clone(),
+            root: self.root.try_clone().map_err(|_| Error::Io)?,
+        })
+    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(super) fn document_id(&self) -> &str {
         &self.id
