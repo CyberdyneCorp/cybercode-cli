@@ -55,6 +55,7 @@ pub(crate) mod binary_documents;
 pub mod binary_effects;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod binary_recovery;
+mod binary_snapshots;
 mod file_observation_hooks;
 mod file_observation_roots;
 mod file_observation_scopes;

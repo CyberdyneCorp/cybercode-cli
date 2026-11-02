@@ -199,6 +199,17 @@ a continuation. Only immutable saved evidence is read, with no draft recovery or
 source mutation. Known acknowledgements interrupted before metadata publication
 become discoverable when explicit owner recovery resumes their publication.
 
-Shared history is not yet wired into Session snapshot/diff screens or rewind.
+The shared Session diff now includes saved binary references and the TUI shows
+their lengths, fingerprints and version identities, including outside Git and
+for files omitted by ordinary snapshot size limits. Existing text patches remain
+available when the ordinary snapshot supplies one. References identify individual
+acknowledged changes; they do not claim a combined net byte diff across external
+writes. Current source read rules and source root/parent bindings apply.
+
+The Session diff reads small source headers and immutable saved evidence on bounded
+workers, without opening command journals or byte images. It admits at most 512
+saved references; larger histories use the paged source-history routes.
+
+Checkpoint/rewind integration remains unfinished.
 The core retention primitive exists, but the configured retention/checkpoint
 adapter remains unfinished; public history access does not silently delete data.

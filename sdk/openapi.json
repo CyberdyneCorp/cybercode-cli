@@ -8459,6 +8459,16 @@
           },
           "patch": {
             "type": "string"
+          },
+          "binary": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/BinaryVersion"
+            },
+            "description": "Acknowledged binary source versions, independent of Git snapshot limits.\nThese are saved references, not a synthesized text patch or net byte diff."
           }
         },
         "required": [
@@ -8469,6 +8479,74 @@
           "patch"
         ],
         "description": "One file of a diff between two snapshots."
+      },
+      "BinaryVersion": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "before_sha256": {
+            "type": "string"
+          },
+          "after_sha256": {
+            "type": "string"
+          },
+          "before_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "after_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "original_bytes": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "proposed_bytes": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "range_count": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "version_id",
+          "document_id",
+          "operation_id",
+          "kind",
+          "path",
+          "before_sha256",
+          "after_sha256",
+          "before_length",
+          "after_length",
+          "original_bytes",
+          "proposed_bytes",
+          "range_count",
+          "created_ms"
+        ],
+        "description": "Shared saved-source metadata. It never contains unsaved command buffers."
+      },
+      "Offset": {
+        "type": "string",
+        "description": "Lossless JSON decimal integer. Never accepts JSON numbers or noncanonical strings."
       },
       "HistoryPage": {
         "type": "object",
@@ -14876,10 +14954,6 @@
           "within_edit_size_limit"
         ]
       },
-      "Offset": {
-        "type": "string",
-        "description": "Lossless JSON decimal integer. Never accepts JSON numbers or noncanonical strings."
-      },
       "Source2": {
         "type": "string",
         "enum": [
@@ -15611,70 +15685,6 @@
         "required": [
           "versions"
         ]
-      },
-      "BinaryVersion": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version_id": {
-            "type": "string"
-          },
-          "document_id": {
-            "type": "string"
-          },
-          "operation_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "before_sha256": {
-            "type": "string"
-          },
-          "after_sha256": {
-            "type": "string"
-          },
-          "before_length": {
-            "$ref": "#/components/schemas/Offset"
-          },
-          "after_length": {
-            "$ref": "#/components/schemas/Offset"
-          },
-          "original_bytes": {
-            "$ref": "#/components/schemas/Offset"
-          },
-          "proposed_bytes": {
-            "$ref": "#/components/schemas/Offset"
-          },
-          "range_count": {
-            "type": "integer",
-            "format": "uint",
-            "minimum": 0
-          },
-          "created_ms": {
-            "type": "integer",
-            "format": "int64"
-          }
-        },
-        "required": [
-          "version_id",
-          "document_id",
-          "operation_id",
-          "kind",
-          "path",
-          "before_sha256",
-          "after_sha256",
-          "before_length",
-          "after_length",
-          "original_bytes",
-          "proposed_bytes",
-          "range_count",
-          "created_ms"
-        ],
-        "description": "Shared saved-source metadata. It never contains unsaved command buffers."
       },
       "Located_BinaryReview": {
         "type": "object",

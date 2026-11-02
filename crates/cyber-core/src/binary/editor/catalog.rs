@@ -263,6 +263,113 @@ impl StorageRoot {
     }
 }
 
+/// Metadata-only acknowledged source reference. This does not grant read access
+/// to its source or to either saved byte image.
+#[derive(Debug, Clone)]
+pub struct SavedReference {
+    pub version: crate::binary::receipts::Version,
+    pub root: PathBuf,
+    pub resource: super::super::Resource,
+}
+impl StorageRoot {
+    /// Enumerate only published immutable evidence for a Session/Location. Never
+    /// opens command journals or bases; callers authorize each returned source.
+    pub fn session_saved_references(
+        &self,
+        session: &str,
+        directory: &std::path::Path,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<SavedReference>, Error> {
+        let directory = directory.canonicalize().map_err(|_| Error::File)?;
+        let root = self.directory()?;
+        let mut found = Vec::new();
+        for (count, entry) in root.entries().map_err(|_| Error::Io)?.enumerate() {
+            if count >= 4096 {
+                return Err(Error::Limit);
+            }
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let name = entry.map_err(|_| Error::Io)?.file_name();
+            let id = name.to_str().ok_or(Error::File)?;
+            if !id.starts_with("bin_") {
+                continue;
+            }
+            let dir = root.open_dir_nofollow(id).map_err(|_| Error::File)?;
+            crate::binary::storage::private(
+                root,
+                &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+                true,
+            )?;
+            if !dir.try_exists("owner.json").map_err(|_| Error::Io)? {
+                continue;
+            }
+            let header: Header =
+                serde_json::from_slice(&small_record(&dir, "owner.json", HEADER_LIMIT)?)
+                    .map_err(|_| Error::Invalid)?;
+            if header.owner.session_id != session || header.owner.directory != directory {
+                continue;
+            }
+            read_saved_references(&dir, id, &header, &cancelled, &mut found)?;
+        }
+        self.directory()?;
+        found.sort_by(|a, b| {
+            a.version
+                .created_ms
+                .cmp(&b.version.created_ms)
+                .then_with(|| a.version.version_id.cmp(&b.version.version_id))
+        });
+        Ok(found)
+    }
+}
+fn read_saved_references(
+    dir: &cap_std::fs::Dir,
+    document: &str,
+    header: &Header,
+    cancelled: &impl Fn() -> bool,
+    found: &mut Vec<SavedReference>,
+) -> Result<(), Error> {
+    if header.version != 1
+        || !header.owner.root.is_absolute()
+        || header.relative.as_os_str().is_empty()
+        || header
+            .relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(Error::Changed);
+    }
+    for (count, entry) in dir.entries().map_err(|_| Error::Io)?.enumerate() {
+        if count >= 4096 {
+            return Err(Error::Limit);
+        }
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let name = entry.map_err(|_| Error::Io)?.file_name();
+        let name = name.to_str().ok_or(Error::File)?;
+        let Some(version) = name
+            .strip_suffix(".json")
+            .filter(|id| super::versions::valid_version(id))
+        else {
+            continue;
+        };
+        let evidence = super::versions::read_any_evidence(dir, document, version)?;
+        if evidence.owner != header.owner || evidence.target.relative != header.relative {
+            return Err(Error::Changed);
+        }
+        found.push(SavedReference {
+            version: evidence.info,
+            root: header.owner.root.clone(),
+            resource: super::super::Resource(header.owner.root.join(&header.relative)),
+        });
+        if found.len() > 512 {
+            return Err(Error::Limit);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

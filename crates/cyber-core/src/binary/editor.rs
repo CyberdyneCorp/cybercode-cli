@@ -27,7 +27,7 @@ mod restore;
 mod retention;
 #[path = "editor/versions.rs"]
 mod versions;
-pub use catalog::{StoredDocument, StoredDocuments};
+pub use catalog::{SavedReference, StoredDocument, StoredDocuments};
 pub use changes::AcknowledgedChange;
 pub use retention::Cleanup;
 pub use versions::VersionView;

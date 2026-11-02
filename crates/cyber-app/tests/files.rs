@@ -1163,6 +1163,11 @@ async fn binary_reviewed_save_retry_and_restore_use_the_production_router_withou
         [0, 159, 146, 150]
     );
     f.set_permissions(json!({"read":"allow","edit":"allow"}));
+    f._app
+        .store
+        .set_append_fault(Some(std::sync::Arc::new(|_, event| {
+            event.kind == "binary.source.handoff.1"
+        })));
     let (code, saved) = f
         .send("POST", &format!("{path}/save"), Some(request.clone()))
         .await;
@@ -1228,6 +1233,33 @@ async fn binary_reviewed_save_retry_and_restore_use_the_production_router_withou
         403
     );
     f.set_permissions(json!({"read":"allow","edit":"allow"}));
+    let (code, diff) = f.get(&format!("/sessions/{session}/diff")).await;
+    assert_eq!(code, 200, "{diff}");
+    let change = diff["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|change| change["file"] == "blob.bin")
+        .expect("non-Git binary source snapshot reference");
+    assert_eq!(change["binary"][0]["operation_id"], "save_one");
+    assert_eq!(change["patch"], "");
+    f.set_permissions(json!({"read":"deny","edit":"allow"}));
+    assert!(
+        f.get(&format!("/sessions/{session}/diff")).await.1["data"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    f.set_permissions(json!({"read":"allow","edit":"allow"}));
+    assert!(
+        f._app
+            .runtime
+            .binary_handoff(version["version_id"].as_str().unwrap())
+            .unwrap()
+            .is_none(),
+        "the fault must isolate snapshot references from notification delivery"
+    );
+    f._app.store.set_append_fault(None);
     let (code, restore) = f
         .send(
             "POST",

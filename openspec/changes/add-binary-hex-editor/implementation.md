@@ -586,3 +586,25 @@ diffs and fresh read-denial refusal. Core/server all-target Clippy, SDK typechec
 125 unit/mock SDK tests (ten external tests skipped), a separate real-executable
 SDK history/save/restore test and strict OpenSpec validation passed. The shared
 snapshot/rewind and retention adapters remain pending.
+
+
+### Shared Session diff references (in progress)
+
+The shared Session diff now reads published acknowledged source references from the
+immutable catalog independently of Git and notification delivery. It checks current
+read decisions before returning metadata, verifies the original root/path/parent
+binding, and rechecks Session/Location and permission state. No command journal or
+byte image is opened for summaries. Existing text patches remain compatible; the
+optional `FileDiff.binary` array carries per-save lengths, fingerprints and durable
+version identities rather than fabricating a combined text/byte patch. The TUI
+labels these rows and renders their saved metadata. Enumeration is bounded to 512
+references, with paged history available separately. Checkpoint/rewind and the
+configured retention adapter still remain pending.
+
+The production-router regression also injects failed notification-handoff journal
+appends after native acknowledgement: the shared Session diff still exposes the
+immutable saved reference, while no successful notification handoff is fabricated.
+Fresh read denial hides the reference. The focused catalog regression, 15 targeted
+TUI tests (including the shared diff overlay), OpenAPI artifact test, SDK typecheck
+and 125 unit/mock tests, core/server/TUI all-target Clippy and strict OpenSpec
+validation passed. No new database migration is required for this adapter.

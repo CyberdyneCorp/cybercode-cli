@@ -1026,6 +1026,27 @@ async fn hex_edit_review_save_undo_and_restore_use_real_owner_routes() {
         std::fs::read(f.work.join("editable.bin")).unwrap(),
         [65, 255, 27, 128]
     );
+    let diff = f
+        .server
+        .client
+        .at(&app.session.directory)
+        .get(&format!("/sessions/{}/diff", app.session.id))
+        .await
+        .unwrap();
+    app.sidebar.files = crate::sidebar::Source::Ready(crate::sidebar::parse_files(&diff["data"]));
+    let index = app
+        .sidebar
+        .changes()
+        .iter()
+        .position(|file| file.file == "editable.bin")
+        .expect("saved binary in shared Session diff");
+    assert!(app.sidebar.changes()[index].binary.is_some());
+    app.overlay = Overlay::FileDiff { index, scroll: 0 };
+    let shown = render(&mut app, 120, 30, &Opts::default());
+    assert!(shown.contains("binary"));
+    assert!(shown.contains("SHA256"));
+    assert!(shown.contains("Saved binary versions"));
+    app.overlay = Overlay::Hex;
     let actions = app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT));
     f.run(&mut app, actions).await;
     assert!(

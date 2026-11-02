@@ -1311,6 +1311,11 @@ export type FileDiff = {
   additions: number;
   deletions: number;
   patch: string;
+  /**
+   * Acknowledged binary source versions, independent of Git snapshot limits.
+   * These are saved references, not a synthesized text patch or net byte diff.
+   */
+  binary?: BinaryVersion[] | null;
 };
 
 /** One directory entry. */

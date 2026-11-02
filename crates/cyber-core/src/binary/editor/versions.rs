@@ -391,6 +391,34 @@ impl crate::binary::storage::StorageRoot {
             next_cursor,
         })
     }
+    /// Read a saved reference, including an expired payload's tombstone, without
+    /// opening either byte image. The caller still needs fresh source read access.
+    pub fn version_info(
+        &self,
+        source: &Document,
+        document: &str,
+        version: &str,
+    ) -> Result<Version, Error> {
+        use cap_fs_ext::DirExt;
+        valid_document(document)?;
+        if !valid_version(version) {
+            return Err(Error::Invalid);
+        }
+        source.validate()?;
+        let root = self.directory()?;
+        let dir = root.open_dir_nofollow(document).map_err(|_| Error::File)?;
+        crate::binary::storage::private(
+            root,
+            &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+            true,
+        )?;
+        let evidence = read_any_evidence(&dir, document, version)?;
+        bind_source(&evidence, source)?;
+        source.validate()?;
+        self.directory()?;
+        Ok(evidence.info)
+    }
+
     /// Caller establishes fresh read authority for the live source resource first.
     /// Saved versions are shared source history; unsaved owner/model drafts are not.
     pub fn open_version(
@@ -571,6 +599,18 @@ mod tests {
         )
         .unwrap();
         patch(&mut second, "private_only", &[1], &[2]);
+        let references = storage
+            .session_saved_references(&owner.session_id, &owner.directory, || false)
+            .unwrap();
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].version.operation_id, "save_a");
+        assert_eq!(references[0].resource.path(), owner.root.join("bytes"));
+        assert!(
+            storage
+                .session_saved_references("ses_another", &owner.directory, || false)
+                .unwrap()
+                .is_empty()
+        );
         let history = storage.source_versions(&source, None, 1, || false).unwrap();
         assert_eq!(history.versions.len(), 1);
         assert_eq!(history.versions[0].version_id, a.version_id);
