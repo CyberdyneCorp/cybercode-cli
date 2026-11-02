@@ -391,6 +391,34 @@ impl crate::binary::storage::StorageRoot {
             next_cursor,
         })
     }
+    /// Read a saved reference, including an expired payload's tombstone, without
+    /// opening either byte image. The caller still needs fresh source read access.
+    pub fn version_info(
+        &self,
+        source: &Document,
+        document: &str,
+        version: &str,
+    ) -> Result<Version, Error> {
+        use cap_fs_ext::DirExt;
+        valid_document(document)?;
+        if !valid_version(version) {
+            return Err(Error::Invalid);
+        }
+        source.validate()?;
+        let root = self.directory()?;
+        let dir = root.open_dir_nofollow(document).map_err(|_| Error::File)?;
+        crate::binary::storage::private(
+            root,
+            &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+            true,
+        )?;
+        let evidence = read_any_evidence(&dir, document, version)?;
+        bind_source(&evidence, source)?;
+        source.validate()?;
+        self.directory()?;
+        Ok(evidence.info)
+    }
+
     /// Caller establishes fresh read authority for the live source resource first.
     /// Saved versions are shared source history; unsaved owner/model drafts are not.
     pub fn open_version(
@@ -551,6 +579,72 @@ mod tests {
             Outcome::Acknowledged
         );
     }
+    #[test]
+    fn source_history_shares_only_acknowledged_versions_across_sessions_and_pages() {
+        let (temp, mut first, owner) = fixture();
+        patch(&mut first, "patch_a", &[0], &[1]);
+        save(&mut first, "save_a");
+        let a = first.publish_last_version().unwrap().unwrap();
+        let storage =
+            crate::binary::storage::StorageRoot::prepare(&temp.path().join("data")).unwrap();
+        let mut source = Document::open(&owner.root, "bytes").unwrap();
+        let mut second = Editor::create(
+            storage.open("bin_another_session").unwrap(),
+            Owner {
+                session_id: "ses_another".into(),
+                ..owner.clone()
+            },
+            &mut source,
+            || false,
+        )
+        .unwrap();
+        patch(&mut second, "private_only", &[1], &[2]);
+        let references = storage
+            .session_saved_references(&owner.session_id, &owner.directory, || false)
+            .unwrap();
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].version.operation_id, "save_a");
+        assert_eq!(references[0].resource.path(), owner.root.join("bytes"));
+        assert!(
+            storage
+                .session_saved_references("ses_another", &owner.directory, || false)
+                .unwrap()
+                .is_empty()
+        );
+        let history = storage.source_versions(&source, None, 1, || false).unwrap();
+        assert_eq!(history.versions.len(), 1);
+        assert_eq!(history.versions[0].version_id, a.version_id);
+        save(&mut second, "save_b");
+        let b = second.publish_last_version().unwrap().unwrap();
+        let source = Document::open(&owner.root, "bytes").unwrap();
+        let page = storage.source_versions(&source, None, 1, || false).unwrap();
+        let next = storage
+            .source_versions(&source, page.next_cursor.as_deref(), 1, || false)
+            .unwrap();
+        let ids = [
+            page.versions[0].version_id.clone(),
+            next.versions[0].version_id.clone(),
+        ];
+        assert!(ids.contains(&a.version_id));
+        assert!(ids.contains(&b.version_id));
+        assert!(next.next_cursor.is_none());
+        assert!(
+            storage
+                .source_versions(&source, Some("../bad:version"), 1, || false)
+                .is_err()
+        );
+        assert!(storage.source_versions(&source, None, 1, || true).is_err());
+        std::fs::write(owner.root.join("other"), b"other").unwrap();
+        let other = Document::open(&owner.root, "other").unwrap();
+        assert!(
+            storage
+                .source_versions(&other, None, 64, || false)
+                .unwrap()
+                .versions
+                .is_empty()
+        );
+    }
+
     #[test]
     fn saved_views_hold_shared_leases_until_the_last_reader_closes() {
         let (temp, mut editor, owner) = fixture();

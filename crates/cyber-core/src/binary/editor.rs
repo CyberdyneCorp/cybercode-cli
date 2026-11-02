@@ -19,13 +19,15 @@ use std::path::PathBuf;
 mod catalog;
 #[path = "editor/changes.rs"]
 mod changes;
+#[path = "editor/history.rs"]
+mod history;
 #[path = "editor/restore.rs"]
 mod restore;
 #[path = "editor/retention.rs"]
 mod retention;
 #[path = "editor/versions.rs"]
 mod versions;
-pub use catalog::{StoredDocument, StoredDocuments};
+pub use catalog::{SavedReference, StoredDocument, StoredDocuments};
 pub use changes::AcknowledgedChange;
 pub use retention::Cleanup;
 pub use versions::VersionView;
@@ -303,6 +305,22 @@ impl Editor {
         self.store.validate()?;
         operation_id(id)?;
         Ok(self.operation(id))
+    }
+    pub fn lookup_installation(
+        &self,
+        id: &str,
+        review: &str,
+        restore: bool,
+    ) -> Result<Option<Operation>, Error> {
+        let payload = signature(&(if restore { "restore-v1" } else { "save-v1" }, review))?;
+        let operation = self.lookup_operation(id)?;
+        if operation
+            .as_ref()
+            .is_some_and(|operation| operation.payload_sha256 != payload)
+        {
+            return Err(Error::Changed);
+        }
+        Ok(operation)
     }
     pub fn operation(&self, id: &str) -> Option<Operation> {
         self.record
@@ -768,6 +786,20 @@ impl Editor {
     /// Called only after the runtime durably publishes the acknowledged observation.
     /// The operation ID is the producer's deduplication identity, not just a path.
     pub fn notified(&mut self, id: &str) -> Result<(), Error> {
+        self.finish_notification(id, None)
+    }
+    /// A durable producer disposition can close notification work without
+    /// claiming that a handler ran or changing the acknowledged source outcome.
+    pub fn notification_suppressed(&mut self, id: &str, reason: &str) -> Result<(), Error> {
+        if reason.is_empty()
+            || reason.len() > 64
+            || !reason.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        {
+            return Err(Error::Invalid);
+        }
+        self.finish_notification(id, Some(format!("notification_suppressed:{reason}")))
+    }
+    fn finish_notification(&mut self, id: &str, reason: Option<String>) -> Result<(), Error> {
         self.store.validate()?;
         let operation = self
             .record
@@ -779,7 +811,11 @@ impl Editor {
                     && op.file_effect == FileEffect::Changed
             })
             .ok_or(Error::Invalid)?;
+        if !operation.notification_pending {
+            return Ok(());
+        }
         operation.notification_pending = false;
+        operation.reason = reason;
         persist(&mut self.store, &self.record)
     }
 }
@@ -838,6 +874,67 @@ mod tests {
             _ => panic!("new save must prepare"),
         }
     }
+    #[test]
+    fn installation_retries_bind_the_original_review_and_notification_disposition() {
+        let (_root, mut editor, path, _owner) = setup();
+        patch(&mut editor, "patch_once");
+        let review = editor.review(0, 128, || false).unwrap();
+        let prepared = ready(&mut editor, "saved_once");
+        editor.commit_save(*prepared).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let notification = editor.notification_key("saved_once").unwrap().unwrap();
+        assert_eq!(
+            editor
+                .lookup_installation("saved_once", &review.fingerprint, false)
+                .unwrap()
+                .unwrap()
+                .outcome,
+            Outcome::Acknowledged
+        );
+        assert!(
+            editor
+                .lookup_installation("saved_once", &"0".repeat(64), false)
+                .is_err()
+        );
+        assert!(
+            editor
+                .lookup_installation("saved_once", &review.fingerprint, true)
+                .is_err()
+        );
+        assert!(
+            editor
+                .notification_suppressed("saved_once", "invalid reason")
+                .is_err()
+        );
+        editor
+            .notification_suppressed("saved_once", "native_unavailable")
+            .unwrap();
+        editor.notified("saved_once").unwrap();
+        let receipt = editor.lookup_operation("saved_once").unwrap().unwrap();
+        assert!(!receipt.notification_pending);
+        assert_eq!(receipt.outcome, Outcome::Acknowledged);
+        assert_eq!(receipt.file_effect, FileEffect::Changed);
+        assert_eq!(
+            receipt.reason.as_deref(),
+            Some("notification_suppressed:native_unavailable")
+        );
+        std::fs::write(&path, b"later external source").unwrap();
+        assert_eq!(
+            editor.notification_key("saved_once").unwrap().as_deref(),
+            Some(notification.as_str())
+        );
+        assert!(
+            editor
+                .acknowledged_change("saved_once")
+                .unwrap()
+                .unwrap()
+                .observed_stamp()
+                .is_err(),
+            "old metadata must not confirm a fresh source observation"
+        );
+        assert_ne!(std::fs::read(path).unwrap(), bytes);
+    }
+
     #[test]
     fn final_save_authority_refusal_preserves_source_draft_and_receipt_absence() {
         let (_root, mut editor, path, _owner) = setup();

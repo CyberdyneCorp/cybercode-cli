@@ -13,12 +13,25 @@ on an explorer file. The Session's read rules apply to every request, including
 normal permission prompts. Selecting an existing Session never rebinds its
 Location; the direct command refuses a target from another project.
 
-The terminal currently provides **live viewing and inspection**. The owner API/SDK
-also supports private staged patches, draft undo/redo, byte review and explicit
-recovery on admitted Linux/macOS workspaces. Terminal editing, production save/
-restore, model operations and snapshot/hooks integration remain unfinished under
-[issue #94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94). Both normal and
-`--read-only` terminal entry currently open a read-only view.
+The terminal opens in view mode. On admitted Linux/macOS workspaces, F2 prepares
+an immutable private draft and enters edit mode. `--read-only` permanently disables
+edit preparation for that document. Windows supports live viewing. Shared saved
+history/snapshot integration, model operations and remaining acceptance work are
+tracked under [issue #94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94).
+
+In edit mode, type complete hex byte pairs to overwrite one byte; Esc cancels an
+unfinished nibble. Alt+I inserts and Alt+O overwrites explicit hex or UTF-8 input
+(Tab chooses the encoding). Shift+arrows select a byte range; Ctrl+C explicitly copies up to 4096 selected
+bytes as hex. Delete removes the current byte or a bounded selection. Ctrl+Z/Y undo/redo private draft
+commands. F2 returns to view controls. Ctrl+S opens a byte review with source and
+proposed SHA-256 fingerprints, lengths, ranges and metadata. Press Ctrl+S again to
+apply that fingerprint. PageUp/PageDown visit the reviewed ranges, requesting the
+next bounded review page when needed. Alt+R reviews Restore Last Save; Ctrl+S applies it.
+
+Closing a dirty draft asks whether to keep it durably, discard commands, or stay.
+Transport errors clear cached bytes and require Ctrl+R to refresh/reconcile retained
+state. Reconciliation never retries a native exchange. An unknown native outcome
+keeps evidence and prevents editing or discarding until it can be reconciled.
 
 ## Navigation and interpretation
 
@@ -47,7 +60,7 @@ whole-file digest. Pages carry their own SHA-256. Replacement of a file or paren
 or an observed metadata change, invalidates the document; close and reopen it.
 On Windows, retained native directory handles can prevent a parent directory from
 being renamed until the view closes.
-Live search is best-effort against external writers. Mutation will require a
+Live search is best-effort against external writers. Editing requires a
 separately prepared immutable base and exact content evidence.
 
 ## Owner API and SDK
@@ -63,6 +76,12 @@ The authenticated `fs` group adds:
 | Prepare private draft | `POST …/{id}/prepare` (`session_id`, current `revision`) |
 | Atomic draft patch | `POST …/{id}/patches` (`session_id`, `operation_id`, `revision`, `splices`) |
 | Undo/redo/discard | `POST …/{id}/history` (`session_id`, `operation_id`, `revision`, `action`) |
+| Shared saved history | `GET …/{id}/versions?session_id=…&after=…&limit=64` |
+| Saved byte diff | `GET …/{id}/versions/{stored_document}/{version}/review?session_id=…&start=0&limit=128` |
+| Reviewed native save | `POST …/{id}/save` (`session_id`, stable `operation_id`, exact review fingerprint in `review`) |
+| Review Restore Last Save | `POST …/{id}/restore-review` (`session_id`, current `revision`) |
+| Apply reviewed restore | `POST …/{id}/restore` (`session_id`, stable `operation_id`, `review`) |
+| Reconcile pending native outcome | `POST …/{id}/reconcile` (`session_id`; never starts a new exchange) |
 | Byte review | `POST …/{id}/review` (`session_id`, `revision`, optional `start`, `limit`) |
 | Discover retained drafts | `GET /api/v1/files/binary/recovery?session_id=…&after=…&limit=64` |
 | Recover retained draft | `POST …/{id}/recover` (`session_id`, optional immutable `read_only`) |
@@ -102,8 +121,8 @@ returns an explicit resource-limit refusal. Session deletion releases live views
 refuses while dirty drafts, locked journals or unresolved receipts would be orphaned, including previously closed drafts.
 Live abandoned views can be pruned after 24 hours; prepared drafts remain durable.
 
-The 512 MiB flag in metadata reports only the planned edit-size ceiling. It does
-not mean editing is available or that a native save guarantee has been proved.
+The 512 MiB flag in metadata reports the edit-size ceiling. Status separately
+advertises native editing support and current permission admission.
 
 ## Private draft API
 
@@ -137,3 +156,60 @@ from the private draft. Recovery uses its exclusive private document lock to set
 matching filesystem-only activity records left by a prior process. It refuses active
 local workers and another private root; generic native processes and uncertain file
 effects remain unresolved. Production source save/restore is not yet exposed.
+
+
+## Reviewed source installation
+
+Save and Restore Last Save require current read and edit authority. Review does
+not write source bytes. Installation checks the exact fingerprint and refreshes
+worker authority after staging and immediately before the durable native intent.
+The source must still match its original identity, parents, metadata and whole-file
+content; conflicting external changes are refused. Supported Linux/macOS storage
+uses a same-filesystem native exchange with displaced preimage and durable
+acknowledged/conflict/unknown receipts, without copy/delete fallback. This does not
+provide compare-and-swap against arbitrary unsynchronized external writers.
+
+Use one stable operation ID and the original review fingerprint when explicitly
+retrying a lost API response; reuse with another payload is refused. Rust and
+TypeScript clients never automatically replay binary mutations. SDK handles expose
+`save(operationId, fingerprint)`, `restoreReview()`, `restore(operationId,
+fingerprint)` and `reconcile()`, plus `operation(operationId)` for retained receipts.
+
+Only acknowledged source changes enter the existing native FileChanged producer.
+Draft edits produce no source notification. Receipt acknowledgement, native
+observation and hook delivery remain separate states; pending notifications may be
+settled by fresh status/receipt reads without producing a duplicate callback.
+
+
+## Shared saved history
+
+An authorized reader can enumerate published acknowledged versions of the current
+source across Sessions, and review each immutable net byte diff. This does not
+expose unsaved owner/model command journals. Both routes refresh the requesting
+Session's read authority and bind the saved evidence to the current source root,
+canonical path and every source parent. Original-coordinate offsets and before/
+after fingerprints remain available even after a later save replaces the leaf.
+A live owner handle invalidated by replacement must first be closed and reopened.
+
+The SDK exposes `document.versions(after, limit)` and
+`document.versionReview(storedDocumentId, versionId, start, limit)`. History cursors
+are opaque identities, not timestamps. A bounded page visits at most 64 matching
+private namespaces and returns at most 64 versions; an empty page may still carry
+a continuation. Only immutable saved evidence is read, with no draft recovery or
+source mutation. Known acknowledgements interrupted before metadata publication
+become discoverable when explicit owner recovery resumes their publication.
+
+The shared Session diff now includes saved binary references and the TUI shows
+their lengths, fingerprints and version identities, including outside Git and
+for files omitted by ordinary snapshot size limits. Existing text patches remain
+available when the ordinary snapshot supplies one. References identify individual
+acknowledged changes; they do not claim a combined net byte diff across external
+writes. Current source read rules and source root/parent bindings apply.
+
+The Session diff reads small source headers and immutable saved evidence on bounded
+workers, without opening command journals or byte images. It admits at most 512
+saved references; larger histories use the paged source-history routes.
+
+Checkpoint/rewind integration remains unfinished.
+The core retention primitive exists, but the configured retention/checkpoint
+adapter remains unfinished; public history access does not silently delete data.

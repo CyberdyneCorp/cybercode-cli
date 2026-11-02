@@ -474,14 +474,47 @@ pub fn file_diff(f: &mut Frame, app: &App, index: usize, scroll: u16, area: Rect
             ))
         })
         .collect();
+    let lines = if let Some(versions) = &change.binary {
+        let mut summary = vec![Line::from(
+            "Saved binary versions · exact byte lengths and SHA-256 fingerprints",
+        )];
+        for version in versions {
+            summary.push(Line::from(format!(
+                "{} · {} → {} bytes · {} ranges",
+                version.kind, version.before_length.0, version.after_length.0, version.range_count
+            )));
+            summary.push(Line::from(format!("- SHA256 {}", version.before_sha256)));
+            summary.push(Line::from(format!("+ SHA256 {}", version.after_sha256)));
+            summary.push(Line::from(format!(
+                "{} / {}",
+                version.document_id, version.version_id
+            )));
+        }
+        if !lines.is_empty() {
+            summary.push(Line::from("Snapshot text diff:"));
+            summary.extend(lines);
+        }
+        summary
+    } else {
+        lines
+    };
     let rect = centered(area, 110, area.height);
-    let title = format!(
-        "{} +{} -{} · ↑↓ scroll · Esc close",
-        change.file, change.additions, change.deletions
-    );
+    let title = if let Some(versions) = &change.binary {
+        format!(
+            "{} · binary · {} saved changes · ↑↓ scroll · Esc close",
+            change.file,
+            versions.len()
+        )
+    } else {
+        format!(
+            "{} +{} -{} · ↑↓ scroll · Esc close",
+            change.file, change.additions, change.deletions
+        )
+    };
     f.render_widget(Clear, rect);
     f.render_widget(
         Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
             .scroll((scroll, 0))
             .block(frame(app, &title)),
         rect,

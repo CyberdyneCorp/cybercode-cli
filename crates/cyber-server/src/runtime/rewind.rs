@@ -331,21 +331,24 @@ impl Runtime {
     /// latest post-Turn snapshot; empty before any snapshot.
     pub async fn session_diff(&self, session_id: &str) -> Result<Vec<FileDiff>, RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
-        let (directory, first, last) = {
+        let (turn, first, last) = {
             let state = handle.state.lock().await;
             let first = state.steps.iter().find_map(|s| s.pre.clone());
             let last = state.steps.iter().rev().find_map(|s| s.post.clone());
-            (state.info.directory.clone(), first, last)
+            (super::drain::turn_context_for(&state, false), first, last)
         };
-        let (Some(first), Some(last)) = (first, last) else {
-            return Ok(Vec::new());
+        let mut files = match (first, last) {
+            (Some(first), Some(last)) => self
+                .inner
+                .options
+                .snapshots
+                .diff(&turn.directory, &first, &last)
+                .await
+                .map_err(|e| RuntimeError::Conflict(format!("Session diff is unavailable: {e}")))?,
+            _ => Vec::new(),
         };
-        self.inner
-            .options
-            .snapshots
-            .diff(&directory, &first, &last)
-            .await
-            .map_err(|e| RuntimeError::Conflict(format!("Session diff is unavailable: {e}")))
+        self.merge_binary_snapshot_diffs(&turn, &mut files).await?;
+        Ok(files)
     }
 
     /// Stage a rewind to just before `message_id`: restore files when the target includes

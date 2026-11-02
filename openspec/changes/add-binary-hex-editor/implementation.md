@@ -532,3 +532,79 @@ Trusted authority and cancellation are rechecked before each namespace change.
 The core suite passes 79 tests, including seven cleanup regressions; core library/
 test Clippy passes. The configured seven-day policy, checkpoint reference adapter,
 owner routes and operator UX still need integration before production activation.
+
+
+### Reviewed owner save and terminal editing (work in progress)
+
+Owner save/Restore Last Save routes bind the review fingerprint to a stable
+operation ID. The actual retained worker rechecks authority immediately before
+publishing native intent. The production-router regression covers save retry,
+restoration and no inference; negative checks cover stale fingerprints,
+cross-Session scope and revoked edit permission. TUI controls now exercise real
+prepare/patch/history/review/save/restore routes with explicit second-step save,
+partial-nibble cancellation, stale replies and retained-state reconciliation.
+Shared snapshot/history adapters and model binary operations are still pending;
+this update does not complete issue #94.
+
+Local verification on macOS arm64: 82 binary-core tests passed (one child helper
+ignored), 24 file-router tests passed, 12 binary-runtime tests passed, 15 targeted
+hex/TUI tests passed, and the OpenAPI current-artifact test passed. The SDK passed
+type checking and 125 unit/mock tests (ten external tests skipped in that selector);
+the separate real-binary binary SDK test passed, including reviewed save, stable
+retry and Restore Last Save with zero inference. Strict OpenSpec validated all
+114 items. Core/server/TUI all-target Clippy passed after splitting command,
+selection and response decoding helpers. Eleven screenshot-harness tests passed.
+The README includes actual synthetic-fixture live-view and reviewed-edit terminal
+captures. Remaining platforms rely on subsequent PR CI, not this local report.
+
+Notification disposition lookup now uses immutable acknowledged version identity
+without requiring the old source inode to still occupy the path. It can settle an
+existing durable observed/suppressed result after a later save; it cannot enqueue
+an observation or mint callback authority. Current native observation still needs
+its retained source proof. Review pages preserve the full fingerprint while the
+terminal can visit every returned range and request subsequent bounded pages.
+
+
+### Shared acknowledged history adapter (in progress)
+
+The native storage service now discovers published saved-source versions across
+Session namespaces using small source headers and immutable version evidence,
+without opening private command journals. Source-relative root/path/parent checks
+remain mandatory. Enumeration is bounded to 64 matching namespaces and 64 returned
+versions per page, including empty continuations. Owner-authenticated history and
+saved-review routes reuse fresh Session/Location/read admission and cancellable
+workers. A stale live viewer must reopen after source replacement. Generated
+OpenAPI/SDK operations and explicit helpers expose the same metadata and byte diff.
+Session snapshot/diff references, saved-view UX and the retention policy adapter
+remain pending; this is not full binary editor acceptance.
+
+Shared-history verification: the binary core selector passed 83 tests (one helper
+ignored); the focused cross-Session/paging regression also passed after making
+continuation anchors omit unsaved private document IDs. The production-router
+regression proves unsaved history exclusion, reopened-reader access to saved byte
+diffs and fresh read-denial refusal. Core/server all-target Clippy, SDK typecheck,
+125 unit/mock SDK tests (ten external tests skipped), a separate real-executable
+SDK history/save/restore test and strict OpenSpec validation passed. The shared
+snapshot/rewind and retention adapters remain pending.
+
+
+### Shared Session diff references (in progress)
+
+The shared Session diff now reads published acknowledged source references from the
+immutable catalog independently of Git and notification delivery. It checks current
+read decisions before returning metadata, verifies the original root/path/parent
+binding, and rechecks Session/Location and permission state. No command journal or
+byte image is opened for summaries. Existing text patches remain compatible; the
+optional `FileDiff.binary` array carries per-save lengths, fingerprints and durable
+version identities rather than fabricating a combined text/byte patch. The TUI
+labels these rows and renders their saved metadata. Enumeration is bounded to 512
+references, with paged history available separately. Checkpoint/rewind and the
+configured retention adapter still remain pending.
+
+The production-router regression also injects failed notification-handoff journal
+appends after native acknowledgement: the shared Session diff still exposes the
+immutable saved reference, while no successful notification handoff is fabricated.
+Fresh read denial hides the reference. The focused catalog regression, 15 targeted
+TUI tests (including the shared diff overlay), OpenAPI artifact test, SDK typecheck
+and 125 unit/mock tests, core/server/TUI all-target Clippy and strict OpenSpec
+validation passed. No new database migration is required for this adapter.

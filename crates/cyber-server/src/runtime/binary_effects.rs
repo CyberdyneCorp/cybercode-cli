@@ -244,6 +244,35 @@ fn verify_observation(tx: &Transaction<'_>, claim: &State, id: &str) -> Result<(
     }
 }
 impl Runtime {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(crate) fn settle_binary_notification(
+        &self,
+        editor: &mut cyber_core::binary::editor::Editor,
+        id: &str,
+    ) -> Result<(), cyber_core::binary::Error> {
+        use cyber_core::binary::Error;
+        if !editor
+            .lookup_operation(id)?
+            .is_some_and(|operation| operation.notification_pending)
+        {
+            return Ok(());
+        }
+        let Some(key) = editor.notification_key(id)? else {
+            return Ok(());
+        };
+        if self.binary_handoff(&key).map_err(|_| Error::Io)?.is_none() {
+            return Ok(());
+        }
+        match self
+            .reconcile_binary_handoff(&key)
+            .map_err(|_| Error::Io)?
+            .state
+        {
+            State::Observed { .. } => editor.notified(id),
+            State::Suppressed { reason } => editor.notification_suppressed(id, &reason),
+            _ => Ok(()),
+        }
+    }
     /// Invoke after the actual filesystem worker releases checkout/path owners.
     /// A repeated receipt may reconcile durable evidence, never re-enqueue an
     /// already claimed native observation or renew expired hook provenance.

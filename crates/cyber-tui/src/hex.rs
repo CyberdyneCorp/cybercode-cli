@@ -6,6 +6,8 @@ use base64::Engine;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+#[path = "hex/edit.rs"]
+pub(crate) mod edit;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
@@ -13,10 +15,17 @@ pub struct Document {
     pub path: String,
     pub revision: String,
     pub length: u64,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
+    Edit {
+        document: Document,
+        command: edit::Command,
+        operation_id: String,
+        generation: u64,
+    },
     Open {
         path: String,
         expected_root: Option<String>,
@@ -55,6 +64,10 @@ pub enum Input {
     FindHex,
     FindText,
     Bookmark,
+    InsertHex,
+    InsertText,
+    ReplaceHex,
+    ReplaceText,
 }
 impl Input {
     pub fn label(self) -> &'static str {
@@ -63,11 +76,16 @@ impl Input {
             Self::FindHex => "Find hex (Tab: UTF-8)",
             Self::FindText => "Find UTF-8 (Tab: hex)",
             Self::Bookmark => "Bookmark name",
+            Self::InsertHex => "Insert hex (Tab: UTF-8)",
+            Self::InsertText => "Insert UTF-8 (Tab: hex)",
+            Self::ReplaceHex => "Overwrite hex (Tab: UTF-8)",
+            Self::ReplaceText => "Overwrite UTF-8 (Tab: hex)",
         }
     }
 }
 #[derive(Debug, Default)]
 pub struct Workspace {
+    pub edit: edit::State,
     pub document: Option<Document>,
     pub generation: u64,
     pub bytes: Vec<u8>,
@@ -86,7 +104,13 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    pub(crate) fn selection(&self) -> Option<(u64, u64)> {
+        let anchor = self.edit.anchor?;
+        (anchor != self.cursor).then_some((anchor.min(self.cursor), anchor.max(self.cursor)))
+    }
+
     pub fn forget(&mut self, session: &Session) {
+        self.edit = edit::State::default();
         if let Some(document) = self.document.take() {
             self.pending_closes.push(Request::Close {
                 id: document.id,
@@ -196,6 +220,10 @@ impl App {
             return vec![];
         }
         let mut actions = self.close_hex_document();
+        self.hex.edit = edit::State {
+            read_only,
+            ..Default::default()
+        };
         self.hex.generation = self.hex.generation.wrapping_add(1);
         self.hex.bytes.clear();
         self.hex.cursor = offset;
@@ -217,7 +245,7 @@ impl App {
         actions
     }
 
-    fn close_hex_document(&mut self) -> Vec<Action> {
+    pub(super) fn close_hex_document(&mut self) -> Vec<Action> {
         self.hex.wanted = false;
         self.hex.bytes.clear();
         self.hex.bookmarks.clear();
@@ -238,6 +266,9 @@ impl App {
     pub(crate) fn hex_key(&mut self, key: KeyEvent) -> Vec<Action> {
         if self.hex.input.is_some() {
             return self.hex_input_key(key);
+        }
+        if let Some(actions) = self.hex_edit_key(key) {
+            return actions;
         }
         match self.keymap.action("hex", &key, false) {
             Some("hex_close") => {
@@ -314,6 +345,10 @@ impl App {
                 *kind = match *kind {
                     Input::FindHex => Input::FindText,
                     Input::FindText => Input::FindHex,
+                    Input::InsertHex => Input::InsertText,
+                    Input::InsertText => Input::InsertHex,
+                    Input::ReplaceHex => Input::ReplaceText,
+                    Input::ReplaceText => Input::ReplaceHex,
                     other => other,
                 }
             }
@@ -332,6 +367,12 @@ impl App {
     }
 
     fn hex_submit(&mut self, kind: Input, input: String) -> Vec<Action> {
+        if matches!(
+            kind,
+            Input::InsertHex | Input::InsertText | Input::ReplaceHex | Input::ReplaceText
+        ) {
+            return self.hex_edit_submit(kind, input);
+        }
         match kind {
             Input::Goto => {
                 let length = self.hex.document.as_ref().map_or(0, |d| d.length);
@@ -381,6 +422,9 @@ impl App {
                     }
                 }
             }
+            Input::InsertHex | Input::InsertText | Input::ReplaceHex | Input::ReplaceText => {
+                unreachable!()
+            }
         }
         vec![]
     }
@@ -417,6 +461,14 @@ impl App {
 pub(crate) fn apply(app: &mut App, msg: crate::perform::Msg) -> Vec<Action> {
     use crate::perform::Msg;
     match msg {
+        Msg::HexEdit {
+            session_id,
+            directory,
+            generation,
+            result,
+        } if active(app, &session_id, &directory, generation) => {
+            return app.hex_edit_reply(result);
+        }
         Msg::Hex {
             session_id,
             directory,
@@ -558,7 +610,7 @@ fn decode_page(value: &Value, document: &Document, offset: u64) -> Result<Vec<u8
     }
     if field(value, "offset")? != offset.to_string()
         || field(value, "revision")? != document.revision
-        || field(value, "source")? != "live"
+        || field(value, "source")? != document.source
     {
         return Err("Stale binary page".into());
     }
@@ -575,6 +627,19 @@ pub async fn perform(
 ) -> crate::perform::Msg {
     use crate::perform::Msg;
     let (generation, opened, result) = match request {
+        Request::Edit {
+            document,
+            command,
+            operation_id,
+            generation,
+        } => {
+            return crate::perform::Msg::HexEdit {
+                session_id: session.id.clone(),
+                directory: session.directory.clone(),
+                generation,
+                result: edit::perform(client, session, document, command, operation_id).await,
+            };
+        }
         Request::Close {
             id,
             session_id,
@@ -643,6 +708,7 @@ pub async fn perform(
                     id: field(data, "document_id")?,
                     path: field(data, "path")?,
                     revision: field(data, "revision")?,
+                    source: field(data,"source")?,
                     length: field(data, "length")?
                         .parse()
                         .map_err(|_| "Invalid byte length")?,
@@ -683,6 +749,7 @@ mod tests {
     #[test]
     fn byte_page_checks_encoding_budget_scope_and_content_evidence() {
         let document = Document {
+            source: "live".into(),
             id: "bin_one".into(),
             path: "bytes".into(),
             revision: "observed".into(),
@@ -780,6 +847,7 @@ mod ownership_tests {
             opened: true,
             result: Ok(Loaded {
                 document: Document {
+                    source: "live".into(),
                     id: "bin_one".into(),
                     path: "bytes".into(),
                     revision: "observed".into(),

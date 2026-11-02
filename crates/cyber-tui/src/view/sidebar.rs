@@ -871,16 +871,37 @@ fn files(app: &App, width: usize, out: &mut Out) {
         return;
     }
     for (i, change) in changes.iter().take(FILE_ROWS).enumerate() {
-        let added = format!("+{}", change.additions);
-        let removed = format!("-{}", change.deletions);
+        let added = change.binary.as_ref().map_or_else(
+            || format!("+{}", change.additions),
+            |versions| format!("{} saved", versions.len()),
+        );
+        let removed = if change.binary.is_some() {
+            "binary".into()
+        } else {
+            format!("-{}", change.deletions)
+        };
         let room = width.saturating_sub(added.len() + removed.len() + 2);
         let spans = vec![
             Span::styled(
                 format!("{:<room$}", shorten_path(&change.file, room)),
                 Style::default().fg(t.text),
             ),
-            Span::styled(format!(" {added}"), Style::default().fg(t.diff_added)),
-            Span::styled(format!(" {removed}"), Style::default().fg(t.diff_removed)),
+            Span::styled(
+                format!(" {added}"),
+                Style::default().fg(if change.binary.is_some() {
+                    t.accent
+                } else {
+                    t.diff_added
+                }),
+            ),
+            Span::styled(
+                format!(" {removed}"),
+                Style::default().fg(if change.binary.is_some() {
+                    t.text_muted
+                } else {
+                    t.diff_removed
+                }),
+            ),
         ];
         out.row(Row::File(i), focusable(app, Some(Row::File(i)), spans));
     }

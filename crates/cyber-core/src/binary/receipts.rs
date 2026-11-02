@@ -45,7 +45,7 @@ pub struct SaveReview {
 }
 
 /// Shared saved-source metadata. It never contains unsaved command buffers.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "BinaryVersion")]
 pub struct Version {

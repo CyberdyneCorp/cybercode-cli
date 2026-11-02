@@ -1383,6 +1383,10 @@ pub struct FileDiff {
     pub additions: u32,
     pub deletions: u32,
     pub patch: String,
+    /// Acknowledged binary source versions, independent of Git snapshot limits.
+    /// These are saved references, not a synthesized text patch or net byte diff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<Vec<cyber_core::binary::receipts::Version>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

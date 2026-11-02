@@ -50,8 +50,14 @@ impl Editor {
     /// A known earlier save can finish metadata publication after explicit
     /// recovery. Unsaved edits and unknown native intents are never candidates.
     pub fn pending_notification_change(&mut self) -> Result<Option<AcknowledgedChange>, Error> {
-        let pending = self
-            .record
+        let pending = self.pending_notification_id();
+        match pending {
+            Some(id) => self.acknowledged_change(&id),
+            None => Ok(None),
+        }
+    }
+    pub fn pending_notification_id(&self) -> Option<String> {
+        self.record
             .operations
             .iter()
             .rev()
@@ -60,15 +66,12 @@ impl Editor {
                     && operation.outcome == Outcome::Acknowledged
                     && operation.file_effect == FileEffect::Changed
             })
-            .map(|operation| operation.id.clone());
-        match pending {
-            Some(id) => self.acknowledged_change(&id),
-            None => Ok(None),
-        }
+            .map(|operation| operation.id.clone())
     }
-    /// Retain durable source-version evidence before handing acknowledgement to
-    /// another producer. Unknown/conflict/no-effect operations never mint proof.
-    pub fn acknowledged_change(&mut self, id: &str) -> Result<Option<AcknowledgedChange>, Error> {
+    /// Identity of an acknowledged notification's immutable evidence. This can
+    /// settle an existing producer disposition after a later source save, but it
+    /// cannot mint native observation or callback authority.
+    pub fn notification_key(&mut self, id: &str) -> Result<Option<String>, Error> {
         self.publish_last_version()?;
         let Some(operation) = self.lookup_operation(id)? else {
             return Ok(None);
@@ -94,6 +97,17 @@ impl Editor {
         {
             return Err(Error::Changed);
         }
+        Ok(Some(version))
+    }
+
+    /// Retain durable source-version evidence before handing acknowledgement to
+    /// another producer. Unknown/conflict/no-effect operations never mint proof.
+    pub fn acknowledged_change(&mut self, id: &str) -> Result<Option<AcknowledgedChange>, Error> {
+        let Some(version) = self.notification_key(id)? else {
+            return Ok(None);
+        };
+        let evidence =
+            versions::read_evidence(self.store.directory(), self.store.document_id(), &version)?;
         let pins = evidence.target.pins()?;
         Ok(Some(AcknowledgedChange {
             key: version,

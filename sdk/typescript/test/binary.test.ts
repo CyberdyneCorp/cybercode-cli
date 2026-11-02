@@ -115,3 +115,21 @@ test("binary mutation transport failure requires explicit recovery instead of au
   await assert.rejects(() => client.binary.open("ses_one", "fixture.bin"));
   assert.equal(calls.length, 1, "lost open response allocated another document automatically");
 });
+
+test("binary save and restore preserve explicit review fingerprints and update metadata", async () => {
+  const status = { ...opened, length: "4", revision: "saved", source: "draft", read_only: false, prepared: true,
+    dirty: false, can_undo: false, can_redo: false, base_sha256: "a".repeat(64), pending_operation: null, edit_supported: true, edit_decision: "allow" };
+  const operation = { id: "save_once", kind: "save", payload_sha256: "b".repeat(64), outcome: "acknowledged", revision: "saved", file_effect: "changed", reason: null, notification_pending: true };
+  const { client, calls } = mockClient(req => json(200, { data: req.url.pathname.endsWith("/documents") ? opened : { operation, status } }));
+  const doc = await client.binary.open("ses_one", "fixture.bin");
+  await doc.save("save_once", "review_original");
+  await doc.save("save_once", "review_original");
+  assert.equal(doc.metadata.revision, "saved");
+  const saves = calls.filter(call => call.url.pathname.endsWith("/save"));
+  assert.equal(saves[0]!.body, saves[1]!.body);
+  assert.equal(JSON.parse(saves[0]!.body!).review, "review_original");
+  await doc.restore("restore_once", "review_restore");
+  assert.equal(JSON.parse(calls.at(-1)!.body!).review, "review_restore");
+  await doc.reconcile();
+  assert.equal(calls.at(-1)!.url.pathname.endsWith("/reconcile"), true);
+});

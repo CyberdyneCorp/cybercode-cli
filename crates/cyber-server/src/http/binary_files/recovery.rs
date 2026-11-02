@@ -173,12 +173,14 @@ pub(super) async fn operation(
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let (entry, location, authority) = owned(&state, &parts, &query.session_id, &id).await?;
+        let runtime = state.runtime.clone();
         let result = work(&state, move || {
-            let content = entry.document.lock().map_err(|_| Error::Io)?;
+            let mut content = entry.document.lock().map_err(|_| Error::Io)?;
             content.validate_resource()?;
-            let crate::runtime::binary_documents::Content::Draft(editor) = &*content else {
+            let crate::runtime::binary_documents::Content::Draft(editor) = &mut *content else {
                 return Err(Error::Invalid);
             };
+            runtime.settle_binary_notification(editor, &operation)?;
             editor.lookup_operation(&operation)
         })
         .await?;

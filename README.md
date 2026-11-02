@@ -81,11 +81,15 @@ For independent patch attempts, host-recorded tests and a separate read-only jud
 
 Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, CLI/browser owner controls, private evidence and emergency Stop. Off by default; controlled macOS capture, input and Stop acceptance passed. Other layouts and signed distribution remain release checks.
 
-The [binary workspace](docs/binary-editor.md) provides read-only, paged hex/ASCII viewing, literal hex/UTF-8 search, exact goto, bookmarks, byte copying and an LE/BE inspector. Open it with `cyber hex <path>`, `/hex <path>`, or `x` on an explorer file, without starting inference. Session read permissions apply. The owner API/SDK also supports private staged edits, draft undo/redo, byte review and recovery on admitted Linux/macOS workspaces. Terminal editing, production saves, model binary operations and snapshot/hooks integration remain tracked in [#94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94).
+The [binary workspace](docs/binary-editor.md) provides paged hex/ASCII viewing, literal hex/UTF-8 search, exact goto, bookmarks, byte copying and an LE/BE inspector. Open it with `cyber hex <path>`, `/hex <path>`, or `x` on an explorer file, without starting inference. Session read permissions apply. On admitted Linux/macOS workspaces, F2 prepares private staged edits with undo/redo; Ctrl+S reviews the exact byte changes, then explicitly saves. Reviewed Restore Last Save and retained draft recovery are also available through the owner API/SDK. Authorized Sessions can review shared saved history, and Session diffs show saved binary references independently of Git. Model binary operations, checkpoint/retention/rewind adapters and remaining acceptance work are tracked in [#94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94).
 
 ![Binary hex workspace with a shared hex/ASCII cursor and little-endian byte inspector](docs/screenshots/binary-hex.png)
 
 *Actual TUI capture of a synthetic 512-byte fixture, opened with `cyber hex fixtures/firmware.bin --offset 0x20 --read-only`.*
+
+![Reviewed binary edit with exact before/after bytes and SHA-256 fingerprints](docs/screenshots/binary-hex-edit.png)
+
+*Actual TUI review of a staged one-byte overwrite. Opening the review leaves the source unchanged; a second Ctrl+S applies it.*
 
 ## Sessions and people working together
 

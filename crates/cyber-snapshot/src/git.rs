@@ -268,6 +268,7 @@ impl Shadow {
                 _ => "modified",
             };
             out.push(FileDiff {
+                binary: None,
                 file: file.clone(),
                 status: status.into(),
                 additions,

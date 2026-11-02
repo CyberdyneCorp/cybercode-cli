@@ -117,6 +117,7 @@ pub struct LspServer {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileChange {
+    pub binary: Option<Vec<cyber_core::binary::receipts::Version>>,
     pub file: String,
     pub additions: u64,
     pub deletions: u64,
@@ -758,12 +759,32 @@ pub fn parse_lsp(data: &Value) -> Vec<LspServer> {
         .collect()
 }
 
+fn parse_binary(data: &Value) -> Option<Vec<cyber_core::binary::receipts::Version>> {
+    let array = data.as_array()?;
+    if array.is_empty() || array.len() > 512 {
+        return None;
+    }
+    let mut versions: Vec<cyber_core::binary::receipts::Version> =
+        serde_json::from_value(data.clone()).ok()?;
+    for version in &mut versions {
+        version.path = clean(&version.path);
+        version.kind = clean(&version.kind);
+        version.document_id = clean(&version.document_id);
+        version.version_id = clean(&version.version_id);
+        version.operation_id = clean(&version.operation_id);
+        version.before_sha256 = clean(&version.before_sha256);
+        version.after_sha256 = clean(&version.after_sha256);
+    }
+    Some(versions)
+}
+
 /// `GET /sessions/:id/diff` data.
 pub fn parse_files(data: &Value) -> Vec<FileChange> {
     data.as_array()
         .into_iter()
         .flatten()
         .map(|d| FileChange {
+            binary: d.get("binary").and_then(parse_binary),
             file: clean(d["file"].as_str().unwrap_or_default()),
             additions: d["additions"].as_u64().unwrap_or(0),
             deletions: d["deletions"].as_u64().unwrap_or(0),
@@ -1125,6 +1146,7 @@ mod tests {
             files: Source::Ready(
                 (0..12)
                     .map(|i| FileChange {
+                        binary: None,
                         file: format!("f{i}"),
                         additions: 1,
                         deletions: 0,

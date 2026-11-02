@@ -16,7 +16,7 @@ test("binary helper reads every byte, preserves scope and releases real owner do
   const model = await startScriptedProvider(() => { inference++; return undefined; });
   const config = join(root, "cyber-home", "config");
   mkdirSync(config, { recursive: true });
-  writeFileSync(join(config, "cyber.jsonc"), JSON.stringify(model.config()));
+  writeFileSync(join(config, "cyber.jsonc"), JSON.stringify({ ...model.config(), permissions: {read:"allow",edit:"allow"} }));
   writeFileSync(join(root, "models.json"), "{}");
   const repo = join(root, "repo");
   mkdirSync(join(repo, ".git"), { recursive: true });
@@ -47,6 +47,39 @@ test("binary helper reads every byte, preserves scope and releases real owner do
     session_id: foreign, revision: document.metadata.revision, offset: "0", limit: 1,
   }), (error: unknown) => error instanceof CyberApiError && error.status === 404);
   assert.deepEqual(readFileSync(source), raw);
+
+  if (process.platform === "darwin" || process.platform === "linux") {
+    const editSession = (await client.session.create({ title: "binary editor", mode: "accept-edits" })).data.id;
+    const editedPath = join(repo, "edited.bin");
+    const original = Buffer.from([0, 255, 27, 128]);
+    writeFileSync(editedPath, original);
+    const editor = await client.binary.open(editSession, "edited.bin");
+    const prepared = await editor.prepare();
+    await editor.patch("sdk_patch", { revision: prepared.revision, splices: [
+      { offset: "1", delete_length: "1", expected_hex: "ff", insert_hex: "0041" },
+    ] });
+    assert.deepEqual(readFileSync(editedPath), original);
+    const review = await editor.review();
+    const saved = await editor.save("sdk_save", review.fingerprint);
+    assert.equal(saved.operation.outcome, "acknowledged");
+    assert.deepEqual(readFileSync(editedPath), Buffer.from([0, 0, 65, 27, 128]));
+    const replayed = await editor.save("sdk_save", review.fingerprint);
+    assert.equal(replayed.operation.id, saved.operation.id);
+    const readerSession = (await client.session.create({title:"shared binary history"})).data.id;
+    const reader = await client.binary.open(readerSession,"edited.bin");
+    const history = await reader.versions();
+    assert.equal(history.versions.length,1);
+    const version = history.versions[0]!;
+    assert.equal(version.operation_id,"sdk_save");
+    const savedReview = await reader.versionReview(version.document_id,version.version_id);
+    assert.equal(savedReview.ranges[0]!.before_hex,"ff");
+    assert.equal(savedReview.ranges[0]!.after_hex,"0041");
+    await reader.close();
+    const restore = await editor.restoreReview();
+    await editor.restore("sdk_restore", restore.fingerprint);
+    assert.deepEqual(readFileSync(editedPath), original);
+    await editor.close();
+  }
 
   // A replacement cannot supply bytes through an old descriptor/revision.
   renameSync(source, join(repo, "old.bin"));
