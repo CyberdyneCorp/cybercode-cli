@@ -102,8 +102,11 @@ impl Document {
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    pub(super) fn project_identity(&self) -> Result<String, Error> {
-        super::native::id(self.directories.first().ok_or(Error::File)?.as_file())
+    pub(super) fn parent_identities(&self) -> Result<Vec<String>, Error> {
+        self.directories
+            .iter()
+            .map(|directory| super::native::id(directory.as_file()))
+            .collect()
     }
 
     /// Preparation requires the caller's fresh read+edit admission. It refuses

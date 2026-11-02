@@ -21,10 +21,13 @@ mod catalog;
 mod changes;
 #[path = "editor/restore.rs"]
 mod restore;
+#[path = "editor/retention.rs"]
+mod retention;
 #[path = "editor/versions.rs"]
 mod versions;
 pub use catalog::{StoredDocument, StoredDocuments};
 pub use changes::AcknowledgedChange;
+pub use retention::Cleanup;
 pub use versions::VersionView;
 
 const MAX_OPERATIONS: usize = 4096;
@@ -126,6 +129,7 @@ pub struct PreparedSave {
     intent: Intent,
     after: Draft<Base>,
     expected_revision: String,
+    _history: File,
 }
 pub enum SavePreparation {
     Existing(Operation),
@@ -209,6 +213,7 @@ impl Editor {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(Error::Io),
         }
+        store.ensure_history_lock()?;
         catalog::publish_header(&mut store, &owner, document)?;
         let (base, target) = document.prepare(&store, cancelled)?;
         if target.root != owner.root {
@@ -234,7 +239,7 @@ impl Editor {
             record,
         })
     }
-    pub fn resume(store: Store, owner: &Owner) -> Result<Self, Error> {
+    pub fn resume(mut store: Store, owner: &Owner) -> Result<Self, Error> {
         let record: Record = serde_json::from_slice(&store.read_record("document.json")?)
             .map_err(|_| Error::Invalid)?;
         if record.version != 1
@@ -244,6 +249,7 @@ impl Editor {
         {
             return Err(Error::File);
         }
+        store.ensure_history_lock()?;
         let pins = record.target.pins()?;
         let draft = Draft::resume(record.base.open(&store)?, record.draft.clone())?;
         Ok(Self {
@@ -507,6 +513,7 @@ impl Editor {
             after.clone(),
             &after_draft,
             self.draft.ranges(),
+            &stage_name,
         )?;
         let intent = Intent {
             operation,
@@ -521,6 +528,7 @@ impl Editor {
             intent,
             after: after_draft,
             expected_revision: self.draft.revision(),
+            _history: self.store.history_lease(false)?,
         })))
     }
     fn conflict(
@@ -568,7 +576,7 @@ impl Editor {
     /// explicit newly authorized attempt. It does not manufacture a save receipt.
     pub fn commit_save_checked(
         &mut self,
-        prepared: PreparedSave,
+        mut prepared: PreparedSave,
         cancelled: impl Fn() -> bool,
         authorize: impl FnOnce() -> Result<(), Error>,
     ) -> Result<Operation, Error> {
@@ -621,6 +629,12 @@ impl Editor {
         }
         // Only the pending JSON value changes. Count the prospective publication
         // by streaming serialization, without cloning the bounded draft history.
+        // Retention starts at commit preparation, not when a caller first held
+        // the prepared token. Fix the timestamp before both capacity forecasts
+        // and intent publication so the reserved outcome shape stays exact.
+        if let Some(evidence) = &mut prepared.intent.evidence {
+            evidence.info.created_ms = chrono::Utc::now().timestamp_millis();
+        }
         let pending_size = encoded_size(&Some(&prepared.intent))?;
         let prior_pending_size = encoded_size(&self.record.pending)?;
         let intent_bytes = encoded_size(&self.record)?

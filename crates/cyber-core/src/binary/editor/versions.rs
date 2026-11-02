@@ -10,11 +10,15 @@ pub(super) struct Evidence {
     pub info: Version,
     pub operation: Operation,
     pub(super) owner: Owner,
-    before: BaseRef,
-    after: BaseRef,
+    pub(super) before: BaseRef,
+    pub(super) after: BaseRef,
     pub target: Target,
-    revision: String,
-    ranges: Vec<(u64, u64, u64, u64)>,
+    pub(super) revision: String,
+    pub(super) ranges: Vec<(u64, u64, u64, u64)>,
+    #[serde(default)]
+    pub(super) retired: bool,
+    #[serde(default)]
+    pub(super) displaced: Option<super::retention::Displaced>,
 }
 impl Evidence {
     pub fn prepared(
@@ -24,6 +28,7 @@ impl Evidence {
         target: Target,
         after: &Draft<Base>,
         ranges: Vec<(u64, u64, u64, u64)>,
+        stage: &str,
     ) -> Result<Self, Error> {
         if ranges.len() > super::super::draft::MAX_HISTORY * super::super::draft::MAX_SPLICES {
             return Err(Error::Limit);
@@ -62,9 +67,14 @@ impl Evidence {
             target,
             revision: review.revision.clone(),
             ranges,
+            retired: false,
+            displaced: Some(super::retention::Displaced::prepared(editor, stage)),
         })
     }
-    fn validate_common(&self, document: &str) -> Result<(), Error> {
+    pub(super) fn validate_common(&self, document: &str) -> Result<(), Error> {
+        if !valid_base(&self.before) || !valid_base(&self.after) {
+            return Err(Error::Changed);
+        }
         let operation = &self.operation;
         let expected = format!(
             "ver_{}",
@@ -99,11 +109,18 @@ impl Evidence {
             || self.info.after_length != self.after.length
             || !self.before.name.starts_with("base_")
             || !self.after.name.starts_with("base_")
-            || self.info.range_count > self.ranges.len()
+            || (!self.retired && self.info.range_count > self.ranges.len())
             || self.ranges.len()
                 > crate::binary::draft::MAX_HISTORY * crate::binary::draft::MAX_SPLICES
         {
             return Err(Error::Changed);
+        }
+        if self.retired {
+            return if self.ranges.is_empty() && self.revision.is_empty() {
+                Ok(())
+            } else {
+                Err(Error::Changed)
+            };
         }
         let (mut before, mut after) = (0, 0);
         for &(at, removed, to, inserted) in &self.ranges {
@@ -136,10 +153,26 @@ impl Evidence {
         Ok(())
     }
 }
+pub(super) fn valid_base(base: &BaseRef) -> bool {
+    base.name.len() <= 100
+        && base.name.starts_with("base_")
+        && base
+            .name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        && base.sha256.len() == 64
+        && base.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        && base.length.0 <= crate::binary::MAX_EDIT_SIZE
+}
 impl Editor {
     /// Publish only after native acknowledgement is durable. The current journal
     /// retains the evidence if publication fails; the next save cannot discard it.
     pub fn publish_last_version(&mut self) -> Result<Option<Version>, Error> {
+        self.store.validate()?;
+        let _readers = self.store.history_lease(false)?;
+        self.publish_last_version_locked()
+    }
+    pub(super) fn publish_last_version_locked(&mut self) -> Result<Option<Version>, Error> {
         self.store.validate()?;
         let Some(last) = &self.record.last_save else {
             return Ok(None);
@@ -186,8 +219,13 @@ pub struct VersionView {
     evidence: Evidence,
     before: Base,
     after: Base,
+    _readers: std::fs::File,
+    _source: native::Pins,
 }
 impl VersionView {
+    pub fn validate_resource(&self) -> Result<(), Error> {
+        self.evidence.target.validate_read_resource()
+    }
     pub fn info(&self) -> &Version {
         &self.evidence.info
     }
@@ -197,6 +235,7 @@ impl VersionView {
         offset: Offset,
         limit: usize,
     ) -> Result<super::super::Page, Error> {
+        self.validate_resource()?;
         let base = if before { &self.before } else { &self.after };
         if limit == 0 || limit > super::super::MAX_PAGE || offset.0 > base.length() {
             return Err(Error::Limit);
@@ -205,6 +244,7 @@ impl VersionView {
             offset.0,
             (base.length() - offset.0).min(limit as u64) as usize,
         )?;
+        self.validate_resource()?;
         Ok(super::super::Page {
             offset,
             eof: offset.0 + bytes.len() as u64 == base.length(),
@@ -218,6 +258,7 @@ impl VersionView {
         limit: usize,
         cancelled: impl Fn() -> bool,
     ) -> Result<Review, Error> {
+        self.validate_resource()?;
         if limit == 0 || limit > 128 {
             return Err(Error::Limit);
         }
@@ -258,6 +299,7 @@ impl VersionView {
         {
             return Err(Error::Changed);
         }
+        self.validate_resource()?;
         Ok(Review {
             revision: self.evidence.revision.clone(),
             base_sha256: info.before_sha256.clone(),
@@ -331,8 +373,11 @@ impl crate::binary::storage::StorageRoot {
             if after.is_some_and(|after| version <= after) {
                 continue;
             }
-            let evidence = read_evidence(&dir, document, version)?;
+            let evidence = read_any_evidence(&dir, document, version)?;
             bind_source(&evidence, source)?;
+            if evidence.retired {
+                continue;
+            }
             found.push(evidence.info);
             found.sort_by(|a, b| a.version_id.cmp(&b.version_id));
             found.truncate(limit + 1);
@@ -368,6 +413,7 @@ impl crate::binary::storage::StorageRoot {
             &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
             true,
         )?;
+        let readers = crate::binary::storage::history_lease(&dir, false)?;
         let evidence = read_evidence(&dir, document, version)?;
         bind_source(&evidence, source)?;
         let before = self.saved_base(
@@ -385,10 +431,13 @@ impl crate::binary::storage::StorageRoot {
             &cancelled,
         )?;
         source.validate()?;
+        let pins = source.retain_pins()?;
         Ok(VersionView {
             evidence,
             before,
             after,
+            _readers: readers,
+            _source: pins,
         })
     }
 }
@@ -404,12 +453,23 @@ fn valid_document(document: &str) -> Result<(), Error> {
     }
     Ok(())
 }
-fn valid_version(version: &str) -> bool {
+pub(super) fn valid_version(version: &str) -> bool {
     version.len() == 68
         && version.starts_with("ver_")
         && version[4..].bytes().all(|b| b.is_ascii_hexdigit())
 }
 pub(super) fn read_evidence(
+    dir: &cap_std::fs::Dir,
+    document: &str,
+    version: &str,
+) -> Result<Evidence, Error> {
+    let evidence = read_any_evidence(dir, document, version)?;
+    if evidence.retired {
+        return Err(Error::Changed);
+    }
+    Ok(evidence)
+}
+pub(super) fn read_any_evidence(
     dir: &cap_std::fs::Dir,
     document: &str,
     version: &str,
@@ -426,7 +486,7 @@ pub(super) fn read_evidence(
 fn bind_source(evidence: &Evidence, source: &Document) -> Result<(), Error> {
     if evidence.target.root != source.root()
         || evidence.target.root.join(&evidence.target.relative) != source.resource().path()
-        || evidence.target.parents.first() != Some(&source.project_identity()?)
+        || evidence.target.parents != source.parent_identities()?
     {
         return Err(Error::File);
     }
@@ -489,6 +549,134 @@ mod tests {
         assert_eq!(
             editor.commit_save(*prepared).unwrap().outcome,
             Outcome::Acknowledged
+        );
+    }
+    #[test]
+    fn saved_views_hold_shared_leases_until_the_last_reader_closes() {
+        let (temp, mut editor, owner) = fixture();
+        patch(&mut editor, "patch_one", &[0], &[1]);
+        save(&mut editor, "saved_one");
+        let version = editor.publish_last_version().unwrap().unwrap();
+        let storage =
+            crate::binary::storage::StorageRoot::prepare(&temp.path().join("data")).unwrap();
+        let source = Document::open(&owner.root, "bytes").unwrap();
+        let first = storage
+            .open_version(&source, "bin_versions", &version.version_id, || false)
+            .unwrap();
+        let second = storage
+            .open_version(&source, "bin_versions", &version.version_id, || false)
+            .unwrap();
+        assert!(editor.store.history_lease(true).is_err());
+        drop(first);
+        assert!(editor.store.history_lease(true).is_err());
+        // Ordinary source saves/publication continue while old immutable views live.
+        patch(&mut editor, "patch_two", &[1], &[2]);
+        save(&mut editor, "saved_two");
+        editor.publish_last_version().unwrap();
+        assert_eq!(
+            second.page(false, Offset(0), 4).unwrap().bytes,
+            [1, 255, 128, 27]
+        );
+        drop(second);
+        let exclusive = editor.store.history_lease(true).unwrap();
+        let source = Document::open(&owner.root, "bytes").unwrap();
+        assert!(
+            storage
+                .open_version(&source, "bin_versions", &version.version_id, || false)
+                .is_err()
+        );
+        drop(exclusive);
+        assert!(
+            storage
+                .open_version(&source, "bin_versions", &version.version_id, || false)
+                .is_ok()
+        );
+    }
+    #[test]
+    fn saved_views_retain_and_check_every_source_parent_after_the_live_document_closes() {
+        let (temp, old, owner) = fixture();
+        drop(old);
+        std::fs::create_dir(owner.root.join("nested")).unwrap();
+        std::fs::write(owner.root.join("nested/bytes"), [0, 255, 128, 27]).unwrap();
+        let storage =
+            crate::binary::storage::StorageRoot::prepare(&temp.path().join("data")).unwrap();
+        let mut source = Document::open(&owner.root, "nested/bytes").unwrap();
+        let mut editor = Editor::create(
+            storage.open("bin_nested").unwrap(),
+            owner.clone(),
+            &mut source,
+            || false,
+        )
+        .unwrap();
+        patch(&mut editor, "patch_one", &[0], &[1]);
+        save(&mut editor, "saved_one");
+        let version = editor.publish_last_version().unwrap().unwrap();
+        let source = Document::open(&owner.root, "nested/bytes").unwrap();
+        let view = storage
+            .open_version(&source, "bin_nested", &version.version_id, || false)
+            .unwrap();
+        drop((source, editor));
+        std::fs::rename(owner.root.join("nested"), owner.root.join("original")).unwrap();
+        std::fs::create_dir(owner.root.join("nested")).unwrap();
+        std::fs::write(owner.root.join("nested/bytes"), [1, 255, 128, 27]).unwrap();
+        let replacement = Document::open(&owner.root, "nested/bytes").unwrap();
+        assert!(
+            storage
+                .open_version(&replacement, "bin_nested", &version.version_id, || false)
+                .is_err()
+        );
+        assert!(view.page(false, Offset(0), 4).is_err());
+        assert!(view.review(0, 1, || false).is_err());
+        std::fs::remove_dir_all(owner.root.join("nested")).unwrap();
+        std::fs::rename(owner.root.join("original"), owner.root.join("nested")).unwrap();
+        assert_eq!(
+            view.page(false, Offset(0), 4).unwrap().bytes,
+            [1, 255, 128, 27]
+        );
+    }
+    #[test]
+    fn retention_timestamp_is_fixed_at_commit_before_capacity_is_reserved() {
+        let (_temp, mut editor, _) = fixture();
+        patch(&mut editor, "patch_one", &[0], &[1]);
+        let review = editor.review(0, 128, || false).unwrap();
+        let SavePreparation::Ready(mut prepared) = editor
+            .prepare_save("saved", &review.fingerprint, || false)
+            .unwrap()
+        else {
+            panic!("save");
+        };
+        prepared.intent.evidence.as_mut().unwrap().info.created_ms = 0;
+        let before = chrono::Utc::now().timestamp_millis();
+        editor.commit_save(*prepared).unwrap();
+        assert!(editor.publish_last_version().unwrap().unwrap().created_ms >= before);
+    }
+    #[test]
+    fn a_missing_reader_lock_beside_saved_history_is_not_recreated() {
+        let (temp, mut editor, owner) = fixture();
+        patch(&mut editor, "patch_one", &[0], &[1]);
+        save(&mut editor, "saved_one");
+        let version = editor.publish_last_version().unwrap().unwrap();
+        let storage =
+            crate::binary::storage::StorageRoot::prepare(&temp.path().join("data")).unwrap();
+        let source = Document::open(&owner.root, "bytes").unwrap();
+        let view = storage
+            .open_version(&source, "bin_versions", &version.version_id, || false)
+            .unwrap();
+        let lock = storage.path().join("bin_versions/history.lock");
+        std::fs::remove_file(&lock).unwrap();
+        assert!(editor.store.ensure_history_lock().is_err());
+        assert!(!lock.exists());
+        assert!(
+            storage
+                .open_version(&source, "bin_versions", &version.version_id, || false)
+                .is_err()
+        );
+        drop((editor, view));
+        assert!(Editor::resume(storage.open_existing("bin_versions").unwrap(), &owner).is_err());
+        assert!(!lock.exists());
+        assert_eq!(
+            std::fs::read(owner.root.join("bytes")).unwrap(),
+            [1, 255, 128, 27]
         );
     }
     #[test]
