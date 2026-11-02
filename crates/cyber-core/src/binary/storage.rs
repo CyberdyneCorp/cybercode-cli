@@ -384,7 +384,36 @@ pub(super) fn flush_dir(dir: &Dir) -> Result<(), Error> {
     }
 }
 
+#[cfg(not(windows))]
+fn existing_lock(dir: &Dir) -> Result<File, Error> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = dir
+        .open_with("lock", &options)
+        .map_err(|_| Error::File)?
+        .into_std();
+    private(dir, &file, false)?;
+    Ok(file)
+}
+
 impl Store {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn document_id(&self) -> &str {
+        &self.id
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn belongs_to(&self, root: &StorageRoot) -> Result<(), Error> {
+        self.validate()?;
+        if self.data_path != root.data || identity(&self.root)? != identity(root.directory()?)? {
+            return Err(Error::Changed);
+        }
+        Ok(())
+    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(super) fn directory(&self) -> &Dir {
         &self.dir
@@ -413,31 +442,31 @@ impl Store {
         Self::locked(data_path, data, root, dir, id)
     }
     fn locked(data_path: PathBuf, data: Dir, root: Dir, dir: Dir, id: &str) -> Result<Self, Error> {
+        // Only an empty newly allocated namespace may create its first lock.
+        // A missing lock beside existing recovery data is corruption, not repair.
+        let may_create_lock = dir.entries().map_err(|_| Error::Io)?.next().is_none();
         #[cfg(windows)]
         let lock = {
             let owner = dir.try_clone().map_err(|_| Error::Io)?.into_std_file();
-            match crate::memory::windows::create_private_file(&owner, "lock") {
-                Ok(created) => drop(created),
-                Err(crate::memory::MemoryStorageError::Io(e))
-                    if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(_) => return Err(Error::File),
+            if may_create_lock {
+                match crate::memory::windows::create_private_file(&owner, "lock") {
+                    Ok(created) => drop(created),
+                    Err(crate::memory::MemoryStorageError::Io(e))
+                        if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(_) => return Err(Error::File),
+                }
             }
             crate::memory::windows::open_pinned_private_file(&owner, "lock")
                 .map_err(|_| Error::File)?
         };
         #[cfg(not(windows))]
-        let lock = match create(&dir, "lock") {
-            Ok(f) => f,
-            Err(_) => {
-                let mut options = OpenOptions::new();
-                options.read(true).write(true).follow(FollowSymlinks::No);
-                let file = dir
-                    .open_with("lock", &options)
-                    .map_err(|_| Error::File)?
-                    .into_std();
-                private(&dir, &file, false)?;
-                file
+        let lock = if may_create_lock {
+            match create(&dir, "lock") {
+                Ok(file) => file,
+                Err(_) => existing_lock(&dir)?,
             }
+        } else {
+            existing_lock(&dir)?
         };
         lock.try_lock().map_err(|_| Error::Limit)?;
         flush_dir(&dir)?;
@@ -487,9 +516,49 @@ impl Store {
             &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
             true,
         )?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if super::native::id(&existing_lock(&dir)?)? != super::native::id(&self._lock)? {
+            return Err(Error::Changed);
+        }
         Ok(())
     }
     fn capacity(&self, additional: u64) -> Result<(), Error> {
+        self.reserve(additional, additional)
+    }
+    /// Atomic exchange moves the old source into the private stage name. A
+    /// shrinking replacement can therefore increase private usage after exchange.
+    /// Reserve both the temporary intent publication and the final displaced file.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn reserve_exchange(
+        &self,
+        intent_bytes: u64,
+        outcome_bytes: u64,
+        displaced_extra: u64,
+    ) -> Result<(), Error> {
+        self.validate()?;
+        if intent_bytes > MAX_RECORD || outcome_bytes > MAX_RECORD {
+            return Err(Error::Limit);
+        }
+        let existing = self
+            .dir
+            .symlink_metadata("document.json")
+            .map_err(|_| Error::Io)?
+            .len();
+        let after_publication = intent_bytes.saturating_sub(existing);
+        let outcome_publication = after_publication
+            .checked_add(outcome_bytes)
+            .ok_or(Error::Limit)?;
+        let future_private = displaced_extra
+            .checked_add(outcome_publication)
+            .ok_or(Error::Limit)?;
+        // Moving the existing source allocates no payload blocks. Both record
+        // publication peaks, including the acknowledgement, reserve quota/space.
+        self.reserve(
+            intent_bytes.max(future_private),
+            intent_bytes.max(outcome_publication),
+        )
+    }
+    fn reserve(&self, private_extra: u64, allocate: u64) -> Result<(), Error> {
         let mut used = 0u64;
         for (count, entry) in self.dir.entries().map_err(|_| Error::Io)?.enumerate() {
             if count >= 4096 {
@@ -505,14 +574,19 @@ impl Store {
             }
             used = used.checked_add(metadata.len()).ok_or(Error::Limit)?;
         }
-        if used.checked_add(additional).is_none_or(|n| n > MAX_STORAGE) {
+        if used
+            .checked_add(private_extra)
+            .is_none_or(|n| n > MAX_STORAGE)
+        {
             return Err(Error::Limit);
         }
+        #[cfg(not(unix))]
+        let _ = allocate;
         #[cfg(unix)]
         {
             let stat = rustix::fs::fstatvfs(self.dir.as_ref()).map_err(|_| Error::Io)?;
             let available = stat.f_bavail.saturating_mul(stat.f_frsize);
-            if available < additional.saturating_add(1024 * 1024) {
+            if available < allocate.saturating_add(1024 * 1024) {
                 return Err(Error::Limit);
             }
         }
@@ -858,6 +932,41 @@ mod tests {
                 .open("bin_new_root")
                 .unwrap();
         }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn missing_document_locks_are_not_repaired_and_live_owners_reject_rebinding() {
+        let data = tempfile::tempdir().unwrap();
+        let storage = StorageRoot::prepare(data.path()).unwrap();
+        let mut store = storage.open("bin_lock").unwrap();
+        store
+            .record("state.json", 2, |writer| {
+                writer.write_all(b"{}").map_err(|_| Error::Io)
+            })
+            .unwrap();
+        let lock = storage.path().join("bin_lock/lock");
+        std::fs::remove_file(&lock).unwrap();
+        assert!(store.validate().is_err());
+        assert!(storage.open_existing("bin_lock").is_err());
+        assert!(!lock.exists(), "recovery repaired a missing live lock");
+        assert!(storage.open("bin_lock").is_err());
+        assert!(
+            !lock.exists(),
+            "ordinary open repaired a missing recovery lock"
+        );
+        use std::os::unix::fs::OpenOptionsExt;
+        let replacement = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&lock)
+            .unwrap();
+        assert!(
+            store.validate().is_err(),
+            "old owner accepted a replacement lock inode"
+        );
+        drop(replacement);
     }
 
     #[test]

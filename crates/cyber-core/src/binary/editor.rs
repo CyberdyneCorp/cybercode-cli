@@ -95,6 +95,23 @@ pub struct Editor {
     draft: Draft<Base>,
     record: Record,
 }
+/// Borrows the actual exclusive document store lock, not a boolean supplied by
+/// a caller. This proves filesystem-only execution ownership, never a file outcome.
+pub struct RecoveryProof<'a> {
+    editor: &'a Editor,
+}
+impl RecoveryProof<'_> {
+    pub fn document_id(&self) -> &str {
+        self.editor.store.document_id()
+    }
+    pub fn owner(&self) -> &Owner {
+        self.editor.owner()
+    }
+    pub fn validate(&self, storage: &super::storage::StorageRoot) -> Result<(), Error> {
+        self.editor.store.belongs_to(storage)
+    }
+}
+
 pub struct PreparedSave {
     intent: Intent,
     after: Draft<Base>,
@@ -133,10 +150,13 @@ impl Write for Counter {
         Ok(())
     }
 }
-fn persist(store: &mut Store, record: &Record) -> Result<(), Error> {
+fn encoded_size(value: &impl Serialize) -> Result<u64, Error> {
     let mut count = Counter(0);
-    serde_json::to_writer(&mut count, record).map_err(|_| Error::Io)?;
-    store.record("document.json", count.0, |writer| {
+    serde_json::to_writer(&mut count, value).map_err(|_| Error::Io)?;
+    Ok(count.0)
+}
+fn persist(store: &mut Store, record: &Record) -> Result<(), Error> {
+    store.record("document.json", encoded_size(record)?, |writer| {
         serde_json::to_writer(writer, record).map_err(|_| Error::Io)
     })
 }
@@ -222,6 +242,10 @@ impl Editor {
             draft,
             record,
         })
+    }
+    pub fn recovery_proof(&self) -> Result<RecoveryProof<'_>, Error> {
+        self.store.validate()?;
+        Ok(RecoveryProof { editor: self })
     }
     pub fn draft(&self) -> &Draft<Base> {
         &self.draft
@@ -562,6 +586,29 @@ impl Editor {
         if cancelled() {
             return Err(Error::Cancelled);
         }
+        // Only the pending JSON value changes. Count the prospective publication
+        // by streaming serialization, without cloning the bounded draft history.
+        let pending_size = encoded_size(&Some(&prepared.intent))?;
+        let prior_pending_size = encoded_size(&self.record.pending)?;
+        let intent_bytes = encoded_size(&self.record)?
+            .checked_sub(prior_pending_size)
+            .and_then(|size| size.checked_add(pending_size))
+            .ok_or(Error::Limit)?;
+        // The installed observation is always a 64-character SHA-256 token. Its
+        // value is captured after exchange; its encoded size is known beforehand.
+        let mut installed = prepared.intent.after.clone();
+        installed.observed = "0".repeat(64);
+        let (outcome, _) = self.acknowledged_record(&prepared.intent, installed, &prepared.after);
+        self.store.reserve_exchange(
+            intent_bytes,
+            encoded_size(&outcome)?,
+            prepared
+                .intent
+                .prior
+                .length
+                .0
+                .saturating_sub(prepared.intent.after.length.0),
+        )?;
         self.record.pending = Some(prepared.intent);
         persist(&mut self.store, &self.record)?;
         let intent = self.record.pending.as_ref().ok_or(Error::Invalid)?;
@@ -618,17 +665,31 @@ impl Editor {
                 intent.after_draft.clone(),
             )?,
         };
+        // Preserve the prior intent if publishing this outcome fails.
+        let (next, operation) = self.acknowledged_record(intent, installed_target, &draft);
+        if persist(&mut self.store, &next).is_err() {
+            return Ok(unknown);
+        }
+        self.record = next;
+        self.draft = draft;
+        self._pins._file = Some(installed_pin);
+        Ok(operation)
+    }
+    fn acknowledged_record(
+        &self,
+        intent: &Intent,
+        target: Target,
+        draft: &Draft<Base>,
+    ) -> (Record, Operation) {
         let mut operation = intent.operation.clone();
         operation.outcome = Outcome::Acknowledged;
         operation.file_effect = FileEffect::Changed;
         operation.reason = None;
         operation.notification_pending = true;
-        // Build the next durable record without discarding the prior intent if a
-        // record write fails after the file was installed.
-        let next = Record {
+        let record = Record {
             version: 1,
             owner: self.record.owner.clone(),
-            target: installed_target,
+            target,
             base: intent.new_base.clone(),
             draft: draft.snapshot(),
             operations: self
@@ -645,13 +706,7 @@ impl Editor {
                 operation: operation.id.clone(),
             }),
         };
-        if persist(&mut self.store, &next).is_err() {
-            return Ok(unknown);
-        }
-        self.record = next;
-        self.draft = draft;
-        self._pins._file = Some(installed_pin);
-        Ok(operation)
+        (record, operation)
     }
     /// Called only after the runtime durably publishes the acknowledged observation.
     /// The operation ID is the producer's deduplication identity, not just a path.
@@ -814,6 +869,97 @@ mod tests {
         .unwrap();
         assert_ne!(native::id(&replacement.into_std_file()).unwrap(), original);
         assert!(editor.validate_read_resource().is_err());
+    }
+
+    #[test]
+    fn restore_reserves_the_displaced_file_quota_before_any_native_effect() {
+        let (root, mut editor, path, _owner) = setup();
+        editor
+            .patch(
+                "grow_for_restore",
+                &PatchBatch {
+                    revision: editor.draft().revision(),
+                    splices: vec![crate::binary::draft::Splice {
+                        offset: Offset(0),
+                        delete_length: Offset(8),
+                        expected_hex: crate::binary::draft::encode_hex(b"original"),
+                        insert_hex: "ff".repeat(48 * 1024),
+                    }],
+                },
+            )
+            .unwrap();
+        let save = ready(&mut editor, "save_grown");
+        assert_eq!(
+            editor.commit_save(*save).unwrap().outcome,
+            Outcome::Acknowledged
+        );
+        let review = editor.restore_review(|| false).unwrap();
+        for outcome_space_missing in [false, true] {
+            let SavePreparation::Ready(prepared) = editor
+                .prepare_restore("restore_quota", &review.fingerprint, || false)
+                .unwrap()
+            else {
+                panic!("restore preparation");
+            };
+            let intent_bytes = serde_json::to_vec(&prepared.intent).unwrap().len() as u64;
+            let displaced_extra = prepared.intent.prior.length.0 - prepared.intent.after.length.0;
+            let allowance = if outcome_space_missing {
+                let mut installed = prepared.intent.after.clone();
+                installed.observed = "0".repeat(64);
+                let (outcome, _) =
+                    editor.acknowledged_record(&prepared.intent, installed, &prepared.after);
+                let publication = encoded_size(&editor.record).unwrap() + intent_bytes
+                    - encoded_size(&editor.record.pending).unwrap();
+                let growth = publication - encoded_size(&editor.record).unwrap();
+                let allowance = displaced_extra + growth + encoded_size(&outcome).unwrap() / 2;
+                assert!(allowance > publication, "intent publication must still fit");
+                allowance
+            } else {
+                let allowance = intent_bytes + 4096;
+                assert!(
+                    allowance < displaced_extra,
+                    "displacement must exceed publication allowance"
+                );
+                allowance
+            };
+            let directory = root.path().join("data/binary/bin_one");
+            let used = std::fs::read_dir(&directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().metadata().unwrap().len())
+                .sum::<u64>();
+            let filler_path = directory.join("quota_filler");
+            let filler = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&filler_path)
+                .unwrap();
+            // Sparse allocation: exercise logical document quota without allocating 2 GiB.
+            filler
+                .set_len(super::super::storage::MAX_STORAGE - used - allowance)
+                .unwrap();
+            let result = editor.commit_save(*prepared);
+            assert!(
+                matches!(result, Err(Error::Limit)),
+                "{result:?}; source length after refusal: {}",
+                std::fs::metadata(&path).unwrap().len()
+            );
+            assert!(!editor.unresolved());
+            assert!(editor.lookup_operation("restore_quota").unwrap().is_none());
+            assert_eq!(std::fs::read(&path).unwrap(), vec![255; 48 * 1024]);
+            drop(filler);
+            std::fs::remove_file(filler_path).unwrap();
+        }
+        let SavePreparation::Ready(prepared) = editor
+            .prepare_restore("restore_quota", &review.fingerprint, || false)
+            .unwrap()
+        else {
+            panic!("restore after capacity release");
+        };
+        assert_eq!(
+            editor.commit_save(*prepared).unwrap().outcome,
+            Outcome::Acknowledged
+        );
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
     }
 
     #[test]
@@ -1306,6 +1452,18 @@ mod tests {
             &owner,
         )
         .unwrap();
+        let storage =
+            super::super::storage::StorageRoot::prepare(&root.path().join("data")).unwrap();
+        resumed
+            .recovery_proof()
+            .unwrap()
+            .validate(&storage)
+            .unwrap();
+        assert_eq!(
+            resumed.pending_operation().unwrap().outcome,
+            Outcome::Unknown,
+            "exclusive execution proof must not acknowledge an uncertain file effect"
+        );
         assert_eq!(resumed.reconcile().unwrap().outcome, Outcome::Unknown);
         assert!(resumed.unresolved());
         assert_eq!(std::fs::read(path).unwrap(), b"original");
