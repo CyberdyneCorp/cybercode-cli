@@ -1094,6 +1094,105 @@ async fn binary_owner_drafts_patch_history_review_and_permission_revocation() {
     );
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn binary_reviewed_save_retry_and_restore_use_the_production_router_without_inference() {
+    let f = Fixture::with(json!({"read":"allow","edit":"allow"})).await;
+    let session = f.session().await;
+    let opened = f.binary(&session, "blob.bin").await;
+    let path = format!(
+        "/files/binary/documents/{}",
+        opened["document_id"].as_str().unwrap()
+    );
+    let (code, prepared) = f
+        .send(
+            "POST",
+            &format!("{path}/prepare"),
+            Some(json!({"session_id":session,"revision":opened["revision"]})),
+        )
+        .await;
+    assert_eq!(code, 200, "{prepared}");
+    let (code,edited)=f.send("POST",&format!("{path}/patches"),Some(json!({"session_id":session,"operation_id":"patch_save",
+        "revision":prepared["data"]["revision"],"splices":[{"offset":"1","delete_length":"2","expected_hex":"9f92","insert_hex":"ff0041"}]}))).await;
+    assert_eq!(code, 200, "{edited}");
+    let (code, review) = f
+        .send(
+            "POST",
+            &format!("{path}/review"),
+            Some(json!({"session_id":session,"revision":edited["data"]["status"]["revision"]})),
+        )
+        .await;
+    assert_eq!(code, 200, "{review}");
+    let request = json!({"session_id":session,"operation_id":"save_one","review":review["data"]["fingerprint"]});
+    let mut stale = request.clone();
+    stale["review"] = json!("0".repeat(64));
+    let (code, refused) = f.send("POST", &format!("{path}/save"), Some(stale)).await;
+    assert!(code >= 400, "stale review accepted: {refused}");
+    let other_session = f.session().await;
+    let mut cross_session = request.clone();
+    cross_session["session_id"] = json!(other_session);
+    let (code, refused) = f
+        .send("POST", &format!("{path}/save"), Some(cross_session))
+        .await;
+    assert!(code >= 400, "cross-Session save accepted: {refused}");
+    f.set_permissions(json!({"read":"allow","edit":"deny"}));
+    let (code, refused) = f
+        .send("POST", &format!("{path}/save"), Some(request.clone()))
+        .await;
+    assert!(code >= 400, "revoked edit grant accepted: {refused}");
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+    f.set_permissions(json!({"read":"allow","edit":"allow"}));
+    let (code, saved) = f
+        .send("POST", &format!("{path}/save"), Some(request.clone()))
+        .await;
+    assert_eq!(code, 200, "{saved}");
+    assert_eq!(saved["data"]["operation"]["outcome"], "acknowledged");
+    assert_eq!(saved["data"]["operation"]["file_effect"], "changed");
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 255, 0, 65, 150]
+    );
+    let (code, replayed) = f.send("POST", &format!("{path}/save"), Some(request)).await;
+    assert_eq!(code, 200, "{replayed}");
+    assert_eq!(replayed["data"]["operation"]["id"], "save_one");
+    let (code, restore) = f
+        .send(
+            "POST",
+            &format!("{path}/restore-review"),
+            Some(json!({"session_id":session,
+        "revision":saved["data"]["status"]["revision"]})),
+        )
+        .await;
+    assert_eq!(code, 200, "{restore}");
+    let (code, restored) = f
+        .send(
+            "POST",
+            &format!("{path}/restore"),
+            Some(json!({"session_id":session,"operation_id":"restore_one",
+        "review":restore["data"]["fingerprint"]})),
+        )
+        .await;
+    assert_eq!(code, 200, "{restored}");
+    assert_eq!(restored["data"]["operation"]["outcome"], "acknowledged");
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+    let (code, old_receipt) = f
+        .get(&format!("{path}/operations/save_one?session_id={session}"))
+        .await;
+    assert_eq!(
+        code, 200,
+        "historical notification lookup tried to re-observe the replaced source: {old_receipt}"
+    );
+    assert_eq!(old_receipt["data"]["outcome"], "acknowledged");
+    assert!(f._model.requests().is_empty());
+    f._app.runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn binary_http_idempotency_keys_never_replay_private_data_after_read_revocation() {
     let f = Fixture::with(json!({"read":"allow"})).await;

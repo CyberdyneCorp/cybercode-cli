@@ -282,6 +282,12 @@ export interface Operations {
     body: S.BinaryPrepareRequest;
     response: S.Located_BinaryStatus;
   };
+  "v1.fs.binaryReconcile": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinaryReconcileRequest;
+    response: S.Located_BinaryEdited;
+  };
   "v1.fs.binaryRecover": {
     path: { id: string };
     query: Record<string, never>;
@@ -298,11 +304,29 @@ export interface Operations {
     body: undefined;
     response: S.Located_BinaryRecoveryList;
   };
+  "v1.fs.binaryRestore": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinarySaveRequest;
+    response: S.Located_BinaryEdited;
+  };
+  "v1.fs.binaryRestoreReview": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinaryReviewRequest;
+    response: S.Located_BinarySaveReview;
+  };
   "v1.fs.binaryReview": {
     path: { id: string };
     query: Record<string, never>;
     body: S.BinaryReviewRequest;
     response: S.Located_BinarySaveReview;
+  };
+  "v1.fs.binarySave": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinarySaveRequest;
+    response: S.Located_BinaryEdited;
   };
   "v1.fs.binarySearch": {
     path: { id: string };
@@ -2217,6 +2241,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.fs.binaryReconcile": {
+    tag: "fs",
+    name: "binaryReconcile",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/reconcile",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.fs.binaryRecover": {
     tag: "fs",
     name: "binaryRecover",
@@ -2241,11 +2277,47 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.fs.binaryRestore": {
+    tag: "fs",
+    name: "binaryRestore",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/restore",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryRestoreReview": {
+    tag: "fs",
+    name: "binaryRestoreReview",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/restore-review",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.fs.binaryReview": {
     tag: "fs",
     name: "binaryReview",
     method: "POST",
     path: "/api/v1/files/binary/documents/{id}/review",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binarySave": {
+    tag: "fs",
+    name: "binarySave",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/save",
     pathParams: ["id"],
     query: [],
     body: "required",
@@ -5149,15 +5221,27 @@ export function createGroups(caller: Caller) {
       /** Prepare a durable private draft after manual edit admission; no source mutation (`POST /api/v1/files/binary/documents/{id}/prepare`) */
       binaryPrepare: (id: string, body: Operations["v1.fs.binaryPrepare"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryPrepare"]["response"]> =>
         caller.call("v1.fs.binaryPrepare", { path: { id }, body }, options),
+      /** Recheck retained native evidence without executing another exchange (`POST /api/v1/files/binary/documents/{id}/reconcile`) */
+      binaryReconcile: (id: string, body: Operations["v1.fs.binaryReconcile"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryReconcile"]["response"]> =>
+        caller.call("v1.fs.binaryReconcile", { path: { id }, body }, options),
       /** Explicitly reopen a retained private draft; never replay a save or grant mutation authority (`POST /api/v1/files/binary/documents/{id}/recover`) */
       binaryRecover: (id: string, body: Operations["v1.fs.binaryRecover"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryRecover"]["response"]> =>
         caller.call("v1.fs.binaryRecover", { path: { id }, body }, options),
       /** Discover retained manual drafts in the exact Session Location (`GET /api/v1/files/binary/recovery`) */
       binaryRecovery: (query?: Operations["v1.fs.binaryRecovery"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryRecovery"]["response"]> =>
         caller.call("v1.fs.binaryRecovery", { query }, options),
+      /** Restore a reviewed preimage without overwriting unrelated changes (`POST /api/v1/files/binary/documents/{id}/restore`) */
+      binaryRestore: (id: string, body: Operations["v1.fs.binaryRestore"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryRestore"]["response"]> =>
+        caller.call("v1.fs.binaryRestore", { path: { id }, body }, options),
+      /** Review the protected preimage for Restore Last Save (`POST /api/v1/files/binary/documents/{id}/restore-review`) */
+      binaryRestoreReview: (id: string, body: Operations["v1.fs.binaryRestoreReview"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryRestoreReview"]["response"]> =>
+        caller.call("v1.fs.binaryRestoreReview", { path: { id }, body }, options),
       /** Review original-offset byte ranges and full fingerprints; no source mutation (`POST /api/v1/files/binary/documents/{id}/review`) */
       binaryReview: (id: string, body: Operations["v1.fs.binaryReview"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryReview"]["response"]> =>
         caller.call("v1.fs.binaryReview", { path: { id }, body }, options),
+      /** Install a separately reviewed native binary draft under fresh authority (`POST /api/v1/files/binary/documents/{id}/save`) */
+      binarySave: (id: string, body: Operations["v1.fs.binarySave"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binarySave"]["response"]> =>
+        caller.call("v1.fs.binarySave", { path: { id }, body }, options),
       /** Search live or draft bytes with bounded scanning and revision-bound continuation (`POST /api/v1/files/binary/documents/{id}/search`) */
       binarySearch: (id: string, body: Operations["v1.fs.binarySearch"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binarySearch"]["response"]> =>
         caller.call("v1.fs.binarySearch", { path: { id }, body }, options),

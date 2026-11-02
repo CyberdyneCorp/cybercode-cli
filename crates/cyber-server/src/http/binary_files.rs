@@ -21,6 +21,8 @@ use crate::runtime::{FileDecision, TurnContext};
 pub(super) mod editing;
 #[path = "binary_files/recovery.rs"]
 pub(super) mod recovery;
+#[path = "binary_files/saving.rs"]
+pub(super) mod saving;
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +72,19 @@ pub struct BytePage {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/files/binary/documents/{id}/save", post(saving::save))
+        .route(
+            "/files/binary/documents/{id}/restore-review",
+            post(saving::restore_review),
+        )
+        .route(
+            "/files/binary/documents/{id}/restore",
+            post(saving::restore),
+        )
+        .route(
+            "/files/binary/documents/{id}/reconcile",
+            post(saving::reconcile),
+        )
         .route("/files/binary/documents", post(open_document))
         .route("/files/binary/recovery", get(recovery::list))
         .route(

@@ -190,6 +190,10 @@ export type BinaryPrepareRequest = {
   revision: string;
 };
 
+export type BinaryReconcileRequest = {
+  session_id: string;
+};
+
 export type BinaryRecoverRequest = {
   session_id: string;
   read_only?: boolean;
@@ -225,6 +229,12 @@ export type BinaryReviewRequest = {
   revision: string;
   start?: number | null;
   limit?: number | null;
+};
+
+export type BinarySaveRequest = {
+  session_id: string;
+  operation_id: string;
+  review: string;
 };
 
 export type BinarySaveReview = {

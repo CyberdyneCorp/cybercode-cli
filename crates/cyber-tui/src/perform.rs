@@ -101,6 +101,12 @@ pub enum Msg {
         generation: u64,
         result: Result<cyber_core::binary::SearchResult, String>,
     },
+    HexEdit {
+        session_id: String,
+        directory: String,
+        generation: u64,
+        result: Result<crate::hex::edit::Reply, String>,
+    },
     Hex {
         session_id: String,
         directory: String,

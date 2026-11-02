@@ -27,6 +27,10 @@ export interface BinaryDocument {
   patch(operationId: string, batch: { revision: string; splices: BinarySplice[] }, options?: RequestOptions): Promise<BinaryEdited>;
   history(operationId: string, command: { revision: string; action: BinaryHistoryAction }, options?: RequestOptions): Promise<BinaryEdited>;
   review(start?: number, limit?: number, options?: RequestOptions): Promise<BinarySaveReview>;
+  save(operationId: string, review: string, options?: RequestOptions): Promise<BinaryEdited>;
+  restoreReview(options?: RequestOptions): Promise<BinarySaveReview>;
+  restore(operationId: string, review: string, options?: RequestOptions): Promise<BinaryEdited>;
+  reconcile(options?: RequestOptions): Promise<BinaryEdited>;
   operation(operationId: string, options?: RequestOptions): Promise<BinaryOperation | null>;
   close(options?: RequestOptions): Promise<void>;
 }
@@ -151,6 +155,33 @@ function binaryHandle(client: CyberClient, sessionId: string, id: string, fields
       operationID(operationId);
       const response = await client.request("v1.fs.binaryOperation", { path: { ...scope, operation: operationId }, query }, options);
       return response.data ?? null;
+    },
+    async save(operationId, review, options) {
+      operationID(operationId);
+      const expected = ++generation;
+      const response = await client.request("v1.fs.binarySave", { path: scope, body: { session_id: sessionId, operation_id: operationId, review } }, options);
+      update(response.data.status, expected);
+      return response.data;
+    },
+    async restoreReview(options) {
+      const expected = generation;
+      const revision = metadata.revision;
+      const response = await client.request("v1.fs.binaryRestoreReview", { path: scope, body: { session_id: sessionId, revision } }, options);
+      if (generation !== expected || response.data.draft.revision !== revision) throw new Error("Stale binary restore review");
+      return response.data;
+    },
+    async restore(operationId, review, options) {
+      operationID(operationId);
+      const expected = ++generation;
+      const response = await client.request("v1.fs.binaryRestore", { path: scope, body: { session_id: sessionId, operation_id: operationId, review } }, options);
+      update(response.data.status, expected);
+      return response.data;
+    },
+    async reconcile(options) {
+      const expected = ++generation;
+      const response = await client.request("v1.fs.binaryReconcile", { path: scope, body: { session_id: sessionId } }, options);
+      update(response.data.status, expected);
+      return response.data;
     },
     async close(options) {
       await client.request("v1.fs.binaryClose", { path: scope, query }, options);

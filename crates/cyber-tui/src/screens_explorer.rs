@@ -967,3 +967,80 @@ async fn hex_stale_open_is_closed_and_session_switch_forgets_private_bytes() {
         f.run(&mut app, actions).await;
     }
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn hex_edit_review_save_undo_and_restore_use_real_owner_routes() {
+    let f = Fixture::new().await;
+    let original = [0, 255, 27, 128];
+    std::fs::write(f.work.join("editable.bin"), original).unwrap();
+    let mut app = f.app().await;
+    let actions = app.open_hex("editable.bin");
+    f.run(&mut app, actions).await;
+    app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    app.on_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+    assert_eq!(app.hex.selection(), Some((0, 2)));
+    let mut actions = app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    let result = f.perform(&app, actions.pop().unwrap()).await;
+    let mut replies = crate::runner::apply(&mut app, result, &mut Default::default());
+    assert!(
+        replies
+            .iter()
+            .any(|action| matches!(action,Action::Copy(hex) if hex=="00ff"))
+    );
+    replies.retain(|action| !matches!(action, Action::Copy(_)));
+    f.run(&mut app, replies).await;
+    app.hex.cursor = 0;
+    let actions = press(&mut app, KeyCode::F(2));
+    f.run(&mut app, actions).await;
+    assert!(app.hex.edit.enabled, "{:?}", app.hex.error);
+    press(&mut app, KeyCode::Char('4'));
+    let actions = press(&mut app, KeyCode::Char('1'));
+    f.run(&mut app, actions).await;
+    assert!(app.hex.edit.dirty, "{:?}", app.hex.error);
+    assert_eq!(app.hex.bytes, [65, 255, 27, 128]);
+    assert_eq!(
+        std::fs::read(f.work.join("editable.bin")).unwrap(),
+        original
+    );
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+    f.run(&mut app, actions).await;
+    assert_eq!(app.hex.bytes, original);
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
+    f.run(&mut app, actions).await;
+    assert_eq!(app.hex.bytes, [65, 255, 27, 128]);
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    f.run(&mut app, actions).await;
+    assert!(app.hex.edit.review.is_some(), "{:?}", app.hex.error);
+    assert_eq!(
+        std::fs::read(f.work.join("editable.bin")).unwrap(),
+        original
+    );
+    let shown = render(&mut app, 120, 30, &Opts::default());
+    assert!(shown.contains("BASE SHA256"));
+    assert!(shown.contains("SAVE REVIEW"));
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    f.run(&mut app, actions).await;
+    assert!(!app.hex.edit.dirty, "{:?}", app.hex.error);
+    assert_eq!(
+        std::fs::read(f.work.join("editable.bin")).unwrap(),
+        [65, 255, 27, 128]
+    );
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT));
+    f.run(&mut app, actions).await;
+    assert!(
+        app.hex
+            .edit
+            .review
+            .as_ref()
+            .is_some_and(|(_, restore)| *restore),
+        "{:?}",
+        app.hex.error
+    );
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    f.run(&mut app, actions).await;
+    assert_eq!(
+        std::fs::read(f.work.join("editable.bin")).unwrap(),
+        original
+    );
+}

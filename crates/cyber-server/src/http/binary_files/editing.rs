@@ -135,9 +135,19 @@ pub(super) async fn status(
         .binary_file_decision(&authority.turn, "edit", &entry.resource)
         .await;
     let supported = platform_supported(&state);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let runtime = state.runtime.clone();
     let result = work(&state, move || {
         let content = entry.document.lock().map_err(|_| Error::Io)?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let mut content = content;
         content.validate_resource()?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if let Content::Draft(editor) = &mut *content
+            && let Some(id) = editor.pending_notification_id()
+        {
+            runtime.settle_binary_notification(editor, &id)?;
+        }
         Ok(describe(&entry, &content, supported, decision))
     })
     .await?;
@@ -149,7 +159,7 @@ pub(super) async fn status(
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-async fn permit_edit(
+pub(super) async fn permit_edit(
     state: &AppState,
     authority: &ReadAuthority,
     entry: &Entry,
@@ -263,7 +273,7 @@ pub(super) async fn prepare(
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-async fn staged_admission(
+pub(super) async fn staged_admission(
     state: &AppState,
     authority: &ReadAuthority,
     entry: &Entry,
