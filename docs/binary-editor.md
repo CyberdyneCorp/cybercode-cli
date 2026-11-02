@@ -131,5 +131,7 @@ Closing releases the in-memory handle, retaining private commands and receipts.
 Use discovery in the same Session Location, recover the selected ID, then prepare
 again before changing its draft. Recovery does not install bytes or replay a save.
 A replaced/aliased parent refuses access; an ordinary changed source remains separate
-from the private draft. Production save/restore and crash reconciliation of native
-activity scopes are not yet exposed by these routes.
+from the private draft. Recovery uses its exclusive private document lock to settle
+matching filesystem-only activity records left by a prior process. It refuses active
+local workers and another private root; generic native processes and uncertain file
+effects remain unresolved. Production source save/restore is not yet exposed.

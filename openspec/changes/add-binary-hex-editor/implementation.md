@@ -375,3 +375,30 @@ as well as deserialization, with a cross-platform round-trip regression that che
 an offset above 2^53. A Windows production-route regression explicitly checks native
 edit refusal alongside successful live viewing and unchanged source bytes; that
 Windows-only test remains subject to native CI. The local wire regression passed.
+
+## Save integration follow-up work
+
+The shrinking-restore quota regression reproduced a native replacement followed
+by an unknown receipt when the displaced old source exceeded private quota.
+Preflight now reserves displaced logical size and both intent/outcome publication
+peaks, preserving the source/draft on refusal. The regression also reserves enough
+for intent and displacement but too little for the acknowledgement, then verifies
+successful restore after releasing capacity. Sparse filler exercises logical quota
+without allocating 2 GiB of payload.
+
+Explicit owner recovery now connects an actual borrowed document-lock proof to
+matching tagged SQL filesystem activity. The proof must belong to the runtime's
+configured private root. Active local workers, another private root and generic
+native activity are not settled. This records execution completion only and never
+acknowledges an uncertain file effect. Runtime proof/isolation regressions passed;
+platform checks and the remaining [save activation work](owner-save-integration.md)
+still apply. Source installation remains unavailable through production routes.
+
+The follow-up's local binary suite passed 60 tests (one child helper ignored by the
+ordinary selector and exercised by its parent). Four runtime ownership/proof tests,
+all 23 production file-route tests, affected core/server library/test Clippy,
+formatting/generated checks and all 114 strict OpenSpec items passed. Review checked
+the actual acknowledgement record shape in the capacity forecast, lock-file binding
+and refusal to recreate missing recovery locks. Linux/macOS/Windows CI must still
+validate this follow-up. PR #97 merged at `d6a9b1ae` after all 24 current-head checks
+passed, including its Windows-specific live-view/unsupported-edit regression.

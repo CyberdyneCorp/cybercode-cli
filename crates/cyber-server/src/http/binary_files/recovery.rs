@@ -135,6 +135,9 @@ pub(super) async fn recover(
             let editor = Editor::resume(storage.open_existing(&id)?, &owner)?;
             editor.validate_read_resource()?;
             registry
+                .recover_binary_activity(editor.recovery_proof()?)
+                .map_err(|_| Error::Changed)?;
+            registry
                 .binary_documents()
                 .insert_recovered(id, owner, editor, input.read_only)
         })
