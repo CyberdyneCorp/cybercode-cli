@@ -30,7 +30,7 @@ staged-edit/save/model/integration requirements below.
 
 - [ ] 4.1 Implement authenticated `fs` document/page/search/patch/history/review/save/restore/operation/close routes with exact Session/Location scope and no raw-byte URLs/logging.
 - [ ] 4.2 Generate OpenAPI/TypeScript types and shared client helpers with lossless offsets, bounded decoding, operation lookup and revision validation; preserve text content routes.
-- [ ] 4.3 Register the capability-owned `binary` tool and implement bounded inspect/read/search/patch through the shared service, isolated from unsaved owner drafts.
+- [x] 4.3 Register the capability-owned `binary` tool and implement bounded inspect/read/search/patch through the shared service, isolated from unsaved owner drafts.
 - [ ] 4.4 Enforce read+edit, plan/read-only/deny ceilings, existing output budgets, permission byte-diff review and plugin filesystem intersections; retain normal text-tool behavior.
 - [ ] 4.5 Test owner auth/Origin, cross-document/Session/Location access, stale generation, read-denied/write-allowed cases, malformed encodings, oversize payloads and secret-safe errors.
 

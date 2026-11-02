@@ -257,6 +257,15 @@ impl ToolHost for AppHost {
         self.builtin.claim_location(info, creating, cancel)
     }
 
+    fn claim_binary_location<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        document: &'a str,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        self.builtin.claim_binary_location(info, document, cancel)
+    }
+
     fn prepare_child_continuation<'a>(
         &'a self,
         parent: &'a cyber_server::runtime::SessionInfo,

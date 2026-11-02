@@ -229,6 +229,34 @@ impl Document {
         Ok(())
     }
 
+    /// Whole-file evidence for an editable-sized live source. This does not
+    /// prepare a draft or claim an immutable revision. Bytes stream in 64 KiB.
+    pub fn fingerprint(&mut self, cancelled: impl Fn() -> bool) -> Result<String, Error> {
+        if self.length > MAX_EDIT_SIZE {
+            return Err(Error::Limit);
+        }
+        self.validate()?;
+        let mut hash = Sha256::new();
+        let mut at = 0;
+        while at < self.length {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
+            let count = (self.length - at).min(DEFAULT_PAGE as u64) as usize;
+            let bytes = self.read_at(at, count)?;
+            if bytes.len() != count {
+                return Err(Error::Changed);
+            }
+            hash.update(bytes);
+            at += count as u64;
+        }
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+        self.validate()?;
+        Ok(format!("{:x}", hash.finalize()))
+    }
+
     fn check_revision(&self, revision: &str) -> Result<(), Error> {
         if revision != self.observed {
             return Err(Error::Changed);

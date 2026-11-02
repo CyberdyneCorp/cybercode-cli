@@ -15,8 +15,8 @@ Location; the direct command refuses a target from another project.
 
 The terminal opens in view mode. On admitted Linux/macOS workspaces, F2 prepares
 an immutable private draft and enters edit mode. `--read-only` permanently disables
-edit preparation for that document. Windows supports live viewing. Shared saved
-history/snapshot integration, model operations and remaining acceptance work are
+edit preparation for that document. Windows supports live viewing. Checkpoint/rewind integration, configured history
+retention and remaining acceptance work are
 tracked under [issue #94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94).
 
 In edit mode, type complete hex byte pairs to overwrite one byte; Esc cancels an
@@ -213,3 +213,44 @@ saved references; larger histories use the paged source-history routes.
 Checkpoint/rewind integration remains unfinished.
 The core retention primitive exists, but the configured retention/checkpoint
 adapter remains unfinished; public history access does not silently delete data.
+
+## Model binary operations
+
+The capability-owned `binary` tool accepts `inspect`, `read`, `search` and `patch`.
+It accesses source files within the current project, never a manual editor's private
+draft. Reads remain available in Plan mode; patching requires a native Linux/macOS
+workspace with current read and edit authority and an enforced writable sandbox.
+The ordinary text read/edit tools retain their text semantics.
+
+Inspect streams a SHA-256 for sources up to 512 MiB; larger files remain live-view
+only. Read defaults to 256 bytes and caps at 4096, with explicit hex, printable
+ASCII, exact decimal-string offsets and page fingerprints. Search uses the same
+bounded literal-hex search and continuation limits as the manual workspace.
+
+For example, after inspecting the current digest, the model may request:
+
+```json
+{
+  "operation": "patch",
+  "path": "fixtures/header.bin",
+  "expected_base_sha256": "<64 lowercase hexadecimal characters from inspect>",
+  "splices": [
+    {"offset": "1", "delete_length": "2", "expected_hex": "ff80", "insert_hex": "00fe01"}
+  ]
+}
+```
+
+The batch must match the whole prepared base and every deleted byte. The same
+128-splice/64-KiB combined expected-and-inserted-byte limit applies. Approval receives
+the exact byte review, final length/digest and native metadata/effect disclosure.
+The actual worker rechecks current invocation, ancestor, read/edit and sandbox
+authority immediately before durable save intent. It retains independent native
+checkout and path ownership through completion after caller disposal.
+
+The result is an explicit acknowledged/conflict/unknown operation receipt. The tool
+is serialized and has no automatic retry. Its stable invocation/payload identity
+prevents reusing an operation for changed bytes. An unknown outcome must not be
+retried under a new call ID: preserve the document/operation identities for recovery.
+The owner API does not admit model drafts as manual buffers; a dedicated model
+recovery surface remains part of the remaining issue #94 acceptance work. Plugin
+registrations cannot invoke this built-in tool as a capability bypass.

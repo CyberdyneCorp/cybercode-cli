@@ -61,6 +61,35 @@ fn invocation(turn: &TurnContext) -> Invocation {
 }
 
 #[tokio::test]
+async fn app_host_delegates_independent_binary_worker_checkout_ownership() {
+    let scratch = tempfile::tempdir().unwrap();
+    let app = application(scratch.path()).await;
+    let host = AppHost {
+        builtin: app.host.clone(),
+        remote: app.state.remote_tools.clone(),
+        peers: Arc::new(|_| Ok(None)),
+        peer_names: Arc::new(|| Ok(Vec::new())),
+    };
+    let info = app
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: scratch.path().canonicalize().unwrap().display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let lease = host
+        .claim_binary_location(&info, "bin_retained_worker", CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(lease.worktree_id, info.worktree_id);
+    let retained = lease.settle_retained().unwrap();
+    drop(retained);
+    app.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn agent_tool_restrictions_refuse_client_dispatch_without_sending_a_request() {
     let scratch = tempfile::tempdir().unwrap();
     let app = application(scratch.path()).await;

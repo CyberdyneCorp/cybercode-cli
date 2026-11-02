@@ -194,6 +194,33 @@ fn stage_file(store: &Store, name: &str) -> Result<File, Error> {
     Ok(file)
 }
 impl Editor {
+    /// Resume only the exact invocation/payload owner, authenticated by its small
+    /// header before opening any private command journal or base image.
+    pub fn model(
+        storage: &super::storage::StorageRoot,
+        id: &str,
+        owner: Owner,
+        document: &mut Document,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Self, Error> {
+        if !matches!(owner.scope, DraftScope::Model { .. }) {
+            return Err(Error::Invalid);
+        }
+        let store = storage.open(id)?;
+        match store.directory().symlink_metadata("document.json") {
+            Ok(_) => {
+                if storage.resource(&owner, id)?.path() != document.resource().path() {
+                    return Err(Error::Changed);
+                }
+                Self::resume(store, &owner)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Self::create(store, owner, document, cancelled)
+            }
+            Err(_) => Err(Error::Io),
+        }
+    }
+
     pub fn create(
         mut store: Store,
         owner: Owner,
@@ -1286,6 +1313,52 @@ mod tests {
             &wrong,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn model_resume_binds_payload_and_never_opens_the_manual_draft() {
+        let (root, mut manual, path, mut owner) = setup();
+        patch(&mut manual, "private_manual_patch");
+        let private_revision = manual.draft().revision();
+        let storage =
+            super::super::storage::StorageRoot::prepare(&root.path().join("data")).unwrap();
+        owner.scope = DraftScope::Model {
+            operation: "ses_one:call_one:payload_one".into(),
+        };
+        let mut document = Document::open(&owner.root, "bytes").unwrap();
+        assert!(
+            Editor::model(&storage, "bin_one", owner.clone(), &mut document, || false).is_err()
+        );
+        let mut model = Editor::model(&storage, "bin_model", owner.clone(), &mut document, || {
+            false
+        })
+        .unwrap();
+        assert_eq!(
+            model
+                .draft()
+                .page(&model.draft().revision(), Offset(0), 8)
+                .unwrap()
+                .bytes,
+            b"original"
+        );
+        patch(&mut model, "patch");
+        let prepared = ready(&mut model, "save");
+        let receipt = model.commit_save(*prepared).unwrap();
+        drop(model);
+        let mut source = Document::open(&owner.root, "bytes").unwrap();
+        let resumed =
+            Editor::model(&storage, "bin_model", owner.clone(), &mut source, || false).unwrap();
+        assert_eq!(
+            resumed.lookup_operation("save").unwrap().unwrap().revision,
+            receipt.revision
+        );
+        drop(resumed);
+        owner.scope = DraftScope::Model {
+            operation: "ses_one:call_one:changed_payload".into(),
+        };
+        assert!(Editor::model(&storage, "bin_model", owner, &mut source, || false).is_err());
+        assert_eq!(manual.draft().revision(), private_revision);
+        assert_eq!(std::fs::read(path).unwrap(), [0, 255, 128, 27]);
     }
 
     #[test]

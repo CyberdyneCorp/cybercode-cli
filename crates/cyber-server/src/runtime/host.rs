@@ -837,6 +837,17 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Ok(LocationLease::unmanaged()) })
     }
 
+    /// Independently retain a filesystem-only binary worker's checkout. Hosts
+    /// must explicitly support this; the active actor's lease cannot be reused.
+    fn claim_binary_location<'a>(
+        &'a self,
+        _info: &'a SessionInfo,
+        _document: &'a str,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<LocationLease, String>> {
+        Box::pin(async { Err("Binary worker checkout ownership is unsupported".into()) })
+    }
+
     /// Prepare an existing child under its exclusive owner. Opening a client view grants no bypass.
     fn prepare_child_continuation<'a>(
         &'a self,

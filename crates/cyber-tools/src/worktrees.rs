@@ -202,24 +202,26 @@ impl BuiltinHost {
         creating: bool,
         cancel: CancellationToken,
     ) -> Result<cyber_server::runtime::LocationLease, String> {
-        let inv = Invocation {
-            tool_output: Default::default(),
-            registration: None,
-            session_id: info.id.clone(),
-            directory: info.directory.clone(),
-            agent: info.agent.clone(),
-            mode: info.mode.clone(),
-            rules: info.rules.clone(),
-            message_id: String::new(),
-            call_id: cyber_core::ids::new_id("call"),
-            operation_key: String::new(),
-            name: "worktree".into(),
-            input: serde_json::Value::Null,
-            attempt: 1,
-            asker: Asker::detached(),
-        };
-        self.claim_location(&inv, info.worktree_id.as_deref(), creating, cancel)
+        let inv = location_invocation(info);
+        self.claim_location(&inv, info.worktree_id.as_deref(), creating, cancel, None)
             .await
+    }
+
+    pub(crate) async fn claim_binary_worktree_location(
+        &self,
+        info: &SessionInfo,
+        document: &str,
+        cancel: CancellationToken,
+    ) -> Result<cyber_server::runtime::LocationLease, String> {
+        let inv = location_invocation(info);
+        self.claim_location(
+            &inv,
+            info.worktree_id.as_deref(),
+            false,
+            cancel,
+            Some(document),
+        )
+        .await
     }
 
     pub(crate) async fn claim_hook_test_location(
@@ -248,7 +250,7 @@ impl BuiltinHost {
             attempt: 1,
             asker: Asker::detached(),
         };
-        self.claim_location(&inv, None, true, cancel).await
+        self.claim_location(&inv, None, true, cancel, None).await
     }
 
     async fn claim_location(
@@ -257,6 +259,7 @@ impl BuiltinHost {
         bound: Option<&str>,
         creating: bool,
         cancel: CancellationToken,
+        binary: Option<&str>,
     ) -> Result<cyber_server::runtime::LocationLease, String> {
         use cyber_server::runtime::LocationLease;
         let activity = self
@@ -304,8 +307,16 @@ impl BuiltinHost {
         let mut leases = Vec::with_capacity(locations.len());
         for (repository, managed) in locations {
             leases.push(
-                retry_repository_busy(&ctx.cancel, || {
-                    repository.claim(&execution, &managed, &inv.session_id)
+                retry_repository_busy(&ctx.cancel, || async {
+                    if let Some(document) = binary {
+                        repository
+                            .claim_binary(&execution, &managed, document)
+                            .await
+                    } else {
+                        repository
+                            .claim(&execution, &managed, &inv.session_id)
+                            .await
+                    }
                 })
                 .await
                 .map_err(|error| error.to_string())?,
@@ -1531,5 +1542,24 @@ fn authorize_owned_worktree(
             format!("Permission denied: {reason}"),
         )),
         _ => Ok(()),
+    }
+}
+
+fn location_invocation(info: &SessionInfo) -> Invocation {
+    Invocation {
+        tool_output: Default::default(),
+        registration: None,
+        session_id: info.id.clone(),
+        directory: info.directory.clone(),
+        agent: info.agent.clone(),
+        mode: info.mode.clone(),
+        rules: info.rules.clone(),
+        message_id: String::new(),
+        call_id: cyber_core::ids::new_id("call"),
+        operation_key: String::new(),
+        name: "worktree".into(),
+        input: serde_json::Value::Null,
+        attempt: 1,
+        asker: Asker::detached(),
     }
 }

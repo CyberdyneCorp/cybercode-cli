@@ -293,3 +293,17 @@ fn a_zero_length_virtual_file_cannot_return_bytes_beyond_its_observed_range() {
     assert!(page.bytes.is_empty());
     assert!(page.eof);
 }
+
+#[test]
+fn live_fingerprints_stream_exact_bytes_and_refuse_cancellation_or_changed_sources() {
+    use sha2::{Digest, Sha256};
+    let bytes: Vec<u8> = (0..=255).cycle().take(128 * 1024 + 17).collect();
+    let (temp, mut source) = fixture(&bytes);
+    assert_eq!(
+        source.fingerprint(|| false).unwrap(),
+        format!("{:x}", Sha256::digest(&bytes))
+    );
+    assert!(matches!(source.fingerprint(|| true), Err(Error::Cancelled)));
+    std::fs::write(temp.path().join("bytes"), b"changed").unwrap();
+    assert!(matches!(source.fingerprint(|| false), Err(Error::Changed)));
+}

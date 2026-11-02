@@ -67,7 +67,7 @@ pub(crate) struct EditAdmission {
 /// Retained host authority for the actual filesystem worker. Verification only
 /// refreshes trusted policy; prompts and hook/model execution belong before it.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub(crate) struct BinaryWork {
+pub struct BinaryWork {
     runtime: super::Runtime,
     executor: tokio::runtime::Handle,
     turn: super::TurnContext,
@@ -76,6 +76,7 @@ pub(crate) struct BinaryWork {
     authority: super::AdmissionAuthority,
     cancel: tokio_util::sync::CancellationToken,
     post: Arc<Mutex<Option<Arc<cyber_core::binary::editor::AcknowledgedChange>>>>,
+    invocation: Option<super::Invocation>,
 }
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl BinaryWork {
@@ -157,6 +158,9 @@ impl BinaryWork {
             .verify(&self.runtime, &self.turn.session_id)
             .map_err(|_| Error::Changed)?;
         self.executor.block_on(async {
+            if let Some(invocation) = &self.invocation {
+                self.runtime.verify_binary_invocation(invocation).await?;
+            }
             let current = self
                 .runtime
                 .file_turn(
@@ -353,6 +357,73 @@ impl Registry {
 }
 
 impl super::Runtime {
+    /// Trusted host storage; callers must separately authenticate the document
+    /// owner and retain source read/edit authority.
+    pub fn binary_storage(&self) -> Result<Arc<cyber_core::binary::storage::StorageRoot>, Error> {
+        self.binary_documents().storage()
+    }
+
+    /// Bind source disclosure/effects to the exact currently dispatched built-in
+    /// call. Stored IDs and an old invocation are never sufficient authority.
+    pub async fn verify_binary_invocation(&self, inv: &super::Invocation) -> Result<(), Error> {
+        let handle = self
+            .inner
+            .handle(&inv.session_id)
+            .await
+            .map_err(|_| Error::Changed)?;
+        let state = handle.state.lock().await;
+        let info = &state.info;
+        if inv.registration.is_some()
+            || inv.name != "binary"
+            || inv.operation_key != format!("{}:{}", inv.session_id, inv.call_id)
+            || info.directory != inv.directory
+            || info.agent != inv.agent
+            || info.mode != inv.mode
+            || info.rules != inv.rules
+            || !state.calls.get(&inv.call_id).is_some_and(|call| {
+                call.status == super::CallStatus::Dispatched
+                    && call.name == inv.name
+                    && call.message_id == inv.message_id
+                    && call.attempt == inv.attempt
+                    && call.input.as_ref() == Some(&inv.input)
+            })
+        {
+            return Err(Error::Changed);
+        }
+        Ok(())
+    }
+
+    /// Retained filesystem worker for an active built-in binary tool call.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub async fn binary_tool_work<T: Send + 'static>(
+        &self,
+        invocation: super::Invocation,
+        document: String,
+        resource: cyber_core::binary::Resource,
+        grants: (super::FileDecision, super::FileDecision),
+        work: impl FnOnce(BinaryWork) -> T + Send + 'static,
+    ) -> Result<T, super::RuntimeError> {
+        self.verify_binary_invocation(&invocation)
+            .await
+            .map_err(|error| super::RuntimeError::Invalid(error.to_string()))?;
+        let turn = self
+            .file_turn(
+                Some(&invocation.session_id),
+                std::path::Path::new(&invocation.directory),
+            )
+            .await?;
+        self.binary_native_work(turn, document, resource, grants, Some(invocation), work)
+            .await
+    }
+
+    /// Capacity only: callers still establish source read authority separately.
+    pub fn binary_read_permit(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, super::RuntimeError> {
+        self.binary_documents()
+            .worker()
+            .map_err(|e| super::RuntimeError::Invalid(e.to_string()))
+    }
     /// Install only after bootstrap has prepared and hidden the existing root from
     /// all child launches. An unconfigured runtime keeps binary editing disabled.
     pub fn configure_binary_storage(
@@ -383,12 +454,28 @@ impl super::Runtime {
         grants: (super::FileDecision, super::FileDecision),
         work: impl FnOnce(BinaryWork) -> T + Send + 'static,
     ) -> Result<T, super::RuntimeError> {
+        self.binary_native_work(turn, document, resource, grants, None, work)
+            .await
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn binary_native_work<T: Send + 'static>(
+        &self,
+        turn: super::TurnContext,
+        document: String,
+        resource: cyber_core::binary::Resource,
+        grants: (super::FileDecision, super::FileDecision),
+        invocation: Option<super::Invocation>,
+        work: impl FnOnce(BinaryWork) -> T + Send + 'static,
+    ) -> Result<T, super::RuntimeError> {
         let edit_permit = self
             .binary_documents()
             .edit_worker()
             .map_err(|error| super::RuntimeError::Invalid(error.to_string()))?;
         let lifecycle = self.memory_mutation_lease().await?;
-        self.inner.ensure_idle(&turn.session_id)?;
+        if invocation.is_none() {
+            self.inner.ensure_idle(&turn.session_id)?;
+        }
         let handle = self.inner.handle(&turn.session_id).await?;
         let info = handle.state.lock().await.info.clone();
         if self
@@ -405,23 +492,12 @@ impl super::Runtime {
         }
         let authority = self.capture_child_admission(&turn.session_id)?;
         let mut activity =
-            super::activity::Scope::reserve_binary(&self.inner, &handle, document).await?;
+            super::activity::Scope::reserve_binary(&self.inner, &handle, document.clone()).await?;
         let cancel = activity.control.stop.clone();
         let _cancel_on_disposal = cancel.clone().drop_guard();
         let location = self
-            .inner
-            .claim_location(&info, false, cancel.clone())
+            .binary_worker_location(&info, &document, cancel.clone(), invocation.is_some())
             .await?;
-        if location.worktree_id != info.worktree_id {
-            return Err(super::RuntimeError::Conflict(
-                "Binary checkout binding changed".into(),
-            ));
-        }
-        // This scope owns no subprocess. The retained proof keeps the native
-        // checkout lock through source mutation and journal settlement, including crash.
-        let location = location
-            .settle_retained()
-            .map_err(super::RuntimeError::Invalid)?;
         let paths = tokio::select! {
             result = self.inner.tools.file_mutation_guard(&turn, &resource) => result.map_err(super::RuntimeError::Invalid)?,
             _ = cancel.cancelled() => return Err(super::RuntimeError::Invalid("Binary operation cancelled before mutation".into())),
@@ -455,6 +531,7 @@ impl super::Runtime {
             authority,
             cancel,
             post: post.clone(),
+            invocation,
         };
         tokio::task::spawn_blocking(move || {
             let (_lifecycle, _location, _paths, _permit, _edit_permit) =
@@ -492,6 +569,34 @@ impl super::Runtime {
                 "Binary worker interrupted; query its operation before retrying".into(),
             )
         })?
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn binary_worker_location(
+        &self,
+        info: &super::SessionInfo,
+        document: &str,
+        cancel: tokio_util::sync::CancellationToken,
+        active_call: bool,
+    ) -> Result<Box<dyn Send>, super::RuntimeError> {
+        let location = if active_call {
+            self.inner
+                .tools
+                .claim_binary_location(info, document, cancel)
+                .await
+                .map_err(super::RuntimeError::Invalid)?
+        } else {
+            self.inner.claim_location(info, false, cancel).await?
+        };
+        if location.worktree_id != info.worktree_id {
+            return Err(super::RuntimeError::Conflict(
+                "Binary checkout binding changed".into(),
+            ));
+        }
+        // Only this filesystem-only worker is acknowledged, never the actor's
+        // generic process activity. Keep its actual lock until commit settles.
+        location
+            .settle_retained()
+            .map_err(super::RuntimeError::Invalid)
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     async fn verify_binary_grants(
