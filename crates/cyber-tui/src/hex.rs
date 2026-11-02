@@ -20,6 +20,7 @@ pub enum Request {
     Open {
         path: String,
         expected_root: Option<String>,
+        read_only: bool,
         offset: u64,
         generation: u64,
     },
@@ -180,7 +181,7 @@ pub fn goto(input: &str, cursor: u64, length: u64) -> Result<u64, &'static str> 
 
 impl App {
     pub fn open_hex(&mut self, path: &str) -> Vec<Action> {
-        self.open_hex_at(path, None, 0)
+        self.open_hex_at(path, None, 0, false)
     }
 
     pub fn open_hex_at(
@@ -188,6 +189,7 @@ impl App {
         path: &str,
         expected_root: Option<String>,
         offset: u64,
+        read_only: bool,
     ) -> Vec<Action> {
         if path.is_empty() {
             self.toast("Usage: /hex <project-relative path>");
@@ -208,6 +210,7 @@ impl App {
         actions.push(Action::Hex(Request::Open {
             path: path.into(),
             expected_root,
+            read_only,
             offset,
             generation: self.hex.generation,
         }));
@@ -622,6 +625,7 @@ pub async fn perform(
         Request::Open {
             path,
             expected_root,
+            read_only,
             offset,
             generation,
         } => {
@@ -630,7 +634,7 @@ pub async fn perform(
                     .at(&session.directory)
                     .post(
                         "/files/binary/documents",
-                        json!({"session_id":session.id,"path":path,"expected_root":expected_root}),
+                        json!({"session_id":session.id,"path":path,"expected_root":expected_root,"read_only":read_only}),
                     )
                     .await
                     .map_err(|e| e.to_string())?;
@@ -726,6 +730,35 @@ mod tests {
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
+    #[test]
+    fn read_only_launch_is_carried_into_the_server_document_admission() {
+        let mut app = App::new(
+            Session {
+                id: "ses_one".into(),
+                directory: "/project".into(),
+                ..Default::default()
+            },
+            vec![],
+            "cyber",
+        );
+        let actions = app.open_hex_at("bytes", Some("/project".into()), 0, true);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::Hex(Request::Open {
+                read_only: true,
+                ..
+            })
+        )));
+        let actions = app.open_hex("bytes");
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::Hex(Request::Open {
+                read_only: false,
+                ..
+            })
+        )));
+    }
+
     #[test]
     fn permission_overlay_keeps_the_hex_reply_and_other_views_retire_it() {
         let mut app = App::new(

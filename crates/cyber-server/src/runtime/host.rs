@@ -1208,6 +1208,49 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Err("File access is unavailable in this host".into()) })
     }
 
+    /// Decisions use the document's recorded canonical resource. Resolving this
+    /// name through a later symlink would check permission for the wrong bytes.
+    fn binary_file_decision<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _action: &'a str,
+        _resource: &'a cyber_core::binary::Resource,
+    ) -> BoxFuture<'a, FileDecision> {
+        Box::pin(async { FileDecision::Deny })
+    }
+    fn authorize_binary_read<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _resource: &'a cyber_core::binary::Resource,
+        _asker: super::Asker,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async { Err("Binary read admission is unavailable in this host".into()) })
+    }
+
+    /// Owner binary review uses the ordinary edit permission UI with bounded byte
+    /// diff metadata. Hosts must explicitly implement this admission boundary.
+    fn authorize_binary_edit<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _resource: &'a cyber_core::binary::Resource,
+        _review: Value,
+        _asker: super::Asker,
+        _cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async { Err("Binary editing is unavailable in this host".into()) })
+    }
+
+    /// Shared workspace then canonical path ownership, retained by the actual
+    /// blocking worker. Acquiring a guard alone grants no file authority.
+    fn file_mutation_guard<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _resource: &'a cyber_core::binary::Resource,
+    ) -> BoxFuture<'a, Result<Box<dyn Send>, String>> {
+        Box::pin(async { Err("File mutation ownership is unavailable in this host".into()) })
+    }
+
     /// Expand a planned command template once, before admission commits
     /// (`skills-commands` → Shell output injection, File and agent references): each
     /// `` !`cmd` `` span becomes its sandboxed output or a visible notice, and `@`

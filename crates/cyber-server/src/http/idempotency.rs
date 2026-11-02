@@ -42,13 +42,19 @@ fn in_flight() -> &'static Mutex<HashSet<String>> {
     KEYS.get_or_init(Mutex::default)
 }
 
+fn bypass_response_cache(req: &Request) -> bool {
+    matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS)
+        || req.uri().path().contains("/files/binary/")
+        || req.uri().path().contains("/collaboration/owner/")
+}
+
 pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> Response {
     // Hub owner issuance may return one-time invitations or join codes. The hub's
     // operation_id handles retries; never persist those response bodies locally.
-    if req.uri().path().contains("/collaboration/owner/") {
-        return next.run(req).await;
-    }
-    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+    // Binary routes always refresh Session/Location/read authority. Their private
+    // operation ledger handles mutation retries; generic response replay must not
+    // persist byte reviews or return data after permission revocation.
+    if bypass_response_cache(&req) {
         return next.run(req).await;
     }
     let Some(key) = req

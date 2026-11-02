@@ -475,7 +475,12 @@ fn initial_actions(
         });
     }
     if let Some(hex) = &opts.hex {
-        initial.extend(app.open_hex_at(&hex.path, Some(hex.root.clone()), hex.offset));
+        initial.extend(app.open_hex_at(
+            &hex.path,
+            Some(hex.root.clone()),
+            hex.offset,
+            hex.read_only,
+        ));
     }
     if let Some(prompt) = &opts.prompt {
         initial.push(Action::Prompt {

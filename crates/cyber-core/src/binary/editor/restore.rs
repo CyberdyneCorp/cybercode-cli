@@ -1,7 +1,7 @@
 //! Restore is a separately reviewed native operation. It does not use Session
 //! history or silently replace an owner's unsaved draft.
 use super::*;
-use crate::binary::draft::{ChangeRange, encode_hex};
+use crate::binary::draft::{ChangeRange, Review, encode_hex};
 
 impl Editor {
     pub fn restore_review(&self, cancelled: impl Fn() -> bool) -> Result<SaveReview, Error> {

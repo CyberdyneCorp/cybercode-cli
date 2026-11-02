@@ -57,4 +57,50 @@ impl Runtime {
             .authorize_file(turn, action, path, asker, self.inner.closed.child_token())
             .await
     }
+    pub async fn authorize_binary_edit(
+        &self,
+        turn: &TurnContext,
+        resource: &cyber_core::binary::Resource,
+        review: serde_json::Value,
+    ) -> Result<(), String> {
+        let asker = self
+            .operation_asker(&turn.session_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.inner
+            .tools
+            .authorize_binary_edit(
+                turn,
+                resource,
+                review,
+                asker,
+                self.inner.closed.child_token(),
+            )
+            .await
+    }
+    pub async fn binary_file_decision(
+        &self,
+        turn: &TurnContext,
+        action: &str,
+        resource: &cyber_core::binary::Resource,
+    ) -> FileDecision {
+        self.inner
+            .tools
+            .binary_file_decision(turn, action, resource)
+            .await
+    }
+    pub async fn authorize_binary_read(
+        &self,
+        turn: &TurnContext,
+        resource: &cyber_core::binary::Resource,
+    ) -> Result<(), String> {
+        let asker = self
+            .operation_asker(&turn.session_id)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.inner
+            .tools
+            .authorize_binary_read(turn, resource, asker, self.inner.closed.child_token())
+            .await
+    }
 }

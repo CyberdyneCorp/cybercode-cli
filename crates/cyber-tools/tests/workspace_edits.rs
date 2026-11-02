@@ -176,3 +176,78 @@ async fn binary_edit_file_admission_retains_plan_sandbox_and_private_path_ceilin
     );
     assert_eq!(readonly.read("bytes.bin"), "source");
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn binary_permission_uses_the_recorded_resource_after_a_later_alias_change() {
+    use cyber_server::runtime::{Asker, FileDecision, ToolHost};
+    use tokio_util::sync::CancellationToken;
+    let fixture = Fixture::new();
+    fixture.set_config(json!({"permissions":{"read":{"secrets.bin":"deny","public.bin":"allow"}}}));
+    fixture.write("secrets.bin", "private original bytes");
+    fixture.write("public.bin", "public bytes");
+    let document = cyber_core::binary::Document::open(&fixture.repo, "secrets.bin").unwrap();
+    let resource = document.resource();
+    std::fs::rename(
+        fixture.repo.join("secrets.bin"),
+        fixture.repo.join("original.bin"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("public.bin", fixture.repo.join("secrets.bin")).unwrap();
+    let context = turn(&fixture, "default");
+    // A fresh read through the alias names public.bin. The already-open document
+    // still represents secrets.bin and must retain that resource's denial.
+    assert_eq!(
+        fixture
+            .host
+            .file_decisions(&context, "read", &[fixture.repo.join("secrets.bin")])
+            .await,
+        vec![FileDecision::Allow]
+    );
+    assert_eq!(
+        fixture
+            .host
+            .binary_file_decision(&context, "read", &resource)
+            .await,
+        FileDecision::Deny
+    );
+    assert!(
+        fixture
+            .host
+            .authorize_binary_read(
+                &context,
+                &resource,
+                Asker::detached(),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn binary_editing_refuses_unrestricted_contexts_without_private_draft_isolation() {
+    use cyber_server::runtime::{FileDecision, ToolHost};
+    let fixture = Fixture::with_policy(
+        "bash",
+        cyber_sandbox::find_helper(),
+        Some("full-access".into()),
+    );
+    fixture.set_config(json!({"permissions":{"*":"allow"}}));
+    fixture.write("bytes.bin", "source");
+    let context = turn(&fixture, "accept-edits");
+    assert_eq!(
+        fixture
+            .host
+            .file_decisions(&context, "read", &[fixture.repo.join("bytes.bin")])
+            .await,
+        vec![FileDecision::Allow]
+    );
+    assert_eq!(
+        fixture
+            .host
+            .file_decisions(&context, "edit", &[fixture.repo.join("bytes.bin")])
+            .await,
+        vec![FileDecision::Deny]
+    );
+}

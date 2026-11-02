@@ -60,7 +60,12 @@ export class HttpTransport implements Transport {
     }
     if (op.binary) return this.fetchBinary(url, init, options.signal);
     // The same init (and so the same Idempotency-Key) is reused by every retry.
-    const response = await this.withRetry(() => this.fetchText(url, init, options.signal), options.signal);
+    // Binary mutation responses are never cached by the server. A lost response
+    // requires explicit operation lookup/recovery; replaying open can allocate a
+    // second handle, and future native saves must never be guessed successful.
+    const attempt = () => this.fetchText(url, init, options.signal);
+    const response = op.path.includes("/files/binary/") && op.method !== "GET"
+      ? await attempt() : await this.withRetry(attempt, options.signal);
     if (response.status < 200 || response.status >= 300) throw errorFromResponse(response.status, response.text);
     return unwrapBody(op, parseJson(op, response.text));
   }

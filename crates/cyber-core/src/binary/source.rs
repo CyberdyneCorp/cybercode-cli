@@ -5,7 +5,6 @@ use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, Instant};
 
 /// One live source with a pinned descriptor. No page reopens a caller-supplied path.
 pub struct Document {
@@ -114,7 +113,16 @@ impl Document {
             return Err(Error::Cancelled);
         }
         self.validate()?;
-        if Path::new(&self.requested) != self.relative {
+        let direct = Path::new(&self.requested);
+        let mut normalized = PathBuf::new();
+        for component in direct.components() {
+            match component {
+                Component::Normal(name) => normalized.push(name),
+                Component::CurDir => {}
+                _ => return Err(Error::File),
+            }
+        }
+        if normalized != self.relative {
             return Err(Error::File);
         }
         let target = super::native::Target::capture(&self.root, &self.relative)?;
@@ -157,6 +165,24 @@ impl Document {
         self.validate()?;
         target.validate()?;
         Ok((base, target))
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn retain_pins(&self) -> Result<super::native::Pins, Error> {
+        let directories = self
+            .directories
+            .iter()
+            .map(|handle| handle.as_file().try_clone().map_err(|_| Error::Io))
+            .collect::<Result<_, _>>()?;
+        let file = self.identity.as_file().try_clone().map_err(|_| Error::Io)?;
+        Ok(super::native::Pins {
+            _directories: directories,
+            _file: Some(file),
+        })
+    }
+
+    pub fn resource(&self) -> Resource {
+        Resource(self.path())
     }
 
     pub fn root(&self) -> &Path {
@@ -244,60 +270,15 @@ impl Document {
         request: &SearchRequest,
         cancelled: impl Fn() -> bool,
     ) -> Result<SearchResult, Error> {
-        let pattern = decode_hex(&request.hex, MAX_PATTERN)?;
-        if pattern.is_empty() || request.offset.0 > self.length {
-            return Err(Error::Invalid);
-        }
         self.check_revision(&request.revision)?;
-        let matcher = aho_corasick::AhoCorasick::new([&pattern]).map_err(|_| Error::Invalid)?;
-        let deadline = Instant::now() + Duration::from_millis(250);
-        let mut at = request.offset.0;
-        let mut carry = Vec::new();
-        let mut offsets = Vec::new();
-        let mut scanned = 0usize;
-        let mut next = None;
-        while at < self.length && scanned < MAX_SEARCH_BYTES {
-            if cancelled() {
-                return Err(Error::Cancelled);
-            }
-            let remaining = usize::try_from(self.length - at).unwrap_or(usize::MAX);
-            let chunk = self.read_at(
-                at,
-                DEFAULT_PAGE.min(MAX_SEARCH_BYTES - scanned).min(remaining),
-            )?;
-            if chunk.is_empty() {
-                return Err(Error::Changed);
-            }
-            let start = at - carry.len() as u64;
-            scanned += chunk.len();
-            at += chunk.len() as u64;
-            carry.extend_from_slice(&chunk);
-            for found in matcher.find_overlapping_iter(&carry) {
-                offsets.push(Offset(start + found.start() as u64));
-                if offsets.len() == MAX_MATCHES {
-                    next = Some(Offset(start + found.start() as u64 + 1));
-                    break;
-                }
-            }
-            if next.is_some() {
-                break;
-            }
-            let keep = (pattern.len() - 1).min(carry.len());
-            carry.drain(..carry.len() - keep);
-            if Instant::now() >= deadline {
-                break;
-            }
-        }
+        let result = super::search::bounded(
+            request,
+            self.length,
+            Source::Live,
+            |at, size| self.read_at(at, size),
+            cancelled,
+        )?;
         self.validate()?;
-        if next.is_none() && at < self.length {
-            next = Some(Offset(at.saturating_sub(carry.len() as u64)));
-        }
-        Ok(SearchResult {
-            revision: self.observed.clone(),
-            source: Source::Live,
-            offsets,
-            next_offset: next,
-            scanned: Offset(scanned as u64),
-        })
+        Ok(result)
     }
 }

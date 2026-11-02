@@ -137,6 +137,131 @@ export type BackgroundResult = {
   call_ids: string[];
 };
 
+export type BinaryChangeRange = {
+  original_offset: Offset;
+  original_length: Offset;
+  draft_offset: Offset;
+  draft_length: Offset;
+  before_sha256: string;
+  after_sha256: string;
+  before_hex: string;
+  after_hex: string;
+  preview_truncated: boolean;
+};
+
+export type BinaryEdited = {
+  operation: BinaryOperation;
+  status: BinaryStatus;
+};
+
+export type BinaryFileEffect = "none" | "changed" | "unknown";
+
+export type BinaryHistoryAction = "undo" | "redo" | "discard";
+
+export type BinaryHistoryRequest = {
+  session_id: string;
+  operation_id: string;
+  revision: string;
+  action: BinaryHistoryAction;
+};
+
+export type BinaryOperation = {
+  id: string;
+  kind: string;
+  payload_sha256: string;
+  outcome: BinaryOutcome;
+  revision: string;
+  file_effect: BinaryFileEffect;
+  reason?: string | null;
+  notification_pending: boolean;
+};
+
+export type BinaryOutcome = "acknowledged" | "conflict" | "unknown";
+
+export type BinaryPatchRequest = {
+  session_id: string;
+  operation_id: string;
+  revision: string;
+  splices: BinarySplice[];
+};
+
+export type BinaryPrepareRequest = {
+  session_id: string;
+  revision: string;
+};
+
+export type BinaryRecoverRequest = {
+  session_id: string;
+  read_only?: boolean;
+};
+
+export type BinaryRecoveryEntry = {
+  document_id: string;
+  path: string;
+  record_available: boolean;
+};
+
+export type BinaryRecoveryList = {
+  documents: BinaryRecoveryEntry[];
+  next_cursor?: string | null;
+};
+
+export type BinaryReview = {
+  revision: string;
+  base_sha256: string;
+  proposed_sha256: string;
+  base_length: Offset;
+  proposed_length: Offset;
+  original_bytes: Offset;
+  proposed_bytes: Offset;
+  range_count: number;
+  ranges: BinaryChangeRange[];
+  next_range?: number | null;
+  fingerprint: string;
+};
+
+export type BinaryReviewRequest = {
+  session_id: string;
+  revision: string;
+  start?: number | null;
+  limit?: number | null;
+};
+
+export type BinarySaveReview = {
+  draft: BinaryReview;
+  permissions: number;
+  owner_uid: number;
+  owner_gid: number;
+  metadata_sha256: string;
+  effects: string;
+  fingerprint: string;
+};
+
+export type BinarySplice = {
+  offset: Offset;
+  delete_length: Offset;
+  expected_hex: string;
+  insert_hex: string;
+};
+
+export type BinaryStatus = {
+  path: string;
+  length: Offset;
+  /** Live observation or draft revision; never a whole-file content digest. */
+  revision: string;
+  source: Source2;
+  within_edit_size_limit: boolean;
+  read_only: boolean;
+  prepared: boolean;
+  dirty: boolean;
+  can_undo: boolean;
+  can_redo: boolean;
+  base_sha256?: string | null;
+  pending_operation?: BinaryOperation | null;
+  edit_supported: boolean;
+  edit_decision: FileDecision;
+};
+
 /** What to check out: a message ID or a label, and whether to restore code. */
 export type BranchCheckout = {
   message_id?: string | null;
@@ -2413,6 +2538,30 @@ export type Located_Array_of_string = {
 };
 
 /** A Location-scoped response. */
+export type Located_BinaryEdited = {
+  location: LocationInfo;
+  data: BinaryEdited;
+};
+
+/** A Location-scoped response. */
+export type Located_BinaryRecoveryList = {
+  location: LocationInfo;
+  data: BinaryRecoveryList;
+};
+
+/** A Location-scoped response. */
+export type Located_BinarySaveReview = {
+  location: LocationInfo;
+  data: BinarySaveReview;
+};
+
+/** A Location-scoped response. */
+export type Located_BinaryStatus = {
+  location: LocationInfo;
+  data: BinaryStatus;
+};
+
+/** A Location-scoped response. */
 export type Located_BytePage = {
   location: LocationInfo;
   data: BytePage;
@@ -2524,6 +2673,12 @@ export type Located_MemoryEditReview = {
 export type Located_MemorySettingsView = {
   location: LocationInfo;
   data: MemorySettingsView;
+};
+
+/** A Location-scoped response. */
+export type Located_Nullable_BinaryOperation = {
+  location: LocationInfo;
+  data?: BinaryOperation | null;
 };
 
 /** A Location-scoped response. */
@@ -3151,13 +3306,14 @@ export type OpenRequest = {
   session_id: string;
   path: string;
   expected_root?: string | null;
+  read_only?: boolean;
 };
 
 export type OpenedDocument = {
   document_id: string;
   path: string;
   length: Offset;
-  /** Observed metadata generation, not an immutable whole-file content digest. */
+  /** Live observation or draft revision; never a whole-file content digest. */
   revision: string;
   source: Source2;
   within_edit_size_limit: boolean;
@@ -4429,7 +4585,7 @@ export type Source = {
   type: "git";
 };
 
-export type Source2 = "live";
+export type Source2 = "live" | "draft";
 
 /** A user statement with its source, kept outside generated prose. */
 export type Sourced = {

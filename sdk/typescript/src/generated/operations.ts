@@ -250,17 +250,73 @@ export interface Operations {
     body: undefined;
     response: boolean;
   };
+  "v1.fs.binaryHistory": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinaryHistoryRequest;
+    response: S.Located_BinaryEdited;
+  };
   "v1.fs.binaryOpen": {
     path: Record<string, never>;
     query: Record<string, never>;
     body: S.OpenRequest;
     response: S.Located_OpenedDocument;
   };
+  "v1.fs.binaryOperation": {
+    path: { id: string; operation: string };
+    query: {
+      session_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_Nullable_BinaryOperation;
+  };
+  "v1.fs.binaryPatch": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinaryPatchRequest;
+    response: S.Located_BinaryEdited;
+  };
+  "v1.fs.binaryPrepare": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinaryPrepareRequest;
+    response: S.Located_BinaryStatus;
+  };
+  "v1.fs.binaryRecover": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinaryRecoverRequest;
+    response: S.Located_BinaryStatus;
+  };
+  "v1.fs.binaryRecovery": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+      after?: QueryValue;
+      limit?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_BinaryRecoveryList;
+  };
+  "v1.fs.binaryReview": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.BinaryReviewRequest;
+    response: S.Located_BinarySaveReview;
+  };
   "v1.fs.binarySearch": {
     path: { id: string };
     query: Record<string, never>;
     body: S.SearchBody;
     response: S.Located_SearchResult;
+  };
+  "v1.fs.binaryStatus": {
+    path: { id: string };
+    query: {
+      session_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_BinaryStatus;
   };
   "v1.fs.content": {
     path: Record<string, never>;
@@ -2101,12 +2157,96 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.fs.binaryHistory": {
+    tag: "fs",
+    name: "binaryHistory",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/history",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.fs.binaryOpen": {
     tag: "fs",
     name: "binaryOpen",
     method: "POST",
     path: "/api/v1/files/binary/documents",
     pathParams: [],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryOperation": {
+    tag: "fs",
+    name: "binaryOperation",
+    method: "GET",
+    path: "/api/v1/files/binary/documents/{id}/operations/{operation}",
+    pathParams: ["id", "operation"],
+    query: ["session_id"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryPatch": {
+    tag: "fs",
+    name: "binaryPatch",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/patches",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryPrepare": {
+    tag: "fs",
+    name: "binaryPrepare",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/prepare",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryRecover": {
+    tag: "fs",
+    name: "binaryRecover",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/recover",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryRecovery": {
+    tag: "fs",
+    name: "binaryRecovery",
+    method: "GET",
+    path: "/api/v1/files/binary/recovery",
+    pathParams: [],
+    query: ["session_id", "after", "limit"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryReview": {
+    tag: "fs",
+    name: "binaryReview",
+    method: "POST",
+    path: "/api/v1/files/binary/documents/{id}/review",
+    pathParams: ["id"],
     query: [],
     body: "required",
     located: true,
@@ -2121,6 +2261,18 @@ export const operations = {
     pathParams: ["id"],
     query: [],
     body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryStatus": {
+    tag: "fs",
+    name: "binaryStatus",
+    method: "GET",
+    path: "/api/v1/files/binary/documents/{id}",
+    pathParams: ["id"],
+    query: ["session_id"],
+    body: "none",
     located: true,
     unwrap: false,
     stream: false,
@@ -4982,12 +5134,36 @@ export function createGroups(caller: Caller) {
       /** Close a Session-owned live binary view (`DELETE /api/v1/files/binary/documents/{id}`) */
       binaryClose: (id: string, query?: Operations["v1.fs.binaryClose"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryClose"]["response"]> =>
         caller.call("v1.fs.binaryClose", { path: { id }, query }, options),
+      /** Undo, redo or discard local draft commands without changing the source (`POST /api/v1/files/binary/documents/{id}/history`) */
+      binaryHistory: (id: string, body: Operations["v1.fs.binaryHistory"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryHistory"]["response"]> =>
+        caller.call("v1.fs.binaryHistory", { path: { id }, body }, options),
       /** Open a Session-owned live binary view; no eager whole-file copy or hash (`POST /api/v1/files/binary/documents`) */
       binaryOpen: (body: Operations["v1.fs.binaryOpen"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryOpen"]["response"]> =>
         caller.call("v1.fs.binaryOpen", { body }, options),
-      /** Search live bytes with bounded scanning and revision-bound continuation (`POST /api/v1/files/binary/documents/{id}/search`) */
+      /** Query the durable receipt; absence is refused while journal storage is fenced (`GET /api/v1/files/binary/documents/{id}/operations/{operation}`) */
+      binaryOperation: (id: string, operation: string, query?: Operations["v1.fs.binaryOperation"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryOperation"]["response"]> =>
+        caller.call("v1.fs.binaryOperation", { path: { id, operation }, query }, options),
+      /** Apply an atomic expected-byte splice batch with a stable operation ID (`POST /api/v1/files/binary/documents/{id}/patches`) */
+      binaryPatch: (id: string, body: Operations["v1.fs.binaryPatch"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryPatch"]["response"]> =>
+        caller.call("v1.fs.binaryPatch", { path: { id }, body }, options),
+      /** Prepare a durable private draft after manual edit admission; no source mutation (`POST /api/v1/files/binary/documents/{id}/prepare`) */
+      binaryPrepare: (id: string, body: Operations["v1.fs.binaryPrepare"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryPrepare"]["response"]> =>
+        caller.call("v1.fs.binaryPrepare", { path: { id }, body }, options),
+      /** Explicitly reopen a retained private draft; never replay a save or grant mutation authority (`POST /api/v1/files/binary/documents/{id}/recover`) */
+      binaryRecover: (id: string, body: Operations["v1.fs.binaryRecover"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryRecover"]["response"]> =>
+        caller.call("v1.fs.binaryRecover", { path: { id }, body }, options),
+      /** Discover retained manual drafts in the exact Session Location (`GET /api/v1/files/binary/recovery`) */
+      binaryRecovery: (query?: Operations["v1.fs.binaryRecovery"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryRecovery"]["response"]> =>
+        caller.call("v1.fs.binaryRecovery", { query }, options),
+      /** Review original-offset byte ranges and full fingerprints; no source mutation (`POST /api/v1/files/binary/documents/{id}/review`) */
+      binaryReview: (id: string, body: Operations["v1.fs.binaryReview"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryReview"]["response"]> =>
+        caller.call("v1.fs.binaryReview", { path: { id }, body }, options),
+      /** Search live or draft bytes with bounded scanning and revision-bound continuation (`POST /api/v1/files/binary/documents/{id}/search`) */
       binarySearch: (id: string, body: Operations["v1.fs.binarySearch"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binarySearch"]["response"]> =>
         caller.call("v1.fs.binarySearch", { path: { id }, body }, options),
+      /** Read current binary draft status under fresh owner authority (`GET /api/v1/files/binary/documents/{id}`) */
+      binaryStatus: (id: string, query?: Operations["v1.fs.binaryStatus"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryStatus"]["response"]> =>
+        caller.call("v1.fs.binaryStatus", { path: { id }, query }, options),
       /** A project file's text (at most 1 MiB) when the Session's rules allow read (`GET /api/v1/files/content`) */
       content: (query?: Operations["v1.fs.content"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.content"]["response"]> =>
         caller.call("v1.fs.content", { query }, options),

@@ -10,6 +10,7 @@ tokio::task_local! { static CANCEL: CancellationToken; }
 
 pub(super) struct Control {
     pub source: String,
+    pub binary_document: Option<String>,
     pub admission_sessions: std::collections::HashSet<String>,
     pub stop: CancellationToken,
     pub done: CancellationToken,
@@ -19,6 +20,9 @@ pub(super) struct Record {
     pub session_id: String,
     pub status: String,
     pub phase: String,
+    /// Trusted synchronous filesystem-only workers; no subprocess can escape this scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_document: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_bindings: Option<Vec<super::admission_authority::Binding>>,
 }
@@ -41,6 +45,21 @@ impl Scope {
         self.authority.clone()
     }
     pub async fn reserve(inner: &Inner, handle: &Handle) -> Result<Self, RuntimeError> {
+        Self::reserve_kind(inner, handle, None).await
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub async fn reserve_binary(
+        inner: &Inner,
+        handle: &Handle,
+        document: String,
+    ) -> Result<Self, RuntimeError> {
+        Self::reserve_kind(inner, handle, Some(document)).await
+    }
+    async fn reserve_kind(
+        inner: &Inner,
+        handle: &Handle,
+        binary_document: Option<String>,
+    ) -> Result<Self, RuntimeError> {
         let runtime = Runtime {
             inner: inner.me.upgrade().ok_or(RuntimeError::ShuttingDown)?,
         };
@@ -52,6 +71,7 @@ impl Scope {
             session_id: source.clone(),
             status: "pending".into(),
             phase: "reserved".into(),
+            binary_document,
             admission_bindings: Some(authority.bindings.clone()),
         };
         inner
@@ -59,6 +79,7 @@ impl Scope {
             .append(&id, Expected::Seq(-1), vec![change(&record)])?;
         let control = Arc::new(Control {
             source: source.clone(),
+            binary_document: record.binary_document.clone(),
             admission_sessions: super::admission_authority::binding_sessions(&authority.bindings),
             stop: inner.closed.child_token(),
             done: CancellationToken::new(),
@@ -120,10 +141,22 @@ impl Drop for Scope {
     fn drop(&mut self) {
         self.control.stop.cancel();
         if !self.settled {
-            if self.launched {
+            let filesystem_only = self.record.binary_document.is_some();
+            if self.launched && !filesystem_only {
                 self.handle.location_uncertain.store(true, Ordering::SeqCst);
             }
-            self.record.status = if self.launched { "unknown" } else { "settled" }.into();
+            // This trusted scope owns only synchronous filesystem calls. Once
+            // its actual worker unwinds, it has no escaped task/process to settle;
+            // possible file effects remain in the separate document intent.
+            self.record.status = if self.launched && !filesystem_only {
+                "unknown"
+            } else {
+                "settled"
+            }
+            .into();
+            if filesystem_only {
+                self.record.phase = "filesystem_worker_disposed_query_document".into();
+            }
             self.record.admission_bindings = None;
             if let Err(error) =
                 self.store
@@ -175,6 +208,9 @@ impl Inner {
         if controls.is_empty() {
             return Ok(());
         }
+        let filesystem_only = controls
+            .iter()
+            .all(|control| control.binary_document.is_some());
         let acknowledged = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             for control in controls {
                 control.done.cancelled().await;
@@ -183,7 +219,15 @@ impl Inner {
         .await;
         let handle = self.handle(source).await?;
         if acknowledged.is_err() {
-            handle.location_uncertain.store(true, Ordering::SeqCst);
+            if !filesystem_only {
+                handle.location_uncertain.store(true, Ordering::SeqCst);
+            }
+            return Err(RuntimeError::Invalid(if filesystem_only {
+                "Binary filesystem work is still settling; query its operation before retrying"
+                    .into()
+            } else {
+                "Idle operation did not acknowledge interruption; recovery is required".into()
+            }));
         }
         if handle.location_uncertain.load(Ordering::SeqCst) {
             return Err(RuntimeError::Invalid(

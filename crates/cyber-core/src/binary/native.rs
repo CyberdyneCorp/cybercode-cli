@@ -16,6 +16,12 @@ use std::path::{Component, Path, PathBuf};
 #[allow(unsafe_code)] // Bounded owned ACL/copyfile-state allocations, no borrowed raw pointers.
 mod macos;
 
+/// Live pins prevent inode reuse while a prepared editor owns its source route.
+pub(super) struct Pins {
+    pub _directories: Vec<File>,
+    pub _file: Option<File>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Metadata {
@@ -210,6 +216,30 @@ impl Target {
             observed: generation(&file)?,
         })
     }
+    pub(super) fn pins(&self) -> Result<Pins, Error> {
+        let mut dir = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
+            .map_err(|_| Error::Changed)?;
+        let mut directories = vec![dir.try_clone().map_err(|_| Error::Io)?.into_std_file()];
+        let mut parts = self.relative.components().peekable();
+        while let Some(part) = parts.next() {
+            let Component::Normal(name) = part else {
+                return Err(Error::File);
+            };
+            if parts.peek().is_some() {
+                dir = dir.open_dir_nofollow(name).map_err(|_| Error::Changed)?;
+                directories.push(dir.try_clone().map_err(|_| Error::Io)?.into_std_file());
+            }
+        }
+        let identities = directories.iter().map(id).collect::<Result<Vec<_>, _>>()?;
+        if identities != self.parents {
+            return Err(Error::Changed);
+        }
+        let file = self.validate().ok().map(|(_, file)| file);
+        Ok(Pins {
+            _directories: directories,
+            _file: file,
+        })
+    }
     pub fn validate(&self) -> Result<(Dir, File), Error> {
         let (parent, file, ids) = open(&self.root, &self.relative, true)?;
         if ids != self.parents
@@ -222,6 +252,53 @@ impl Target {
         }
         Ok((parent, file))
     }
+    /// Retained draft disclosure stays bound to the original parent route. The
+    /// current leaf may have changed/deleted (a save conflict), but aliases must
+    /// never redirect authority to another resource. No source bytes are read.
+    pub fn validate_read_resource(&self) -> Result<(), Error> {
+        let mut dir = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())
+            .map_err(|_| Error::Changed)?;
+        let mut parents = vec![id(&dir
+            .try_clone()
+            .map_err(|_| Error::Io)?
+            .into_std_file())?];
+        let mut parts = self.relative.components().peekable();
+        while let Some(part) = parts.next() {
+            let Component::Normal(name) = part else {
+                return Err(Error::File);
+            };
+            if parts.peek().is_some() {
+                dir = dir.open_dir_nofollow(name).map_err(|_| Error::Changed)?;
+                parents.push(id(&dir
+                    .try_clone()
+                    .map_err(|_| Error::Io)?
+                    .into_std_file())?);
+                continue;
+            }
+            if parents != self.parents {
+                return Err(Error::Changed);
+            }
+            match dir.symlink_metadata(name) {
+                Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+                    let mut options = OpenOptions::new();
+                    use cap_std::fs::OpenOptionsExt;
+                    options
+                        .read(true)
+                        .follow(FollowSymlinks::No)
+                        .custom_flags(libc::O_NONBLOCK);
+                    let file = dir.open_with(name, &options).map_err(|_| Error::Changed)?;
+                    if !file.metadata().map_err(|_| Error::Io)?.is_file() {
+                        return Err(Error::File);
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                _ => return Err(Error::Changed),
+            }
+            return Ok(());
+        }
+        Err(Error::File)
+    }
+
     pub fn same_filesystem(&self, private: &Dir) -> Result<(), Error> {
         let (_, file) = self.validate()?;
         if file.metadata().map_err(|_| Error::Io)?.dev()

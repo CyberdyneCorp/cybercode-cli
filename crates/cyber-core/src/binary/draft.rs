@@ -20,6 +20,7 @@ pub trait ImmutableBase {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "BinarySplice")]
 pub struct Splice {
     pub offset: Offset,
     pub delete_length: Offset,
@@ -29,6 +30,7 @@ pub struct Splice {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "BinaryPatchBatch")]
 pub struct PatchBatch {
     pub revision: String,
     pub splices: Vec<Splice>,
@@ -58,6 +60,7 @@ struct Piece {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BinaryChangeRange")]
 pub struct ChangeRange {
     pub original_offset: Offset,
     pub original_length: Offset,
@@ -70,6 +73,7 @@ pub struct ChangeRange {
     pub preview_truncated: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BinaryReview")]
 pub struct Review {
     pub revision: String,
     pub base_sha256: String,
@@ -192,6 +196,21 @@ impl<B: ImmutableBase> Draft<B> {
             sha256: format!("{:x}", Sha256::digest(&bytes)),
             bytes,
         })
+    }
+
+    pub fn search(
+        &self,
+        request: &super::SearchRequest,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<super::SearchResult, Error> {
+        self.current(&request.revision)?;
+        super::search::bounded(
+            request,
+            self.length,
+            super::Source::Draft,
+            |at, size| self.read(at, size),
+            cancelled,
+        )
     }
 
     fn piece_bytes(&self, piece: &Piece, offset: u64, length: usize) -> Result<Vec<u8>, Error> {
@@ -663,6 +682,38 @@ mod tests {
     }
     fn bytes(d: &Draft<Base>) -> Vec<u8> {
         d.read(0, d.length().0 as usize).unwrap()
+    }
+
+    #[test]
+    fn immutable_search_crosses_piece_boundaries_and_rejects_stale_revisions() {
+        let mut draft = Draft::new(Base::new(b"abCDxy".to_vec())).unwrap();
+        let old = draft.revision();
+        patch(&mut draft, vec![edit(2, b"CD", &[0, 255])]).unwrap();
+        let request = super::super::SearchRequest {
+            revision: draft.revision(),
+            hex: "6200ff78".into(),
+            offset: Offset(0),
+        };
+        let result = draft.search(&request, || false).unwrap();
+        assert!(matches!(result.source, super::super::Source::Draft));
+        assert_eq!(result.offsets, [Offset(1)]);
+        assert_eq!(result.revision, draft.revision());
+        assert!(matches!(
+            draft.search(&request, || true),
+            Err(Error::Cancelled)
+        ));
+        let mut stale = request.clone();
+        stale.revision = old;
+        assert!(matches!(
+            draft.search(&stale, || false),
+            Err(Error::Changed)
+        ));
+        let mut malformed = request;
+        malformed.hex = "f".into();
+        assert!(matches!(
+            draft.search(&malformed, || false),
+            Err(Error::Invalid)
+        ));
     }
 
     #[test]

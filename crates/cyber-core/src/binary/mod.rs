@@ -7,12 +7,24 @@ pub mod draft;
 pub mod editor;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod native;
+pub mod receipts;
+mod search;
 mod source;
 pub mod storage;
 pub use source::Document;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// The canonical resource admitted when a document was opened, never a path to
+/// resolve again during permission checks. This is a name, not an authority token.
+#[derive(Debug, Clone)]
+pub struct Resource(std::path::PathBuf);
+impl Resource {
+    pub fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
 
 pub const DEFAULT_PAGE: usize = 64 * 1024;
 pub const MAX_PAGE: usize = 1024 * 1024;
@@ -69,7 +81,7 @@ pub enum Error {
 pub struct Metadata {
     pub path: String,
     pub length: Offset,
-    /// Observed metadata generation, not an immutable whole-file content digest.
+    /// Live observation or draft revision; never a whole-file content digest.
     pub revision: String,
     pub source: Source,
     pub within_edit_size_limit: bool,
@@ -79,6 +91,7 @@ pub struct Metadata {
 #[serde(rename_all = "snake_case")]
 pub enum Source {
     Live,
+    Draft,
 }
 
 /// Internal bytes; HTTP adapters choose their bounded transport encoding.
