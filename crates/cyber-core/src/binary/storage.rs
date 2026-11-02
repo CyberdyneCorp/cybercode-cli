@@ -15,6 +15,8 @@ use std::sync::Arc;
 
 pub const MAX_STORAGE: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_RECORD: u64 = 256 * 1024 * 1024;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const HISTORY_LOCK: &str = "history.lock";
 
 fn open_data_directory(path: &Path) -> Result<Dir, Error> {
     #[cfg(windows)]
@@ -441,6 +443,48 @@ fn existing_lock(dir: &Dir) -> Result<File, Error> {
 
 impl Store {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn ensure_history_lock(&mut self) -> Result<(), Error> {
+        self.validate()?;
+        match self.dir.symlink_metadata(HISTORY_LOCK) {
+            Ok(_) => {
+                history_lease(&self.dir, false)?;
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(Error::Io),
+        }
+        // Older private draft-only records can adopt the reader contract. Missing
+        // locks beside published history are never silently repaired: old readers
+        // may still own an earlier lock incarnation or use an older contract.
+        for (count, entry) in self.dir.entries().map_err(|_| Error::Io)?.enumerate() {
+            if count >= 4096 {
+                return Err(Error::Limit);
+            }
+            let name = entry.map_err(|_| Error::Io)?.file_name();
+            if name
+                .to_str()
+                .is_some_and(|name| name.starts_with("ver_") && name.ends_with(".json"))
+            {
+                return Err(Error::Changed);
+            }
+        }
+        self.capacity(0)?;
+        let file = create(&self.dir, HISTORY_LOCK)?;
+        file.sync_all().map_err(|_| Error::Io)?;
+        if flush_dir(&self.dir).is_err() {
+            self.fenced = true;
+            return Err(Error::Io);
+        }
+        self.validate()
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) fn history_lease(&self, exclusive: bool) -> Result<File, Error> {
+        self.validate()?;
+        let lease = history_lease(&self.dir, exclusive)?;
+        self.validate()?;
+        Ok(lease)
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     pub(super) fn storage_root(&self) -> Result<StorageRoot, Error> {
         self.validate()?;
         Ok(StorageRoot {
@@ -758,6 +802,19 @@ impl Store {
         self.validate()?;
         Ok(base)
     }
+}
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(super) fn history_lease(dir: &Dir, exclusive: bool) -> Result<File, Error> {
+    let file = read_file(dir, HISTORY_LOCK)?;
+    if file.metadata().map_err(|_| Error::Io)?.len() != 0 {
+        return Err(Error::Changed);
+    }
+    if exclusive {
+        file.try_lock().map_err(|_| Error::Limit)?;
+    } else {
+        file.try_lock_shared().map_err(|_| Error::Limit)?;
+    }
+    Ok(file)
 }
 fn immutable_base(
     dir: Arc<Dir>,
