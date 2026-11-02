@@ -1574,11 +1574,27 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "post",
             "/files/binary/documents/{id}/search",
             "v1.fs.binarySearch",
-            "Search live bytes with bounded scanning and revision-bound continuation",
+            "Search live or draft bytes with bounded scanning and revision-bound continuation",
         )
         .located()
         .body::<super::binary_files::SearchBody>(g)
         .ok::<Located<cyber_core::binary::SearchResult>>(g),
+        op("get", "/files/binary/documents/{id}", "v1.fs.binaryStatus", "Read current binary draft status under fresh owner authority")
+            .located().query(&["session_id"]).ok::<Located<super::binary_files::editing::Status>>(g),
+        op("post", "/files/binary/documents/{id}/prepare", "v1.fs.binaryPrepare", "Prepare a durable private draft after manual edit admission; no source mutation")
+            .located().body::<super::binary_files::editing::PrepareRequest>(g).ok::<Located<super::binary_files::editing::Status>>(g),
+        op("post", "/files/binary/documents/{id}/patches", "v1.fs.binaryPatch", "Apply an atomic expected-byte splice batch with a stable operation ID")
+            .located().body::<super::binary_files::editing::PatchRequest>(g).ok::<Located<super::binary_files::editing::Edited>>(g),
+        op("post", "/files/binary/documents/{id}/history", "v1.fs.binaryHistory", "Undo, redo or discard local draft commands without changing the source")
+            .located().body::<super::binary_files::editing::HistoryRequest>(g).ok::<Located<super::binary_files::editing::Edited>>(g),
+        op("post", "/files/binary/documents/{id}/review", "v1.fs.binaryReview", "Review original-offset byte ranges and full fingerprints; no source mutation")
+            .located().body::<super::binary_files::editing::ReviewRequest>(g).ok::<Located<cyber_core::binary::receipts::SaveReview>>(g),
+        op("get", "/files/binary/recovery", "v1.fs.binaryRecovery", "Discover retained manual drafts in the exact Session Location")
+            .located().query(&["session_id", "after", "limit"]).ok::<Located<super::binary_files::recovery::RecoveryList>>(g),
+        op("post", "/files/binary/documents/{id}/recover", "v1.fs.binaryRecover", "Explicitly reopen a retained private draft; never replay a save or grant mutation authority")
+            .located().body::<super::binary_files::recovery::RecoverRequest>(g).ok::<Located<super::binary_files::editing::Status>>(g),
+        op("get", "/files/binary/documents/{id}/operations/{operation}", "v1.fs.binaryOperation", "Query the durable receipt; absence is refused while journal storage is fenced")
+            .located().query(&["session_id"]).ok::<Located<Option<cyber_core::binary::receipts::Operation>>>(g),
         op(
             "delete",
             "/files/binary/documents/{id}",

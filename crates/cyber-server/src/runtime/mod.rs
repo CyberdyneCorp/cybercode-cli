@@ -2779,3 +2779,6 @@ impl Inner {
 mod workflow_solve;
 
 pub use workflow_solve::{SolveCandidateEvidence, SolveEvidence};
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod binary_documents_tests;

@@ -27,9 +27,9 @@ impl Runtime {
             self.fence_deletion(session_id, &ids)?;
             ids
         };
-        for id in &ids {
-            self.computer_stop(id);
-        }
+        self.settle_deletion_activity(&ids)
+            .await
+            .inspect_err(|_| self.lift_deletion_fence(&ids))?;
         // SessionEnd is observational and never blocks the deletion it reports.
         self.inner.session_end(&handle, "delete").await;
         self.settle_hook_work(&ids).await;
@@ -104,6 +104,50 @@ impl Runtime {
             self.inner
                 .bus
                 .publish(LiveEvent::Deleted { session_id: id });
+        }
+        Ok(())
+    }
+
+    /// Keep all refusal work before SessionEnd and durable Session deletion.
+    async fn settle_deletion_activity(&self, ids: &[String]) -> Result<(), RuntimeError> {
+        for id in ids {
+            self.computer_stop(id);
+        }
+        for id in ids {
+            let controls = self.inner.cancel_idle_activities(id);
+            self.inner.wait_idle_activities(id, controls).await?;
+        }
+        // Another runtime/process can own a filesystem worker whose Store lock
+        // has not yet been acquired. A missing local control is not settlement.
+        let sources = ids.to_vec();
+        let unresolved = self.inner.store.read(move |db| {
+            for id in sources {
+                let retained: bool = db.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM event e WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.binary_document') IS NOT NULL AND json_extract(data,'$.status')<>'settled' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq))",
+                    [&id], |row| row.get(0))?;
+                if retained { return Ok(true); }
+            }
+            Ok(false)
+        })?;
+        if unresolved {
+            return Err(RuntimeError::Conflict(
+                "Binary filesystem activity requires recovery before Session deletion".into(),
+            ));
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let runtime = self.clone();
+            let doomed = ids.to_vec();
+            let checked = tokio::task::spawn_blocking(move || {
+                runtime.binary_documents().check_session_deletion(&doomed)
+            })
+            .await;
+            if !matches!(checked, Ok(Ok(()))) {
+                return Err(RuntimeError::Conflict(
+                    "Binary drafts or receipts require recovery/discard before Session deletion"
+                        .into(),
+                ));
+            }
         }
         Ok(())
     }

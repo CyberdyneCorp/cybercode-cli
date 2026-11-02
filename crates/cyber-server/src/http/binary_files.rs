@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::request::Parts;
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use cyber_core::binary::{self, Document, Error, Offset, SearchRequest, SearchResult};
@@ -17,12 +17,19 @@ use super::{ApiError, AppState, files};
 use crate::runtime::binary_documents::Entry;
 use crate::runtime::{FileDecision, TurnContext};
 
+#[path = "binary_files/editing.rs"]
+pub(super) mod editing;
+#[path = "binary_files/recovery.rs"]
+pub(super) mod recovery;
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenRequest {
     pub session_id: String,
     pub path: String,
     pub expected_root: Option<String>,
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -64,9 +71,31 @@ pub struct BytePage {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/files/binary/documents", post(open_document))
+        .route("/files/binary/recovery", get(recovery::list))
+        .route(
+            "/files/binary/documents/{id}/recover",
+            post(recovery::recover),
+        )
+        .route(
+            "/files/binary/documents/{id}/operations/{operation}",
+            get(recovery::operation),
+        )
         .route("/files/binary/documents/{id}/bytes", get(bytes))
         .route("/files/binary/documents/{id}/search", post(search))
-        .route("/files/binary/documents/{id}", delete(close))
+        .route(
+            "/files/binary/documents/{id}",
+            get(editing::status).delete(close),
+        )
+        .route(
+            "/files/binary/documents/{id}/prepare",
+            post(editing::prepare),
+        )
+        .route("/files/binary/documents/{id}/patches", post(editing::patch))
+        .route(
+            "/files/binary/documents/{id}/history",
+            post(editing::history),
+        )
+        .route("/files/binary/documents/{id}/review", post(editing::review))
 }
 
 fn refused(error: Error) -> ApiError {
@@ -99,13 +128,13 @@ struct ReadAuthority {
     turn: TurnContext,
     root: PathBuf,
     grant: FileDecision,
+    resource: binary::Resource,
 }
 
 async fn verify_read(
     state: &AppState,
     parts: &Parts,
     authority: &ReadAuthority,
-    path: &FilePath,
 ) -> Result<(), ApiError> {
     let (now, root, _) = files::scope(state, parts, Some(&authority.turn.session_id)).await?;
     let prior = &authority.turn;
@@ -117,11 +146,8 @@ async fn verify_read(
     }
     let decision = state
         .runtime
-        .file_decisions(&now, "read", &[path.to_path_buf()])
-        .await
-        .first()
-        .copied()
-        .unwrap_or(FileDecision::Deny);
+        .binary_file_decision(&now, "read", &authority.resource)
+        .await;
     if decision == FileDecision::Deny
         || (decision == FileDecision::Ask && authority.grant != FileDecision::Ask)
     {
@@ -139,6 +165,26 @@ async fn verify_read(
         );
     }
     Ok(())
+}
+
+async fn permit_read(
+    state: &AppState,
+    turn: &TurnContext,
+    resource: &binary::Resource,
+) -> Result<FileDecision, ApiError> {
+    let decision = state
+        .runtime
+        .binary_file_decision(turn, "read", resource)
+        .await;
+    match decision {
+        FileDecision::Allow | FileDecision::Ask => state
+            .runtime
+            .authorize_binary_read(turn, resource)
+            .await
+            .map(|_| decision)
+            .map_err(|message| files::denied(decision, &message)),
+        _ => Err(files::denied(decision, "Permission denied: read")),
+    }
 }
 
 async fn open_document(
@@ -163,16 +209,21 @@ async fn open_document(
     }
     let at = root.clone();
     let document = work(&state, move || Document::open(&at, &input.path)).await?;
-    let path = document.path();
-    let grant = files::permit(&state, &turn, "read", &path).await?;
-    let authority = ReadAuthority { turn, root, grant };
-    verify_read(&state, &parts, &authority, &path).await?;
+    let resource = document.resource();
+    let grant = permit_read(&state, &turn, &resource).await?;
+    let authority = ReadAuthority {
+        turn,
+        root,
+        grant,
+        resource,
+    };
+    verify_read(&state, &parts, &authority).await?;
     let document = work(&state, move || {
         document.validate()?;
         Ok(document)
     })
     .await?;
-    verify_read(&state, &parts, &authority, &path).await?;
+    verify_read(&state, &parts, &authority).await?;
     let location = LocationInfo::of(FilePath::new(&authority.turn.directory));
     let (document_id, metadata) = state
         .runtime
@@ -182,6 +233,7 @@ async fn open_document(
             authority.turn.directory,
             authority.root,
             document,
+            input.read_only,
         )
         .map_err(refused)?;
     Ok(Json(Located {
@@ -212,10 +264,16 @@ async fn owned(
                 && entry.root == root
         })
         .ok_or_else(|| ApiError::not_found("NotFoundError", "No such binary document"))?;
-    let grant = files::permit(state, &turn, "read", &entry.path).await?;
+    let resource = entry.resource.clone();
+    let grant = permit_read(state, &turn, &resource).await?;
     let location = LocationInfo::of(FilePath::new(&turn.directory));
-    let authority = ReadAuthority { turn, root, grant };
-    verify_read(state, parts, &authority, &entry.path).await?;
+    let authority = ReadAuthority {
+        turn,
+        root,
+        grant,
+        resource,
+    };
+    verify_read(state, parts, &authority).await?;
     Ok((entry, location, authority))
 }
 
@@ -230,16 +288,19 @@ async fn bytes(
         .clone()
         .ok_or_else(|| ApiError::invalid("revision is required"))?;
     let (entry, location, authority) = owned(&state, &parts, &query.session_id, &id).await?;
-    let path = entry.path.clone();
     let data = work(&state, move || {
-        let page = entry.document.lock().map_err(|_| Error::Io)?.page(
+        let mut content = entry.document.lock().map_err(|_| Error::Io)?;
+        content.validate_resource()?;
+        let source = content.metadata().source;
+        let page = content.page(
             &revision,
             query.offset.unwrap_or(Offset(0)),
             query.limit.unwrap_or(binary::DEFAULT_PAGE),
         )?;
+        content.validate_resource()?;
         Ok(BytePage {
             revision,
-            source: binary::Source::Live,
+            source,
             offset: page.offset,
             length: Offset(page.bytes.len() as u64),
             base64: base64::engine::general_purpose::STANDARD.encode(page.bytes),
@@ -248,7 +309,7 @@ async fn bytes(
         })
     })
     .await?;
-    verify_read(&state, &parts, &authority, &path).await?;
+    verify_read(&state, &parts, &authority).await?;
     Ok(Json(Located { location, data }))
 }
 
@@ -259,7 +320,6 @@ async fn search(
     Json(input): Json<SearchBody>,
 ) -> Result<Json<Located<SearchResult>>, ApiError> {
     let (entry, location, authority) = owned(&state, &parts, &input.session_id, &id).await?;
-    let path = entry.path.clone();
     let input = SearchRequest {
         revision: input.revision,
         hex: input.hex,
@@ -268,14 +328,14 @@ async fn search(
     let cancellation = tokio_util::sync::CancellationToken::new();
     let _cancel_on_drop = cancellation.clone().drop_guard();
     let result = work(&state, move || {
-        entry
-            .document
-            .lock()
-            .map_err(|_| Error::Io)?
-            .search(&input, || cancellation.is_cancelled())
+        let mut content = entry.document.lock().map_err(|_| Error::Io)?;
+        content.validate_resource()?;
+        let result = content.search(&input, || cancellation.is_cancelled())?;
+        content.validate_resource()?;
+        Ok(result)
     })
     .await?;
-    verify_read(&state, &parts, &authority, &path).await?;
+    verify_read(&state, &parts, &authority).await?;
     Ok(Json(Located {
         location,
         data: result,

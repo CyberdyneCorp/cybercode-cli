@@ -94,8 +94,8 @@ fn resolve(
 pub(crate) fn binary_edit_boundary(ctx: &Ctx<'_>, path: &Path) -> Result<(), String> {
     let (config, sources) = configuration(ctx)?;
     let sandbox = resolve(ctx, &config, &sources);
-    if sandbox.error.is_some() || sandbox.policy == Policy::ReadOnly {
-        return Err("Binary editing is unavailable under the selected sandbox".into());
+    if sandbox.error.is_some() || sandbox.policy != Policy::WorkspaceWrite {
+        return Err("Binary editing requires an enforced writable workspace sandbox".into());
     }
     let hidden = sandbox
         .deny_read_for(&ctx.location, &ctx.host.opts.home)

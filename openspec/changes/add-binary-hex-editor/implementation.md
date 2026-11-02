@@ -209,13 +209,13 @@ It does not activate a model tool, HTTP mutations or notifications. Private-root
 protection before child launch, owner/model isolation, discard/retention, snapshot
 integration and the acknowledged observation outbox are still required.
 
-### Candidate native storage matrix
+### Native storage matrix (updated after PR #96 merge)
 
 | Platform | Core proof | Production editing admission |
 | --- | --- | --- |
-| macOS/APFS, same filesystem | Native exchange, metadata/xattrs/executable bits and extended ACL, process-death recovery exercised locally | Not activated; integration gates remain |
-| Linux, same filesystem | Native exchange and POSIX ACL/xattr preservation implemented; native CI pending | Not activated; filesystem/platform evidence required |
-| Windows | Private DACL/frozen-base and draft support implemented; native CI pending; no Windows replacement implementation | Viewer remains available; editing unsupported |
+| macOS/APFS, same filesystem | Native exchange, metadata/xattrs/executable bits, extended ACL and process-death proof passed locally and native CI in #96 | Private owner drafts supported in the API follow-up; production save integration remains gated |
+| Linux, same filesystem | Native exchange, POSIX ACL/xattr preservation and process-death proof passed native CI in #96; distinct-filesystem refusal also passed | Private owner drafts supported in the API follow-up; production save integration remains gated |
+| Windows | Private DACL/frozen-base and draft proof passed native CI in #96; no Windows replacement implementation | Viewer remains available; owner editing unsupported |
 | Cross-filesystem or missing exchange/private storage guarantees | Refuse preparation; no copy-and-delete fallback | Unsupported for editing |
 
 Special files, symlink mutation aliases, multi-link targets, read-only targets,
@@ -315,3 +315,56 @@ so an owner operation cannot invoke the Auto-mode classifier. A production App
 regression verifies the exact manual permission request and zero provider requests
 before/after approval. Broad core task items 3.1/3.2 now reflect implemented draft
 and review engines. Save admission and all delivery/integration tasks remain open.
+
+## Owner draft API follow-up
+
+PR #96 merged at `037fdc4b` after all 39 current-head checks passed, including
+Linux/macOS/Windows native proof and the real Linux distinct-filesystem refusal.
+The next increment exposes authenticated owner status, preparation, atomic patches,
+undo/redo/discard, paged byte review, receipt lookup, retained-draft discovery and
+explicit recovery. It does not expose source installation or imply terminal editing.
+
+A recorded canonical resource is used for fresh permissions without resolving a
+later alias into a different policy resource. Parent pins survive live-view disposal
+and recovery. Private journal uncertainty refuses stale reads and receipt absence
+until reopening. Draft search shares the bounded literal engine; wire receipts and
+reviews have platform-independent schemas. Preparing requires enforced workspace
+sandbox isolation, both read/edit admission and immutable per-handle read-only ceilings.
+
+Binary responses bypass generic HTTP idempotency response storage/replay. The SDK
+never automatically retries binary POST transport failures; explicit patch/history
+requests retain their original revision and stable operation ID. Status refreshes
+update handle metadata, and in-flight pages/reviews from superseded generations refuse.
+Closing releases cached state while retaining private commands/receipts. Recovery
+reopens the exact manual Session Location and grants no implicit edit admission.
+Session deletion fences and stops native scopes first, then refuses dirty/unknown,
+locked or corrupt retained journals before SessionEnd, including closed documents.
+
+Filesystem-only workers retain lifecycle, native checkout, workspace/path and
+capacity guards through actual blocking-worker completion after HTTP disposal.
+Their execution settlement is distinct from a document's file-effect receipt; no
+subprocess/hook callback may escape this scope. Runtime tests exercise disposal,
+Stop timeout, shutdown waiting and worker unwind. Restart reconciliation of their
+SQL activity records is still required before production save activation.
+
+Scoped review uses the code-review skill against the final diff, retaining the
+existing Rust core/host/runtime/HTTP layering. Findings addressed include frozen
+permission resources, retained parent identities, stage-byte verification before
+native intent, stale journal disclosure, lost-response retry handling and Session
+orphaning. Clippy supplies the Rust cognitive-complexity gate; the skill's standalone
+analyzers do not support Rust. Platform CI and final check results must be recorded
+at the delivered head. No full editor, save/restore, model, shared binary snapshot,
+FileChanged, terminal-editing or visual/performance acceptance is claimed here.
+
+
+Local checks for the owner API increment: binary core 58 passed (one explicitly
+invoked child helper ignored in the ordinary selection), production App file routes
+23 passed, retained worker/deletion regressions 3 passed, actual text/patch/admission
+regressions 5 passed, hex TUI selection 9 passed, SDK typecheck and 124 unit/mock tests
+passed (10 external tests not run in that selection), affected five-crate library/
+test Clippy passed, formatting/generated source/diff checks passed and strict
+OpenSpec validated all 114 items. Later platform CI remains required. The existing
+macOS native sandbox deprecation and linker messages were observed; no origin is
+assigned without a corresponding main-branch comparison. The CLI read-only flag
+now reaches immutable server admission. Recovery header lookup opens existing
+namespaces only and does not create a document for an absent caller-provided ID.

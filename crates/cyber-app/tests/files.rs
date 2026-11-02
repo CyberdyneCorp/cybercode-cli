@@ -991,3 +991,339 @@ async fn owner_binary_edit_permission_remains_manual_in_auto_mode_without_infere
         [0, 159, 146, 150]
     );
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn binary_owner_drafts_patch_history_review_and_permission_revocation() {
+    use base64::Engine;
+    let f = Fixture::with(json!({"read":"allow", "edit":"allow"})).await;
+    let session = f.session().await;
+    let opened = f.binary(&session, "blob.bin").await;
+    let id = opened["document_id"].as_str().unwrap();
+    let path = format!("/files/binary/documents/{id}");
+    let (code, prepared) = f
+        .send(
+            "POST",
+            &format!("{path}/prepare"),
+            Some(json!({
+                "session_id": session, "revision": opened["revision"]
+            })),
+        )
+        .await;
+    assert_eq!(code, 200, "{prepared}");
+    assert_eq!(prepared["data"]["source"], "draft");
+    assert_eq!(prepared["data"]["prepared"], true);
+    let revision = prepared["data"]["revision"].as_str().unwrap();
+    let batch = json!({"session_id":session, "operation_id":"patch_one", "revision":revision,
+        "splices":[{"offset":"1", "delete_length":"2", "expected_hex":"9f92", "insert_hex":"ff0041"}]});
+    let (code, edited) = f
+        .send("POST", &format!("{path}/patches"), Some(batch.clone()))
+        .await;
+    assert_eq!(code, 200, "{edited}");
+    assert_eq!(edited["data"]["status"]["length"], "5");
+    assert_eq!(edited["data"]["operation"]["file_effect"], "none");
+    let (code, replay) = f
+        .send("POST", &format!("{path}/patches"), Some(batch.clone()))
+        .await;
+    assert_eq!(code, 200, "{replay}");
+    assert_eq!(replay["data"]["operation"], edited["data"]["operation"]);
+    let mut wrong_retry = batch;
+    wrong_retry["splices"][0]["insert_hex"] = json!("aa");
+    assert_eq!(
+        f.send("POST", &format!("{path}/patches"), Some(wrong_retry))
+            .await
+            .0,
+        400
+    );
+    let edited_revision = edited["data"]["status"]["revision"].as_str().unwrap();
+    let (code, page) = f
+        .get(&format!(
+            "{path}/bytes?session_id={session}&revision={edited_revision}"
+        ))
+        .await;
+    assert_eq!(code, 200, "{page}");
+    assert_eq!(page["data"]["source"], "draft");
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(page["data"]["base64"].as_str().unwrap())
+            .unwrap(),
+        [0, 255, 0, 65, 150]
+    );
+    let (code, review) = f
+        .send(
+            "POST",
+            &format!("{path}/review"),
+            Some(json!({"session_id":session,"revision":edited_revision})),
+        )
+        .await;
+    assert_eq!(code, 200, "{review}");
+    assert_eq!(review["data"]["draft"]["proposed_length"], "5");
+    assert_eq!(review["data"]["draft"]["ranges"][0]["before_hex"], "9f92");
+    let (code, undone) = f.send("POST", &format!("{path}/history"), Some(json!({"session_id":session,"revision":edited_revision,"operation_id":"undo_one","action":"undo"}))).await;
+    assert_eq!(code, 200, "{undone}");
+    assert_eq!(undone["data"]["status"]["can_redo"], true);
+    assert_eq!(undone["data"]["status"]["length"], "4");
+    let (code, redone) = f.send("POST", &format!("{path}/history"), Some(json!({"session_id":session,"revision":undone["data"]["status"]["revision"],"operation_id":"redo_one","action":"redo"}))).await;
+    assert_eq!(code, 200, "{redone}");
+    assert_eq!(redone["data"]["status"]["length"], "5");
+    let config_path = f.root.join("config/cyber.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+    config["permissions"] = json!({"read":"allow","edit":"deny"});
+    std::fs::write(&config_path, config.to_string()).unwrap();
+    let discard = json!({"session_id":session,"revision":redone["data"]["status"]["revision"],"operation_id":"discard_one","action":"discard"});
+    assert_eq!(
+        f.send("POST", &format!("{path}/history"), Some(discard.clone()))
+            .await
+            .0,
+        403
+    );
+    config["permissions"] = json!({"read":"allow","edit":"allow"});
+    std::fs::write(config_path, config.to_string()).unwrap();
+    let (code, discarded) = f
+        .send("POST", &format!("{path}/history"), Some(discard))
+        .await;
+    assert_eq!(code, 200, "{discarded}");
+    assert_eq!(discarded["data"]["status"]["dirty"], false);
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+    assert!(
+        f._model.requests().is_empty(),
+        "manual draft editing started inference"
+    );
+}
+
+#[tokio::test]
+async fn binary_http_idempotency_keys_never_replay_private_data_after_read_revocation() {
+    let f = Fixture::with(json!({"read":"allow"})).await;
+    let session = f.session().await;
+    let opened = f.binary(&session, "blob.bin").await;
+    let path = format!(
+        "{}/api/v1/files/binary/documents/{}/search",
+        f.base,
+        opened["document_id"].as_str().unwrap()
+    );
+    let body =
+        json!({"session_id":session,"revision":opened["revision"],"hex":"9f92","offset":"0"});
+    let request = || {
+        f.http
+            .post(&path)
+            .basic_auth("cyber", Some(PASSWORD))
+            .header("x-cyber-directory", f.project.display().to_string())
+            .header("idempotency-key", "binary_search_retry")
+            .json(&body)
+    };
+    let response = request().send().await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["data"]["offsets"],
+        json!(["1"])
+    );
+    let config_path = f.root.join("config/cyber.json");
+    let mut config: Value = serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+    config["permissions"] = json!({"read":"deny"});
+    std::fs::write(config_path, config.to_string()).unwrap();
+    let response = request().send().await.unwrap();
+    assert_eq!(
+        response.status(),
+        403,
+        "keyed search replay bypassed read revocation"
+    );
+    assert!(f._model.requests().is_empty());
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn binary_immutable_read_only_open_refuses_preparation_even_with_edit_allow() {
+    let f = Fixture::with(json!({"read":"allow","edit":"allow"})).await;
+    let session = f.session().await;
+    let (code, opened) = f
+        .send(
+            "POST",
+            "/files/binary/documents",
+            Some(json!({"session_id":session,"path":"blob.bin","read_only":true})),
+        )
+        .await;
+    assert_eq!(code, 200, "{opened}");
+    let (code, result) = f
+        .send(
+            "POST",
+            &format!(
+                "/files/binary/documents/{}/prepare",
+                opened["data"]["document_id"].as_str().unwrap()
+            ),
+            Some(json!({"session_id":session,"revision":opened["data"]["revision"]})),
+        )
+        .await;
+    assert_eq!(code, 403, "{result}");
+    assert_eq!(result["reason"], "binary_read_only");
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn binary_closed_dirty_draft_is_recoverable_and_prevents_session_deletion() {
+    let f = Fixture::with(json!({"read":"allow", "edit":"allow"})).await;
+    let session = f.session().await;
+    let opened = f.binary(&session, "blob.bin").await;
+    let id = opened["document_id"].as_str().unwrap();
+    let path = format!("/files/binary/documents/{id}");
+    let (code, prepared) = f
+        .send(
+            "POST",
+            &format!("{path}/prepare"),
+            Some(json!({"session_id":session,"revision":opened["revision"]})),
+        )
+        .await;
+    assert_eq!(code, 200, "{prepared}");
+    let (code, edited) = f.send("POST", &format!("{path}/patches"), Some(json!({"session_id":session,"revision":prepared["data"]["revision"],"operation_id":"retained_patch","splices":[{"offset":"0","delete_length":"1","expected_hex":"00","insert_hex":"ff"}]}))).await;
+    assert_eq!(code, 200, "{edited}");
+    let revision = edited["data"]["status"]["revision"].clone();
+    assert_eq!(
+        f.send("DELETE", &format!("{path}?session_id={session}"), None)
+            .await
+            .0,
+        200
+    );
+    let (code, refused) = f
+        .send("DELETE", &format!("/sessions/{session}"), None)
+        .await;
+    assert_eq!(code, 409, "{refused}");
+    let (code, listing) = f
+        .get(&format!("/files/binary/recovery?session_id={session}"))
+        .await;
+    assert_eq!(code, 200, "{listing}");
+    assert_eq!(listing["data"]["documents"][0]["document_id"], id);
+    let other = f.session().await;
+    let (code, hidden) = f
+        .get(&format!("/files/binary/recovery?session_id={other}"))
+        .await;
+    assert_eq!(code, 200, "{hidden}");
+    assert_eq!(hidden["data"]["documents"], json!([]));
+    assert_ne!(
+        f.send(
+            "POST",
+            &format!("{path}/recover"),
+            Some(json!({"session_id":other}))
+        )
+        .await
+        .0,
+        200
+    );
+    let (code, recovered) = f
+        .send(
+            "POST",
+            &format!("{path}/recover"),
+            Some(json!({"session_id":session})),
+        )
+        .await;
+    assert_eq!(code, 200, "{recovered}");
+    assert_eq!(recovered["data"]["revision"], revision);
+    assert_eq!(recovered["data"]["dirty"], true);
+    let (code, receipt) = f
+        .get(&format!(
+            "{path}/operations/retained_patch?session_id={session}"
+        ))
+        .await;
+    assert_eq!(code, 200, "{receipt}");
+    assert_eq!(receipt["data"], edited["data"]["operation"]);
+    // Recovery grants reading, never a fresh mutation admission implicitly.
+    let discard = json!({"session_id":session,"revision":revision,"operation_id":"retained_discard","action":"discard"});
+    assert_eq!(
+        f.send("POST", &format!("{path}/history"), Some(discard.clone()))
+            .await
+            .0,
+        403
+    );
+    let (code, prepared) = f
+        .send(
+            "POST",
+            &format!("{path}/prepare"),
+            Some(json!({"session_id":session,"revision":revision})),
+        )
+        .await;
+    assert_eq!(code, 200, "{prepared}");
+    let (code, discarded) = f
+        .send("POST", &format!("{path}/history"), Some(discard))
+        .await;
+    assert_eq!(code, 200, "{discarded}");
+    let (code, result) = f
+        .send("DELETE", &format!("/sessions/{session}"), None)
+        .await;
+    assert_eq!(code, 204, "{result}");
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+    assert!(f._model.requests().is_empty());
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn binary_prepare_rechecks_plan_ceiling_after_manual_permission_wait() {
+    let f = Fixture::with(json!({"read":"allow", "edit":"ask"})).await;
+    let (code, created) = f
+        .send(
+            "POST",
+            "/sessions",
+            Some(json!({"model":"test/main","mode":"auto"})),
+        )
+        .await;
+    assert_eq!(code, 201, "{created}");
+    let session = created["data"]["id"].as_str().unwrap().to_owned();
+    let opened = f.binary(&session, "blob.bin").await;
+    let path = format!(
+        "/files/binary/documents/{}",
+        opened["document_id"].as_str().unwrap()
+    );
+    let request = f.background(
+        "POST",
+        format!("{path}/prepare"),
+        Some(json!({"session_id":session,"revision":opened["revision"]})),
+    );
+    let mut asked = vec![];
+    for _ in 0..500 {
+        asked = pending(&f, &session).await;
+        if !asked.is_empty() || request.is_finished() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(asked[0]["action"], "edit");
+    assert_eq!(asked[0]["metadata"]["requires_confirmation"], true);
+    assert!(f._model.requests().is_empty());
+    let (code, result) = f
+        .send(
+            "POST",
+            &format!("/sessions/{session}/mode"),
+            Some(json!({"mode":"plan"})),
+        )
+        .await;
+    assert_eq!(code, 200, "{result}");
+    f.send(
+        "POST",
+        &format!(
+            "/sessions/{session}/permissions/{}/reply",
+            asked[0]["id"].as_str().unwrap()
+        ),
+        Some(json!({"reply":"once"})),
+    )
+    .await;
+    let (code, refused) = tokio::time::timeout(Duration::from_secs(5), request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(code == 403 || code == 409, "{code}: {refused}");
+    let (_, status) = f.get(&format!("{path}?session_id={session}")).await;
+    assert_eq!(status["data"]["prepared"], false, "{status}");
+    assert_eq!(
+        std::fs::read(f.project.join("blob.bin")).unwrap(),
+        [0, 159, 146, 150]
+    );
+    assert!(f._model.requests().is_empty());
+}

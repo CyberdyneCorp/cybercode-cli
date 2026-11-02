@@ -812,6 +812,9 @@ impl BuiltinHost {
 
     /// Writes to one canonical path are serialized within the server.
     pub(crate) fn path_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+        self.canonical_path_lock(&canonical(path))
+    }
+    fn canonical_path_lock(&self, path: &Path) -> Arc<tokio::sync::Mutex<()>> {
         Arc::clone(
             self.locks
                 .lock()
@@ -935,6 +938,56 @@ impl ToolHost for BuiltinHost {
         cancel: CancellationToken,
     ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(self.authorize_browse(turn, action, path, asker, cancel, Value::Null))
+    }
+
+    fn binary_file_decision<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        action: &'a str,
+        resource: &'a cyber_core::binary::Resource,
+    ) -> BoxFuture<'a, cyber_server::runtime::FileDecision> {
+        Box::pin(self.decide_binary(turn, action, resource))
+    }
+    fn authorize_binary_read<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        resource: &'a cyber_core::binary::Resource,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(self.authorize_browse_path(
+            turn,
+            "read",
+            resource.path(),
+            asker,
+            cancel,
+            serde_json::json!({"requires_confirmation": true}),
+        ))
+    }
+    fn authorize_binary_edit<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        resource: &'a cyber_core::binary::Resource,
+        review: Value,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(self.authorize_browse_path(turn, "edit", resource.path(), asker, cancel, review))
+    }
+
+    fn file_mutation_guard<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        resource: &'a cyber_core::binary::Resource,
+    ) -> BoxFuture<'a, Result<Box<dyn Send>, String>> {
+        Box::pin(async move {
+            let workspace = cyber_server::workspace::mutation_lock(Path::new(&turn.directory))
+                .map_err(|error| error.to_string())?
+                .lock_owned()
+                .await;
+            let path = self.canonical_path_lock(resource.path()).lock_owned().await;
+            Ok(Box::new((workspace, path)) as Box<dyn Send>)
+        })
     }
 
     fn resolve_prompt_resources<'a>(

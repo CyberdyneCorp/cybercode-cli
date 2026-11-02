@@ -57,10 +57,9 @@ fn stricter(a: FileDecision, b: FileDecision) -> FileDecision {
 /// The decision for `action` on `path`, with `external_directory` when the path leaves
 /// the Location.
 fn decide(policy: &Policy, location: &Path, tool: &str, action: &str, path: &Path) -> FileDecision {
-    let path = canonical(path);
     let resource = path
         .strip_prefix(location)
-        .map_or_else(|_| permissions::slash(&path), permissions::slash);
+        .map_or_else(|_| permissions::slash(path), permissions::slash);
     let edit = action == "edit";
     let request = |action: &str, resource: String| Request {
         tool: Some(tool.into()),
@@ -68,7 +67,11 @@ fn decide(policy: &Policy, location: &Path, tool: &str, action: &str, path: &Pat
         resources: vec![resource],
         read_only: !edit,
         file_edit: edit,
-        mutates: if edit { vec![path.clone()] } else { vec![] },
+        mutates: if edit {
+            vec![path.to_path_buf()]
+        } else {
+            vec![]
+        },
         ..Request::default()
     };
     let decision = file_decision(policy.decide(&request(action, resource)));
@@ -76,10 +79,10 @@ fn decide(policy: &Policy, location: &Path, tool: &str, action: &str, path: &Pat
         return decision;
     }
     let dir = if path.is_dir() {
-        path.clone()
+        path.to_path_buf()
     } else {
         path.parent()
-            .map_or_else(|| path.clone(), Path::to_path_buf)
+            .map_or_else(|| path.to_path_buf(), Path::to_path_buf)
     };
     let external = request(
         "external_directory",
@@ -138,14 +141,48 @@ impl BuiltinHost {
                 {
                     return FileDecision::Deny;
                 }
-                decide(&ctx.policy, &location, &inv.name, action, path)
+                decide(&ctx.policy, &location, &inv.name, action, &canonical(path))
             })
             .collect()
+    }
+
+    pub(crate) async fn decide_binary(
+        &self,
+        turn: &TurnContext,
+        action: &str,
+        resource: &cyber_core::binary::Resource,
+    ) -> FileDecision {
+        if !matches!(action, "read" | "edit") {
+            return FileDecision::Deny;
+        }
+        let path = resource.path();
+        let inv = invocation(turn, action, path, Asker::detached());
+        let Ok(ctx) = self.browse_context(&inv, CancellationToken::new()).await else {
+            return FileDecision::Deny;
+        };
+        if crate::sandboxing::hidden(&ctx).denies(path)
+            || (action == "edit" && crate::sandboxing::binary_edit_boundary(&ctx, path).is_err())
+        {
+            return FileDecision::Deny;
+        }
+        decide(&ctx.policy, &ctx.location, &inv.name, action, path)
     }
 
     /// Authorize as the `read` tool does: `external_directory`, then the action, with
     /// permission hooks and the normal request when the rules say `ask`.
     pub(crate) async fn authorize_browse(
+        &self,
+        turn: &TurnContext,
+        action: &str,
+        path: &Path,
+        asker: Asker,
+        cancel: CancellationToken,
+        metadata: Value,
+    ) -> Result<(), String> {
+        self.authorize_browse_path(turn, action, &canonical(path), asker, cancel, metadata)
+            .await
+    }
+    pub(crate) async fn authorize_browse_path(
         &self,
         turn: &TurnContext,
         action: &str,
@@ -167,7 +204,7 @@ impl BuiltinHost {
         }
         let inv = invocation(turn, action, path, asker);
         let ctx = self.browse_context(&inv, cancel).await?;
-        let path = canonical(path);
+        let path = path.to_path_buf();
         let resource = ctx.resource(&path);
         let request = Request {
             action: action.into(),
@@ -182,6 +219,7 @@ impl BuiltinHost {
             ..Request::default()
         };
         let outcome = async {
+            crate::sandboxing::refuse_hidden(&ctx, &[&path]).await?;
             if action == "edit" {
                 crate::sandboxing::binary_edit_boundary(&ctx, &path).map_err(ToolError::Failed)?;
                 ctx.check_external_writes(std::slice::from_ref(&path))

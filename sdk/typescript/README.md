@@ -27,7 +27,31 @@ try {
 Offsets are `bigint` or canonical decimal strings. Pages are bounded and verified
 against their returned revision, offset, length and SHA-256; these are live
 observations, not immutable whole-file snapshots. Owner/Session/Location and read
-rules apply. Editing and save/recovery remain unfinished; see the
+rules apply. Admitted Linux/macOS workspaces also support private draft operations:
+
+```ts
+const draft = await client.binary.open(session.id, "fixtures/header.bin");
+await draft.prepare(); // explicit edit admission; source bytes stay unchanged
+const batch = {
+  revision: draft.metadata.revision,
+  splices: [{ offset: "0", delete_length: "1", expected_hex: "00", insert_hex: "ff" }],
+};
+await draft.patch("patch_header_1", batch);
+const review = await draft.review();
+console.log(review.draft.ranges);
+// Use the same operation ID AND original batch for an explicit retry.
+const receipt = await draft.operation("patch_header_1");
+await draft.history("discard_header_1", { revision: draft.metadata.revision, action: "discard" });
+```
+
+`status()` refreshes the handle's metadata; responses from superseded byte reads
+are rejected. `history()` supports `undo`, `redo` and `discard`. Closing keeps private
+drafts; `client.fs.binaryRecovery({ session_id: session.id })` discovers
+them and `client.binary.recover(session.id, documentID)` reopens one. Recovery needs
+fresh read authority; call `prepare()` again before editing. Open/recover accepts
+`{ readOnly: true }` as an immutable handle ceiling. Binary POST transport failures
+are not automatically retried: query the stable operation receipt and refresh status
+before choosing an explicit retry. Production save/restore remain unfinished; see the
 [binary workspace guide](../../docs/binary-editor.md).
 
 ## Connecting

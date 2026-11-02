@@ -3,13 +3,12 @@
 //! A native intent is never automatically re-executed after interruption.
 use super::{
     Document, Error, Offset,
-    draft::{Draft, DraftState, ImmutableBase, PatchBatch, Review},
+    draft::{Draft, DraftState, ImmutableBase, PatchBatch},
     native::{self, Target},
     storage::{Base, Store},
 };
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::OpenOptions;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::File;
@@ -40,41 +39,8 @@ pub enum DraftScope {
     Manual,
     Model { operation: String },
 }
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Outcome {
-    Acknowledged,
-    Conflict,
-    Unknown,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum FileEffect {
-    None,
-    Changed,
-    Unknown,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Operation {
-    pub id: String,
-    pub kind: String,
-    pub payload_sha256: String,
-    pub outcome: Outcome,
-    pub revision: String,
-    pub file_effect: FileEffect,
-    pub reason: Option<String>,
-    pub notification_pending: bool,
-}
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct SaveReview {
-    pub draft: Review,
-    pub permissions: u32,
-    pub owner_uid: u32,
-    pub owner_gid: u32,
-    pub metadata_sha256: String,
-    pub effects: String,
-    pub fingerprint: String,
-}
+pub use super::receipts::{FileEffect, Operation, Outcome, SaveReview};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BaseRef {
@@ -125,6 +91,7 @@ struct Record {
 }
 pub struct Editor {
     store: Store,
+    _pins: native::Pins,
     draft: Draft<Base>,
     record: Record,
 }
@@ -207,14 +174,17 @@ impl Editor {
             return Err(Error::File);
         }
         // Never replace an existing document, including one with unresolved evidence.
-        if store.directory().symlink_metadata("document.json").is_ok() {
-            return Err(Error::Changed);
+        match store.directory().symlink_metadata("document.json") {
+            Ok(_) => return Err(Error::Changed),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(Error::Io),
         }
         catalog::publish_header(&mut store, &owner, document)?;
         let (base, target) = document.prepare(&store, cancelled)?;
         if target.root != owner.root {
             return Err(Error::File);
         }
+        let pins = document.retain_pins()?;
         let draft = Draft::new(base)?;
         let record = Record {
             version: 1,
@@ -229,6 +199,7 @@ impl Editor {
         persist(&mut store, &record)?;
         Ok(Self {
             store,
+            _pins: pins,
             draft,
             record,
         })
@@ -243,9 +214,11 @@ impl Editor {
         {
             return Err(Error::File);
         }
+        let pins = record.target.pins()?;
         let draft = Draft::resume(record.base.open(&store)?, record.draft.clone())?;
         Ok(Self {
             store,
+            _pins: pins,
             draft,
             record,
         })
@@ -253,12 +226,28 @@ impl Editor {
     pub fn draft(&self) -> &Draft<Base> {
         &self.draft
     }
+    /// Refuse stale in-memory draft disclosure after an uncertain journal write.
+    pub fn validate_read_resource(&self) -> Result<(), Error> {
+        self.store.validate()?;
+        self.record.target.validate_read_resource()
+    }
+    pub fn resource(&self) -> super::Resource {
+        super::Resource(self.record.target.root.join(&self.record.target.relative))
+    }
+
     pub fn target(&self) -> &Target {
         &self.record.target
     }
     pub fn owner(&self) -> &Owner {
         &self.record.owner
     }
+    pub fn pending_operation(&self) -> Option<Operation> {
+        self.record
+            .pending
+            .as_ref()
+            .and_then(|pending| self.operation(&pending.operation.id))
+    }
+
     pub fn unresolved(&self) -> bool {
         self.record.pending.is_some()
     }
@@ -268,6 +257,12 @@ impl Editor {
             return Err(Error::Changed);
         }
         Ok(())
+    }
+    /// A fenced/uncertain journal must be reopened before absence can be asserted.
+    pub fn lookup_operation(&self, id: &str) -> Result<Option<Operation>, Error> {
+        self.store.validate()?;
+        operation_id(id)?;
+        Ok(self.operation(id))
     }
     pub fn operation(&self, id: &str) -> Option<Operation> {
         self.record
@@ -556,6 +551,14 @@ impl Editor {
             );
         }
         self.store.validate()?;
+        let stage = stage_file(&self.store, &prepared.intent.stage)?;
+        if native::id(&stage)? != prepared.intent.after.file
+            || native::metadata(&stage)? != prepared.intent.after.metadata
+            || stage.metadata().map_err(|_| Error::Io)?.len() != prepared.intent.after.length.0
+            || native::content(&stage, &cancelled)? != prepared.intent.new_base.sha256
+        {
+            return Err(Error::Changed);
+        }
         if cancelled() {
             return Err(Error::Cancelled);
         }
@@ -602,9 +605,9 @@ impl Editor {
             if native::generation(&displaced)? != displaced_stamp {
                 return Err(Error::Changed);
             }
-            Ok(installed_target)
+            Ok((installed_target, installed))
         })();
-        let installed_target = match verified {
+        let (installed_target, installed_pin) = match verified {
             Ok(target) => target,
             Err(_) => return Ok(unknown),
         };
@@ -647,6 +650,7 @@ impl Editor {
         }
         self.record = next;
         self.draft = draft;
+        self._pins._file = Some(installed_pin);
         Ok(operation)
     }
     /// Called only after the runtime durably publishes the acknowledged observation.
@@ -722,6 +726,112 @@ mod tests {
             _ => panic!("new save must prepare"),
         }
     }
+    #[test]
+    fn prepared_editors_keep_native_source_and_directory_pins_after_the_live_view_is_dropped() {
+        use std::os::unix::fs::MetadataExt;
+        let (_root, editor, _path, owner) = setup();
+        let original_root = editor.target().parents[0].clone();
+        let original_file = editor.target().file.clone();
+        std::fs::remove_dir_all(&owner.root).unwrap();
+        std::fs::create_dir(&owner.root).unwrap();
+        std::fs::write(owner.root.join("bytes"), b"replacement").unwrap();
+        assert_eq!(
+            native::id(&editor._pins._directories[0]).unwrap(),
+            original_root
+        );
+        let source = editor._pins._file.as_ref().unwrap();
+        assert_eq!(native::id(source).unwrap(), original_file);
+        assert_eq!(source.metadata().unwrap().nlink(), 0);
+        assert!(editor.target().validate_read_resource().is_err());
+    }
+
+    #[test]
+    fn uncertain_draft_publication_refuses_stale_reads_and_receipt_absence_until_reopen() {
+        let (root, mut editor, path, owner) = setup();
+        let batch = PatchBatch {
+            revision: editor.draft().revision(),
+            splices: vec![crate::binary::draft::Splice {
+                offset: Offset(0),
+                delete_length: Offset(1),
+                expected_hex: "6f".into(),
+                insert_hex: "ff".into(),
+            }],
+        };
+        editor.store.fail_after_publication = Some(editor.store.publications + 1);
+        assert!(editor.patch("patch_uncertain", &batch).is_err());
+        assert!(editor.validate_read_resource().is_err());
+        assert!(editor.lookup_operation("patch_uncertain").is_err());
+        assert!(editor.lookup_operation("never_seen").is_err());
+        drop(editor);
+        let resumed = Editor::resume(
+            Store::open(&root.path().join("data"), "bin_one").unwrap(),
+            &owner,
+        )
+        .unwrap();
+        resumed.validate_read_resource().unwrap();
+        assert_eq!(
+            resumed
+                .lookup_operation("patch_uncertain")
+                .unwrap()
+                .unwrap()
+                .outcome,
+            Outcome::Acknowledged
+        );
+        assert!(resumed.lookup_operation("never_seen").unwrap().is_none());
+        assert_eq!(resumed.draft().read(0, 1).unwrap(), [255]);
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
+    }
+
+    #[test]
+    fn recovered_editor_retains_all_parent_pins_across_later_directory_removal() {
+        let (root, editor, _path, owner) = setup();
+        drop(editor);
+        std::fs::create_dir(owner.root.join("nested")).unwrap();
+        std::fs::write(owner.root.join("nested/bytes"), [0, 255]).unwrap();
+        let mut doc = Document::open(&owner.root, "nested/bytes").unwrap();
+        let editor = Editor::create(
+            Store::open(&root.path().join("data"), "bin_nested").unwrap(),
+            owner.clone(),
+            &mut doc,
+            || false,
+        )
+        .unwrap();
+        drop((doc, editor));
+        let editor = Editor::resume(
+            Store::open(&root.path().join("data"), "bin_nested").unwrap(),
+            &owner,
+        )
+        .unwrap();
+        assert_eq!(editor._pins._directories.len(), 2);
+        let original = editor.target().parents[1].clone();
+        std::fs::remove_dir_all(owner.root.join("nested")).unwrap();
+        std::fs::create_dir(owner.root.join("nested")).unwrap();
+        assert_eq!(native::id(&editor._pins._directories[1]).unwrap(), original);
+        let replacement = cap_std::fs::Dir::open_ambient_dir(
+            owner.root.join("nested"),
+            cap_std::ambient_authority(),
+        )
+        .unwrap();
+        assert_ne!(native::id(&replacement.into_std_file()).unwrap(), original);
+        assert!(editor.validate_read_resource().is_err());
+    }
+
+    #[test]
+    fn changed_replacement_bytes_are_refused_before_intent_or_source_effects() {
+        let (root, mut editor, path, _owner) = setup();
+        patch(&mut editor, "patch_replacement");
+        let prepared = ready(&mut editor, "save_replacement");
+        let stage = root
+            .path()
+            .join("data/binary/bin_one")
+            .join(&prepared.intent.stage);
+        std::fs::write(stage, [9; 4]).unwrap();
+        assert!(matches!(editor.commit_save(*prepared), Err(Error::Changed)));
+        assert!(!editor.unresolved());
+        assert!(editor.operation("save_replacement").is_none());
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
+    }
+
     #[test]
     fn creating_a_document_cannot_bind_a_different_owner_location() {
         let (root, _editor, path, mut owner) = setup();
@@ -1099,6 +1209,38 @@ mod tests {
             result.revision
         );
         assert_eq!(editor.record.operations.len(), 1);
+    }
+    #[test]
+    fn preparation_accepts_direct_dot_paths_but_not_parent_traversal() {
+        let (root, editor, path, owner) = setup();
+        drop(editor);
+        assert!(Document::open(&owner.root, path.to_str().unwrap()).is_err());
+        {
+            let id = "bin_dot";
+            let requested = format!("./{}", path.file_name().unwrap().to_str().unwrap());
+            let mut doc = Document::open(&owner.root, &requested).unwrap();
+            let editor = Editor::create(
+                Store::open(&root.path().join("data"), id).unwrap(),
+                owner.clone(),
+                &mut doc,
+                || false,
+            )
+            .unwrap();
+            assert_eq!(editor.resource().path(), path.canonicalize().unwrap());
+        }
+        std::fs::create_dir(owner.root.join("nested")).unwrap();
+        let requested = format!("nested/../{}", path.file_name().unwrap().to_str().unwrap());
+        let mut doc = Document::open(&owner.root, &requested).unwrap();
+        assert!(
+            Editor::create(
+                Store::open(&root.path().join("data"), "bin_parent").unwrap(),
+                owner,
+                &mut doc,
+                || false
+            )
+            .is_err()
+        );
+        assert_eq!(std::fs::read(path).unwrap(), b"original");
     }
     #[test]
     fn source_aliases_and_wrong_session_cannot_prepare_or_resume_mutation() {

@@ -81,7 +81,7 @@ For independent patch attempts, host-recorded tests and a separate read-only jud
 
 Experimental [native computer use](docs/computer-use.md) adds macOS 14+ application/display screenshots and input with expiring owner grants, CLI/browser owner controls, private evidence and emergency Stop. Off by default; controlled macOS capture, input and Stop acceptance passed. Other layouts and signed distribution remain release checks.
 
-The [binary workspace](docs/binary-editor.md) provides read-only, paged hex/ASCII viewing, literal hex/UTF-8 search, exact goto, bookmarks, byte copying and an LE/BE inspector. Open it with `cyber hex <path>`, `/hex <path>`, or `x` on an explorer file, without starting inference. Session read permissions apply. Staged editing, draft undo/redo, recoverable saves, model binary operations and snapshot/hooks integration remain tracked in [#94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94).
+The [binary workspace](docs/binary-editor.md) provides read-only, paged hex/ASCII viewing, literal hex/UTF-8 search, exact goto, bookmarks, byte copying and an LE/BE inspector. Open it with `cyber hex <path>`, `/hex <path>`, or `x` on an explorer file, without starting inference. Session read permissions apply. The owner API/SDK also supports private staged edits, draft undo/redo, byte review and recovery on admitted Linux/macOS workspaces. Terminal editing, production saves, model binary operations and snapshot/hooks integration remain tracked in [#94](https://github.com/CyberdyneCorp/cybercode-cli/issues/94).
 
 ![Binary hex workspace with a shared hex/ASCII cursor and little-endian byte inspector](docs/screenshots/binary-hex.png)
 

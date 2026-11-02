@@ -14817,6 +14817,10 @@
               "string",
               "null"
             ]
+          },
+          "read_only": {
+            "type": "boolean",
+            "default": false
           }
         },
         "required": [
@@ -14854,7 +14858,7 @@
           },
           "revision": {
             "type": "string",
-            "description": "Observed metadata generation, not an immutable whole-file content digest."
+            "description": "Live observation or draft revision; never a whole-file content digest."
           },
           "source": {
             "$ref": "#/components/schemas/Source2"
@@ -14879,7 +14883,8 @@
       "Source2": {
         "type": "string",
         "enum": [
-          "live"
+          "live",
+          "draft"
         ]
       },
       "Located_BytePage": {
@@ -15009,6 +15014,566 @@
           "offsets",
           "scanned"
         ]
+      },
+      "Located_BinaryStatus": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/BinaryStatus"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "BinaryStatus": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "revision": {
+            "type": "string",
+            "description": "Live observation or draft revision; never a whole-file content digest."
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source2"
+          },
+          "within_edit_size_limit": {
+            "type": "boolean"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "prepared": {
+            "type": "boolean"
+          },
+          "dirty": {
+            "type": "boolean"
+          },
+          "can_undo": {
+            "type": "boolean"
+          },
+          "can_redo": {
+            "type": "boolean"
+          },
+          "base_sha256": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pending_operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BinaryOperation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "edit_supported": {
+            "type": "boolean"
+          },
+          "edit_decision": {
+            "$ref": "#/components/schemas/FileDecision"
+          }
+        },
+        "required": [
+          "path",
+          "length",
+          "revision",
+          "source",
+          "within_edit_size_limit",
+          "read_only",
+          "prepared",
+          "dirty",
+          "can_undo",
+          "can_redo",
+          "edit_supported",
+          "edit_decision"
+        ]
+      },
+      "BinaryOperation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "payload_sha256": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/BinaryOutcome"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "file_effect": {
+            "$ref": "#/components/schemas/BinaryFileEffect"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notification_pending": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "payload_sha256",
+          "outcome",
+          "revision",
+          "file_effect",
+          "notification_pending"
+        ]
+      },
+      "BinaryOutcome": {
+        "type": "string",
+        "enum": [
+          "acknowledged",
+          "conflict",
+          "unknown"
+        ]
+      },
+      "BinaryFileEffect": {
+        "type": "string",
+        "enum": [
+          "none",
+          "changed",
+          "unknown"
+        ]
+      },
+      "BinaryPrepareRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "revision"
+        ]
+      },
+      "BinaryPatchRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "splices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BinarySplice"
+            }
+          }
+        },
+        "required": [
+          "session_id",
+          "operation_id",
+          "revision",
+          "splices"
+        ]
+      },
+      "BinarySplice": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "offset": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "delete_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "expected_hex": {
+            "type": "string"
+          },
+          "insert_hex": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "offset",
+          "delete_length",
+          "expected_hex",
+          "insert_hex"
+        ]
+      },
+      "Located_BinaryEdited": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/BinaryEdited"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "BinaryEdited": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "$ref": "#/components/schemas/BinaryOperation"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BinaryStatus"
+          }
+        },
+        "required": [
+          "operation",
+          "status"
+        ]
+      },
+      "BinaryHistoryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/BinaryHistoryAction"
+          }
+        },
+        "required": [
+          "session_id",
+          "operation_id",
+          "revision",
+          "action"
+        ]
+      },
+      "BinaryHistoryAction": {
+        "type": "string",
+        "enum": [
+          "undo",
+          "redo",
+          "discard"
+        ]
+      },
+      "BinaryReviewRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "start": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "session_id",
+          "revision"
+        ]
+      },
+      "Located_BinarySaveReview": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/BinarySaveReview"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "BinarySaveReview": {
+        "type": "object",
+        "properties": {
+          "draft": {
+            "$ref": "#/components/schemas/BinaryReview"
+          },
+          "permissions": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "owner_uid": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "owner_gid": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "metadata_sha256": {
+            "type": "string"
+          },
+          "effects": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft",
+          "permissions",
+          "owner_uid",
+          "owner_gid",
+          "metadata_sha256",
+          "effects",
+          "fingerprint"
+        ]
+      },
+      "BinaryReview": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "string"
+          },
+          "base_sha256": {
+            "type": "string"
+          },
+          "proposed_sha256": {
+            "type": "string"
+          },
+          "base_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "proposed_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "original_bytes": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "proposed_bytes": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "range_count": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "ranges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BinaryChangeRange"
+            }
+          },
+          "next_range": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint",
+            "minimum": 0
+          },
+          "fingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "base_sha256",
+          "proposed_sha256",
+          "base_length",
+          "proposed_length",
+          "original_bytes",
+          "proposed_bytes",
+          "range_count",
+          "ranges",
+          "fingerprint"
+        ]
+      },
+      "BinaryChangeRange": {
+        "type": "object",
+        "properties": {
+          "original_offset": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "original_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "draft_offset": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "draft_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "before_sha256": {
+            "type": "string"
+          },
+          "after_sha256": {
+            "type": "string"
+          },
+          "before_hex": {
+            "type": "string"
+          },
+          "after_hex": {
+            "type": "string"
+          },
+          "preview_truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "original_offset",
+          "original_length",
+          "draft_offset",
+          "draft_length",
+          "before_sha256",
+          "after_sha256",
+          "before_hex",
+          "after_hex",
+          "preview_truncated"
+        ]
+      },
+      "Located_BinaryRecoveryList": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/BinaryRecoveryList"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "BinaryRecoveryList": {
+        "type": "object",
+        "properties": {
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BinaryRecoveryEntry"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "documents"
+        ]
+      },
+      "BinaryRecoveryEntry": {
+        "type": "object",
+        "properties": {
+          "document_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "record_available": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "document_id",
+          "path",
+          "record_available"
+        ]
+      },
+      "BinaryRecoverRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "session_id"
+        ]
+      },
+      "Located_Nullable_BinaryOperation": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BinaryOperation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "description": "A Location-scoped response."
       },
       "Data_boolean": {
         "type": "object",
@@ -28865,7 +29430,7 @@
     "/api/v1/files/binary/documents/{id}/search": {
       "post": {
         "operationId": "v1.fs.binarySearch",
-        "summary": "Search live bytes with bounded scanning and revision-bound continuation",
+        "summary": "Search live or draft bytes with bounded scanning and revision-bound continuation",
         "tags": [
           "fs"
         ],
@@ -28938,6 +29503,69 @@
       }
     },
     "/api/v1/files/binary/documents/{id}": {
+      "get": {
+        "operationId": "v1.fs.binaryStatus",
+        "summary": "Read current binary draft status under fresh owner authority",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BinaryStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "operationId": "v1.fs.binaryClose",
         "summary": "Close a Session-owned live binary view",
@@ -28977,6 +29605,527 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_boolean"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}/prepare": {
+      "post": {
+        "operationId": "v1.fs.binaryPrepare",
+        "summary": "Prepare a durable private draft after manual edit admission; no source mutation",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BinaryStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinaryPrepareRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}/patches": {
+      "post": {
+        "operationId": "v1.fs.binaryPatch",
+        "summary": "Apply an atomic expected-byte splice batch with a stable operation ID",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BinaryEdited"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinaryPatchRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}/history": {
+      "post": {
+        "operationId": "v1.fs.binaryHistory",
+        "summary": "Undo, redo or discard local draft commands without changing the source",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BinaryEdited"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinaryHistoryRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}/review": {
+      "post": {
+        "operationId": "v1.fs.binaryReview",
+        "summary": "Review original-offset byte ranges and full fingerprints; no source mutation",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BinarySaveReview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinaryReviewRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/recovery": {
+      "get": {
+        "operationId": "v1.fs.binaryRecovery",
+        "summary": "Discover retained manual drafts in the exact Session Location",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BinaryRecoveryList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}/recover": {
+      "post": {
+        "operationId": "v1.fs.binaryRecover",
+        "summary": "Explicitly reopen a retained private draft; never replay a save or grant mutation authority",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BinaryStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinaryRecoverRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/documents/{id}/operations/{operation}": {
+      "get": {
+        "operationId": "v1.fs.binaryOperation",
+        "summary": "Query the durable receipt; absence is refused while journal storage is fenced",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Nullable_BinaryOperation"
                 }
               }
             }

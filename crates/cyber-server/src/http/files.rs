@@ -103,7 +103,7 @@ fn refused(refusal: Refusal) -> ApiError {
     }
 }
 
-fn denied(decision: FileDecision, message: &str) -> ApiError {
+pub(super) fn denied(decision: FileDecision, message: &str) -> ApiError {
     let decision = match decision {
         FileDecision::Allow => "allow",
         FileDecision::Ask => "ask",

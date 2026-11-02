@@ -121,6 +121,20 @@ impl StorageRoot {
         }
         Ok(store)
     }
+    /// Recovery must never allocate a document namespace for an absent ID.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub fn open_existing(&self, id: &str) -> Result<Store, Error> {
+        component(id)?;
+        let root = self.directory()?.try_clone().map_err(|_| Error::Io)?;
+        let dir = root.open_dir_nofollow(id).map_err(|_| Error::File)?;
+        private(
+            &root,
+            &dir.try_clone().map_err(|_| Error::Io)?.into_std_file(),
+            true,
+        )?;
+        let data = open_data_directory(&self.data)?;
+        Store::locked(self.data.clone(), data, root, dir, id)
+    }
     /// A writable project containing private storage could rename or inspect the
     /// staging directory under its filesystem grant. Such editing is unsupported.
     pub fn admit_project(&self, project: &Path) -> Result<(), Error> {
@@ -396,6 +410,9 @@ impl Store {
         component(id)?;
         let (data_path, data, root) = open_root(data)?;
         let dir = child(&root, id)?;
+        Self::locked(data_path, data, root, dir, id)
+    }
+    fn locked(data_path: PathBuf, data: Dir, root: Dir, dir: Dir, id: &str) -> Result<Self, Error> {
         #[cfg(windows)]
         let lock = {
             let owner = dir.try_clone().map_err(|_| Error::Io)?.into_std_file();

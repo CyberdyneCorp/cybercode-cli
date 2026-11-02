@@ -373,6 +373,43 @@ impl ToolHost for AppHost {
             .authorize_file(turn, action, path, asker, cancel)
     }
 
+    fn binary_file_decision<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        action: &'a str,
+        resource: &'a cyber_core::binary::Resource,
+    ) -> BoxFuture<'a, cyber_server::runtime::FileDecision> {
+        self.builtin.binary_file_decision(turn, action, resource)
+    }
+    fn authorize_binary_read<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        resource: &'a cyber_core::binary::Resource,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        self.builtin
+            .authorize_binary_read(turn, resource, asker, cancel)
+    }
+    fn authorize_binary_edit<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        resource: &'a cyber_core::binary::Resource,
+        review: serde_json::Value,
+        asker: cyber_server::runtime::Asker,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        self.builtin
+            .authorize_binary_edit(turn, resource, review, asker, cancel)
+    }
+    fn file_mutation_guard<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        resource: &'a cyber_core::binary::Resource,
+    ) -> BoxFuture<'a, Result<Box<dyn Send>, String>> {
+        self.builtin.file_mutation_guard(turn, resource)
+    }
+
     fn resolve_prompt_resources<'a>(
         &'a self,
         turn: &'a TurnContext,
