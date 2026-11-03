@@ -24,6 +24,7 @@ Defines the built-in tools Cyber Code exposes to models: parameters, limits, per
 - `list_sessions`, `send_message`, `watch_session` (cross-session-messaging)
 - `channel_reply` (channels)
 - `memory` (memory)
+- `binary` (binary-editing)
 - `wait_for_mcp`, `mcp_list_resources`, `mcp_list_resource_templates`, `mcp_read_resource` (mcp)
 - `publish_artifact` (session-sharing)
 - `advisor` (provider-catalog)

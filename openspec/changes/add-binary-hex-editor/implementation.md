@@ -647,3 +647,12 @@ retention/checkpoint/rewind adapters, remaining UI recovery/accessibility and na
 performance/platform acceptance remain open. No external provider was called by
 these model-tool tests. Linux and Windows verification for this follow-up must come
 from CI; local verification is macOS only.
+
+
+CI follow-up, 2026-11-03: Linux/macOS Rust and Windows build failed the
+canonical tool-registry/golden coverage checks because the new tool was listed only
+in the active proposal catalog and lacked a golden fixture. The canonical catalog
+now lists the implemented tool. A real Plan-mode binary read golden retains bytes,
+bounds, fingerprint and source metadata, normalizing only the live revision and
+JSON key order. All 14 golden tests and strict OpenSpec validation (114 items)
+passed locally. Cross-platform CI must verify the corrected head before merge.
