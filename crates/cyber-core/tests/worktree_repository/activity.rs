@@ -2,6 +2,31 @@ use super::*;
 use cyber_core::worktrees::CheckoutActivity;
 
 #[test]
+fn binary_worker_retains_an_independent_checkout_lease_through_source_commit() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("binary-worker").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let actor = block_on(repository.claim(&fixture.execution, &managed, "ses_actor")).unwrap();
+    assert!(block_on(repository.claim_binary(&fixture.execution, &managed, "ses_actor")).is_err());
+    let worker =
+        block_on(repository.claim_binary(&fixture.execution, &managed, "bin_worker")).unwrap();
+    actor.settle().unwrap();
+    let retained = worker.settle_retained().unwrap();
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    drop(retained);
+    block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false)).unwrap();
+}
+
+#[test]
 fn lsp_owner_remains_independent_and_excludes_removal_through_retained_settlement() {
     let fixture = Fixture::new();
     let repository = fixture.repository();

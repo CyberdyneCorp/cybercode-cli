@@ -1112,3 +1112,84 @@ async fn builtin_read_cannot_obtain_owner_api_password() {
         .contains("OWNER_PUBLIC_CONTROL")
     );
 }
+
+#[tokio::test]
+async fn binary_model_reads_inspects_and_searches_exact_bytes_in_plan_without_text_edits() {
+    use sha2::{Digest, Sha256};
+    let f = Fixture::new();
+    let bytes: Vec<u8> = (0..=255).collect();
+    std::fs::write(f.repo.join("bytes.bin"), &bytes).unwrap();
+    *f.config.lock().unwrap() = json!({"permissions":{"read":"allow"}});
+    assert!(
+        f.tool_names("plan", false)
+            .iter()
+            .any(|name| name == "binary")
+    );
+    let inspect: serde_json::Value = serde_json::from_str(&ok(f
+        .call(
+            "plan",
+            "binary",
+            json!({"operation":"inspect","path":"bytes.bin"}),
+        )
+        .await))
+    .unwrap();
+    assert_eq!(
+        inspect["base_sha256"],
+        format!("{:x}", Sha256::digest(&bytes))
+    );
+    let read:serde_json::Value=serde_json::from_str(&ok(f.call("plan","binary",json!({"operation":"read","path":"bytes.bin","offset":"0","limit":256,"revision":inspect["metadata"]["revision"]})).await)).unwrap();
+    assert_eq!(
+        read["hex"],
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    );
+    assert_eq!(read["length"], "256");
+    assert!(!read["ascii"].as_str().unwrap().contains('\x1b'));
+    let search: serde_json::Value = serde_json::from_str(&ok(f
+        .call(
+            "plan",
+            "binary",
+            json!({"operation":"search","path":"bytes.bin","hex":"feff","offset":"0"}),
+        )
+        .await))
+    .unwrap();
+    assert_eq!(search["result"]["offsets"], json!(["254"]));
+    for input in [
+        json!({"operation":"read","path":"bytes.bin","offset":1}),
+        json!({"operation":"read","path":"bytes.bin","offset":"01"}),
+        json!({"operation":"read","path":"bytes.bin","limit":4097}),
+        json!({"operation":"read","path":"bytes.bin","revision":"stale"}),
+    ] {
+        assert!(matches!(
+            f.call("plan", "binary", input).await,
+            ToolOutcome::Failed(_)
+        ));
+    }
+    *f.config.lock().unwrap() = json!({"permissions":{"read":"deny","edit":"allow"}});
+    assert!(
+        !f.tool_names("default", false)
+            .iter()
+            .any(|name| name == "binary")
+    );
+    let denied = failed(
+        f.call(
+            "default",
+            "binary",
+            json!({"operation":"read","path":"bytes.bin"}),
+        )
+        .await,
+    );
+    assert!(!denied.contains(read["hex"].as_str().unwrap()));
+    std::fs::write(f.dir.path().join("outside.bin"), b"private outside").unwrap();
+    *f.config.lock().unwrap() =
+        json!({"permissions":{"read":"allow","external_directory":"allow"}});
+    assert!(matches!(
+        f.call(
+            "default",
+            "binary",
+            json!({"operation":"read","path":f.dir.path().join("outside.bin")})
+        )
+        .await,
+        ToolOutcome::Failed(_)
+    ));
+    assert_eq!(std::fs::read(f.repo.join("bytes.bin")).unwrap(), bytes);
+}

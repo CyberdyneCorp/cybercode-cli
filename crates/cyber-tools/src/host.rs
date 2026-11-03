@@ -1333,6 +1333,15 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.claim_worktree_location(info, creating, cancel))
     }
 
+    fn claim_binary_location<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        document: &'a str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        Box::pin(self.claim_binary_worktree_location(info, document, cancel))
+    }
+
     fn prepare_child_continuation<'a>(
         &'a self,
         parent: &'a cyber_server::runtime::SessionInfo,
@@ -1858,7 +1867,7 @@ fn offered(
     let by_mode = match (mode, name) {
         (Mode::Plan, "write" | "plan_exit" | "todo" | "skill" | "notify") => true,
         (Mode::Plan, "plan_enter") => false,
-        (Mode::Plan, "computer") => true,
+        (Mode::Plan, "computer" | "binary") => true,
         (Mode::Plan, _) => safety == cyber_server::runtime::RetrySafety::ReadOnly,
         (_, "plan_exit") => false,
         _ => true,
@@ -2231,6 +2240,45 @@ impl Ctx<'_> {
             Some(reason) => Err(self.denied(&req, "rule", deny_message(&reason)).await),
             None => Ok(()),
         }
+    }
+
+    pub(crate) async fn verify_binary_read(&self, path: &Path) -> Result<(), ToolError> {
+        if self.cancel.is_cancelled() {
+            return Err(ToolError::Aborted);
+        }
+        let profile = self
+            .host
+            .agent_profile(&self.location, &self.inv.agent)
+            .map_err(tools::failed)?;
+        if !profile_allows_tool(&profile, "binary") {
+            return Err(tools::failed(
+                "Binary tool is no longer allowed for this agent",
+            ));
+        }
+        if crate::sandboxing::hidden(self).denies(path) {
+            return Err(tools::failed("Binary source is no longer readable"));
+        }
+        let request = Request {
+            tool: Some(self.inv.name.clone()),
+            action: "read".into(),
+            resources: vec![self.resource(path)],
+            read_only: true,
+            ..Default::default()
+        };
+        let fresh = self
+            .host
+            .policy(self.inv)
+            .await
+            .map_err(tools::failed)?
+            .decide(&request);
+        if matches!(fresh, Decision::Deny(_))
+            || (fresh == Decision::Ask && self.policy.decide(&request) != Decision::Ask)
+        {
+            return Err(tools::failed(
+                "Binary read authority changed; repeat the operation",
+            ));
+        }
+        Ok(())
     }
 
     pub async fn authorize(

@@ -1,0 +1,14 @@
+{
+  "ascii": "...A",
+  "eof": false,
+  "hex": "ff801b41",
+  "length": "4",
+  "metadata": {
+    "length": "6",
+    "path": "bytes.bin",
+    "source": "live",
+    "within_edit_size_limit": true
+  },
+  "offset": "1",
+  "page_sha256": "b790daf98db2c34783564c4ab0c146dde11698376898461929725fe09b8fce1e"
+}

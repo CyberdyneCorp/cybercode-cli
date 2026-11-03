@@ -145,6 +145,18 @@ impl Repository {
         self.claim_owner(execution, managed, server_id).await
     }
 
+    /// A retained filesystem-only binary worker owns a lease independently of
+    /// the Session actor, whose lease may already be held by the active turn.
+    pub async fn claim_binary(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+        document: &str,
+    ) -> io::Result<CheckoutLease> {
+        safe_id(document, "bin")?;
+        self.claim_owner(execution, managed, document).await
+    }
+
     async fn claim_owner(
         &self,
         execution: &dyn GitExecution,
@@ -215,6 +227,8 @@ fn safe_owner_id(id: &str) -> io::Result<()> {
         "mcs"
     } else if crate::ids::has_prefix(id, "lsp") {
         "lsp"
+    } else if crate::ids::has_prefix(id, "bin") {
+        "bin"
     } else {
         "ses"
     };

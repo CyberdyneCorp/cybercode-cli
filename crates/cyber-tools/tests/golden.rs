@@ -134,6 +134,37 @@ async fn advertised_tool_names_are_a_subset_of_the_canonical_registry() {
 }
 
 #[tokio::test]
+async fn binary_read_golden() {
+    let f = Fixture::new();
+    f.set_config(json!({"permissions":{"read":"allow"}}));
+    std::fs::write(f.repo.join("bytes.bin"), [0, 255, 128, 27, 65, 10]).unwrap();
+    let output = ok(f
+        .call(
+            "plan",
+            "binary",
+            json!({
+                "operation":"read", "path":"bytes.bin", "offset":"1", "limit":4
+            }),
+        )
+        .await);
+    let mut page: serde_json::Value = serde_json::from_str(&output).unwrap();
+    // The live observation includes file identity/mtime, so only that token is
+    // unstable. Preserve all byte, bounds, hash and source metadata contracts.
+    assert!(
+        page["metadata"]
+            .as_object_mut()
+            .unwrap()
+            .remove("revision")
+            .unwrap()
+            .is_string()
+    );
+    // Workspace feature unification can enable preserve_order; JSON object key
+    // order is not part of this contract under either serde_json representation.
+    page.sort_all_objects();
+    support::golden(&f, "binary", &serde_json::to_string_pretty(&page).unwrap());
+}
+
+#[tokio::test]
 async fn filesystem_goldens() {
     let f = Fixture::new();
     f.write("a.txt", "alpha\nbeta\n");

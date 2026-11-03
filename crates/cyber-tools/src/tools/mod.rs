@@ -3,6 +3,7 @@
 pub(crate) mod agent;
 mod background;
 pub(crate) mod bash;
+mod binary;
 pub(crate) mod collaboration;
 pub(crate) mod computer;
 mod deliver;
@@ -63,6 +64,7 @@ pub(crate) trait Tool: Send + Sync {
 pub(crate) fn all() -> Vec<Box<dyn Tool>> {
     let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(fs::Read),
+        Box::new(binary::Binary),
         Box::new(lsp::Lsp),
         Box::new(fs::Write),
         Box::new(fs::Edit),
@@ -135,7 +137,7 @@ pub(crate) fn action_of(name: &str) -> &str {
     match name {
         "write" | "edit" | "apply_patch" | "notebook_edit" => "edit",
         "powershell" | "monitor" | "pty_start" | "pty_write" | "pty_read" => "bash",
-        "send_file" => "read",
+        "send_file" | "binary" => "read",
         "enter_worktree" | "exit_worktree" => "worktree",
         "workflow" => crate::permissions::WORKFLOW_RUN,
         "collab_send_message" => crate::permissions::COLLAB_MESSAGE_SEND,

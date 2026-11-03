@@ -608,3 +608,51 @@ Fresh read denial hides the reference. The focused catalog regression, 15 target
 TUI tests (including the shared diff overlay), OpenAPI artifact test, SDK typecheck
 and 125 unit/mock tests, core/server/TUI all-target Clippy and strict OpenSpec
 validation passed. No new database migration is required for this adapter.
+
+
+### Model binary tool (follow-up to merged PR #103)
+
+The built-in `binary` tool now offers inspect/read/search and exact expected-digest
+patches. Read pages default to 256 bytes and cap at 4096; inspect streams live
+SHA-256 evidence through 512 MiB without preparing a private draft. Plan mode can
+read/search, while patches additionally require edit authority and a native writable
+workspace sandbox. Fully denied reads hide the tool. Text tools retain their
+existing semantics.
+
+Each patch has a separate invocation/payload-bound private namespace. Its small
+owner header is authenticated before a prior journal/base is loaded. Expected
+whole-base and per-splice bytes, 128-splice/64-KiB limits and canonical payload
+identity are enforced by the shared core. Permission approval receives the exact
+byte review before mutation ownership. The retained filesystem worker validates
+its dispatched built-in call, current Session/Location/ancestors, current tool and
+read/edit policy and sandbox boundary immediately before intent. A dedicated
+`bin_` checkout lease avoids reacquiring the active actor's Session lease and
+cannot acknowledge generic subprocess activity. Native receipts and post-commit
+notifications use the same save engine as the owner editor. The tool is serialized
+and never automatically retries an uncertain replacement.
+
+Verification so far: 83 binary-core tests passed (one process-death helper ignored
+in this selector); the independent checkout-owner regression, five real runtime
+model-tool regressions, the Plan read/search regression and all 45 general tool tests passed. Coverage includes
+exact growth bytes and saved history, digest/expected-byte refusal, read/edit denial,
+Plan refusal, approval byte metadata, fresh policy revocation during approval, Stop
+during approval and separation from the manual draft namespace. Strict OpenSpec
+validation passed all 114 items. All six existing server-worker regressions and
+core/server/tools all-target Clippy passed. Review identified and corrected the
+production AppHost forwarding of the independent worker lease; its dedicated
+regression and app all-target Clippy passed. Formatting and diff checks passed.
+
+This is not full #94 acceptance. Dedicated model receipt recovery, configured
+retention/checkpoint/rewind adapters, remaining UI recovery/accessibility and named
+performance/platform acceptance remain open. No external provider was called by
+these model-tool tests. Linux and Windows verification for this follow-up must come
+from CI; local verification is macOS only.
+
+
+CI follow-up, 2026-11-03: Linux/macOS Rust and Windows build failed the
+canonical tool-registry/golden coverage checks because the new tool was listed only
+in the active proposal catalog and lacked a golden fixture. The canonical catalog
+now lists the implemented tool. A real Plan-mode binary read golden retains bytes,
+bounds, fingerprint and source metadata, normalizing only the live revision and
+JSON key order. All 14 golden tests and strict OpenSpec validation (114 items)
+passed locally. Cross-platform CI must verify the corrected head before merge.
