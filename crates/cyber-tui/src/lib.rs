@@ -150,6 +150,7 @@ pub struct HexStart {
     pub root: String,
     pub offset: u64,
     pub read_only: bool,
+    pub recover: Option<String>,
 }
 
 pub struct TuiOptions {

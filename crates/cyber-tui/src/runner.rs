@@ -475,12 +475,17 @@ fn initial_actions(
         });
     }
     if let Some(hex) = &opts.hex {
-        initial.extend(app.open_hex_at(
-            &hex.path,
-            Some(hex.root.clone()),
-            hex.offset,
-            hex.read_only,
-        ));
+        initial.extend(if let Some(id) = &hex.recover {
+            app.recover_hex_at(
+                id,
+                &hex.path,
+                Some(hex.root.clone()),
+                hex.offset,
+                hex.read_only,
+            )
+        } else {
+            app.open_hex_at(&hex.path, Some(hex.root.clone()), hex.offset, hex.read_only)
+        });
     }
     if let Some(prompt) = &opts.prompt {
         initial.push(Action::Prompt {

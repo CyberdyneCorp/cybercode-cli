@@ -82,9 +82,10 @@ function metadataFields(status: BinaryStatus): Omit<OpenedDocument, "document_id
 
 /** Reopen retained commands and receipts. Preparing edit authority remains explicit. */
 export async function recoverBinaryDocument(client: CyberClient, sessionId: string, id: string,
-  options: RequestOptions & { readOnly?: boolean } = {}): Promise<BinaryDocument> {
-  const { readOnly = false, ...requestOptions } = options;
-  const response = await client.request("v1.fs.binaryRecover", { path: { id }, body: { session_id: sessionId, read_only: readOnly } }, requestOptions);
+  options: RequestOptions & { readOnly?: boolean; expectedRoot?: string } = {}): Promise<BinaryDocument> {
+  if (!/^bin_[a-zA-Z0-9_]{1,96}$/.test(id)) throw new TypeError("Invalid retained binary identity");
+  const { readOnly = false, expectedRoot, ...requestOptions } = options;
+  const response = await client.request("v1.fs.binaryRecover", { path: { id }, body: { session_id: sessionId, read_only: readOnly, expected_root: expectedRoot } }, requestOptions);
   return binaryHandle(client, sessionId, id, metadataFields(response.data));
 }
 

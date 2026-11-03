@@ -15655,6 +15655,12 @@
           "read_only": {
             "type": "boolean",
             "default": false
+          },
+          "expected_root": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

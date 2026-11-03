@@ -28,3 +28,8 @@ This list is the single registry of top-level commands; no other spec SHALL intr
 #### Scenario: Direct terminal entry
 - **WHEN** an owner opens a project binary with `cyber hex fixtures/sample.bin --offset 0x20 --read-only`
 - **THEN** the view starts at exact offset 32 without model inference, draft mutation or a write on exit
+
+#### Scenario: Reopen a kept manual draft
+- **WHEN** the user runs `cyber hex <path> --session <original-session> --recover <document>`
+- **THEN** the owner recovery route checks the project and namespace, the terminal verifies the file path, and the draft opens in view mode without inference or source changes
+- **AND** dirty/unknown state and private undo/redo are retained, while an explicit fresh edit admission is required before editing or saving

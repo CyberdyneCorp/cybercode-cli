@@ -283,7 +283,7 @@ fn review_lines(
 
 fn status(h: &Workspace) -> String {
     if h.edit.closing {
-        if h.edit.uncertain || h.loading {
+        if h.edit.uncertain || h.loading || h.edit.admission_missing || h.edit.read_only {
             "Keep retained state? K keep and close · Esc stay".into()
         } else {
             "Unsaved draft: K keep and close · D discard · Esc stay".into()

@@ -17,6 +17,8 @@ pub struct RecoverRequest {
     pub session_id: String,
     #[serde(default)]
     pub read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_root: Option<String>,
 }
 #[derive(Serialize, JsonSchema)]
 #[schemars(rename = "BinaryRecoveryEntry")]
@@ -108,6 +110,16 @@ pub(super) async fn recover(
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let (turn, root, _) = files::scope(&state, &parts, Some(&input.session_id)).await?;
+        if input
+            .expected_root
+            .as_ref()
+            .is_some_and(|expected| expected != &root.display().to_string())
+        {
+            return Err(
+                ApiError::forbidden("The selected Session belongs to another project")
+                    .with_reason("binary_scope"),
+            );
+        }
         let owner = owner(&turn, root.clone()).map_err(refused)?;
         let storage = state
             .runtime

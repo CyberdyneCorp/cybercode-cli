@@ -970,6 +970,97 @@ async fn hex_stale_open_is_closed_and_session_switch_forgets_private_bytes() {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[tokio::test]
+async fn hex_kept_draft_reopens_without_source_changes_and_requires_fresh_edit_admission() {
+    let f = Fixture::new().await;
+    std::fs::write(f.work.join("kept.bin"), [0, 255, 128, 27]).unwrap();
+    let mut app = f.app().await;
+    let before = f
+        .server
+        .client
+        .get(&format!("/sessions/{}/messages", app.session.id))
+        .await
+        .unwrap();
+    let actions = app.open_hex("kept.bin");
+    f.run(&mut app, actions).await;
+    let actions = press(&mut app, KeyCode::F(2));
+    f.run(&mut app, actions).await;
+    press(&mut app, KeyCode::Char('4'));
+    let actions = press(&mut app, KeyCode::Char('1'));
+    f.run(&mut app, actions).await;
+    let id = app.hex.document.as_ref().unwrap().id.clone();
+    let actions = press(&mut app, KeyCode::Esc);
+    f.run(&mut app, actions).await;
+    let actions = press(&mut app, KeyCode::Char('k'));
+    f.run(&mut app, actions).await;
+    assert!(app.hex.document.is_none());
+    assert!(
+        app.toast
+            .as_ref()
+            .unwrap()
+            .0
+            .contains(&format!("--recover {id}"))
+    );
+    let actions = app.recover_hex_at(&id, "kept.bin", Some("/wrong/project".into()), 0, false);
+    f.run(&mut app, actions).await;
+    assert!(app.hex.error.is_some());
+    assert!(app.hex.bytes.is_empty());
+    let root = f.work.display().to_string();
+    let actions = app.recover_hex_at(&id, "wrong.bin", Some(root.clone()), 0, false);
+    f.run(&mut app, actions).await;
+    assert!(app.hex.error.is_some());
+    assert!(app.hex.bytes.is_empty());
+    let actions = app.recover_hex_at(&id, "kept.bin", Some(root.clone()), 0, false);
+    f.run(&mut app, actions).await;
+    assert!(app.hex.error.is_none(), "{:?}", app.hex.error);
+    assert_eq!(app.hex.bytes, [65, 255, 128, 27]);
+    assert!(app.hex.edit.dirty && app.hex.edit.admission_missing);
+    assert!(!app.hex.edit.enabled);
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+    assert!(actions.is_empty());
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    f.run(&mut app, actions).await;
+    assert!(!app.hex.edit.enabled && app.hex.edit.admission_missing);
+    let actions = press(&mut app, KeyCode::F(2));
+    f.run(&mut app, actions).await;
+    assert!(
+        app.hex.edit.enabled && !app.hex.edit.admission_missing,
+        "{:?}",
+        app.hex.error
+    );
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL));
+    f.run(&mut app, actions).await;
+    assert_eq!(app.hex.bytes, [0, 255, 128, 27]);
+    let actions = app.on_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
+    f.run(&mut app, actions).await;
+    assert_eq!(app.hex.bytes, [65, 255, 128, 27]);
+    let actions = press(&mut app, KeyCode::Esc);
+    f.run(&mut app, actions).await;
+    let actions = press(&mut app, KeyCode::Char('k'));
+    f.run(&mut app, actions).await;
+    let actions = app.recover_hex_at(&id, "kept.bin", Some(root), 0, true);
+    f.run(&mut app, actions).await;
+    assert!(app.hex.edit.read_only && app.hex.edit.dirty && !app.hex.edit.enabled);
+    let actions = press(&mut app, KeyCode::F(2));
+    f.run(&mut app, actions).await;
+    assert!(!app.hex.edit.enabled);
+    assert_eq!(
+        std::fs::read(f.work.join("kept.bin")).unwrap(),
+        [0, 255, 128, 27]
+    );
+    let after = f
+        .server
+        .client
+        .get(&format!("/sessions/{}/messages", app.session.id))
+        .await
+        .unwrap();
+    assert_eq!(
+        before["data"], after["data"],
+        "recovery never starts inference"
+    );
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
 async fn hex_edit_review_save_undo_and_restore_use_real_owner_routes() {
     let f = Fixture::new().await;
     let original = [0, 255, 27, 128];
