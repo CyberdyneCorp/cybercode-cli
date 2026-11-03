@@ -65,7 +65,7 @@ export class CyberClient implements Caller {
     /** Inspect retained invocation receipts without promoting private drafts. */
     model: modelBinaryRecovery(this),
     /** Reopen retained private commands/receipts without replaying a source save. */
-    recover: (sessionID: string, documentID: string, options: RequestOptions & { readOnly?: boolean } = {}): Promise<BinaryDocument> => recoverBinaryDocument(this, sessionID, documentID, options),
+    recover: (sessionID: string, documentID: string, options: RequestOptions & { readOnly?: boolean; expectedRoot?: string } = {}): Promise<BinaryDocument> => recoverBinaryDocument(this, sessionID, documentID, options),
     /** Open a live exact-byte view scoped to a Session and this client's Location. */
     open: (sessionID: string, path: string, options: RequestOptions & { expectedRoot?: string; readOnly?: boolean } = {}): Promise<BinaryDocument> => openBinaryDocument(this, sessionID, path, options),
   };

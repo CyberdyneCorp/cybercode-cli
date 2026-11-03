@@ -17,9 +17,25 @@ pub struct HexArgs {
     /// Open an existing Session without rebinding its Location.
     #[arg(long)]
     pub session: Option<String>,
-    /// Inspect bytes without entering an edit draft.
+    /// Inspect bytes without enabling draft edits.
     #[arg(long)]
     pub read_only: bool,
+    /// Reopen a kept manual draft in its original --session.
+    #[arg(long, requires="session", value_parser=document_id)]
+    pub recover: Option<String>,
+}
+fn document_id(value: &str) -> Result<String, String> {
+    if value.starts_with("bin_")
+        && value.len() > 4
+        && value.len() <= 100
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        Ok(value.into())
+    } else {
+        Err("expected a retained bin_ document identity".into())
+    }
 }
 fn offset(value: &str) -> Result<u64, String> {
     match value.strip_prefix("0x") {
@@ -75,6 +91,7 @@ pub fn run(args: HexArgs, mut launch: LaunchArgs, global: &GlobalArgs) -> Result
         root: root.display().to_string(),
         offset: args.offset,
         read_only: args.read_only,
+        recover: args.recover,
     });
     super::tui::run(&launch, global, None)
 }
@@ -82,6 +99,50 @@ pub fn run(args: HexArgs, mut launch: LaunchArgs, global: &GlobalArgs) -> Result
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    #[test]
+    fn kept_draft_recovery_requires_the_original_session_and_a_safe_document_identity() {
+        let parsed = crate::cli::Cli::try_parse_from([
+            "cyber",
+            "hex",
+            "fixture.bin",
+            "--session",
+            "ses_one",
+            "--recover",
+            "bin_kept",
+            "--read-only",
+        ])
+        .unwrap();
+        let Some(crate::cli::Command::Hex(args)) = parsed.command else {
+            panic!("hex command")
+        };
+        assert_eq!(args.recover.as_deref(), Some("bin_kept"));
+        assert!(args.read_only);
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "cyber",
+                "hex",
+                "fixture.bin",
+                "--recover",
+                "bin_kept"
+            ])
+            .is_err()
+        );
+        for id in ["../bin_kept", "bin_", "bin_one/bytes", "other"] {
+            assert!(
+                crate::cli::Cli::try_parse_from([
+                    "cyber",
+                    "hex",
+                    "fixture.bin",
+                    "--session",
+                    "ses_one",
+                    "--recover",
+                    id
+                ])
+                .is_err()
+            );
+        }
+    }
+
     #[test]
     fn hex_entry_parses_exact_offsets_and_rejects_invalid_sizes_before_admission() {
         let cli = crate::cli::Cli::try_parse_from([

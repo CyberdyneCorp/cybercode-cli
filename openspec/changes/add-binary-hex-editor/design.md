@@ -85,3 +85,18 @@ are separate actions, not side effects of receipt lookup.
 ## Delivery and acceptance
 
 The user prioritized implementation on 2026-11-01 ahead of the unfinished first two workstreams. Preserve shared contracts and implement in this internal sequence: byte-service native identity/storage proof; bounded view/search and SDK; staged editing/save/recovery; themed TUI/direct CLI; model patch integration; snapshot/hooks and acceptance. Tests must cover every byte value, empty files, NUL/invalid UTF-8, offsets above 2^53, sparse files, EOF/overflow, same-size/same-mtime changes, denied reads/edits, partial nibbles, multi-splice atomicity, file growth/shrinkage, history, stale revisions and Session switches, lost acknowledgements, kill/restart around replacement and native alias races. Use real binary fixtures and hashes, TUI snapshots at wide/narrow/NO_COLOR widths plus real terminal captures, native platform positive/negative controls, generated schema/API/CLI checks and code/security review. See [implementation progress](implementation.md) for the unchanged-main browsing baseline, current viewer evidence and unperformed editor/native acceptance.
+
+
+### Reopening a kept manual draft from the CLI
+
+`cyber hex <path> --session <original-session> --recover <document>` reopens a kept
+manual namespace through the owner recovery route. The server checks an optional
+expected project root before reading its private journal; the terminal also checks
+the returned file path and retires a mismatched response's view. The document ID is
+validated before transport. CLI recovery requires the original Session and supports
+`--read-only`; no model inference or source mutation is performed on open.
+
+Recovered dirty/unknown flags and private undo/redo remain visible, but recovery
+never restores an old edit grant. The terminal tracks missing edit admission until
+an explicit successful F2 prepare reply. Status/copy/reconciliation replies cannot
+enable editing or saving; an immutable read-only view cannot obtain admission.

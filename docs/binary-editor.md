@@ -151,6 +151,20 @@ and refresh status before explicitly choosing a follow-up.
 Closing releases the in-memory handle, retaining private commands and receipts.
 Use discovery in the same Session Location, recover the selected ID, then prepare
 again before changing its draft. Recovery does not install bytes or replay a save.
+Keep-and-close displays the retained document identity and original Session.
+Reopen that manual draft in the terminal:
+
+```sh
+cyber --cwd /path/to/project hex fixtures/header.bin --session ses_… --recover bin_…
+```
+
+The project and file must match the retained namespace. Recovery starts in view
+mode with dirty/unknown state preserved. F2 obtains fresh edit admission before
+editing, undo/redo, discard or save; a status/reconciliation response does not grant
+that admission. `--read-only` keeps the recovered document immutable. Ctrl+R checks
+an uncertain outcome without another source replacement. Recovery does not start
+inference or turn a model invocation namespace into a manual draft.
+
 A replaced/aliased parent refuses access; an ordinary changed source remains separate
 from the private draft. Recovery uses its exclusive private document lock to settle
 matching filesystem-only activity records left by a prior process. It refuses active

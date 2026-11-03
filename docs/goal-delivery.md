@@ -20,6 +20,17 @@ stay tracked in issues #92 and #93. Their separate pending policy decisions are
 not selected by this scheduling change. The binary workspace implementation is
 partial; its live view does not complete the editor goal.
 
+On 2026-11-03 the user requested merging #105 and moving to [daily coding
+issue #93](https://github.com/CyberdyneCorp/cybercode-cli/issues/93). Daily coding
+is now the next priority after publishing the already tested manual-draft CLI
+recovery increment. This supersedes the old requirement to finish #92 before
+starting #93. Plugins/hooks remain incomplete; their pending design decisions
+and enforcement guarantees are not implicitly accepted. Remaining binary
+retention/checkpoint/rewind integration and UX/performance acceptance are also
+unfinished despite the owner's manual closure of #94. Follow the approved daily
+coding implementation order, beginning with rewind preview/confirmation; preserve
+shared snapshot, permission, recovery and FileChanged contracts.
+
 ## Delivery constraint approved on 2026-10-29
 
 The user requested fewer simultaneously open PRs. Keep normally **one open goal

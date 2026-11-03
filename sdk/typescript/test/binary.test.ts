@@ -78,11 +78,13 @@ test("binary draft helpers retain explicit retry revisions and never convert byt
   assert.equal(patches.length, 2);
   assert.equal(patches[0]!.body, patches[1]!.body, "retry changed its revision after acknowledgement");
   assert.deepEqual(await doc.operation("patch_once"), receipt);
-  const recovered = await client.binary.recover("ses_one", doc.id, { readOnly: true });
+  const recovered = await client.binary.recover("ses_one", doc.id, { readOnly: true, expectedRoot: "/work" });
   assert.equal(recovered.id, doc.id);
   assert.equal(recovered.metadata.source, "draft");
   assert.equal(JSON.parse(calls.at(-1)!.body!).read_only, true);
+  assert.equal(JSON.parse(calls.at(-1)!.body!).expected_root, "/work");
   const before = calls.length;
+  await assert.rejects(() => client.binary.recover("ses_one", "../bin_one"));
   await assert.rejects(() => doc.patch("bad/id", batch));
   await assert.rejects(() => doc.patch("bad_bytes", { ...batch, splices: [{ ...batch.splices[0]!, expected_hex: "0" }] }));
   await assert.rejects(() => doc.patch("wrong_length", { ...batch, splices: [{ ...batch.splices[0]!, delete_length: "2" }] }));

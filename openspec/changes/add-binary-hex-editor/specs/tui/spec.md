@@ -61,3 +61,8 @@ The explorer SHALL never bypass permissions. Listing SHALL be evaluated as `list
 #### Scenario: Save finishes after a Session switch
 - **WHEN** a response arrives for a binary document after the user switches Session or Location
 - **THEN** it cannot repaint the new document, replace its draft or authorize another save
+
+#### Scenario: Recovered status does not grant edit admission
+- **WHEN** a kept draft is recovered or its status is reconciled
+- **THEN** the terminal preserves dirty/unknown state and keeps editing disabled until F2 explicitly obtains fresh admission
+- **AND** a read-only launch cannot enable edits or save, and a stale recovered response is retired under its original Session and Location

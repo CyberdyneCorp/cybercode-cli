@@ -9,6 +9,7 @@ pub use client::perform;
 pub struct State {
     pub read_only: bool,
     pub prepared: bool,
+    pub admission_missing: bool,
     pub enabled: bool,
     pub dirty: bool,
     pub uncertain: bool,
@@ -46,6 +47,7 @@ pub enum Command {
 }
 #[derive(Debug, Clone)]
 pub struct Reply {
+    pub admitted: bool,
     pub status: Value,
     pub clipboard: Option<String>,
     pub review: Option<(cyber_core::binary::receipts::SaveReview, bool)>,
@@ -75,6 +77,29 @@ fn status(
         return Err("Binary response scope/revision changed".into());
     }
     Ok(status)
+}
+
+impl State {
+    pub(super) fn recovered(&mut self, value: Value, document: &Document) -> Result<(), String> {
+        self.read_only |= value.get("read_only") == Some(&Value::Bool(true));
+        let status = status(value, document, None)?;
+        self.prepared = status.prepared;
+        self.dirty = status.dirty;
+        self.uncertain = status.pending_operation.is_some();
+        self.enabled = false;
+        self.admission_missing = true;
+        self.notice = Some(
+            if self.uncertain {
+                "Recovered unknown outcome; Ctrl+R checks retained evidence"
+            } else if self.read_only {
+                "Recovered kept draft; read-only view"
+            } else {
+                "Recovered kept draft; F2 refreshes edit admission"
+            }
+            .into(),
+        );
+        Ok(())
+    }
 }
 
 impl App {
@@ -181,27 +206,39 @@ impl App {
     fn hex_edit_command(&mut self, key: KeyEvent) -> Option<Command> {
         match self.keymap.action("hex", &key, false) {
             Some("hex_edit") if !self.hex.edit.read_only => {
-                if self.hex.edit.prepared {
+                if self.hex.edit.prepared && !self.hex.edit.admission_missing {
                     self.hex.edit.enabled = !self.hex.edit.enabled;
                     return None;
                 }
                 Some(Command::Prepare)
             }
             Some("hex_reconcile") => Some(Command::Reconcile),
-            Some("hex_save") if self.hex.edit.prepared => match self.hex.edit.review.as_ref() {
-                Some((review, restore)) => Some(Command::Save {
-                    fingerprint: review.fingerprint.clone(),
-                    restore: *restore,
-                }),
-                None => Some(Command::Review {
-                    restore: false,
+            Some("hex_save")
+                if self.hex.edit.prepared
+                    && !self.hex.edit.admission_missing
+                    && !self.hex.edit.read_only =>
+            {
+                match self.hex.edit.review.as_ref() {
+                    Some((review, restore)) => Some(Command::Save {
+                        fingerprint: review.fingerprint.clone(),
+                        restore: *restore,
+                    }),
+                    None => Some(Command::Review {
+                        restore: false,
+                        start: 0,
+                    }),
+                }
+            }
+            Some("hex_restore")
+                if self.hex.edit.prepared
+                    && !self.hex.edit.admission_missing
+                    && !self.hex.edit.read_only =>
+            {
+                Some(Command::Review {
+                    restore: true,
                     start: 0,
-                }),
-            },
-            Some("hex_restore") if self.hex.edit.prepared => Some(Command::Review {
-                restore: true,
-                start: 0,
-            }),
+                })
+            }
             Some("hex_undo") if self.hex.edit.enabled => Some(Command::History("undo")),
             Some("hex_redo") if self.hex.edit.enabled => Some(Command::History("redo")),
             _ => None,
@@ -291,12 +328,22 @@ impl App {
         match key.code {
             KeyCode::Esc => self.hex.edit.closing = false,
             KeyCode::Char('k') => {
+                if let Some(document) = &self.hex.document {
+                    self.toast(format!(
+                        "Kept draft {} · reopen with --session {} --recover {}",
+                        document.id, self.session.id, document.id
+                    ));
+                }
                 self.hex.generation = self.hex.generation.wrapping_add(1);
                 self.overlay = Overlay::None;
                 return self.close_hex_document();
             }
             KeyCode::Char('d') if !self.hex.edit.uncertain && !self.hex.loading => {
                 self.hex.edit.closing = false;
+                if self.hex.edit.admission_missing || self.hex.edit.read_only {
+                    self.hex.error = Some("Refresh edit admission with F2 before discarding; read-only views can keep the draft".into());
+                    return vec![];
+                }
                 return self.hex_edit_request(Command::History("discard"));
             }
             _ => {}
@@ -370,7 +417,11 @@ impl App {
                 document.length = status.metadata.length.0;
                 self.hex.cursor = self.hex.cursor.min(document.length);
                 self.hex.edit.prepared = status.prepared;
-                self.hex.edit.enabled = status.prepared && !self.hex.edit.read_only;
+                if reply.admitted {
+                    self.hex.edit.admission_missing = false;
+                }
+                self.hex.edit.enabled =
+                    status.prepared && !self.hex.edit.read_only && !self.hex.edit.admission_missing;
                 self.hex.edit.dirty = status.dirty;
                 self.hex.edit.uncertain = status.pending_operation.is_some();
                 self.hex.edit.review = reply.review;
@@ -515,6 +566,7 @@ mod tests {
                 directory,
                 generation: generation.wrapping_sub(1),
                 result: Ok(Reply {
+                    admitted: false,
                     clipboard: None,
                     status: json!({"path":"bytes","revision":"stale","source":"draft","length":"1"}),
                     review: None,

@@ -30,6 +30,7 @@ pub enum Request {
         path: String,
         expected_root: Option<String>,
         read_only: bool,
+        recover: Option<String>,
         offset: u64,
         generation: u64,
     },
@@ -56,6 +57,7 @@ pub struct Loaded {
     pub document: Document,
     pub offset: u64,
     pub bytes: Vec<u8>,
+    pub recovered: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,6 +163,14 @@ impl Workspace {
         self.loading = false;
         match result {
             Ok(loaded) => {
+                if let Some(status) = loaded.recovered
+                    && let Err(error) = self.edit.recovered(status, &loaded.document)
+                {
+                    self.document = Some(loaded.document);
+                    self.bytes.clear();
+                    self.error = Some(error);
+                    return;
+                }
                 self.document = Some(loaded.document);
                 self.page_offset = loaded.offset;
                 self.bytes = loaded.bytes;
@@ -204,6 +214,22 @@ pub fn goto(input: &str, cursor: u64, length: u64) -> Result<u64, &'static str> 
 }
 
 impl App {
+    pub fn recover_hex_at(
+        &mut self,
+        id: &str,
+        path: &str,
+        root: Option<String>,
+        offset: u64,
+        read_only: bool,
+    ) -> Vec<Action> {
+        let mut actions = self.open_hex_at(path, root, offset, read_only);
+        for action in &mut actions {
+            if let Action::Hex(Request::Open { recover, .. }) = action {
+                *recover = Some(id.into());
+            }
+        }
+        actions
+    }
     pub fn open_hex(&mut self, path: &str) -> Vec<Action> {
         self.open_hex_at(path, None, 0, false)
     }
@@ -239,6 +265,7 @@ impl App {
             path: path.into(),
             expected_root,
             read_only,
+            recover: None,
             offset,
             generation: self.hex.generation,
         }));
@@ -586,6 +613,7 @@ async fn page(
         document,
         offset,
         bytes,
+        recovered: None,
     })
 }
 
@@ -691,21 +719,37 @@ pub async fn perform(
             path,
             expected_root,
             read_only,
+            recover,
             offset,
             generation,
         } => {
             let result = async {
+                if recover.as_ref().is_some_and(|id| {
+                    !id.starts_with("bin_") || id.len() > 100 || id.len() <= 4
+                        || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                }) {
+                    return Err("Invalid retained binary document identity".into());
+                }
+                let route = recover.as_ref().map_or_else(
+                    || "/files/binary/documents".into(),
+                    |id| format!("/files/binary/documents/{id}/recover"),
+                );
+                let body = if recover.is_some() {
+                    json!({"session_id":session.id,"expected_root":expected_root,"read_only":read_only})
+                } else {
+                    json!({"session_id":session.id,"path":path,"expected_root":expected_root,"read_only":read_only})
+                };
                 let value = client
                     .at(&session.directory)
-                    .post(
-                        "/files/binary/documents",
-                        json!({"session_id":session.id,"path":path,"expected_root":expected_root,"read_only":read_only}),
-                    )
+                    .post(&route, body)
                     .await
                     .map_err(|e| e.to_string())?;
                 let data = &value["data"];
                 let document = Document {
-                    id: field(data, "document_id")?,
+                    id: match &recover {
+                        Some(id) => id.clone(),
+                        None => field(data, "document_id")?,
+                    },
                     path: field(data, "path")?,
                     revision: field(data, "revision")?,
                     source: field(data,"source")?,
@@ -714,10 +758,17 @@ pub async fn perform(
                         .map_err(|_| "Invalid byte length")?,
                 };
                 let id = document.id.clone();
-                let result = if offset > document.length {
+                let result = if recover.is_some() && (document.path != path || document.source != "draft") {
+                    Err("Recovered draft does not match the requested file".into())
+                } else if offset > document.length {
                     Err("Offset is past EOF".into())
                 } else {
-                    page(client, session, document, offset / 4096 * 4096).await
+                    page(client, session, document, offset / 4096 * 4096).await.map(|mut loaded| {
+                        if recover.is_some() {
+                            loaded.recovered = Some(data.clone());
+                        }
+                        loaded
+                    })
                 };
                 if result.is_err() {
                     let _ = client
@@ -855,6 +906,7 @@ mod ownership_tests {
                 },
                 offset: 0,
                 bytes: vec![0, 255],
+                recovered: None,
             }),
         };
         assert!(apply(&mut app, message).is_empty());

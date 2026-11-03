@@ -1672,6 +1672,14 @@ async fn binary_closed_dirty_draft_is_recoverable_and_prevents_session_deletion(
         .0,
         200
     );
+    let (code, refused) = f
+        .send(
+            "POST",
+            &format!("{path}/recover"),
+            Some(json!({"session_id":session,"expected_root":"/wrong-project"})),
+        )
+        .await;
+    assert_eq!(code, 403, "{refused}");
     let (code, recovered) = f
         .send(
             "POST",

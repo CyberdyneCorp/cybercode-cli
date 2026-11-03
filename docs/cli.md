@@ -100,7 +100,8 @@ cyber hex [OPTIONS] <PATH>
 
 - `--offset <OFFSET>`: Initial byte offset, as decimal or 0x hexadecimal. Default: `0`.
 - `--session <SESSION>`: Open an existing Session without rebinding its Location.
-- `--read-only`: Inspect bytes without entering an edit draft.
+- `--read-only`: Inspect bytes without enabling draft edits.
+- `--recover <RECOVER>`: Reopen a kept manual draft in its original --session.
 
 ## `cyber login`
 

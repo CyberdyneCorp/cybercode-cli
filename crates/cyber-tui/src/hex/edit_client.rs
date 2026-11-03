@@ -20,6 +20,7 @@ pub async fn perform(
             .map_err(|e| e.to_string())?;
         if response["data"]["pending_operation"].is_null() {
             return Ok(Reply {
+                admitted: false,
                 clipboard: None,
                 status: response["data"].clone(),
                 review: None,
@@ -109,6 +110,7 @@ pub async fn perform(
             .clone()
     };
     Ok(Reply {
+        admitted: route == "prepare",
         clipboard: None,
         status,
         review,
@@ -142,6 +144,7 @@ async fn copy(
         return Err("Selection revision changed".into());
     }
     Ok(Reply {
+        admitted: false,
         status: response["data"].clone(),
         clipboard: Some(hex),
         review: None,

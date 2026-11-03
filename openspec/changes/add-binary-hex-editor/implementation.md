@@ -709,3 +709,36 @@ RSS was 7.45 MiB, excluding filesystem cache. These core-only observations exclu
 server, permission, terminal rendering/input and provider work; they do not close
 the broader UI/platform/performance acceptance task. The benchmark target passed
 core all-target Clippy.
+
+### Kept manual draft terminal recovery
+
+`cyber hex <path> --session <original-session> --recover <document>` reopens
+retained manual commands without allocating a new draft or starting inference.
+Keep-and-close displays the recovery identity. An optional expected project root
+is checked before private journal access, and the terminal checks the returned file
+path before reading a page. A mismatched view is closed while its journal remains.
+
+Recovery hydrates dirty/unknown state and retains undo/redo, but starts in view
+mode. Only an explicit successful F2 prepare reply renews edit admission; copy,
+status and reconciliation cannot enable edits or save. `--read-only` cannot renew
+admission. The close prompt offers keep-only while admission is missing. README,
+feature guide, generated CLI help, OpenAPI and TypeScript helpers document this
+scope. Configured retention/checkpoint/rewind and remaining UI/platform acceptance
+remain outstanding; this increment does not complete #94.
+
+Local verification for terminal recovery: 79 CLI tests (including generated-help
+consistency), 16 hex TUI tests, and the closed-dirty-draft production-router
+regression passed. The latter now also rejects a mismatched expected root before
+successful recovery. SDK typecheck and tests passed (125 passed, 10 external tests
+skipped). OpenAPI regeneration, strict OpenSpec validation (114 items), spec lint
+(0 errors, 25 warnings), formatting and diff checks passed. CLI/TUI/server/app
+all-target Clippy passed. Local runtime verification is macOS; cross-platform CI
+for this increment remains pending.
+
+After rebasing onto merged #105 (`a6165c18`), the 16 hex TUI tests and
+closed-dirty-draft production-router regression passed again. The combined tree
+preserves resource-bound resume alongside expected-root admission. OpenAPI
+regeneration/check, SDK typecheck and 127 tests (10 external skips), strict
+OpenSpec validation (114 items) and diff checks passed. The user prioritized #93
+next; the delivery guide and daily-coding proposal/design/tasks record that
+scheduling change without accepting unfinished #92/#94 scope.

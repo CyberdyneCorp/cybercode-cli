@@ -197,6 +197,7 @@ export type BinaryReconcileRequest = {
 export type BinaryRecoverRequest = {
   session_id: string;
   read_only?: boolean;
+  expected_root?: string | null;
 };
 
 export type BinaryRecoveryEntry = {
