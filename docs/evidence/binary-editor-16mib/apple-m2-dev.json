@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "fixture_bytes": "16777216",
+  "runs": [
+    {
+      "first_page_ms": 2.537583,
+      "prepare_ms": 1000.270833,
+      "patch_ms": 5.82275,
+      "undo_ms": 7.019958,
+      "redo_ms": 7.973292,
+      "review_ms": 965.975334,
+      "save_ms": 4904.886917,
+      "restore_review_ms": 1442.837584,
+      "restore_ms": 4978.800709,
+      "search": {
+        "total_ms": 3.9878750000000003,
+        "longest_slice_ms": 2.3022910000000003,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.096959,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    },
+    {
+      "first_page_ms": 2.169459,
+      "prepare_ms": 1001.0186249999999,
+      "patch_ms": 5.877333999999999,
+      "undo_ms": 8.015167,
+      "redo_ms": 6.998584,
+      "review_ms": 969.5070000000001,
+      "save_ms": 4862.4958750000005,
+      "restore_review_ms": 1451.9885829999998,
+      "restore_ms": 4991.9024580000005,
+      "search": {
+        "total_ms": 3.264667,
+        "longest_slice_ms": 1.873041,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.079458,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    },
+    {
+      "first_page_ms": 2.2022500000000003,
+      "prepare_ms": 998.118667,
+      "patch_ms": 7.9189169999999995,
+      "undo_ms": 9.032874999999999,
+      "redo_ms": 8.0095,
+      "review_ms": 976.922791,
+      "save_ms": 4877.748708,
+      "restore_review_ms": 1447.474417,
+      "restore_ms": 4863.623166,
+      "search": {
+        "total_ms": 2.4963339999999996,
+        "longest_slice_ms": 1.233542,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.073,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    },
+    {
+      "first_page_ms": 2.572417,
+      "prepare_ms": 992.498583,
+      "patch_ms": 6.082667,
+      "undo_ms": 6.916208,
+      "redo_ms": 7.89,
+      "review_ms": 969.8384169999999,
+      "save_ms": 4860.362667,
+      "restore_review_ms": 1440.0701250000002,
+      "restore_ms": 4861.8974579999995,
+      "search": {
+        "total_ms": 2.744125,
+        "longest_slice_ms": 1.356167,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.081208,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    },
+    {
+      "first_page_ms": 2.3060419999999997,
+      "prepare_ms": 994.357167,
+      "patch_ms": 6.97325,
+      "undo_ms": 7.044916,
+      "redo_ms": 7.915874999999999,
+      "review_ms": 972.768208,
+      "save_ms": 5025.832209,
+      "restore_review_ms": 1467.602791,
+      "restore_ms": 4862.539583,
+      "search": {
+        "total_ms": 2.663917,
+        "longest_slice_ms": 1.2745,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.107417,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    }
+  ],
+  "median_ms": {
+    "first_page_ms": 2.3060419999999997,
+    "prepare_ms": 998.118667,
+    "patch_ms": 6.082667,
+    "undo_ms": 7.044916,
+    "redo_ms": 7.915874999999999,
+    "review_ms": 969.8384169999999,
+    "save_ms": 4877.748708,
+    "restore_review_ms": 1447.474417,
+    "restore_ms": 4863.623166,
+    "cancellation_ms": 0.081208
+  },
+  "scope": "Core engine only; excludes server, permissions, terminal rendering/input and provider inference. Fresh temporary files with warm OS executable/cache effects; no cold-cache claim.",
+  "reference": "local-apple-m2-24gib",
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "cpu": "Apple M2",
+  "physical_ram_bytes": 25769803776,
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "profile": "dev",
+  "engine_source_revision": "026533d49c19931e80229b20518a1aa8b8455fe4",
+  "benchmark_source_sha256": "cc44c262ca7c7b245f689f2dc66679a640c6b6948c60b7ef5d681418e39655de",
+  "executable_sha256": "2265c5e7a9c90fcc021df0a0be1fbc373986ce5775ccdf3d958f8dd3171765b1",
+  "cargo_lock_sha256": "907dfd81176064a8d26e9c20da6a948d4facb6bcb23dcb8b29b50e8f170f8e6f",
+  "measured_at_utc": "2026-11-03T10:08:16.411950+00:00",
+  "peak_process_rss_bytes": 8699904,
+  "median_search_total_ms": 2.744125,
+  "longest_search_slice_ms": 2.3022910000000003
+}

@@ -694,3 +694,18 @@ these recovery endpoints. Strict OpenSpec validation passed all 114 items. Sourc
 review checked namespace/resource binding, permission waits, private-buffer
 separation, cancellation and the existing filesystem-only recovery proof. Linux
 and Windows recovery acceptance remain for CI after the preceding PR merges.
+
+
+### Named 16 MiB core performance evidence
+
+The reproducible `binary_editor` harness ran five serial 16 MiB trials on the
+Apple M2/24 GiB reference, with full hash verification after native save and
+restore. Both unoptimized and optimized results and process peak-RSS evidence are
+in [the measurement record](../../../docs/evidence/binary-editor-16mib/README.md).
+Optimized medians were 0.54 ms for open/first 64 KiB page, 141 ms for immutable
+preparation, 101 ms for byte review, 553 ms for native save, 545 ms for native
+restore and 0.064 ms for cooperative search cancellation. Optimized process peak
+RSS was 7.45 MiB, excluding filesystem cache. These core-only observations exclude
+server, permission, terminal rendering/input and provider work; they do not close
+the broader UI/platform/performance acceptance task. The benchmark target passed
+core all-target Clippy.

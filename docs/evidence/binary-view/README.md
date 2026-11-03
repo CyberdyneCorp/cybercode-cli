@@ -15,3 +15,9 @@ server startup with an unoptimized line-tables build and warm OS executable cach
 RSS is one sample at first view, not peak memory. The temporary exploratory driver
 is not a portable benchmark harness. Editing, save/recovery, input/cancellation
 latency, the 16 MiB editing benchmark, and Linux/Windows native evidence remain open.
+
+
+A later [16 MiB core-only editor measurement](../binary-editor-16mib/README.md)
+covers prepare/edit/review/save/restore and cooperative search cancellation on the
+Apple M2 reference. It does not turn this historical viewer capture into current
+end-to-end terminal/editor or cross-platform performance acceptance.

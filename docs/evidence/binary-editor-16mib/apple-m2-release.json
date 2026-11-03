@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "fixture_bytes": "16777216",
+  "runs": [
+    {
+      "first_page_ms": 1.295958,
+      "prepare_ms": 156.121458,
+      "patch_ms": 6.137875,
+      "undo_ms": 6.8175,
+      "redo_ms": 6.007084,
+      "review_ms": 101.12075,
+      "save_ms": 552.925625,
+      "restore_review_ms": 150.57237500000002,
+      "restore_ms": 565.5014170000001,
+      "search": {
+        "total_ms": 10.799875,
+        "longest_slice_ms": 7.036833000000001,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.20775000000000002,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    },
+    {
+      "first_page_ms": 0.5419160000000001,
+      "prepare_ms": 140.74758300000002,
+      "patch_ms": 7.093042,
+      "undo_ms": 7.759083,
+      "redo_ms": 8.867542,
+      "review_ms": 103.668666,
+      "save_ms": 573.240583,
+      "restore_review_ms": 150.154667,
+      "restore_ms": 545.1872079999999,
+      "search": {
+        "total_ms": 3.1150409999999997,
+        "longest_slice_ms": 1.586458,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.0785,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    },
+    {
+      "first_page_ms": 0.48279099999999997,
+      "prepare_ms": 128.568291,
+      "patch_ms": 5.954875,
+      "undo_ms": 7.002416,
+      "redo_ms": 6.968959,
+      "review_ms": 99.800375,
+      "save_ms": 543.791875,
+      "restore_review_ms": 149.660125,
+      "restore_ms": 549.5097920000001,
+      "search": {
+        "total_ms": 2.944292,
+        "longest_slice_ms": 1.684708,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.063,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    },
+    {
+      "first_page_ms": 0.501958,
+      "prepare_ms": 131.684291,
+      "patch_ms": 6.872667,
+      "undo_ms": 7.021125,
+      "redo_ms": 6.962000000000001,
+      "review_ms": 99.62941599999999,
+      "save_ms": 548.1025000000001,
+      "restore_review_ms": 149.69750000000002,
+      "restore_ms": 541.1866669999999,
+      "search": {
+        "total_ms": 2.864833,
+        "longest_slice_ms": 1.447167,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.06175,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    },
+    {
+      "first_page_ms": 0.641333,
+      "prepare_ms": 142.73687500000003,
+      "patch_ms": 6.964292,
+      "undo_ms": 7.165875000000001,
+      "redo_ms": 6.8125,
+      "review_ms": 101.210041,
+      "save_ms": 554.5326670000001,
+      "restore_review_ms": 149.08029100000002,
+      "restore_ms": 544.492292,
+      "search": {
+        "total_ms": 3.511625,
+        "longest_slice_ms": 2.139125,
+        "slices": 3,
+        "match_offset": "16777209"
+      },
+      "cancellation_ms": 0.064417,
+      "cancellation_polls": 3,
+      "restored_sha256": "3808005c4d1f0d8d401deb5b9b6177b40a313eb172d33fc959722cc283b95555"
+    }
+  ],
+  "median_ms": {
+    "first_page_ms": 0.5419160000000001,
+    "prepare_ms": 140.74758300000002,
+    "patch_ms": 6.872667,
+    "undo_ms": 7.021125,
+    "redo_ms": 6.962000000000001,
+    "review_ms": 101.12075,
+    "save_ms": 552.925625,
+    "restore_review_ms": 149.69750000000002,
+    "restore_ms": 545.1872079999999,
+    "cancellation_ms": 0.064417
+  },
+  "scope": "Core engine only; excludes server, permissions, terminal rendering/input and provider inference. Fresh temporary files with warm OS executable/cache effects; no cold-cache claim.",
+  "reference": "local-apple-m2-24gib",
+  "platform": "macOS-26.7-arm64-arm-64bit",
+  "cpu": "Apple M2",
+  "physical_ram_bytes": 25769803776,
+  "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "profile": "release",
+  "engine_source_revision": "026533d49c19931e80229b20518a1aa8b8455fe4",
+  "benchmark_source_sha256": "cc44c262ca7c7b245f689f2dc66679a640c6b6948c60b7ef5d681418e39655de",
+  "executable_sha256": "fa3736710e9e8c76cf5b1be413d98d401825ada840ba649b6ec14f7c3fe9df92",
+  "cargo_lock_sha256": "907dfd81176064a8d26e9c20da6a948d4facb6bcb23dcb8b29b50e8f170f8e6f",
+  "measured_at_utc": "2026-11-03T10:08:16.460960+00:00",
+  "peak_process_rss_bytes": 7815168,
+  "median_search_total_ms": 3.1150409999999997,
+  "longest_search_slice_ms": 7.036833000000001
+}

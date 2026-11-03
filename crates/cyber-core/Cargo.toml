@@ -54,5 +54,9 @@ windows-sys = { version = "0.61.2", features = ["Win32_System_Memory"] }
 name = "untrusted_detector"
 harness = false
 
+[[bench]]
+name = "binary_editor"
+harness = false
+
 [lints]
 workspace = true
