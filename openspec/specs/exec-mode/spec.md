@@ -152,7 +152,7 @@ The schema SHALL be versioned by `schema_version` in the `init` event (starting 
 - **THEN** stdout lines are, in order: `system`, `tool_use`, `tool_result`, `assistant_text`, `result`
 
 ### Requirement: Structured final output
-(P1) The system SHALL accept `--output-schema <file.json>`, a JSON Schema the final answer must satisfy. It SHALL be enforced through the structured-output mechanism from `session-runtime`. On success, the `result` field SHALL hold the validated JSON object (text mode prints it pretty-printed). After 2 failed validation retries the run SHALL exit with code 1 and a `StructuredOutputError`.
+(P1) The system SHALL accept `--output-schema <file.json>`, a JSON Schema the final answer must satisfy. It SHALL be enforced through the structured-output mechanism from `session-runtime`. On success, the `result` field SHALL hold the validated JSON object (text mode prints it pretty-printed). After one initial submission and at most two failed validation corrections the run SHALL exit with code 1 and a `StructuredOutputError`; it SHALL NOT make a fourth submission.
 
 #### Scenario: Valid structured result
 - **WHEN** a user runs `cyber exec --output-schema findings.schema.json "audit deps"` and the model returns a conforming object

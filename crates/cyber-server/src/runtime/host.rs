@@ -1402,6 +1402,8 @@ pub struct FileDiff {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RestoreError {
+    #[error("Working tree changed since the rewind preview; review a fresh preview")]
+    Stale,
     #[error("RewindConflictError: changed since the snapshot and cannot be merged: {}", .0.join(", "))]
     Conflict(Vec<String>),
     #[error("{0}")]
@@ -1427,6 +1429,44 @@ pub trait Snapshots: Send + Sync {
         from: &str,
         to: &str,
     ) -> BoxFuture<'_, Result<Vec<FileDiff>, String>>;
+
+    fn reviewed_restore_available(&self) -> bool {
+        false
+    }
+
+    /// Plan the actual three-way result, rather than a target/current comparison
+    /// that would incorrectly list unrelated owner files as deletions.
+    fn preview_restore(
+        &self,
+        _directory: &str,
+        _target: &str,
+        _recorded: &str,
+        _expected: &str,
+    ) -> BoxFuture<'_, Result<Vec<FileDiff>, RestoreError>> {
+        Box::pin(async {
+            Err(RestoreError::Failed(
+                "Restore planning is unavailable on this snapshot host".into(),
+            ))
+        })
+    }
+
+    /// Restore only after rechecking the reviewed current tree under the same
+    /// workspace mutation lock as the effect. Custom hosts fail closed until they
+    /// implement this contract; ordinary legacy restore remains unchanged.
+    fn restore_reviewed(
+        &self,
+        _directory: &str,
+        _target: &str,
+        _recorded: &str,
+        _expected: &str,
+        _authorize: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    ) -> BoxFuture<'_, Result<Vec<String>, RestoreError>> {
+        Box::pin(async {
+            Err(RestoreError::Failed(
+                "Reviewed restore is unavailable on this snapshot host".into(),
+            ))
+        })
+    }
 
     /// Make the working tree match `target` for every path that differs between `recorded`
     /// (the last state the system wrote) and `target`, preserving later edits by three-way

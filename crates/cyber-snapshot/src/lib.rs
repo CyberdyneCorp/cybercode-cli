@@ -128,6 +128,81 @@ impl Snapshots for GitSnapshots {
         })
     }
 
+    fn reviewed_restore_available(&self) -> bool {
+        true
+    }
+
+    fn preview_restore(
+        &self,
+        directory: &str,
+        target: &str,
+        recorded: &str,
+        expected: &str,
+    ) -> BoxFuture<'_, Result<Vec<FileDiff>, RestoreError>> {
+        let (directory, target, recorded, expected) = (
+            directory.to_owned(),
+            target.to_owned(),
+            recorded.to_owned(),
+            expected.to_owned(),
+        );
+        Box::pin(async move {
+            let shadow = self
+                .shadow(&directory)
+                .ok_or_else(|| RestoreError::Failed("Snapshots are unavailable".into()))?;
+            let lock = cyber_server::workspace::mutation_lock(&shadow.worktree)
+                .map_err(|error| RestoreError::Failed(error.to_string()))?;
+            let _guard = lock.lock().await;
+            let (ignore, max) = self.options(Path::new(&directory));
+            let current = shadow
+                .track(&ignore, max)
+                .await
+                .map_err(RestoreError::Failed)?;
+            if current.tree != expected {
+                return Err(RestoreError::Stale);
+            }
+            restore::preview(&shadow, &target, &recorded, &expected).await
+        })
+    }
+
+    fn restore_reviewed(
+        &self,
+        directory: &str,
+        target: &str,
+        recorded: &str,
+        expected: &str,
+        authorize: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+    ) -> BoxFuture<'_, Result<Vec<String>, RestoreError>> {
+        let (directory, target, recorded, expected) = (
+            directory.to_owned(),
+            target.to_owned(),
+            recorded.to_owned(),
+            expected.to_owned(),
+        );
+        Box::pin(async move {
+            let shadow = self.shadow(&directory).ok_or_else(|| {
+                RestoreError::Failed("Snapshots are unavailable for this Location".into())
+            })?;
+            let lock = cyber_server::workspace::mutation_lock(&shadow.worktree)
+                .map_err(|error| RestoreError::Failed(error.to_string()))?;
+            let _guard = lock.lock().await;
+            authorize().map_err(RestoreError::Failed)?;
+            let (ignore, max) = self.options(Path::new(&directory));
+            let current = shadow
+                .track(&ignore, max)
+                .await
+                .map_err(RestoreError::Failed)?;
+            if current.tree != expected {
+                return Err(RestoreError::Stale);
+            }
+            let backups = self
+                .root()
+                .join("backups")
+                .join(ulid::Ulid::new().to_string().to_lowercase());
+            restore::restore_authorized(&shadow, &target, &recorded, &backups, authorize.as_ref())
+                .await
+        })
+    }
+
     fn restore(
         &self,
         directory: &str,

@@ -31,6 +31,7 @@ pub mod plugins;
 pub mod pr;
 pub mod providers;
 pub mod review;
+mod rewind;
 pub mod sandbox;
 pub mod serve;
 pub mod sessions;

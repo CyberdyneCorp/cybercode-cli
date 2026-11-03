@@ -121,6 +121,10 @@ pub mod deferred_tools;
 mod model;
 mod requests;
 mod rewind;
+mod rewind_preview;
+pub use rewind_preview::{
+    RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview, RewindSelection,
+};
 mod routing;
 mod sandbox_events;
 pub use sandbox_events::SandboxEvent;

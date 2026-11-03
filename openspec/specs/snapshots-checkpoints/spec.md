@@ -59,7 +59,7 @@ Records the working tree around every model step in a private git repository sep
 - **THEN** messages 3 to 5 leave the model's view and remain reachable as an inactive branch through `/tree` and `cyber sessions checkout`
 
 ### Requirement: Three-phase revert
-(P0) Rewinds affecting the conversation SHALL be staged first: `stage { message_id, target }` restores files (when the target includes code) and records the revert state, `clear` restores the pre-stage working tree, and `commit` deletes the messages and inbox rows after the boundary while retaining unresolved tool recovery records independently of conversation projection. A staged revert SHALL be committed automatically on the next prompt, shell command or compaction. The routes SHALL be `POST /api/v1/sessions/:id/revert/{stage,clear,commit}`.
+(P0) Rewinds affecting the conversation SHALL be staged first: `stage { message_id, target }` restores files (when the target includes code) and records the revert state, `clear` restores the pre-stage working tree, and `commit` moves the boundary user message and later messages, together with their derived inbox state, onto a retained inactive branch while keeping unresolved tool recovery records independently of conversation projection. A `code`-only commit SHALL keep the active conversation unchanged. A staged revert SHALL be committed automatically on the next prompt, shell command or compaction. The routes SHALL be `POST /api/v1/sessions/:id/revert/{stage,clear,commit}`.
 
 #### Scenario: Undo a staged revert
 - **WHEN** a revert is staged and the user calls `clear`
@@ -120,3 +120,7 @@ Records the working tree around every model step in a private git repository sep
 #### Scenario: PR survives local rewind
 - **WHEN** a user rewinds a Turn that created a remote PR
 - **THEN** the preview states that the PR remains remote and the recovery record is preserved
+
+#### Scenario: Committed conversation rewind preserves recovery
+- **WHEN** the owner commits a conversation rewind across an unresolved tool call
+- **THEN** later messages remain on an inactive branch and the independent unknown-outcome record is neither deleted nor acknowledged

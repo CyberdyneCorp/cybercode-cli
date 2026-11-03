@@ -317,6 +317,7 @@ cyber sessions [OPTIONS] <COMMAND>
 - [`delete`](#cyber-sessions-delete): Delete a Session with its child Sessions
 - [`tree`](#cyber-sessions-tree): The Session's user-message tree: `*` marks the active path
 - [`checkout`](#cyber-sessions-checkout): Make another branch active; the Session must be idle
+- [`rewind`](#cyber-sessions-rewind): Preview a rewind before a user message; apply only with its reviewed fingerprint
 - [`label`](#cyber-sessions-label): Set or remove a branch label
 - [`export`](#cyber-sessions-export): Write a Session as JSON (default), Markdown (--format md) or one self-contained HTML page (--format html): its info, messages, tool calls, goals and workflow runs
 - [`import`](#cyber-sessions-import): Import a JSON export (`cyber sessions export`) as a new Session in this Location, with fresh IDs and its attachments, which are verified before anything is written
@@ -403,6 +404,24 @@ cyber sessions checkout [OPTIONS] <SESSION> <MESSAGE>
 
 - `--code`: Also restore files to the branch's last snapshot, keeping your own edits.
 - `--exact`: Make the message itself the tip; the next prompt branches there.
+
+## `cyber sessions rewind`
+
+Preview a rewind before a user message; apply only with its reviewed fingerprint
+
+```text
+cyber sessions rewind [OPTIONS] --to <TO> <SESSION>
+```
+
+**Arguments:**
+
+- `<SESSION>`: ID, exact title or unique ID prefix.
+
+**Options:**
+
+- `--to <TO>`: Exact active user-message ID; the boundary itself is excluded on conversation rewind.
+- `--target <TARGET>`: Values: `code`, `conversation`, `both`. Default: `both`.
+- `--confirm <CONFIRM>`: Apply the exact previously reviewed preview; changed context requires a new preview.
 
 ## `cyber sessions label`
 

@@ -50,6 +50,19 @@ pub(crate) fn git_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// A proposed index entry; `None` removes the path. Used only by read-only restore planning.
+pub(crate) struct TreeChange {
+    pub path: String,
+    pub image: Option<(String, Vec<u8>)>,
+}
+struct PreviewIndex(PathBuf);
+impl Drop for PreviewIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let _ = std::fs::remove_file(self.0.with_extension("index.lock"));
+    }
+}
+
 impl Shadow {
     pub fn locate(root: &Path, location: &Path) -> Option<Self> {
         let project = cyber_core::project::identify(location);
@@ -277,6 +290,87 @@ impl Shadow {
             });
         }
         Ok(out)
+    }
+
+    /// Construct a proposed tree in a separate index. Neither the source files nor
+    /// the live shadow index are changed, including when planning is cancelled.
+    pub(crate) async fn projected_tree(
+        &self,
+        current: &str,
+        changes: Vec<TreeChange>,
+    ) -> Result<String, String> {
+        use tokio::io::AsyncWriteExt;
+        let index = PreviewIndex(
+            self.git_dir
+                .join(format!("preview-{}.index", ulid::Ulid::new())),
+        );
+        self.index_command(&index.0, &["read-tree", current])
+            .await?;
+        for change in changes {
+            match change.image {
+                None => {
+                    self.index_command(
+                        &index.0,
+                        &["update-index", "--force-remove", "--", &change.path],
+                    )
+                    .await?;
+                }
+                Some((mode, bytes)) => {
+                    let mut child = self
+                        .command(&["hash-object", "-w", "--stdin"])
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .spawn()
+                        .map_err(|error| error.to_string())?;
+                    let mut input = child.stdin.take().ok_or("Missing Git object input")?;
+                    input
+                        .write_all(&bytes)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    drop(input);
+                    let output = child
+                        .wait_with_output()
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    if !output.status.success() {
+                        return Err("Cannot prepare proposed snapshot object".into());
+                    }
+                    let object = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                    self.index_command(
+                        &index.0,
+                        &[
+                            "update-index",
+                            "--add",
+                            "--cacheinfo",
+                            &mode,
+                            &object,
+                            &change.path,
+                        ],
+                    )
+                    .await?;
+                }
+            }
+        }
+        let tree = self.index_command(&index.0, &["write-tree"]).await?;
+        Ok(String::from_utf8_lossy(&tree).trim().to_owned())
+    }
+
+    async fn index_command(&self, index: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+        let output = self
+            .command(args)
+            .env("GIT_INDEX_FILE", index)
+            .output()
+            .await
+            .map_err(|error| error.to_string())?;
+        if output.status.success() {
+            Ok(output.stdout)
+        } else {
+            Err(format!(
+                "Proposed snapshot index: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
     }
 
     /// `(mode, contents)` of a path in a tree, or `None` when absent.

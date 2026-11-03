@@ -1058,6 +1058,10 @@ export type Data_RevertState = {
   data: RevertState;
 };
 
+export type Data_RewindPreview = {
+  data: RewindPreview;
+};
+
 export type Data_RunDetail = {
   data: RunDetail;
 };
@@ -3963,6 +3967,50 @@ export type ReviewedHook = {
   /** Why a managed policy refuses this definition; it never runs while set. */
   skipped?: string | null;
   last_run?: HookLastRun | null;
+};
+
+export type RewindCodePreview = {
+  baseline: string;
+  target: string;
+  recorded: string;
+  files: FileDiff[];
+  skipped: string[];
+};
+
+export type RewindConfirmation = {
+  message_id: string;
+  target: RevertTarget;
+  /** Exact Session Location selected by the owner, including for conversation-only rewind. */
+  expected_directory: string;
+  confirmation: string;
+};
+
+export type RewindEffect = {
+  call_id: string;
+  tool: string;
+  status: CallStatus;
+};
+
+export type RewindPreview = {
+  session_id: string;
+  directory: string;
+  sequence: number;
+  message_id: string;
+  target: RevertTarget;
+  active_tip?: string | null;
+  code?: RewindCodePreview | null;
+  /** Includes recovery calls retained outside the visible conversation branch. */
+  effects: RewindEffect[];
+  warning: string;
+  /** Fingerprint of the server-derived preview; not an authentication credential. */
+  confirmation: string;
+};
+
+export type RewindSelection = {
+  message_id: string;
+  target: RevertTarget;
+  /** Exact Session Location selected by the owner, including for conversation-only rewind. */
+  expected_directory: string;
 };
 
 export type Role = "lead" | "teammate";

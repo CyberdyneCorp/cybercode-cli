@@ -251,3 +251,113 @@ async fn snapshot_restore_waits_for_the_shared_workspace_mutation_owner() {
         .unwrap();
     assert_eq!(std::fs::read(r.root.join("a.txt")).unwrap(), original);
 }
+
+#[tokio::test]
+async fn reviewed_restore_rechecks_after_waiting_for_workspace_ownership() {
+    let r = Repo::new();
+    let target = r.track().await;
+    r.write("a.txt", "recorded\n");
+    let recorded = r.track().await;
+    let lock = cyber_server::workspace::mutation_lock(&r.root).unwrap();
+    let guard = lock.lock().await;
+    let snaps = r.snaps.clone();
+    let directory = r.dir();
+    let expected = recorded.clone();
+    let waiting = tokio::spawn(async move {
+        snaps
+            .restore_reviewed(
+                &directory,
+                &target,
+                &recorded,
+                &expected,
+                Arc::new(|| Ok(())),
+            )
+            .await
+    });
+    tokio::task::yield_now().await;
+    r.write("a.txt", "owner edit while waiting\n");
+    drop(guard);
+    assert_eq!(waiting.await.unwrap(), Err(RestoreError::Stale));
+    assert_eq!(
+        r.read("a.txt").as_deref(),
+        Some("owner edit while waiting\n")
+    );
+}
+
+#[tokio::test]
+async fn reviewed_restore_refreshes_authority_and_has_a_positive_control() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let r = Repo::new();
+    let original = r.read("a.txt");
+    let target = r.track().await;
+    r.write("a.txt", "recorded\n");
+    let recorded = r.track().await;
+    let lock = cyber_server::workspace::mutation_lock(&r.root).unwrap();
+    let guard = lock.lock().await;
+    let allowed = Arc::new(AtomicBool::new(true));
+    let permission = allowed.clone();
+    let authorize = Arc::new(move || {
+        if permission.load(Ordering::SeqCst) {
+            Ok(())
+        } else {
+            Err("owner admission revoked".into())
+        }
+    });
+    let snaps = r.snaps.clone();
+    let directory = r.dir();
+    let (wanted, last) = (target.clone(), recorded.clone());
+    let waiting = tokio::spawn(async move {
+        snaps
+            .restore_reviewed(&directory, &wanted, &last, &last, authorize)
+            .await
+    });
+    tokio::task::yield_now().await;
+    allowed.store(false, Ordering::SeqCst);
+    drop(guard);
+    assert!(
+        matches!(waiting.await.unwrap(), Err(RestoreError::Failed(message)) if message.contains("revoked"))
+    );
+    assert_eq!(r.read("a.txt").as_deref(), Some("recorded\n"));
+    let restored = r
+        .snaps
+        .restore_reviewed(&r.dir(), &target, &recorded, &recorded, Arc::new(|| Ok(())))
+        .await
+        .unwrap();
+    assert_eq!(restored, ["a.txt"]);
+    assert_eq!(r.read("a.txt"), original);
+}
+
+#[tokio::test]
+async fn reviewed_restore_rechecks_admission_before_each_file_and_keeps_backups() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let r = Repo::new();
+    let original = r.read("a.txt");
+    let target = r.track().await;
+    r.write("a.txt", "recorded a\n");
+    r.write("b.txt", "recorded b\n");
+    let recorded = r.track().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let gate = calls.clone();
+    let authorize = Arc::new(move || {
+        if gate.fetch_add(1, Ordering::SeqCst) < 3 {
+            Ok(())
+        } else {
+            Err("revoked before the second file".into())
+        }
+    });
+    let result = r
+        .snaps
+        .restore_reviewed(&r.dir(), &target, &recorded, &recorded, authorize)
+        .await;
+    assert!(
+        matches!(result, Err(RestoreError::Failed(message)) if message.contains("second file"))
+    );
+    assert_eq!(r.read("a.txt"), original);
+    assert_eq!(r.read("b.txt").as_deref(), Some("recorded b\n"));
+    let backups = std::fs::read_dir(r.data.join("snapshot/backups")).unwrap();
+    let saved = backups
+        .map(|entry| entry.unwrap().path().join("a.txt"))
+        .find_map(|path| std::fs::read_to_string(path).ok());
+    assert_eq!(saved.as_deref(), Some("recorded a\n"));
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+}
