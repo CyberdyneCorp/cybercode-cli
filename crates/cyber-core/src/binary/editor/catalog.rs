@@ -70,6 +70,24 @@ pub(super) fn publish_header(
 impl StorageRoot {
     /// Authenticate a small owner header before opening a potentially large draft.
     pub fn resource(&self, owner: &Owner, id: &str) -> Result<super::super::Resource, Error> {
+        let header = self.header(id)?;
+        if &header.owner != owner {
+            return Err(Error::File);
+        }
+        Ok(super::super::Resource(owner.root.join(header.relative)))
+    }
+
+    /// Authenticate only this Session/Location's model namespace. The returned
+    /// owner is for receipt recovery, never promotion into a manual draft.
+    pub fn model_owner(&self, scope: &Owner, id: &str) -> Result<Owner, Error> {
+        let header = self.header(id)?;
+        if !model_scope(&header.owner, scope) {
+            return Err(Error::File);
+        }
+        Ok(header.owner)
+    }
+
+    fn header(&self, id: &str) -> Result<Header, Error> {
         if !id.starts_with("bin_")
             || id.len() > 100
             || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
@@ -87,7 +105,6 @@ impl StorageRoot {
             serde_json::from_slice(&small_record(&dir, "owner.json", HEADER_LIMIT)?)
                 .map_err(|_| Error::Invalid)?;
         if header.version != 1
-            || &header.owner != owner
             || header.relative.as_os_str().is_empty()
             || header
                 .relative
@@ -96,7 +113,7 @@ impl StorageRoot {
         {
             return Err(Error::File);
         }
-        Ok(super::super::Resource(owner.root.join(header.relative)))
+        Ok(header)
     }
 
     /// Deletion must not orphan dirty drafts or unresolved receipts, including closed
@@ -138,6 +155,26 @@ impl StorageRoot {
         after: Option<&str>,
         limit: usize,
     ) -> Result<StoredDocuments, Error> {
+        self.list_scoped(owner, after, limit, false)
+    }
+
+    /// Bounded model receipt discovery reads small headers, never private drafts.
+    pub fn list_model(
+        &self,
+        scope: &Owner,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<StoredDocuments, Error> {
+        self.list_scoped(scope, after, limit, true)
+    }
+
+    fn list_scoped(
+        &self,
+        owner: &Owner,
+        after: Option<&str>,
+        limit: usize,
+        model: bool,
+    ) -> Result<StoredDocuments, Error> {
         if limit == 0
             || limit > 64
             || after.is_some_and(|id| {
@@ -177,7 +214,12 @@ impl StorageRoot {
             let header: Header =
                 serde_json::from_slice(&small_record(&dir, "owner.json", HEADER_LIMIT)?)
                     .map_err(|_| Error::Invalid)?;
-            if header.version != 1 || &header.owner != owner {
+            let admitted = if model {
+                model_scope(&header.owner, owner)
+            } else {
+                &header.owner == owner
+            };
+            if header.version != 1 || !admitted {
                 continue;
             }
             if header.relative.as_os_str().is_empty()
@@ -204,6 +246,13 @@ impl StorageRoot {
             next_cursor,
         })
     }
+}
+
+fn model_scope(owner: &Owner, scope: &Owner) -> bool {
+    owner.session_id == scope.session_id
+        && owner.directory == scope.directory
+        && owner.root == scope.root
+        && matches!(owner.scope, DraftScope::Model { .. })
 }
 
 impl StorageRoot {

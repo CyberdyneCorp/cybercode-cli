@@ -64,6 +64,24 @@ File I/O, hashing and encoding use bounded workers rather than blocking the serv
 
 Register one capability-owned model tool, `binary`, with `inspect`, `read`, `search` and `patch` operations. Read operations check ordinary `read`; patch additionally checks `edit`, code-restore protections and invocation-scoped write authority. Plan/read-only agents can inspect/search but cannot patch. The model receives bounded offset/hex/ASCII or match results, base fingerprints and explicit receipts; it cannot send a complete arbitrary file as unbounded base64 or invoke the owner's unsaved draft. A model patch owns a separate ephemeral draft, validates all expected bytes, passes ordinary permission review with its byte diff, then uses the same save engine and durable operation identity. No new provider request is required for manual editing. Hook/plugin code cannot bypass its declared filesystem capabilities by calling this API/tool.
 
+### Model receipt recovery
+
+Model invocation namespaces remain distinct from manual document handles. Add
+separate owner-authenticated model recovery discovery, operation lookup and explicit
+reconciliation routes under `/files/binary/model`. Match the current Session,
+canonical Location/root and a stored Model scope from the small private header
+before loading its journal/base. Discovery discloses only currently allowed source
+names; direct lookup uses normal read approval. Read/editor authority and ancestor
+admission are refreshed before returning receipts. Never promote model commands
+into the owner's manual editor or grant source write permission through recovery.
+
+Reconciliation observes retained evidence under the exclusive document lock, uses
+bounded cancellable IO and never executes replacement again. Only matching trusted
+filesystem activity may be settled by the existing borrowed document-lock proof;
+generic native process activity remains untouched. Unknown results and pending
+notification metadata stay explicit. Callback dispatch, source restore and cleanup
+are separate actions, not side effects of receipt lookup.
+
 ## Delivery and acceptance
 
 The user prioritized implementation on 2026-11-01 ahead of the unfinished first two workstreams. Preserve shared contracts and implement in this internal sequence: byte-service native identity/storage proof; bounded view/search and SDK; staged editing/save/recovery; themed TUI/direct CLI; model patch integration; snapshot/hooks and acceptance. Tests must cover every byte value, empty files, NUL/invalid UTF-8, offsets above 2^53, sparse files, EOF/overflow, same-size/same-mtime changes, denied reads/edits, partial nibbles, multi-splice atomicity, file growth/shrinkage, history, stale revisions and Session switches, lost acknowledgements, kill/restart around replacement and native alias races. Use real binary fixtures and hashes, TUI snapshots at wide/narrow/NO_COLOR widths plus real terminal captures, native platform positive/negative controls, generated schema/API/CLI checks and code/security review. See [implementation progress](implementation.md) for the unchanged-main browsing baseline, current viewer evidence and unperformed editor/native acceptance.

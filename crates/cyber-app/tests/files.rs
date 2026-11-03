@@ -1366,6 +1366,263 @@ async fn binary_immutable_read_only_open_refuses_preparation_even_with_edit_allo
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+fn retained_model(f: &Fixture, session: &str, id: &str, save: bool) {
+    use cyber_core::binary::{
+        Document, Offset,
+        draft::{PatchBatch, Splice},
+        editor::{DraftScope, Editor, Owner, SavePreparation},
+    };
+    let storage = f._app.runtime.binary_storage().unwrap();
+    let owner = Owner {
+        session_id: session.into(),
+        directory: f.project.clone(),
+        root: f.project.clone(),
+        scope: DraftScope::Model {
+            operation: format!("{session}:{id}:canonical_payload"),
+        },
+    };
+    let mut document = Document::open(&f.project, "blob.bin").unwrap();
+    let mut editor = Editor::model(&storage, id, owner, &mut document, || false).unwrap();
+    let revision = editor.draft().revision();
+    let before = editor.draft().page(&revision, Offset(0), 1).unwrap().bytes[0];
+    editor
+        .patch(
+            "model_patch",
+            &PatchBatch {
+                revision,
+                splices: vec![Splice {
+                    offset: Offset(0),
+                    delete_length: Offset(1),
+                    expected_hex: format!("{before:02x}"),
+                    insert_hex: format!("{:02x}", before ^ 255),
+                }],
+            },
+        )
+        .unwrap();
+    if save {
+        let review = editor.review(0, 128, || false).unwrap();
+        let SavePreparation::Ready(prepared) = editor
+            .prepare_save("model_save", &review.fingerprint, || false)
+            .unwrap()
+        else {
+            panic!("new source save")
+        };
+        assert_eq!(
+            editor.commit_save(*prepared).unwrap().outcome,
+            cyber_core::binary::receipts::Outcome::Acknowledged
+        );
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn binary_model_receipt_recovery_stays_scoped_and_never_replays_source_edits() {
+    let f = Fixture::with(json!({"read":"allow", "edit":"allow"})).await;
+    let session = f.session().await;
+    retained_model(&f, &session, "bin_model_saved", true);
+    retained_model(&f, &session, "bin_model_unsaved", false);
+    let original = std::fs::read(f.project.join("blob.bin")).unwrap();
+    let identity = cyber_core::binary::native::Target::capture(&f.project, Path::new("blob.bin"))
+        .unwrap()
+        .file;
+    let (status, listing) = f
+        .get(&format!(
+            "/files/binary/model/recovery?session_id={session}&limit=1"
+        ))
+        .await;
+    assert_eq!(status, 200, "{listing}");
+    assert_eq!(
+        listing["data"]["documents"][0]["document_id"],
+        "bin_model_saved"
+    );
+    let cursor = listing["data"]["next_cursor"].as_str().unwrap();
+    let (status, next) = f
+        .get(&format!(
+            "/files/binary/model/recovery?session_id={session}&after={cursor}"
+        ))
+        .await;
+    assert_eq!(status, 200, "{next}");
+    assert_eq!(
+        next["data"]["documents"][0]["document_id"],
+        "bin_model_unsaved"
+    );
+    let (status, manual) = f
+        .get(&format!("/files/binary/recovery?session_id={session}"))
+        .await;
+    assert_eq!(status, 200, "{manual}");
+    assert_eq!(manual["data"]["documents"], json!([]));
+    let path = "/files/binary/model/documents/bin_model_saved/operations/model_save";
+    let (status, receipt) = f.get(&format!("{path}?session_id={session}")).await;
+    assert_eq!(status, 200, "{receipt}");
+    assert_eq!(receipt["data"]["outcome"], "acknowledged");
+    assert_eq!(receipt["data"]["file_effect"], "changed");
+    let url = format!("{}/api/v1{path}?session_id={session}", f.base);
+    assert_eq!(f.http.get(&url).send().await.unwrap().status(), 401);
+    let authorized = f
+        .http
+        .get(&url)
+        .basic_auth("cyber", Some(PASSWORD))
+        .header("x-cyber-directory", f.project.display().to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(authorized.status(), 200);
+    assert!(
+        authorized.headers()["cache-control"]
+            .to_str()
+            .unwrap()
+            .contains("no-store")
+    );
+    assert_eq!(
+        f.http
+            .get(&url)
+            .basic_auth("cyber", Some(PASSWORD))
+            .header("x-cyber-directory", f.project.display().to_string())
+            .header("Origin", "https://untrusted.invalid")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        403
+    );
+    for _ in 0..2 {
+        let (status, reconciled) = f
+            .send(
+                "POST",
+                &format!("{path}/reconcile"),
+                Some(json!({"session_id":session})),
+            )
+            .await;
+        assert_eq!(status, 200, "{reconciled}");
+        assert_eq!(reconciled["data"], receipt["data"]);
+    }
+    let (status, absent) = f.get(&format!("/files/binary/model/documents/bin_model_unsaved/operations/model_save?session_id={session}")).await;
+    assert_eq!(status, 200, "{absent}");
+    assert!(absent["data"].is_null());
+    assert_ne!(
+        f.send(
+            "POST",
+            "/files/binary/documents/bin_model_saved/recover",
+            Some(json!({"session_id":session}))
+        )
+        .await
+        .0,
+        200
+    );
+    let opened = f.binary(&session, "blob.bin").await;
+    let manual_id = opened["document_id"].as_str().unwrap();
+    let (status, prepared) = f
+        .send(
+            "POST",
+            &format!("/files/binary/documents/{manual_id}/prepare"),
+            Some(json!({"session_id":session,"revision":opened["revision"]})),
+        )
+        .await;
+    assert_eq!(status, 200, "{prepared}");
+    assert_eq!(
+        f.get(&format!(
+            "/files/binary/model/documents/{manual_id}/operations/model_save?session_id={session}"
+        ))
+        .await
+        .0,
+        404
+    );
+    let other = f.session().await;
+    assert_eq!(f.get(&format!("{path}?session_id={other}")).await.0, 404);
+    let (status, hidden) = f
+        .get(&format!("/files/binary/model/recovery?session_id={other}"))
+        .await;
+    assert_eq!(status, 200, "{hidden}");
+    assert_eq!(hidden["data"]["documents"], json!([]));
+    assert_eq!(std::fs::read(f.project.join("blob.bin")).unwrap(), original);
+    assert_eq!(
+        cyber_core::binary::native::Target::capture(&f.project, Path::new("blob.bin"))
+            .unwrap()
+            .file,
+        identity
+    );
+    let mut config = f._model.config();
+    config["permissions"] = json!({"read":"deny", "edit":"allow"});
+    std::fs::write(f.root.join("config/cyber.json"), config.to_string()).unwrap();
+    assert_eq!(f.get(&format!("{path}?session_id={session}")).await.0, 403);
+    assert_eq!(
+        f.send(
+            "POST",
+            &format!("{path}/reconcile"),
+            Some(json!({"session_id":session}))
+        )
+        .await
+        .0,
+        403
+    );
+    let (status, hidden) = f
+        .get(&format!(
+            "/files/binary/model/recovery?session_id={session}"
+        ))
+        .await;
+    assert_eq!(status, 200, "{hidden}");
+    assert_eq!(hidden["data"]["documents"], json!([]));
+    assert!(f._model.requests().is_empty());
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn binary_model_receipt_lookup_refreshes_read_authority_after_approval() {
+    for revoke in [false, true] {
+        let f = Fixture::with(json!({"read":"allow", "edit":"allow"})).await;
+        let session = f.session().await;
+        retained_model(&f, &session, "bin_model_review", true);
+        let mut config = f._model.config();
+        config["permissions"] = json!({"read":"ask", "edit":"allow"});
+        std::fs::write(f.root.join("config/cyber.json"), config.to_string()).unwrap();
+        let (status, hidden) = f
+            .get(&format!(
+                "/files/binary/model/recovery?session_id={session}"
+            ))
+            .await;
+        assert_eq!(status, 200, "{hidden}");
+        assert_eq!(hidden["data"]["documents"], json!([]));
+        let request = f.background("GET", format!("/files/binary/model/documents/bin_model_review/operations/model_save?session_id={session}"), None);
+        let mut asked = vec![];
+        for _ in 0..500 {
+            asked = pending(&f, &session).await;
+            if !asked.is_empty() || request.is_finished() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert_eq!(asked[0]["action"], "read");
+        if revoke {
+            config["permissions"] = json!({"read":"deny", "edit":"allow"});
+            std::fs::write(f.root.join("config/cyber.json"), config.to_string()).unwrap();
+        }
+        f.send(
+            "POST",
+            &format!(
+                "/sessions/{session}/permissions/{}/reply",
+                asked[0]["id"].as_str().unwrap()
+            ),
+            Some(json!({"reply":"once"})),
+        )
+        .await;
+        let (status, result) = tokio::time::timeout(Duration::from_secs(5), request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status, if revoke { 403 } else { 200 }, "{result}");
+        if !revoke {
+            assert_eq!(result["data"]["outcome"], "acknowledged");
+        }
+        assert_eq!(
+            std::fs::read(f.project.join("blob.bin")).unwrap(),
+            [255, 159, 146, 150]
+        );
+        assert!(f._model.requests().is_empty());
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[tokio::test]
 async fn binary_closed_dirty_draft_is_recoverable_and_prevents_session_deletion() {
     let f = Fixture::with(json!({"read":"allow", "edit":"allow"})).await;

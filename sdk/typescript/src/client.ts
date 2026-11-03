@@ -1,4 +1,4 @@
-import { openBinaryDocument, recoverBinaryDocument, type BinaryDocument } from "./binary.js";
+import { openBinaryDocument, recoverBinaryDocument, modelBinaryRecovery, type BinaryDocument } from "./binary.js";
 import { Connection, type ConnectOptions } from "./connection.js";
 import {
   createGroups,
@@ -62,6 +62,8 @@ export class CyberClient implements Caller {
   readonly #transport: Transport;
 
   readonly binary = {
+    /** Inspect retained invocation receipts without promoting private drafts. */
+    model: modelBinaryRecovery(this),
     /** Reopen retained private commands/receipts without replaying a source save. */
     recover: (sessionID: string, documentID: string, options: RequestOptions & { readOnly?: boolean } = {}): Promise<BinaryDocument> => recoverBinaryDocument(this, sessionID, documentID, options),
     /** Open a live exact-byte view scoped to a Session and this client's Location. */

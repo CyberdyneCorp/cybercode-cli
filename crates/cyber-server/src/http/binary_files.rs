@@ -24,6 +24,8 @@ pub(super) mod recovery;
 #[path = "binary_files/saving.rs"]
 pub(super) mod saving;
 
+#[path = "binary_files/model_recovery.rs"]
+pub(super) mod model_recovery;
 #[path = "binary_files/versions.rs"]
 pub(super) mod versions;
 
@@ -75,6 +77,15 @@ pub struct BytePage {
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/files/binary/model/recovery", get(model_recovery::list))
+        .route(
+            "/files/binary/model/documents/{id}/operations/{operation}",
+            get(model_recovery::operation),
+        )
+        .route(
+            "/files/binary/model/documents/{id}/operations/{operation}/reconcile",
+            post(model_recovery::reconcile),
+        )
         .route("/files/binary/documents/{id}/versions", get(versions::list))
         .route(
             "/files/binary/documents/{id}/versions/{document}/{version}/review",

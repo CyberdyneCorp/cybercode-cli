@@ -39,6 +39,11 @@
 - **WHEN** a Session permits editing a path but denies reading its content
 - **THEN** binary preview, before/after disclosure and patch admission remain refused without leaking bytes
 
+#### Scenario: Model receipt recovery stays outside the manual editor
+- **WHEN** the owner queries a retained model operation after losing its response
+- **THEN** lookup rechecks the same Session/Location and current source read authority, refuses manual or other-Session namespaces, and returns only operation metadata
+- **AND** explicit reconciliation observes retained evidence without another source replacement, preserving unknown outcomes and cancellation evidence
+
 ### Requirement: Binary draft and restore evidence retention
 (P1) Dirty drafts and unresolved saves SHALL survive disconnect/restart in owner-protected storage and SHALL require fresh scope/permission validation on resume. Clean abandoned drafts MAY be removed after 24 hours; unresolved mutation evidence SHALL NOT be expired by that rule. Every successful save SHALL retain byte-accurate preimage/receipt evidence and a separately reviewed conflict-aware Restore Last Save path, including Git/non-git files skipped by ordinary snapshot limits. Unknown effects SHALL remain unknown after local rewind; external checksums/signatures or remote effects SHALL NOT be repaired implicitly.
 

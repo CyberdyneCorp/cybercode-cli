@@ -256,6 +256,30 @@ export interface Operations {
     body: S.BinaryHistoryRequest;
     response: S.Located_BinaryEdited;
   };
+  "v1.fs.binaryModelOperation": {
+    path: { id: string; operation: string };
+    query: {
+      session_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_Nullable_BinaryOperation;
+  };
+  "v1.fs.binaryModelReconcile": {
+    path: { id: string; operation: string };
+    query: Record<string, never>;
+    body: S.BinaryReconcileRequest;
+    response: S.Located_Nullable_BinaryOperation;
+  };
+  "v1.fs.binaryModelRecovery": {
+    path: Record<string, never>;
+    query: {
+      session_id?: QueryValue;
+      after?: QueryValue;
+      limit?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_BinaryRecoveryList;
+  };
   "v1.fs.binaryOpen": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -2209,6 +2233,42 @@ export const operations = {
     pathParams: ["id"],
     query: [],
     body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryModelOperation": {
+    tag: "fs",
+    name: "binaryModelOperation",
+    method: "GET",
+    path: "/api/v1/files/binary/model/documents/{id}/operations/{operation}",
+    pathParams: ["id", "operation"],
+    query: ["session_id"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryModelReconcile": {
+    tag: "fs",
+    name: "binaryModelReconcile",
+    method: "POST",
+    path: "/api/v1/files/binary/model/documents/{id}/operations/{operation}/reconcile",
+    pathParams: ["id", "operation"],
+    query: [],
+    body: "required",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.fs.binaryModelRecovery": {
+    tag: "fs",
+    name: "binaryModelRecovery",
+    method: "GET",
+    path: "/api/v1/files/binary/model/recovery",
+    pathParams: [],
+    query: ["session_id", "after", "limit"],
+    body: "none",
     located: true,
     unwrap: false,
     stream: false,
@@ -5253,6 +5313,15 @@ export function createGroups(caller: Caller) {
       /** Undo, redo or discard local draft commands without changing the source (`POST /api/v1/files/binary/documents/{id}/history`) */
       binaryHistory: (id: string, body: Operations["v1.fs.binaryHistory"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryHistory"]["response"]> =>
         caller.call("v1.fs.binaryHistory", { path: { id }, body }, options),
+      /** Read an invocation-bound receipt without opening its bytes in the manual editor (`GET /api/v1/files/binary/model/documents/{id}/operations/{operation}`) */
+      binaryModelOperation: (id: string, operation: string, query?: Operations["v1.fs.binaryModelOperation"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryModelOperation"]["response"]> =>
+        caller.call("v1.fs.binaryModelOperation", { path: { id, operation }, query }, options),
+      /** Observe retained native proof for a model operation; never replay a replacement (`POST /api/v1/files/binary/model/documents/{id}/operations/{operation}/reconcile`) */
+      binaryModelReconcile: (id: string, operation: string, body: Operations["v1.fs.binaryModelReconcile"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryModelReconcile"]["response"]> =>
+        caller.call("v1.fs.binaryModelReconcile", { path: { id, operation }, body }, options),
+      /** Discover only this Session Location's retained model operation namespaces under allowed read rules (`GET /api/v1/files/binary/model/recovery`) */
+      binaryModelRecovery: (query?: Operations["v1.fs.binaryModelRecovery"]["query"], options?: RequestOptions): Promise<Operations["v1.fs.binaryModelRecovery"]["response"]> =>
+        caller.call("v1.fs.binaryModelRecovery", { query }, options),
       /** Open a Session-owned live binary view; no eager whole-file copy or hash (`POST /api/v1/files/binary/documents`) */
       binaryOpen: (body: Operations["v1.fs.binaryOpen"]["body"], options?: RequestOptions): Promise<Operations["v1.fs.binaryOpen"]["response"]> =>
         caller.call("v1.fs.binaryOpen", { body }, options),

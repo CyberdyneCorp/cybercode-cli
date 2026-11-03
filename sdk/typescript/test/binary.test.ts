@@ -116,6 +116,33 @@ test("binary mutation transport failure requires explicit recovery instead of au
   assert.equal(calls.length, 1, "lost open response allocated another document automatically");
 });
 
+test("model binary receipt helpers keep Session scope separate from manual handles", async () => {
+  const receipt = { id: "save_once", kind: "save", payload_sha256: "a".repeat(64), outcome: "unknown", revision: "draft_a", file_effect: "unknown", reason: "native_outcome_requires_reconciliation", notification_pending: false };
+  const { client, calls } = mockClient(req => json(200, { data: req.url.pathname.endsWith("/recovery")
+    ? { documents: [{ document_id: "bin_model", path: "fixture.bin", record_available: true }], next_cursor: null } : receipt }));
+  const listing = await client.binary.model.list("ses_one", undefined, 1);
+  assert.equal(listing.documents[0]!.document_id, "bin_model");
+  assert.equal(calls[0]!.url.searchParams.get("session_id"), "ses_one");
+  assert.equal(calls[0]!.url.searchParams.get("limit"), "1");
+  assert.deepEqual(await client.binary.model.operation("ses_one", "bin_model", "save_once"), receipt);
+  assert.equal(calls[1]!.url.pathname.endsWith("/model/documents/bin_model/operations/save_once"), true);
+  assert.deepEqual(await client.binary.model.reconcile("ses_one", "bin_model", "save_once"), receipt);
+  assert.equal(calls[2]!.method, "POST");
+  assert.deepEqual(JSON.parse(calls[2]!.body!), { session_id: "ses_one" });
+  assert.equal(calls.some(call => call.url.pathname.endsWith("/recover") || call.url.pathname.endsWith("/save")), false);
+  const before = calls.length;
+  await assert.rejects(() => client.binary.model.operation("ses_one", "../bin_model", "save_once"));
+  await assert.rejects(() => client.binary.model.reconcile("ses_one", "bin_model", "../save_once"));
+  await assert.rejects(() => client.binary.model.list("ses_one", undefined, 65));
+  assert.equal(calls.length, before);
+});
+
+test("model binary reconciliation never retries a lost response", async () => {
+  const { client, calls } = mockClient(() => { throw new TypeError("response lost"); }, { retry: { retries: 4, delayMs: 0 } });
+  await assert.rejects(() => client.binary.model.reconcile("ses_one", "bin_model", "save_once"));
+  assert.equal(calls.length, 1);
+});
+
 test("binary save and restore preserve explicit review fingerprints and update metadata", async () => {
   const status = { ...opened, length: "4", revision: "saved", source: "draft", read_only: false, prepared: true,
     dirty: false, can_undo: false, can_redo: false, base_sha256: "a".repeat(64), pending_operation: null, edit_supported: true, edit_decision: "allow" };

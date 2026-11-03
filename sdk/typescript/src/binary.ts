@@ -6,6 +6,28 @@ import type { RequestOptions } from "./generated/operations.js";
 const MAX_OFFSET = (1n << 64n) - 1n;
 const MAX_PAGE = 1024 * 1024;
 
+/** Model receipts stay separate from editable manual document handles. */
+export function modelBinaryRecovery(client: CyberClient) {
+  const documentID = (id: string) => {
+    if (!/^bin_[a-zA-Z0-9_]{1,96}$/.test(id)) throw new TypeError("Invalid model binary document identity");
+  };
+  return {
+    async list(sessionID: string, after?: string, limit = 64, options?: RequestOptions) {
+      if (after !== undefined) documentID(after);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64) throw new RangeError("Invalid model receipt page");
+      return (await client.request("v1.fs.binaryModelRecovery", { query: { session_id: sessionID, after, limit } }, options)).data;
+    },
+    async operation(sessionID: string, id: string, operation: string, options?: RequestOptions) {
+      documentID(id); operationID(operation);
+      return (await client.request("v1.fs.binaryModelOperation", { path: { id, operation }, query: { session_id: sessionID } }, options)).data;
+    },
+    async reconcile(sessionID: string, id: string, operation: string, options?: RequestOptions) {
+      documentID(id); operationID(operation);
+      return (await client.request("v1.fs.binaryModelReconcile", { path: { id, operation }, body: { session_id: sessionID } }, options)).data;
+    },
+  };
+}
+
 /** Canonical wire offset. Numbers are deliberately excluded to prevent rounded offsets. */
 export function byteOffset(value: bigint | string): string {
   if (typeof value !== "bigint" && typeof value !== "string") throw new TypeError("Use bigint or a decimal string for byte offsets");

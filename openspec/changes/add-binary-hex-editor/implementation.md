@@ -656,3 +656,56 @@ now lists the implemented tool. A real Plan-mode binary read golden retains byte
 bounds, fingerprint and source metadata, normalizing only the live revision and
 JSON key order. All 14 golden tests and strict OpenSpec validation (114 items)
 passed locally. Cross-platform CI must verify the corrected head before merge.
+
+
+### Model operation receipt recovery (local follow-up)
+
+Separate `/files/binary/model` owner routes discover only the current Session and
+canonical Location/root's model namespaces, query individual operation receipts and
+explicitly reconcile retained native proof. Model headers do not enter manual
+recovery or produce editable document handles. Discovery includes only explicitly
+read-allowed names; known-ID lookup uses the ordinary read approval flow. Auth,
+Origin, current read/ancestor scope, exclusive journal ownership, lifecycle/worker
+capacity and response `no-store` remain effective. Absence is returned only from a
+validated journal; locked/missing/fenced state is refused.
+
+Reconciliation never exchanges the source again or dispatches callbacks. Unknown
+intent and notification-pending state remain explicit. Resume/reconciliation can
+cancel bounded image/hash work while retaining proof. A shared resource-bound
+resume checks the journal target against the already authorized header resource
+before opening a base, for both manual recovery and model calls/recovery.
+
+The SDK adds `client.binary.model.list/operation/reconcile`, preserving identities
+and the existing no-automatic-retry rule. Generated OpenAPI and SDK operations are
+updated. Tests cover own/manual/other-Session/Location namespace isolation, paging,
+missing operations, read denial and revocation after approval, auth/Origin/no-store,
+repeated reconciliation with unchanged file identity/bytes, cancellation preserving
+an installed unknown intent and explicit refusal of a different authorized resource.
+The broader retention/checkpoint/rewind and remaining UI/platform/performance
+acceptance work is still open; this increment does not close #94.
+
+
+Local verification for model recovery: 20 production-router binary tests and 84
+binary-core tests passed (one process-death helper ignored in that selector).
+Core/server/app all-target Clippy, formatting/diff checks and the current OpenAPI
+artifact test passed. SDK typecheck and 127 unit/mock tests passed; ten configured
+external SDK tests were skipped, and no new real-executable SDK run is claimed for
+these recovery endpoints. Strict OpenSpec validation passed all 114 items. Source
+review checked namespace/resource binding, permission waits, private-buffer
+separation, cancellation and the existing filesystem-only recovery proof. Linux
+and Windows recovery acceptance remain for CI after the preceding PR merges.
+
+
+### Named 16 MiB core performance evidence
+
+The reproducible `binary_editor` harness ran five serial 16 MiB trials on the
+Apple M2/24 GiB reference, with full hash verification after native save and
+restore. Both unoptimized and optimized results and process peak-RSS evidence are
+in [the measurement record](../../../docs/evidence/binary-editor-16mib/README.md).
+Optimized medians were 0.54 ms for open/first 64 KiB page, 141 ms for immutable
+preparation, 101 ms for byte review, 553 ms for native save, 545 ms for native
+restore and 0.064 ms for cooperative search cancellation. Optimized process peak
+RSS was 7.45 MiB, excluding filesystem cache. These core-only observations exclude
+server, permission, terminal rendering/input and provider work; they do not close
+the broader UI/platform/performance acceptance task. The benchmark target passed
+core all-target Clippy.

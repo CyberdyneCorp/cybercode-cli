@@ -68,7 +68,10 @@ impl BaseRef {
         }
     }
     fn open(&self, store: &Store) -> Result<Base, Error> {
-        store.open_base(&self.name, self.length.0, &self.sha256)
+        self.open_cancellable(store, || false)
+    }
+    fn open_cancellable(&self, store: &Store, cancelled: impl Fn() -> bool) -> Result<Base, Error> {
+        store.open_base_cancellable(&self.name, self.length.0, &self.sha256, cancelled)
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -212,7 +215,7 @@ impl Editor {
                 if storage.resource(&owner, id)?.path() != document.resource().path() {
                     return Err(Error::Changed);
                 }
-                Self::resume(store, &owner)
+                Self::resume_for_resource(store, &owner, &document.resource(), cancelled)
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 Self::create(store, owner, document, cancelled)
@@ -268,19 +271,56 @@ impl Editor {
             record,
         })
     }
-    pub fn resume(mut store: Store, owner: &Owner) -> Result<Self, Error> {
+    pub fn resume(store: Store, owner: &Owner) -> Result<Self, Error> {
+        Self::resume_cancellable(store, owner, || false)
+    }
+    pub fn resume_cancellable(
+        store: Store,
+        owner: &Owner,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Self, Error> {
+        Self::resume_checked(store, owner, None, cancelled)
+    }
+    /// Bind the journal target to the exact resource already read-authorized by
+    /// the caller, before opening any potentially large private base image.
+    pub fn resume_for_resource(
+        store: Store,
+        owner: &Owner,
+        resource: &super::Resource,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Self, Error> {
+        Self::resume_checked(store, owner, Some(resource), cancelled)
+    }
+    fn resume_checked(
+        mut store: Store,
+        owner: &Owner,
+        resource: Option<&super::Resource>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Self, Error> {
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
         let record: Record = serde_json::from_slice(&store.read_record("document.json")?)
             .map_err(|_| Error::Invalid)?;
         if record.version != 1
             || &record.owner != owner
             || record.operations.len() > MAX_OPERATIONS
             || record.target.root != owner.root
+            || resource.is_some_and(|resource| {
+                record.target.root.join(&record.target.relative) != resource.path()
+            })
         {
             return Err(Error::File);
         }
         store.ensure_history_lock()?;
         let pins = record.target.pins()?;
-        let draft = Draft::resume(record.base.open(&store)?, record.draft.clone())?;
+        let draft = Draft::resume(
+            record.base.open_cancellable(&store, &cancelled)?,
+            record.draft.clone(),
+        )?;
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
         Ok(Self {
             store,
             _pins: pins,
@@ -711,18 +751,33 @@ impl Editor {
         let _effect = native::exchange(self.store.directory(), &intent.stage, &intent.prior);
         // Even an error may follow a native effect. Reconcile by identities and
         // content rather than retrying or attempting an unreviewed rollback.
-        self.settle(Some(prepared.after))
+        self.settle(Some(prepared.after), || false)
     }
     pub fn reconcile(&mut self) -> Result<Operation, Error> {
-        self.settle(None)
+        self.reconcile_cancellable(|| false)
     }
-    fn settle(&mut self, after: Option<Draft<Base>>) -> Result<Operation, Error> {
+    /// Observe retained evidence only; cancellation never retries an exchange or
+    /// discards the unresolved intent.
+    pub fn reconcile_cancellable(
+        &mut self,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Operation, Error> {
+        self.settle(None, cancelled)
+    }
+    fn settle(
+        &mut self,
+        after: Option<Draft<Base>>,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Operation, Error> {
         self.store.validate()?;
         let intent = self.record.pending.as_ref().ok_or(Error::Invalid)?;
         let mut unknown = intent.operation.clone();
         unknown.outcome = Outcome::Unknown;
         unknown.reason = Some("native_outcome_unknown_evidence_retained".into());
         let verified = (|| {
+            if cancelled() {
+                return Err(Error::Cancelled);
+            }
             let installed_target = Target::capture(&intent.after.root, &intent.after.relative)?;
             if installed_target.file != intent.after.file
                 || installed_target.parents != intent.after.parents
@@ -736,8 +791,8 @@ impl Editor {
             let displaced_stamp = native::generation(&displaced)?;
             if native::id(&displaced)? != intent.prior.file
                 || native::metadata(&displaced)? != intent.prior.metadata
-                || native::content(&installed, || false)? != intent.new_base.sha256
-                || native::content(&displaced, || false)? != self.record.base.sha256
+                || native::content(&installed, &cancelled)? != intent.new_base.sha256
+                || native::content(&displaced, &cancelled)? != self.record.base.sha256
             {
                 return Err(Error::Changed);
             }
@@ -757,12 +812,15 @@ impl Editor {
         let draft = match after {
             Some(draft) => draft,
             None => Draft::resume(
-                intent.new_base.open(&self.store)?,
+                intent.new_base.open_cancellable(&self.store, &cancelled)?,
                 intent.after_draft.clone(),
             )?,
         };
         // Preserve the prior intent if publishing this outcome fails.
         let (next, operation) = self.acknowledged_record(intent, installed_target, &draft);
+        if cancelled() {
+            return Ok(unknown);
+        }
         if persist(&mut self.store, &next).is_err() {
             return Ok(unknown);
         }
@@ -1271,6 +1329,96 @@ mod tests {
     }
 
     #[test]
+    fn model_receipt_discovery_and_resume_are_separate_from_manual_drafts_and_other_locations() {
+        let (root, manual, _path, scope) = setup();
+        let storage =
+            super::super::storage::StorageRoot::prepare(&root.path().join("data")).unwrap();
+        let mut owner = scope.clone();
+        owner.scope = DraftScope::Model {
+            operation: "call_one:payload".into(),
+        };
+        let mut doc = Document::open(&scope.root, "bytes").unwrap();
+        for id in ["bin_model_a", "bin_model_b"] {
+            let editor = Editor::model(&storage, id, owner.clone(), &mut doc, || false).unwrap();
+            assert!(editor.lookup_operation("missing").unwrap().is_none());
+        }
+        assert!(storage.model_owner(&scope, "bin_one").is_err());
+        assert_eq!(storage.model_owner(&scope, "bin_model_a").unwrap(), owner);
+        let first = storage.list_model(&scope, None, 1).unwrap();
+        assert_eq!(first.documents.len(), 1);
+        assert_eq!(first.documents[0].document_id, "bin_model_a");
+        assert_eq!(
+            storage
+                .list_model(&scope, first.next_cursor.as_deref(), 1)
+                .unwrap()
+                .documents[0]
+                .document_id,
+            "bin_model_b"
+        );
+        assert_eq!(
+            storage.list(&scope, None, 64).unwrap().documents[0].document_id,
+            "bin_one"
+        );
+        assert!(
+            Editor::resume_cancellable(
+                storage.open_existing("bin_model_a").unwrap(),
+                &owner,
+                || true
+            )
+            .is_err()
+        );
+        assert!(
+            Editor::resume_cancellable(
+                storage.open_existing("bin_model_a").unwrap(),
+                &owner,
+                || false
+            )
+            .is_ok()
+        );
+        std::fs::write(scope.root.join("other"), b"other source").unwrap();
+        let other = Document::open(&scope.root, "other").unwrap().resource();
+        assert!(
+            Editor::resume_for_resource(
+                storage.open_existing("bin_model_a").unwrap(),
+                &owner,
+                &other,
+                || false
+            )
+            .is_err()
+        );
+        assert_foreign_model_scopes_are_refused(&storage, scope);
+        assert!(!manual.unresolved());
+    }
+
+    fn assert_foreign_model_scopes_are_refused(
+        storage: &super::super::storage::StorageRoot,
+        mut scope: Owner,
+    ) {
+        let original_session = scope.session_id.clone();
+        scope.session_id = "ses_other".into();
+        assert!(storage.model_owner(&scope, "bin_model_a").is_err());
+        assert!(
+            storage
+                .list_model(&scope, None, 64)
+                .unwrap()
+                .documents
+                .is_empty()
+        );
+        scope.session_id = original_session;
+        scope.directory = scope.root.join("nested");
+        std::fs::create_dir(&scope.directory).unwrap();
+        assert!(storage.model_owner(&scope, "bin_model_a").is_err());
+        assert!(
+            storage
+                .list_model(&scope, None, 64)
+                .unwrap()
+                .documents
+                .is_empty()
+        );
+        assert!(storage.model_owner(&scope, "../bin_model_a").is_err());
+    }
+
+    #[test]
     fn owner_namespace_and_exact_location_cannot_be_rebound_on_resume() {
         let (root, editor, _path, owner) = setup();
         drop(editor);
@@ -1708,6 +1856,17 @@ mod tests {
         assert_eq!(
             resumed.operation("save_cut").unwrap().outcome,
             Outcome::Unknown
+        );
+        assert_eq!(
+            resumed.reconcile_cancellable(|| true).unwrap().outcome,
+            Outcome::Unknown
+        );
+        assert!(resumed.pending_operation().is_some());
+        assert_eq!(
+            Target::capture(&owner.directory, Path::new("bytes"))
+                .unwrap()
+                .file,
+            installed
         );
         assert_eq!(resumed.reconcile().unwrap().outcome, Outcome::Acknowledged);
         assert_eq!(resumed.target().file, installed);
