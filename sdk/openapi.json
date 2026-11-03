@@ -15611,22 +15611,6 @@
           "record_available"
         ]
       },
-      "BinaryRecoverRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "session_id": {
-            "type": "string"
-          },
-          "read_only": {
-            "type": "boolean",
-            "default": false
-          }
-        },
-        "required": [
-          "session_id"
-        ]
-      },
       "Located_Nullable_BinaryOperation": {
         "type": "object",
         "properties": {
@@ -15648,6 +15632,34 @@
           "location"
         ],
         "description": "A Location-scoped response."
+      },
+      "BinaryReconcileRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id"
+        ]
+      },
+      "BinaryRecoverRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "session_id"
+        ]
       },
       "Located_BinaryVersions": {
         "type": "object",
@@ -15720,18 +15732,6 @@
           "session_id",
           "operation_id",
           "review"
-        ]
-      },
-      "BinaryReconcileRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "session_id": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "session_id"
         ]
       },
       "Data_boolean": {
@@ -30148,6 +30148,235 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/model/recovery": {
+      "get": {
+        "operationId": "v1.fs.binaryModelRecovery",
+        "summary": "Discover only this Session Location's retained model operation namespaces under allowed read rules",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_BinaryRecoveryList"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/model/documents/{id}/operations/{operation}": {
+      "get": {
+        "operationId": "v1.fs.binaryModelOperation",
+        "summary": "Read an invocation-bound receipt without opening its bytes in the manual editor",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Nullable_BinaryOperation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/binary/model/documents/{id}/operations/{operation}/reconcile": {
+      "post": {
+        "operationId": "v1.fs.binaryModelReconcile",
+        "summary": "Observe retained native proof for a model operation; never replay a replacement",
+        "tags": [
+          "fs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "operation",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_Nullable_BinaryOperation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BinaryReconcileRequest"
               }
             }
           }

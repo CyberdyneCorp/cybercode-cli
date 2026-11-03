@@ -1591,6 +1591,12 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             .located().body::<super::binary_files::editing::ReviewRequest>(g).ok::<Located<cyber_core::binary::receipts::SaveReview>>(g),
         op("get", "/files/binary/recovery", "v1.fs.binaryRecovery", "Discover retained manual drafts in the exact Session Location")
             .located().query(&["session_id", "after", "limit"]).ok::<Located<super::binary_files::recovery::RecoveryList>>(g),
+        op("get", "/files/binary/model/recovery", "v1.fs.binaryModelRecovery", "Discover only this Session Location's retained model operation namespaces under allowed read rules")
+            .located().query(&["session_id", "after", "limit"]).ok::<Located<super::binary_files::recovery::RecoveryList>>(g),
+        op("get", "/files/binary/model/documents/{id}/operations/{operation}", "v1.fs.binaryModelOperation", "Read an invocation-bound receipt without opening its bytes in the manual editor")
+            .located().query(&["session_id"]).ok::<Located<Option<cyber_core::binary::receipts::Operation>>>(g),
+        op("post", "/files/binary/model/documents/{id}/operations/{operation}/reconcile", "v1.fs.binaryModelReconcile", "Observe retained native proof for a model operation; never replay a replacement")
+            .located().body::<super::binary_files::saving::ReconcileRequest>(g).ok::<Located<Option<cyber_core::binary::receipts::Operation>>>(g),
         op("post", "/files/binary/documents/{id}/recover", "v1.fs.binaryRecover", "Explicitly reopen a retained private draft; never replay a save or grant mutation authority")
             .located().body::<super::binary_files::recovery::RecoverRequest>(g).ok::<Located<super::binary_files::editing::Status>>(g),
         op("get", "/files/binary/documents/{id}/operations/{operation}", "v1.fs.binaryOperation", "Query the durable receipt; absence is refused while journal storage is fenced")

@@ -130,9 +130,15 @@ pub(super) async fn recover(
         verify_read(&state, &parts, &authority).await?;
         let lifecycle = state.runtime.memory_mutation_lease().await?;
         let registry = state.runtime.clone();
+        let resource = authority.resource.clone();
         let result = work(&state, move || {
             let _lifecycle = lifecycle;
-            let editor = Editor::resume(storage.open_existing(&id)?, &owner)?;
+            let editor = Editor::resume_for_resource(
+                storage.open_existing(&id)?,
+                &owner,
+                &resource,
+                || false,
+            )?;
             editor.validate_read_resource()?;
             registry
                 .recover_binary_activity(editor.recovery_proof()?)

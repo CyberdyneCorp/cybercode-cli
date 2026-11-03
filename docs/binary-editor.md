@@ -251,6 +251,40 @@ The result is an explicit acknowledged/conflict/unknown operation receipt. The t
 is serialized and has no automatic retry. Its stable invocation/payload identity
 prevents reusing an operation for changed bytes. An unknown outcome must not be
 retried under a new call ID: preserve the document/operation identities for recovery.
-The owner API does not admit model drafts as manual buffers; a dedicated model
-recovery surface remains part of the remaining issue #94 acceptance work. Plugin
+The owner API does not admit model drafts as manual buffers; model receipts are recovered through the separate endpoints below. Plugin
 registrations cannot invoke this built-in tool as a capability bypass.
+
+
+### Recovering model operation receipts
+
+Model operation discovery and receipt lookup use a separate namespace:
+
+- `GET /api/v1/files/binary/model/recovery?session_id=…&after=…&limit=64`
+- `GET /api/v1/files/binary/model/documents/{id}/operations/{operation}?session_id=…`
+- `POST /api/v1/files/binary/model/documents/{id}/operations/{operation}/reconcile`
+  with `{ "session_id": "ses_…" }`.
+
+The exact owning Session and canonical Location must still match. Discovery returns
+only model headers whose source has an explicit current read allowance; use a known
+operation identity to request normal read approval when a rule says Ask. Manual
+drafts are excluded, and these endpoints never return an editable document handle
+or any private draft bytes. Authentication, Origin checks, current ancestor and read
+permission checks and `no-store` remain effective.
+
+Lookup returns the durable receipt or explicit `null` for an absent operation in a
+validated journal. Locked, missing or uncertain journals refuse absence instead.
+Explicit reconciliation observes retained native evidence without another exchange.
+It can acknowledge a proven installed result; an unprovable result stays unknown.
+Cancellation preserves unresolved intent and source bytes. These reads do not
+replay callbacks; a pending notification stays explicit until normal handoff settles.
+
+```ts
+const listing = await client.binary.model.list(session.id);
+const receipt = await client.binary.model.operation(session.id, documentId, operationId);
+const observed = await client.binary.model.reconcile(session.id, documentId, operationId);
+```
+
+The SDK preserves the supplied identities and never retries reconciliation after a
+transport failure. Retry lookup first. Discovery and reconciliation require neither
+new model inference nor a source edit allowance. Source restore and abandoned model
+draft cleanup remain separate from receipt recovery and from manual draft editing.
