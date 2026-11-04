@@ -222,6 +222,7 @@ impl App {
     /// and drags are not used. With `tui.mouse: off` nothing is handled, even an event
     /// the terminal still sends after capture was turned off.
     pub fn on_mouse(&mut self, event: MouseEvent) -> Vec<Action> {
+        self.rewind.escape = None;
         if !self.mouse_capture() {
             return Vec::new();
         }
@@ -688,6 +689,7 @@ fn wheel_moves(overlay: &Overlay) -> bool {
         Overlay::Picker(_)
             | Overlay::Palette(_)
             | Overlay::HookHistory
+            | Overlay::Rewind
             | Overlay::HookDefinitions
             | Overlay::Findings
             | Overlay::FileDiff { .. }

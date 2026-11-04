@@ -231,6 +231,19 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         false,
     ),
     ("exit", "quit", None, false),
+    ("rewind", "review code/conversation rewind", None, false),
+    (
+        "undo",
+        "review a staged undo and restore its prompt text",
+        None,
+        false,
+    ),
+    (
+        "redo",
+        "review the next staged boundary or clear undo",
+        None,
+        false,
+    ),
 ];
 
 /// `(name, description, binding action, action)` of UI actions.

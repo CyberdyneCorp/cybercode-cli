@@ -123,7 +123,8 @@ mod requests;
 mod rewind;
 mod rewind_preview;
 pub use rewind_preview::{
-    RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview, RewindSelection,
+    RewindAction, RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview,
+    RewindSelection,
 };
 mod routing;
 mod sandbox_events;

@@ -15,6 +15,7 @@ mod output_styles;
 mod overlays;
 pub(crate) mod progress;
 mod rename;
+mod rewind;
 mod settings;
 pub(crate) mod sidebar;
 mod sounds;
@@ -77,6 +78,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::Settings
             | Overlay::Files
             | Overlay::Hex
+            | Overlay::Rewind
             | Overlay::Workflows
             | Overlay::Messages
             | Overlay::Team
@@ -135,6 +137,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         | Overlay::Settings
         | Overlay::Files
         | Overlay::Hex
+        | Overlay::Rewind
         | Overlay::Workflows
         | Overlay::Messages
         | Overlay::Team
@@ -233,6 +236,7 @@ fn full_screen(f: &mut Frame, app: &App, panel: Rect) {
     match app.overlay {
         Overlay::Files => explorer::draw(f, app, panel),
         Overlay::Hex => hex::draw(f, app, panel),
+        Overlay::Rewind => rewind::draw(f, app, panel),
         Overlay::Workflows => workflows::draw(f, app, panel),
         Overlay::Messages => messaging::view(f, app, panel),
         Overlay::Team => team::view(f, app, panel),
@@ -344,6 +348,8 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
     let state = if app.session.running {
         format!("{} running ", spinner(app))
+    } else if app.session.revert.is_some() {
+        "UNDO STAGED · /redo ".to_owned()
     } else {
         "idle ".to_owned()
     };

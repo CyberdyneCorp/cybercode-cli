@@ -37,6 +37,7 @@ mod progress;
 mod recap;
 mod rename;
 mod review;
+mod rewind;
 mod runner;
 mod session_overview;
 mod settings;

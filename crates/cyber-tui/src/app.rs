@@ -92,6 +92,7 @@ pub enum Action {
     /// A file's preview; an `ask` file raises the permission request first.
     LoadPreview(String),
     Hex(crate::hex::Request),
+    Rewind(crate::rewind::Request),
     /// Save a Config tab preference to `kv.json`.
     SavePreference {
         key: &'static str,
@@ -342,6 +343,7 @@ pub enum Overlay {
     /// The file explorer; its state is `App::explorer`.
     Files,
     Hex,
+    Rewind,
     /// The theme switcher.
     Themes(Box<crate::switcher::Switcher>),
     /// The Workflow monitor; its state is `App::workflows`.
@@ -413,6 +415,7 @@ pub struct Completion {
 }
 
 pub struct App {
+    pub rewind: crate::rewind::View,
     pub admissions: crate::admissions::Admissions,
     pub session: Session,
     pub cost: crate::settings::cost::CostView,
@@ -559,6 +562,7 @@ impl App {
             .get(theme_name)
             .resolve(appearance.light(), appearance.depth);
         Self {
+            rewind: Default::default(),
             admissions: Default::default(),
             session,
             cost: Default::default(),
@@ -737,6 +741,7 @@ impl App {
 
     pub(crate) fn set_session(&mut self, session: Session) {
         if session.id != self.session.id || session.directory != self.session.directory {
+            self.forget_rewind();
             self.forget_hex();
             self.memory.forget_location();
             if matches!(self.overlay, Overlay::Memory) {
@@ -958,6 +963,12 @@ impl App {
 
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Action> {
         self.mouse.disarm();
+        if key.code != KeyCode::Esc
+            || !key.modifiers.is_empty()
+            || !matches!(self.overlay, Overlay::None)
+        {
+            self.rewind.escape = None;
+        }
         if key.code == KeyCode::Esc
             && key
                 .modifiers
@@ -1018,6 +1029,7 @@ impl App {
             Overlay::Settings => self.settings_key(key),
             Overlay::Files => self.explorer_key(key),
             Overlay::Hex => self.hex_key(key),
+            Overlay::Rewind => self.rewind_key(key),
             Overlay::Themes(_) => self.switcher_key(key),
             Overlay::Workflows => self.workflows_key(key),
             Overlay::Rename(_) => self.rename_key(key),
@@ -1439,6 +1451,10 @@ impl App {
         if let Some(action) = self.keymap.action("global", &key, false) {
             return self.run_binding(action);
         }
+        if key.code == KeyCode::Esc {
+            let actions = self.rewind_composer_escape(key);
+            return self.update_completion(actions);
+        }
         let actions = match key.code {
             KeyCode::Enter
                 if key.modifiers.contains(KeyModifiers::SHIFT) || alt && !self.session.running =>
@@ -1453,20 +1469,29 @@ impl App {
             }
             KeyCode::BackTab => self.cycle_mode(),
             KeyCode::Up if alt && !self.queued.is_empty() => self.take_back(),
-            KeyCode::Esc if self.admissions.pending(&self.session.id).is_some() => {
-                vec![
-                    self.admissions
-                        .pending(&self.session.id)
-                        .expect("pending")
-                        .request
-                        .action(true),
-                ]
-            }
-            KeyCode::Esc if self.session.running => vec![Action::Interrupt],
-            KeyCode::Esc if self.hide_recap() => Vec::new(),
             _ => self.edit_key(key, ctrl),
         };
         self.update_completion(actions)
+    }
+
+    fn rewind_composer_escape(&mut self, key: KeyEvent) -> Vec<Action> {
+        if let Some(pending) = self.admissions.pending(&self.session.id) {
+            self.rewind.escape = None;
+            return vec![pending.request.action(true)];
+        }
+        if self.session.running {
+            self.rewind.escape = None;
+            return vec![Action::Interrupt];
+        }
+        if self.hide_recap() {
+            self.rewind.escape = None;
+            return vec![];
+        }
+        if key.modifiers.is_empty() {
+            self.rewind_escape()
+        } else {
+            vec![]
+        }
     }
 
     fn edit_key(&mut self, key: KeyEvent, ctrl: bool) -> Vec<Action> {
@@ -1693,6 +1718,9 @@ impl App {
         if self.composer.is_empty() {
             return Vec::new();
         }
+        if self.refuse_attached_undo_command() {
+            return vec![];
+        }
         let draft = self.composer.text();
         let command = draft.starts_with(['&', '!', '/']);
         if command && crate::attachments::names_media(&draft, &self.attachments.chips) {
@@ -1755,6 +1783,15 @@ impl App {
             .split_once(' ')
             .map_or((line, ""), |(n, a)| (n, a.trim()));
         match name {
+            "rewind" | "undo" | "redo" if args.is_empty() => self.open_rewind(match name {
+                "undo" => crate::rewind::Intent::Undo,
+                "redo" => crate::rewind::Intent::Redo,
+                _ => crate::rewind::Intent::Menu,
+            }),
+            "rewind" | "undo" | "redo" => {
+                self.toast("Use /rewind, /undo or /redo without arguments");
+                vec![]
+            }
             "memory" => self.memory_command(args),
             "loop" => self.loop_command(args),
             "team" => self.team_command(args),

@@ -415,6 +415,9 @@ impl RevertTarget {
 /// A staged revert: the conversation boundary and the trees involved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RevertState {
+    /// Paths actually changed by a reviewed staged undo; absent on legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
     /// The user message rewound to; it and everything after it go on commit.
     pub message_id: String,
     pub target: RevertTarget,
@@ -422,7 +425,8 @@ pub struct RevertState {
     pub baseline: Option<String>,
     /// The tree the working tree was restored to.
     pub applied: Option<String>,
-    /// Unified diff from the baseline to the restored tree.
+    /// Legacy baseline-to-selected-snapshot comparison. Reviewed previews expose
+    /// the actual three-way result separately; this field never grants file ownership.
     pub diff: String,
 }
 
@@ -1058,6 +1062,7 @@ impl SessionState {
         match r.phase {
             RevertPhase::Stage => {
                 self.revert = Some(RevertState {
+                    paths: r.paths,
                     message_id: r.message_id,
                     target: r.target,
                     baseline: r.baseline,

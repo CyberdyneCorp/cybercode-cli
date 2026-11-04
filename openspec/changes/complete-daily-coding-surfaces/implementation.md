@@ -82,3 +82,64 @@ later workstreams remain unfinished. The original one-step owner API remains a
 compatibility path, not a newly reviewed surface. The new flow refuses an existing
 stage until the owner explicitly commits or clears it. The retained native fence
 is evidence of an unknown effect, not an implemented recovery-journal UI.
+
+
+## TUI reviewed rewind implementation (2026-11-04)
+
+Task 2.3 is implemented: `/rewind`, idle unmodified Esc-Esc, `/undo` and `/redo`
+use the reviewed server flow. Busy interruption is explicit and waits for an idle
+acknowledgement. Full-screen review includes actual patches, current exclusions,
+retained tool outcomes and external-effect disclosure. The existing permission,
+question and native-stop priorities remain. Draft replacement requires the exact
+Session/Location/panel generation and an unchanged composer; late acknowledgements
+and new attachment chips cannot replace a newer draft. Original text is retained
+in a bounded in-memory map; restart does not reconstruct unsent drafts or media.
+
+Server preview/confirm now supports explicit stage/clear actions. Reviewed file
+stages persist the first baseline, raw selected snapshot and union of actually
+changed paths in additive replayable events. Clear intersects that path set with
+the three-way plan. Recording the whole post-restore tree was rejected in review:
+it would adopt unrelated owner files into later redo authority. Legacy restage,
+clear and branch checkout cannot drop the new manifest. Custom snapshot hosts
+must implement reviewed staging; conversation-only remains available without it.
+
+Local macOS validation: 642 TUI tests passed, three ignored; four server rewind
+ownership tests and 12 Git snapshot integration tests passed. SDK typecheck and
+128 tests passed, ten configured external cases skipped. TUI/server/snapshot
+all-target Clippy passed. The real CLI binary built, with an observed nonfatal
+linker unwind warning. Real terminal menu/review captures are in
+`docs/screenshots/rewind-{menu,review}.png`; the sample edit is supplied by the
+capture fixture during a held scripted-provider Turn, using actual snapshots and
+HTTP preview without confirmation. Wide/narrow/light/NO_COLOR/screen-reader
+render snapshots are included. Regression coverage exercises multiple stages,
+original-baseline preservation, durable event replay, owner files, conversation
+without snapshots, inactive branches, explicit busy interruption, changed drafts,
+and replies delivered after a scope switch.
+
+This completes implementation task 2.3, not acceptance task 2.4 or issue #93.
+Native process-kill/restart and restore-journal acceptance, complete historical
+exclusion reporting, private non-Git snapshots, path rules/context, root structured
+output and JSONL remain open. No external model provider was used; Linux/Windows
+execution remains for CI and subsequent native acceptance.
+
+Final correction checks: all eight focused rewind tests passed after adding
+same-Session generation/ambiguous-response checks and refusing typed undo/redo
+before attachment consumption. Workspace all-target Clippy passed with warnings
+denied; current OpenAPI regeneration/check, SDK generation consistency, typecheck
+and 128 SDK tests (ten external skips), formatting and diff checks passed. Strict
+OpenSpec again passed 114 items; spec lint reported zero errors and 25 warnings.
+The code-review pass found no remaining blocking issue in this increment. Runtime
+ownership stays behind snapshot ports; TUI HTTP orchestration is separate from
+rendering. Native crash/restart and broader platform acceptance remain explicit
+coverage gaps under task 2.4 rather than completed checks.
+
+### PR #108 command-catalog CI correction
+
+Linux and macOS CI each failed only
+`services::tests::every_tui_slash_command_is_in_the_builtin_catalog` because the
+new TUI undo/redo handlers were absent from the shared core catalog. Reproduced
+that exact failure locally, then registered `undo` and `redo` beside `rewind` so
+slash completion and the public command catalog expose them. The existing
+regression remains unchanged. All 41 `cyber-app` library tests then passed;
+core/app library Clippy with warnings denied, formatting and diff checks passed.
+The full platform suites must rerun on the corrected PR head.

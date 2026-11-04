@@ -1156,3 +1156,341 @@ async fn hex_edit_review_save_undo_and_restore_use_real_owner_routes() {
         original
     );
 }
+
+#[tokio::test]
+async fn rewind_stages_undo_and_redo_clears_files_and_restores_the_original_draft() {
+    use crate::rewind::{Intent, Phase};
+    let f = Fixture::new().await;
+    let mut app = f.app().await;
+    let original = std::fs::read(f.work.join("notes.md")).unwrap();
+    let count = f.server.model.requests().len();
+    app.composer.set_text("an unsent owner draft");
+    let actions = app.open_rewind(Intent::Undo);
+    f.run(&mut app, actions).await;
+    assert_eq!(app.rewind.phase, Phase::Review, "{:?}", app.rewind.error);
+    assert_eq!(app.composer.text(), "an unsent owner draft");
+    assert_eq!(std::fs::read(f.work.join("notes.md")).unwrap(), original);
+    rewind_snapshots(&mut app);
+    let actions = press(&mut app, KeyCode::Enter);
+    f.run(&mut app, actions).await;
+    assert!(app.session.revert.is_some(), "{:?}", app.rewind.error);
+    assert!(!f.work.join("notes.md").exists());
+    assert_eq!(app.composer.text(), "WRITE the notes");
+    let baseline = app.session.revert.as_ref().unwrap().baseline.clone();
+    std::fs::write(f.work.join("owner.txt"), "keep this owner edit\n").unwrap();
+    let actions = app.open_rewind(Intent::Redo);
+    f.run(&mut app, actions).await;
+    assert_eq!(app.rewind.phase, Phase::Review, "{:?}", app.rewind.error);
+    assert_eq!(
+        app.rewind.preview.as_ref().unwrap().action,
+        cyber_server::runtime::RewindAction::Clear
+    );
+    let actions = press(&mut app, KeyCode::Enter);
+    f.run(&mut app, actions).await;
+    assert!(app.session.revert.is_none());
+    assert_eq!(std::fs::read(f.work.join("notes.md")).unwrap(), original);
+    assert_eq!(
+        std::fs::read_to_string(f.work.join("owner.txt")).unwrap(),
+        "keep this owner edit\n"
+    );
+    assert_eq!(app.composer.text(), "an unsent owner draft");
+    assert!(baseline.is_some());
+    assert_eq!(
+        count,
+        f.server.model.requests().len(),
+        "review, stage and clear do not start inference"
+    );
+}
+
+fn rewind_snapshots(app: &mut App) {
+    let root = app.session.directory.clone();
+    let boundary = app.rewind.preview.as_ref().unwrap().message_id.clone();
+    app.session.directory = "/project".into();
+    app.rewind.preview.as_mut().unwrap().message_id = "msg_boundary".into();
+    for item in &mut app.rewind.boundaries {
+        if item.id == boundary {
+            item.id = "msg_boundary".into();
+        }
+    }
+
+    for (name, width, height, opts) in [
+        ("rewind_review_wide", 140, 36, Opts::default()),
+        ("rewind_review_narrow", 65, 28, Opts::default()),
+        (
+            "rewind_review_light",
+            100,
+            30,
+            Opts {
+                light: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "rewind_review_no_color",
+            100,
+            30,
+            Opts {
+                no_color: true,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let shown = render(app, width, height, &opts);
+        assert!(shown.contains("REVIEW"));
+        assert!(!shown.contains('\u{1b}'));
+        insta::assert_snapshot!(name, shown);
+    }
+    app.screen_reader = true;
+    insta::assert_snapshot!(
+        "rewind_review_screen_reader",
+        render(app, 100, 30, &Opts::default())
+    );
+    app.screen_reader = false;
+    app.session.directory = root;
+    for item in &mut app.rewind.boundaries {
+        if item.id == "msg_boundary" {
+            item.id = boundary.clone();
+        }
+    }
+    app.rewind.preview.as_mut().unwrap().message_id = boundary;
+}
+
+#[tokio::test]
+async fn rewind_keeps_a_newer_composer_and_ignores_old_scope_acknowledgements() {
+    use crate::rewind::{Intent, Phase};
+    let f = Fixture::new().await;
+    let mut app = f.app().await;
+    app.composer.set_text("original draft");
+    let actions = app.open_rewind(Intent::Undo);
+    f.run(&mut app, actions).await;
+    assert_eq!(app.rewind.phase, Phase::Review);
+    let action = press(&mut app, KeyCode::Enter).pop().unwrap();
+    let ack = f.perform(&app, action).await;
+    app.composer.set_text("newer owner text");
+    let actions = crate::runner::apply(&mut app, ack, &mut Default::default());
+    f.run(&mut app, actions).await;
+    assert!(app.session.revert.is_some());
+    assert_eq!(app.composer.text(), "newer owner text");
+    let actions = app.open_rewind(Intent::Redo);
+    f.run(&mut app, actions).await;
+    let action = press(&mut app, KeyCode::Enter).pop().unwrap();
+    let ack = f.perform(&app, action).await;
+    let follow = crate::runner::apply(&mut app, ack.clone(), &mut Default::default());
+    f.run(&mut app, follow).await;
+    assert_eq!(
+        app.composer.text(),
+        "newer owner text",
+        "clearing must not replace a newer draft with the cached original"
+    );
+    // A dropped response must not infer success or change the composer; reopening
+    // the same Session also invalidates any late acknowledgement generation.
+    let pending = app.open_rewind(Intent::Menu);
+    let [crate::app::Action::Rewind(request)] = pending.as_slice() else {
+        panic!("fresh status request");
+    };
+    crate::rewind::apply(
+        &mut app,
+        &mut Default::default(),
+        request.clone(),
+        Err("connection lost after possible effect".into()),
+    );
+    assert!(app.rewind.preview.is_none());
+    assert_eq!(app.composer.text(), "newer owner text");
+    let Ok(crate::perform::Msg::Rewind { request, result }) = ack.clone() else {
+        panic!("rewind acknowledgement");
+    };
+    assert!(crate::rewind::apply(&mut app, &mut Default::default(), request, *result).is_empty());
+    assert!(app.rewind.preview.is_none());
+    assert_eq!(app.composer.text(), "newer owner text");
+    let mut foreign = app.session.clone();
+    foreign.id = "ses_foreign".into();
+    foreign.directory = "/foreign".into();
+    app.set_session(foreign);
+    app.composer.set_text("foreign draft");
+    let Ok(crate::perform::Msg::Rewind { request, result }) = ack else {
+        panic!("rewind acknowledgement");
+    };
+    assert!(crate::rewind::apply(&mut app, &mut Default::default(), request, *result).is_empty());
+    assert_eq!(app.composer.text(), "foreign draft");
+}
+
+#[tokio::test]
+async fn rewind_conversation_only_is_available_without_snapshots_and_preserves_branches() {
+    use crate::rewind::{Intent, Phase};
+    let server = Server::start().await;
+    let id = server.answered("a plain prompt").await;
+    let mut app = server.load(&id).await;
+    let mut actions = app.open_rewind(Intent::Undo);
+    while let Some(action) = actions.pop() {
+        let reply = crate::perform::perform_owned(&server.client, &app.session, action, None).await;
+        actions.extend(crate::runner::apply(
+            &mut app,
+            reply,
+            &mut Default::default(),
+        ));
+    }
+    assert_eq!(app.rewind.phase, Phase::Choose);
+    assert!(app.rewind.code_error.is_some());
+    press(&mut app, KeyCode::Char('2'));
+    let mut actions = press(&mut app, KeyCode::Enter);
+    while let Some(action) = actions.pop() {
+        let reply = crate::perform::perform_owned(&server.client, &app.session, action, None).await;
+        actions.extend(crate::runner::apply(
+            &mut app,
+            reply,
+            &mut Default::default(),
+        ));
+    }
+    assert_eq!(app.rewind.phase, Phase::Review, "{:?}", app.rewind.error);
+    assert!(app.rewind.preview.as_ref().unwrap().code.is_none());
+    let mut actions = press(&mut app, KeyCode::Enter);
+    while let Some(action) = actions.pop() {
+        let reply = crate::perform::perform_owned(&server.client, &app.session, action, None).await;
+        actions.extend(crate::runner::apply(
+            &mut app,
+            reply,
+            &mut Default::default(),
+        ));
+    }
+    assert!(app.session.revert.is_some());
+    assert_eq!(app.composer.text(), "a plain prompt");
+    server.prompt(&id, "a new branch").await;
+    server.wait_answered(&id).await;
+    let tree = server
+        .client
+        .get(&format!("/sessions/{id}/tree"))
+        .await
+        .unwrap();
+    assert!(
+        tree["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|node| node["active"] == false)
+    );
+}
+
+#[tokio::test]
+async fn rewind_requires_explicit_busy_interruption_and_an_idle_acknowledgement() {
+    use crate::rewind::{Intent, Phase};
+    let server = Server::start().await;
+    let id = server.session().await;
+    server.prompt(&id, "HOLD").await;
+    let mut app = server.load(&id).await;
+    assert!(app.session.running);
+    assert!(app.open_rewind(Intent::Menu).is_empty());
+    assert_eq!(app.rewind.phase, Phase::Busy);
+    let shown = render(&mut app, 100, 25, &Opts::default());
+    assert!(shown.contains("explicitly interrupts"));
+    let mut actions = press(&mut app, KeyCode::Char('i'));
+    while let Some(action) = actions.pop() {
+        let reply = crate::perform::perform_owned(&server.client, &app.session, action, None).await;
+        actions.extend(crate::runner::apply(
+            &mut app,
+            reply,
+            &mut Default::default(),
+        ));
+    }
+    for _ in 0..50 {
+        if app.rewind.phase != Phase::Waiting {
+            break;
+        }
+        let mut actions = press(&mut app, KeyCode::Char('r'));
+        while let Some(action) = actions.pop() {
+            let reply =
+                crate::perform::perform_owned(&server.client, &app.session, action, None).await;
+            actions.extend(crate::runner::apply(
+                &mut app,
+                reply,
+                &mut Default::default(),
+            ));
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(!app.session.running);
+    assert_eq!(app.rewind.phase, Phase::Choose, "{:?}", app.rewind.error);
+    assert!(
+        app.rewind.preview.is_none(),
+        "interrupt acknowledgement does not itself authorize rewind"
+    );
+    server.model.release();
+}
+
+#[tokio::test]
+async fn rewind_multiple_boundaries_keep_the_first_baseline_and_do_not_adopt_owner_files() {
+    use crate::rewind::{Intent, Phase};
+    let f = Fixture::new().await;
+    f.server.prompt(&f.id, "Review the notes").await;
+    f.server.wait_answered(&f.id).await;
+    let mut app = f.app().await;
+    app.composer.set_text("saved owner draft");
+    let actions = app.open_rewind(Intent::Undo);
+    f.run(&mut app, actions).await;
+    assert_eq!(app.rewind.phase, Phase::Review, "{:?}", app.rewind.error);
+    let actions = press(&mut app, KeyCode::Enter);
+    f.run(&mut app, actions).await;
+    let baseline = app.session.revert.as_ref().unwrap().baseline.clone();
+    std::fs::write(f.work.join("owner.txt"), "owner version one\n").unwrap();
+    let actions = app.open_rewind(Intent::Undo);
+    f.run(&mut app, actions).await;
+    let actions = press(&mut app, KeyCode::Enter);
+    f.run(&mut app, actions).await;
+    let staged = app.session.revert.clone().unwrap();
+    assert_eq!(staged.baseline, baseline);
+    assert_eq!(
+        staged.paths.as_deref(),
+        Some(["notes.md".to_owned()].as_slice())
+    );
+    assert!(!f.work.join("notes.md").exists());
+    let events = f.server.host.store.read_events(&f.id, -1, 200).unwrap();
+    assert!(!events.has_more);
+    let replayed = cyber_server::runtime::SessionState::replay(&events.events).unwrap();
+    assert_eq!(replayed.revert, Some(staged));
+    assert!(
+        f.server.host.runtime.revert_clear(&f.id).await.is_err(),
+        "legacy clear cannot drop reviewed path ownership"
+    );
+    std::fs::write(f.work.join("owner.txt"), "owner version two\n").unwrap();
+    for _ in 0..2 {
+        let actions = app.open_rewind(Intent::Redo);
+        f.run(&mut app, actions).await;
+        assert_eq!(app.rewind.phase, Phase::Review, "{:?}", app.rewind.error);
+        let actions = press(&mut app, KeyCode::Enter);
+        f.run(&mut app, actions).await;
+        assert_eq!(
+            std::fs::read_to_string(f.work.join("owner.txt")).unwrap(),
+            "owner version two\n"
+        );
+    }
+    assert!(app.session.revert.is_none());
+    assert!(f.work.join("notes.md").exists());
+    assert_eq!(app.composer.text(), "saved owner draft");
+}
+
+#[tokio::test]
+async fn rewind_menu_commits_code_only_without_replacing_the_composer() {
+    use crate::rewind::{Intent, Phase};
+    let f = Fixture::new().await;
+    let mut app = f.app().await;
+    let before: Vec<String> = app.items.iter().map(|item| item.id().to_owned()).collect();
+    app.composer.set_text("keep this draft");
+    let actions = app.open_rewind(Intent::Menu);
+    f.run(&mut app, actions).await;
+    assert_eq!(app.rewind.phase, Phase::Choose);
+    press(&mut app, KeyCode::Char('1'));
+    let actions = press(&mut app, KeyCode::Enter);
+    f.run(&mut app, actions).await;
+    assert_eq!(app.rewind.phase, Phase::Review);
+    let actions = press(&mut app, KeyCode::Enter);
+    f.run(&mut app, actions).await;
+    assert!(!f.work.join("notes.md").exists());
+    assert_eq!(
+        app.items
+            .iter()
+            .map(|item| item.id().to_owned())
+            .collect::<Vec<_>>(),
+        before
+    );
+    assert_eq!(app.composer.text(), "keep this draft");
+    assert!(app.session.revert.is_none());
+}

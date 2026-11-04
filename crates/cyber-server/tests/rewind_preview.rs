@@ -116,6 +116,7 @@ async fn seed(h: &Harness, runtime: &Runtime) -> (String, RewindSelection) {
     (
         id,
         RewindSelection {
+            action: RewindAction::Commit,
             message_id,
             target: RevertTarget::Both,
             expected_directory: h.repo.display().to_string(),

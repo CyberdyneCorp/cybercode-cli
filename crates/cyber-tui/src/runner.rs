@@ -691,6 +691,9 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
     match msg {
         Msg::AdmissionStarted(_) | Msg::AdmissionUpdated { .. } => {}
         Msg::Computer { session_id, result } => app.computer.apply(&session_id, result),
+        Msg::Rewind { request, result } => {
+            return crate::rewind::apply(app, refresh, request, *result);
+        }
         Msg::Snapshot {
             session,
             items,

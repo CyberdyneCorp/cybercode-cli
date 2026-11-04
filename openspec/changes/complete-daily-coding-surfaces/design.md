@@ -67,3 +67,32 @@ external-writer atomicity or a new recoverable restore-journal implementation.
 The CLI defaults to preview, with explicit `--confirm <fingerprint>` for applying
 all targets. There is no automatic confirmation or busy-session interruption.
 A changed preview requires review again, including when used by a script. An existing legacy staged revert must be explicitly committed or cleared before using the new flow; it is never silently finalized by another reviewed selection.
+
+### TUI staged rewind increment
+
+The TUI uses the reviewed preview/confirmation routes for final rewind and staged
+undo/redo. `RewindSelection.action` is additive and defaults to `commit`; `stage`
+keeps the original baseline across boundary movement, and `clear` requires the
+exact retained boundary and target. Action and prior stage are bound into the
+preview fingerprint. Targets cannot silently change while a stage is retained.
+Code staging durably retains the union of paths it actually changed and the original baseline. It keeps the selected agent snapshot as its recorded image, without adopting unrelated owner files from a post-restore tree. Reviewed clear restores only those retained paths, including after event replay. Legacy operations cannot silently drop this ownership record.
+Unsupported snapshot hosts refuse code staging; conversation-only remains usable.
+
+`/rewind` and idle double-Esc open the boundary/target menu. `/undo` selects the
+preceding user boundary and `/redo` advances it or clears the final stage; both
+show a fresh review before confirmation. Busy Sessions require an explicit
+interrupt choice and a server read acknowledging idle before preview. The panel
+shows conflicts/current exclusions and external/unknown-effect limits. Replies
+carry exact Session, directory and UI generation. A Session switch, new selection
+or closed panel invalidates late composer changes. Native Stop and permission/
+question prompts keep their existing priority.
+
+Only acknowledged matching operations replace composer text, with an additional
+check that the current draft has not changed while the request waited. Original
+plain text drafts are retained per Session/Location in a bounded local in-memory
+map; clearing restores the original when safe, otherwise the newer draft remains
+and the original can be copied explicitly. Undo/redo refuses an unsent draft with
+attachment chips to preserve those inputs. Historical prompt restoration copies
+text, without manufacturing media attachment authority. After a restart without
+a retained original draft, clear preserves the current composer. No uncertain
+operation is replayed automatically.

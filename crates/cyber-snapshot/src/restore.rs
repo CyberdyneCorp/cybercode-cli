@@ -43,7 +43,17 @@ pub(crate) async fn restore_authorized(
     backups: &Path,
     authorize: &(dyn Fn() -> Result<(), String> + Send + Sync),
 ) -> Result<Vec<String>, RestoreError> {
-    let plan = plan(shadow, target, recorded, authorize).await?;
+    restore_authorized_scoped(shadow, target, recorded, backups, authorize, None).await
+}
+pub(crate) async fn restore_authorized_scoped(
+    shadow: &Shadow,
+    target: &str,
+    recorded: &str,
+    backups: &Path,
+    authorize: &(dyn Fn() -> Result<(), String> + Send + Sync),
+    paths: Option<&[String]>,
+) -> Result<Vec<String>, RestoreError> {
+    let plan = plan(shadow, target, recorded, authorize, paths).await?;
     apply(shadow, plan, backups, authorize)
 }
 
@@ -53,7 +63,16 @@ pub(crate) async fn preview(
     recorded: &str,
     current: &str,
 ) -> Result<Vec<cyber_server::runtime::FileDiff>, RestoreError> {
-    let plan = plan(shadow, target, recorded, &|| Ok(())).await?;
+    preview_scoped(shadow, target, recorded, current, None).await
+}
+pub(crate) async fn preview_scoped(
+    shadow: &Shadow,
+    target: &str,
+    recorded: &str,
+    current: &str,
+    paths: Option<&[String]>,
+) -> Result<Vec<cyber_server::runtime::FileDiff>, RestoreError> {
+    let plan = plan(shadow, target, recorded, &|| Ok(()), paths).await?;
     let changes = plan
         .into_iter()
         .map(|item| crate::git::TreeChange {
@@ -84,6 +103,7 @@ async fn plan(
     target: &str,
     recorded: &str,
     authorize: &(dyn Fn() -> Result<(), String> + Send + Sync),
+    allowed: Option<&[String]>,
 ) -> Result<Vec<Planned>, RestoreError> {
     authorize().map_err(RestoreError::Failed)?;
     let paths = shadow
@@ -93,6 +113,9 @@ async fn plan(
     let mut plan = Vec::new();
     let mut conflicts = Vec::new();
     for path in paths {
+        if allowed.is_some_and(|allowed| !allowed.contains(&path)) {
+            continue;
+        }
         let want = content(shadow, target, &path).await?;
         let base = content(shadow, recorded, &path).await?;
         let current = on_disk(&shadow.worktree.join(&path));
