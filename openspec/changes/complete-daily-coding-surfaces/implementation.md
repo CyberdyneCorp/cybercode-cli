@@ -132,3 +132,14 @@ The code-review pass found no remaining blocking issue in this increment. Runtim
 ownership stays behind snapshot ports; TUI HTTP orchestration is separate from
 rendering. Native crash/restart and broader platform acceptance remain explicit
 coverage gaps under task 2.4 rather than completed checks.
+
+### PR #108 command-catalog CI correction
+
+Linux and macOS CI each failed only
+`services::tests::every_tui_slash_command_is_in_the_builtin_catalog` because the
+new TUI undo/redo handlers were absent from the shared core catalog. Reproduced
+that exact failure locally, then registered `undo` and `redo` beside `rewind` so
+slash completion and the public command catalog expose them. The existing
+regression remains unchanged. All 41 `cyber-app` library tests then passed;
+core/app library Clippy with warnings denied, formatting and diff checks passed.
+The full platform suites must rerun on the corrected PR head.

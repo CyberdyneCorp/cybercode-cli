@@ -247,6 +247,8 @@ pub const BUILTIN: &[(&str, &str)] = &[
     ("fork", "Fork this Session into a new one"),
     ("new", "Start a new Session"),
     ("rewind", "Rewind code and conversation to a message"),
+    ("undo", "Review a staged undo and restore its prompt text"),
+    ("redo", "Review the next staged boundary or clear undo"),
     (
         "subtask",
         "Fork a background child with the current context",

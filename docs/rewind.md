@@ -58,6 +58,8 @@ Open `/rewind`, or press Esc twice within 500 ms while idle. Select an active
 user-message boundary, choose `1` code, `2` conversation or `3` both, and press
 Enter to preview. Enter again explicitly commits the reviewed rewind. This menu
 preserves the current composer. Scroll the review with arrows or PgUp/PgDn.
+`/rewind`, `/undo` and `/redo` are built-ins in the shared command catalog,
+available through slash completion and `GET /commands`.
 
 ![Rewind boundary menu](screenshots/rewind-menu.png)
 
