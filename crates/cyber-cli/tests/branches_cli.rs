@@ -339,3 +339,146 @@ fn refuses_while_busy(env: &Env, model: &scripted_model::ScriptedModel, id: &str
     assert!(gated.wait().unwrap().success());
     assert_eq!(env.user_ids(id).len(), 2);
 }
+
+fn rewind_preview(env: &Env, session: &str, message: &str, target: &str) -> Value {
+    json(&env.cyber(&[
+        "sessions", "rewind", session, "--to", message, "--target", target, "--format", "json",
+    ]))
+}
+
+fn confirm_rewind(
+    env: &Env,
+    session: &str,
+    message: &str,
+    target: &str,
+    preview: &Value,
+) -> Output {
+    env.cyber(&[
+        "sessions",
+        "rewind",
+        session,
+        "--to",
+        message,
+        "--target",
+        target,
+        "--confirm",
+        preview["confirmation"].as_str().unwrap(),
+        "--format",
+        "json",
+    ])
+}
+
+#[test]
+fn rewind_preview_is_non_mutating_and_stale_files_refuse_before_restore() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    let id = env.exec(None, "WRITE-A");
+    env.exec(Some(&id), "WRITE-B");
+    std::fs::write(env.root.join("repo/owner.txt"), "owner file\n").unwrap();
+    let users = env.user_ids(&id);
+    let preview = rewind_preview(&env, &id, &users[0], "code");
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(env.file("b.txt").as_deref(), Some("beta\n"));
+    assert_eq!(env.user_ids(&id), users);
+    assert_eq!(preview["confirmation"].as_str().unwrap().len(), 64);
+    let files = preview["code"]["files"].as_array().unwrap();
+    assert_eq!(files.len(), 2);
+    assert!(
+        files.iter().all(|file| file["file"] != "owner.txt"),
+        "unrelated owner files must not be shown as proposed deletions"
+    );
+    assert_owner_drift_refused(&env, &id, &users, &preview);
+    let fresh = rewind_preview(&env, &id, &users[0], "code");
+    json(&confirm_rewind(&env, &id, &users[0], "code", &fresh));
+    assert_eq!(env.file("a.txt"), None);
+    assert_eq!(env.file("b.txt"), None);
+    assert_eq!(env.file("owner.txt").as_deref(), Some("owner change\n"));
+    assert_eq!(
+        env.user_ids(&id),
+        users,
+        "code-only keeps the active conversation"
+    );
+    exits(&confirm_rewind(&env, &id, &users[0], "code", &fresh), 1);
+}
+
+fn assert_owner_drift_refused(env: &Env, id: &str, users: &[String], preview: &Value) {
+    std::fs::write(env.root.join("repo/owner.txt"), "owner change\n").unwrap();
+    let refused = exits(&confirm_rewind(env, id, &users[0], "code", preview), 1);
+    assert!(refused.contains("preview changed"), "{refused}");
+    assert_eq!(env.file("owner.txt").as_deref(), Some("owner change\n"));
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(env.file("b.txt").as_deref(), Some("beta\n"));
+    assert_eq!(env.user_ids(id), users);
+    std::fs::write(env.root.join("repo/a.txt"), "conflicting owner edit\n").unwrap();
+    let refused = exits(
+        &env.cyber(&[
+            "sessions", "rewind", id, "--to", &users[0], "--target", "code",
+        ]),
+        1,
+    );
+    assert!(refused.contains("RewindConflictError"), "{refused}");
+    assert_eq!(
+        env.file("a.txt").as_deref(),
+        Some("conflicting owner edit\n")
+    );
+    std::fs::write(env.root.join("repo/a.txt"), "alpha\n").unwrap();
+}
+
+#[test]
+fn confirmed_combined_rewind_keeps_an_inactive_branch_and_rejects_cross_session_review() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    let id = env.exec(None, "WRITE-A");
+    env.exec(Some(&id), "WRITE-B");
+    let users = env.user_ids(&id);
+    let preview = rewind_preview(&env, &id, &users[1], "both");
+    let other = env.exec(None, "another session");
+    let other_user = env.user_ids(&other)[0].clone();
+    exits(
+        &confirm_rewind(&env, &other, &other_user, "conversation", &preview),
+        1,
+    );
+    json(&confirm_rewind(&env, &id, &users[1], "both", &preview));
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(env.file("b.txt"), None);
+    assert_eq!(env.user_ids(&id), users[..1]);
+    let tree = env.tree(&id);
+    assert!(
+        tree.iter()
+            .any(|node| node["id"] == users[1] && node["active"] == false)
+    );
+    let exported = json(&env.cyber(&["sessions", "export", &id, "--all-branches"]));
+    assert!(
+        exported.to_string().contains(&users[1]),
+        "inactive messages remain exportable"
+    );
+}
+
+#[test]
+fn conversation_rewind_works_without_git_and_stale_context_never_applies() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let id = env.exec(None, "first prompt");
+    let first = env.user_ids(&id)[0].clone();
+    let refused = exits(&env.cyber(&["sessions", "rewind", &id, "--to", &first]), 2);
+    assert!(refused.contains("Snapshots are unavailable"), "{refused}");
+    let preview = rewind_preview(&env, &id, &first, "conversation");
+    assert_eq!(preview["code"], Value::Null);
+    env.exec(Some(&id), "second prompt");
+    let before = env.user_ids(&id);
+    let refused = exits(
+        &confirm_rewind(&env, &id, &first, "conversation", &preview),
+        1,
+    );
+    assert!(refused.contains("preview changed"), "{refused}");
+    assert_eq!(env.user_ids(&id), before);
+    let fresh = rewind_preview(&env, &id, &first, "conversation");
+    json(&confirm_rewind(&env, &id, &first, "conversation", &fresh));
+    assert!(env.user_ids(&id).is_empty());
+    assert!(!env.tree(&id).is_empty());
+    exits(
+        &confirm_rewind(&env, &id, &first, "conversation", &fresh),
+        2,
+    );
+}

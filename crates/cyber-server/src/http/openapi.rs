@@ -758,6 +758,12 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .body::<RevertBody>(g)
         .ok::<Data<RevertState>>(g),
+        op("post", "/sessions/{sessionID}/rewind/preview", "v1.session.rewindPreview", "Review a rewind without changing files or the active conversation")
+            .body::<crate::runtime::RewindSelection>(g)
+            .ok::<Data<crate::runtime::RewindPreview>>(g),
+        op("post", "/sessions/{sessionID}/rewind/confirm", "v1.session.rewindConfirm", "Revalidate a reviewed fingerprint before owned rewind")
+            .body::<crate::runtime::RewindConfirmation>(g)
+            .ok::<Data<RevertState>>(g),
         op(
             "post",
             "/sessions/{sessionID}/revert/stage",

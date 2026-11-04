@@ -13,7 +13,7 @@ cyber-server = { path = "../cyber-server" }
 futures = "0.3"
 serde_json.workspace = true
 sha1 = "0.10"
-tokio = { version = "1", features = ["rt", "process", "time", "sync", "fs", "macros"] }
+tokio = { version = "1", features = ["rt", "process", "time", "sync", "fs", "macros", "io-util"] }
 ulid.workspace = true
 
 [dev-dependencies]

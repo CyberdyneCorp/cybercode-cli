@@ -11,6 +11,16 @@
 - **WHEN** a file changes after the owner reviews a code-rewind preview
 - **THEN** applying the old preview refuses or requires a fresh review rather than overwriting that edit
 
+#### Scenario: Explicit CLI confirmation
+- **WHEN** an owner runs `cyber sessions rewind <session> --to <message> --target code|conversation|both`
+- **THEN** the command returns a preview and fingerprint without restoring files or changing the active path
+- **AND** an explicit `--confirm <fingerprint>` revalidates Session sequence, directory, boundary, current snapshot and target before owned restoration, refusing changed context and preserving independent recovery evidence
+
+#### Scenario: Snapshot host cannot revalidate
+- **WHEN** a custom snapshot host cannot check the reviewed current tree under its workspace mutation lock
+- **THEN** confirmed code restoration is refused rather than calling an unchecked legacy restore, while conversation-only rewind remains available when otherwise idle
+
+
 ### Requirement: Bounded non-git snapshot storage
 (P1) Non-git snapshots SHALL use private atomic BLAKE3-addressed file objects and Location-bound manifests, respecting ignores and file-size limits without following out-of-scope symlinks. Matching size/mtime SHALL NOT substitute for verified content identity. The default 200 MiB Location cap SHALL disable unavailable code rewind visibly while retaining conversation rewind. Restoration and retention SHALL preserve staged/branch/unknown-effect evidence and use the same conflict and recovery guarantees as Git snapshots.
 

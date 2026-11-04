@@ -180,7 +180,7 @@ The session runtime records Sessions and their durable input inbox, then runs ad
 - **THEN** it receives every durable event with sequence 1043 and higher, in order
 
 ### Requirement: Structured output
-(P1) The system SHALL accept a per-prompt `format: { type: "json_schema", schema }`, add a `structured_output` tool built from the schema, require it as the final call, validate the input against the schema (returning validation errors to the model up to 3 times), store the validated value on the assistant message, and end the Drain.
+(P1) The system SHALL accept a per-prompt `format: { type: "json_schema", schema }`, add a `structured_output` tool built from the schema, require it as the final call, validate the input against the schema (one initial submission followed by at most two validation corrections for root prompts, then `StructuredOutputError`; existing child result/SchemaMismatch contracts remain separate), store the validated value on the assistant message, and end the Drain.
 
 #### Scenario: Schema enforced
 - **WHEN** a prompt requests `{ type: "object", required: ["summary"] }`

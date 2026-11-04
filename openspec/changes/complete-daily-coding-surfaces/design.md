@@ -41,3 +41,29 @@ Emit schema_version 2, one result per admitted input with stable correlation, op
 ## Delivery and acceptance
 
 Implement in order: revert spec reconciliation and CLI/TUI; non-git snapshots; path rules/context inspection; root structured output; JSONL driver. Each increment includes API/SDK/CLI generation, regressions, docs and meaningful production-path acceptance. Use actual temporary Git and non-git files, scripted provider/server process tests, TUI TestBackend plus real captures, crash/race tests, and native checks for filesystem behavior. Perform code/security review before delivery. Existing stale task headings are reconciled only against demonstrated clauses. On 2026-11-03 the user prioritized #93 after #105, superseding the original Plugins/hooks scheduling prerequisite. Start with the approved rewind slice while preserving unresolved cross-workstream dependencies; this scheduling change does not accept incomplete plugin enforcement or select pending policies. The workstream remains incomplete until all approved scope is implemented and the required checks have recorded outcomes.
+
+### CLI/server preview increment
+
+The first increment adds `/sessions/{id}/rewind/preview` and `/rewind/confirm`.
+Preview snapshots current eligible files without changing source bytes or staging
+a revert. Its bounded response includes exact Session/directory/sequence/boundary,
+active tip, target/recorded/current snapshot identities, current exclusions, file
+patches, retained tool statuses and an external/unknown-effect disclosure. A SHA-256
+fingerprint binds the server-derived response; it is not an authentication token.
+Confirmation recomputes the response, verifies fresh idle/scope/admission state and
+holds the Session projection through restore and the stage/commit event batch.
+
+The snapshot port requires a reviewed-restore implementation. Git rechecks the
+current tree after acquiring its workspace mutation lock, then uses the existing
+conflict-aware restore with fresh admission checks before file writes. Unsupported
+custom hosts refuse code preview; conversation-only remains possible. A failed
+native acknowledgement or event commit after file effects retains the native
+activity fence and backup evidence. The existing one-step `/rewind` and explicit
+revert stage/clear/commit routes retain their compatibility behavior; they do not
+consume the new fingerprint. Full TUI/interrupt, crash/restart and non-Git backend
+acceptance remain subsequent tasks. This increment does not claim arbitrary
+external-writer atomicity or a new recoverable restore-journal implementation.
+
+The CLI defaults to preview, with explicit `--confirm <fingerprint>` for applying
+all targets. There is no automatic confirmation or busy-session interruption.
+A changed preview requires review again, including when used by a script. An existing legacy staged revert must be explicitly committed or cleared before using the new flow; it is never silently finalized by another reviewed selection.

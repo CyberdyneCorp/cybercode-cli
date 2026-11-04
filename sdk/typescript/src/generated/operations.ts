@@ -1505,6 +1505,18 @@ export interface Operations {
     body: S.RevertBody;
     response: S.RevertState;
   };
+  "v1.session.rewindConfirm": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.RewindConfirmation;
+    response: S.RevertState;
+  };
+  "v1.session.rewindPreview": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.RewindSelection;
+    response: S.RewindPreview;
+  };
   "v1.session.sentFile": {
     path: { sessionID: string; fileID: string };
     query: Record<string, never>;
@@ -4506,6 +4518,30 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.rewindConfirm": {
+    tag: "session",
+    name: "rewindConfirm",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/confirm",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.rewindPreview": {
+    tag: "session",
+    name: "rewindPreview",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/preview",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.sentFile": {
     tag: "session",
     name: "sentFile",
@@ -5920,6 +5956,12 @@ export function createGroups(caller: Caller) {
       /** Stage and commit a rewind (`POST /api/v1/sessions/{sessionID}/rewind`) */
       rewind: (sessionID: string, body: Operations["v1.session.rewind"]["body"], options?: RequestOptions): Promise<Operations["v1.session.rewind"]["response"]> =>
         caller.call("v1.session.rewind", { path: { sessionID }, body }, options),
+      /** Revalidate a reviewed fingerprint before owned rewind (`POST /api/v1/sessions/{sessionID}/rewind/confirm`) */
+      rewindConfirm: (sessionID: string, body: Operations["v1.session.rewindConfirm"]["body"], options?: RequestOptions): Promise<Operations["v1.session.rewindConfirm"]["response"]> =>
+        caller.call("v1.session.rewindConfirm", { path: { sessionID }, body }, options),
+      /** Review a rewind without changing files or the active conversation (`POST /api/v1/sessions/{sessionID}/rewind/preview`) */
+      rewindPreview: (sessionID: string, body: Operations["v1.session.rewindPreview"]["body"], options?: RequestOptions): Promise<Operations["v1.session.rewindPreview"]["response"]> =>
+        caller.call("v1.session.rewindPreview", { path: { sessionID }, body }, options),
       /** Download a file the Session delivered with send_file (`GET /api/v1/sessions/{sessionID}/files/{fileID}`) */
       sentFile: (sessionID: string, fileID: string, options?: RequestOptions): Promise<Operations["v1.session.sentFile"]["response"]> =>
         caller.call("v1.session.sentFile", { path: { sessionID, fileID } }, options),

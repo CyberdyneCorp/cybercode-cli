@@ -68,7 +68,7 @@ Before insertion, all text SHALL pass through the secret redaction rules of `obs
 ### Requirement: Search index consistency
 (P1) The system SHALL keep the index consistent with the transcript:
 - Deleting a Session, whether directly, by cascade from its parent or by retention GC, SHALL delete its index rows in the same transaction as its events.
-- Committing a conversation revert SHALL delete the index rows of the deleted messages in the revert's transaction.
+- Committing a conversation revert SHALL retain index rows for the inactive branch; its hits SHALL carry `active_path: false`.
 - A conversation rewind that only changes the active branch SHALL keep the rows, and hits on messages off the active path SHALL carry `active_path: false`.
 - Forks and imports SHALL be indexed from their own events.
 - A database backup SHALL contain the index.
@@ -84,9 +84,9 @@ Before insertion, all text SHALL pass through the secret redaction rules of `obs
 - **WHEN** retention GC deletes an archived Session older than `storage.retention.archived_days`
 - **THEN** its index rows are deleted in the same transaction
 
-#### Scenario: Reverted messages leave the index
+#### Scenario: Reverted messages remain on an inactive branch
 - **WHEN** a staged revert of messages 3 to 5 is committed
-- **THEN** search results contain no hit on messages 3 to 5
+- **THEN** hits on messages 3 to 5 remain available with `active_path: false`
 
 #### Scenario: Restore from an older index version
 - **WHEN** a backup written with index version 1 is restored by a binary with index version 2

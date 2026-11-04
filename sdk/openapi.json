@@ -7005,6 +7005,318 @@
           "data"
         ]
       },
+      "RewindSelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RevertTarget"
+          },
+          "expected_directory": {
+            "type": "string",
+            "description": "Exact Session Location selected by the owner, including for conversation-only rewind."
+          }
+        },
+        "required": [
+          "message_id",
+          "target",
+          "expected_directory"
+        ]
+      },
+      "Data_RewindPreview": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RewindPreview"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "RewindPreview": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RevertTarget"
+          },
+          "active_tip": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RewindCodePreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RewindEffect"
+            },
+            "description": "Includes recovery calls retained outside the visible conversation branch."
+          },
+          "warning": {
+            "type": "string"
+          },
+          "confirmation": {
+            "type": "string",
+            "description": "Fingerprint of the server-derived preview; not an authentication credential."
+          }
+        },
+        "required": [
+          "session_id",
+          "directory",
+          "sequence",
+          "message_id",
+          "target",
+          "effects",
+          "warning",
+          "confirmation"
+        ]
+      },
+      "RewindCodePreview": {
+        "type": "object",
+        "properties": {
+          "baseline": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "recorded": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileDiff"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "baseline",
+          "target",
+          "recorded",
+          "files",
+          "skipped"
+        ]
+      },
+      "FileDiff": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`added`, `deleted` or `modified`."
+          },
+          "additions": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "deletions": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "patch": {
+            "type": "string"
+          },
+          "binary": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/BinaryVersion"
+            },
+            "description": "Acknowledged binary source versions, independent of Git snapshot limits.\nThese are saved references, not a synthesized text patch or net byte diff."
+          }
+        },
+        "required": [
+          "file",
+          "status",
+          "additions",
+          "deletions",
+          "patch"
+        ],
+        "description": "One file of a diff between two snapshots."
+      },
+      "BinaryVersion": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version_id": {
+            "type": "string"
+          },
+          "document_id": {
+            "type": "string"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "before_sha256": {
+            "type": "string"
+          },
+          "after_sha256": {
+            "type": "string"
+          },
+          "before_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "after_length": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "original_bytes": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "proposed_bytes": {
+            "$ref": "#/components/schemas/Offset"
+          },
+          "range_count": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "required": [
+          "version_id",
+          "document_id",
+          "operation_id",
+          "kind",
+          "path",
+          "before_sha256",
+          "after_sha256",
+          "before_length",
+          "after_length",
+          "original_bytes",
+          "proposed_bytes",
+          "range_count",
+          "created_ms"
+        ],
+        "description": "Shared saved-source metadata. It never contains unsaved command buffers."
+      },
+      "Offset": {
+        "type": "string",
+        "description": "Lossless JSON decimal integer. Never accepts JSON numbers or noncanonical strings."
+      },
+      "RewindEffect": {
+        "type": "object",
+        "properties": {
+          "call_id": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CallStatus"
+          }
+        },
+        "required": [
+          "call_id",
+          "tool",
+          "status"
+        ]
+      },
+      "CallStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "called",
+            "description": "Recorded from the stream, not yet dispatched."
+          },
+          {
+            "type": "string",
+            "const": "dispatched",
+            "description": "Dispatched; outcome not yet recorded."
+          },
+          {
+            "type": "string",
+            "const": "interrupted",
+            "description": "Known not to have run to completion; safe to try again."
+          },
+          {
+            "type": "string",
+            "const": "outcome_unknown",
+            "description": "Dispatched, and whether its side effects happened is unknown."
+          }
+        ]
+      },
+      "RewindConfirmation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "message_id",
+          "target",
+          "expected_directory",
+          "confirmation"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/RevertTarget"
+          },
+          "expected_directory": {
+            "type": "string",
+            "description": "Exact Session Location selected by the owner, including for conversation-only rewind."
+          },
+          "confirmation": {
+            "type": "string"
+          }
+        }
+      },
       "ShellBody": {
         "type": "object",
         "properties": {
@@ -7932,37 +8244,6 @@
           "never"
         ]
       },
-      "CallStatus": {
-        "oneOf": [
-          {
-            "type": "string",
-            "enum": [
-              "ok",
-              "error"
-            ]
-          },
-          {
-            "type": "string",
-            "const": "called",
-            "description": "Recorded from the stream, not yet dispatched."
-          },
-          {
-            "type": "string",
-            "const": "dispatched",
-            "description": "Dispatched; outcome not yet recorded."
-          },
-          {
-            "type": "string",
-            "const": "interrupted",
-            "description": "Known not to have run to completion; safe to try again."
-          },
-          {
-            "type": "string",
-            "const": "outcome_unknown",
-            "description": "Dispatched, and whether its side effects happened is unknown."
-          }
-        ]
-      },
       "Redactions": {
         "type": "object",
         "properties": {
@@ -8436,117 +8717,6 @@
         "required": [
           "data"
         ]
-      },
-      "FileDiff": {
-        "type": "object",
-        "properties": {
-          "file": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string",
-            "description": "`added`, `deleted` or `modified`."
-          },
-          "additions": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          },
-          "deletions": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          },
-          "patch": {
-            "type": "string"
-          },
-          "binary": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "$ref": "#/components/schemas/BinaryVersion"
-            },
-            "description": "Acknowledged binary source versions, independent of Git snapshot limits.\nThese are saved references, not a synthesized text patch or net byte diff."
-          }
-        },
-        "required": [
-          "file",
-          "status",
-          "additions",
-          "deletions",
-          "patch"
-        ],
-        "description": "One file of a diff between two snapshots."
-      },
-      "BinaryVersion": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version_id": {
-            "type": "string"
-          },
-          "document_id": {
-            "type": "string"
-          },
-          "operation_id": {
-            "type": "string"
-          },
-          "kind": {
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          },
-          "before_sha256": {
-            "type": "string"
-          },
-          "after_sha256": {
-            "type": "string"
-          },
-          "before_length": {
-            "$ref": "#/components/schemas/Offset"
-          },
-          "after_length": {
-            "$ref": "#/components/schemas/Offset"
-          },
-          "original_bytes": {
-            "$ref": "#/components/schemas/Offset"
-          },
-          "proposed_bytes": {
-            "$ref": "#/components/schemas/Offset"
-          },
-          "range_count": {
-            "type": "integer",
-            "format": "uint",
-            "minimum": 0
-          },
-          "created_ms": {
-            "type": "integer",
-            "format": "int64"
-          }
-        },
-        "required": [
-          "version_id",
-          "document_id",
-          "operation_id",
-          "kind",
-          "path",
-          "before_sha256",
-          "after_sha256",
-          "before_length",
-          "after_length",
-          "original_bytes",
-          "proposed_bytes",
-          "range_count",
-          "created_ms"
-        ],
-        "description": "Shared saved-source metadata. It never contains unsaved command buffers."
-      },
-      "Offset": {
-        "type": "string",
-        "description": "Lossless JSON decimal integer. Never accepts JSON numbers or noncanonical strings."
       },
       "HistoryPage": {
         "type": "object",
@@ -23554,6 +23724,124 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RevertBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preview": {
+      "post": {
+        "operationId": "v1.session.rewindPreview",
+        "summary": "Review a rewind without changing files or the active conversation",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_RewindPreview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewindSelection"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/confirm": {
+      "post": {
+        "operationId": "v1.session.rewindConfirm",
+        "summary": "Revalidate a reviewed fingerprint before owned rewind",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_RevertState"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewindConfirmation"
               }
             }
           }

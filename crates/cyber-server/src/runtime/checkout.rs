@@ -128,7 +128,7 @@ impl Runtime {
     /// A running Job (a process, a Monitor, a subagent or a workflow) or delegation hands
     /// its result back into the Session's active path when it ends. What started it may
     /// be leaving that path, so a checkout fails closed until none runs.
-    fn ensure_no_background(&self, session_id: &str) -> Result<(), RuntimeError> {
+    pub(super) fn ensure_no_background(&self, session_id: &str) -> Result<(), RuntimeError> {
         let jobs = self
             .jobs(Some(session_id))?
             .iter()

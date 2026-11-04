@@ -344,6 +344,8 @@ pub fn routes() -> Router<AppState> {
         .route(&format!("{s}/compact"), post(compact))
         .route(&format!("{s}/recap"), get(recap).post(generate_recap))
         .route(&format!("{s}/rewind"), post(rewind))
+        .route(&format!("{s}/rewind/preview"), post(rewind_preview))
+        .route(&format!("{s}/rewind/confirm"), post(rewind_confirm))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
         .route(&format!("{s}/revert/commit"), post(commit))
@@ -1184,6 +1186,25 @@ async fn answer_question(
     };
     state.runtime.answer_question(&request_id, reply).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn rewind_preview(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(selection): Json<crate::runtime::RewindSelection>,
+) -> Result<Json<Data<crate::runtime::RewindPreview>>> {
+    Ok(Json(Data {
+        data: state.runtime.rewind_preview(&id, &selection).await?,
+    }))
+}
+async fn rewind_confirm(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(confirmation): Json<crate::runtime::RewindConfirmation>,
+) -> Result<Json<Data<RevertState>>> {
+    Ok(Json(Data {
+        data: state.runtime.rewind_confirm(&id, &confirmation).await?,
+    }))
 }
 
 #[cfg(test)]

@@ -34,7 +34,7 @@
   Tests: `backfill_resumes_after_restart_without_duplicates`, `backfill_waits_on_busy_writer_queue`, `search_during_backfill_reports_progress`.
 - [ ] 2.2 Deletion: delete the doc and FTS rows inside `runtime/deletion.rs`'s transaction for every doomed Session, which covers retention GC too.
   - Regression tests: `deleted_session_disappears_from_search`, `child_sessions_rows_deleted_with_parent`, `retention_gc_removes_index_rows`, `delete_during_backfill_leaves_no_rows`.
-- [ ] 2.3 Revert commit: delete the rows of the deleted messages, and mark hits off the active path after a conversation rewind as `active_path: false`.
+- [ ] 2.3 Revert commit: retain the inactive branch and its index rows, and mark hits off the active path as `active_path: false`.
   - Tests: `reverted_messages_leave_the_index`, `rewound_branch_hits_are_inactive`.
 - [ ] 2.4 Index version check on open and after `cyber db restore`: on a mismatch, delete the rows and restart the backfill.
   - Tests: `restore_from_older_index_version_rebuilds`; `online_backup_carries_index`, which runs `cyber db backup`, opens the copy and searches it.

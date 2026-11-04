@@ -63,6 +63,19 @@ pub enum SessionsCmd {
         #[arg(long)]
         exact: bool,
     },
+    /// Preview a rewind before a user message; apply only with its reviewed fingerprint.
+    Rewind {
+        /// ID, exact title or unique ID prefix.
+        session: String,
+        /// Exact active user-message ID; the boundary itself is excluded on conversation rewind.
+        #[arg(long)]
+        to: String,
+        #[arg(long, value_enum, default_value = "both")]
+        target: super::rewind::Target,
+        /// Apply the exact previously reviewed preview; changed context requires a new preview.
+        #[arg(long, value_parser = super::rewind::fingerprint)]
+        confirm: Option<String>,
+    },
     /// Set or remove a branch label.
     Label {
         /// ID, exact title or unique ID prefix.
@@ -106,7 +119,7 @@ pub enum SessionsCmd {
     Other(Vec<String>),
 }
 
-const LATER: &[&str] = &["fork", "rewind", "repair-context", "share", "unshare"];
+const LATER: &[&str] = &["fork", "repair-context", "share", "unshare"];
 
 pub fn run(cmd: SessionsCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     if let SessionsCmd::Other(args) = &cmd {
@@ -180,6 +193,12 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
             write_export(&document, format, output.as_deref())
         }
         SessionsCmd::Import { file } => import(client, &file, global).await,
+        SessionsCmd::Rewind {
+            session,
+            to,
+            target,
+            confirm,
+        } => super::rewind::run(client, &session, &to, target, confirm, global).await,
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
         branch => dispatch_branch(client, branch, global).await,
     }

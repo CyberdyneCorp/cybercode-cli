@@ -33,6 +33,59 @@ pub(crate) async fn restore(
     recorded: &str,
     backups: &Path,
 ) -> Result<Vec<String>, RestoreError> {
+    restore_authorized(shadow, target, recorded, backups, &|| Ok(())).await
+}
+
+pub(crate) async fn restore_authorized(
+    shadow: &Shadow,
+    target: &str,
+    recorded: &str,
+    backups: &Path,
+    authorize: &(dyn Fn() -> Result<(), String> + Send + Sync),
+) -> Result<Vec<String>, RestoreError> {
+    let plan = plan(shadow, target, recorded, authorize).await?;
+    apply(shadow, plan, backups, authorize)
+}
+
+pub(crate) async fn preview(
+    shadow: &Shadow,
+    target: &str,
+    recorded: &str,
+    current: &str,
+) -> Result<Vec<cyber_server::runtime::FileDiff>, RestoreError> {
+    let plan = plan(shadow, target, recorded, &|| Ok(())).await?;
+    let changes = plan
+        .into_iter()
+        .map(|item| crate::git::TreeChange {
+            path: item.path,
+            image: match item.next {
+                Content::Absent => None,
+                Content::File { bytes, executable } => {
+                    Some((if executable { "100755" } else { "100644" }.into(), bytes))
+                }
+                Content::Link(target) => {
+                    Some((SYMLINK.into(), target.to_string_lossy().as_bytes().to_vec()))
+                }
+            },
+        })
+        .collect();
+    let proposed = shadow
+        .projected_tree(current, changes)
+        .await
+        .map_err(RestoreError::Failed)?;
+    shadow
+        .diff(current, &proposed)
+        .await
+        .map_err(RestoreError::Failed)
+}
+
+async fn plan(
+    shadow: &Shadow,
+    target: &str,
+    recorded: &str,
+    authorize: &(dyn Fn() -> Result<(), String> + Send + Sync),
+) -> Result<Vec<Planned>, RestoreError> {
+    authorize().map_err(RestoreError::Failed)?;
     let paths = shadow
         .changed(recorded, target)
         .await
@@ -56,7 +109,7 @@ pub(crate) async fn restore(
     if !conflicts.is_empty() {
         return Err(RestoreError::Conflict(conflicts));
     }
-    apply(shadow, plan, backups)
+    Ok(plan)
 }
 
 async fn content(shadow: &Shadow, tree: &str, path: &str) -> Result<Content, RestoreError> {
@@ -195,7 +248,12 @@ async fn merge(
     Ok((out.status.code() == Some(0)).then_some(out.stdout))
 }
 
-fn apply(shadow: &Shadow, plan: Vec<Planned>, backups: &Path) -> Result<Vec<String>, RestoreError> {
+fn apply(
+    shadow: &Shadow,
+    plan: Vec<Planned>,
+    backups: &Path,
+    authorize: &(dyn Fn() -> Result<(), String> + Send + Sync),
+) -> Result<Vec<String>, RestoreError> {
     // Recheck immediately before replacing: a file that moved since planning is a race.
     let raced: Vec<String> = plan
         .iter()
@@ -207,6 +265,7 @@ fn apply(shadow: &Shadow, plan: Vec<Planned>, backups: &Path) -> Result<Vec<Stri
     }
     let mut restored = Vec::new();
     for item in plan {
+        authorize().map_err(RestoreError::Failed)?;
         let path = shadow.worktree.join(&item.path);
         backup(&item.seen, &backups.join(&item.path))
             .map_err(|e| RestoreError::Failed(format!("backup of {}: {e}", item.path)))?;

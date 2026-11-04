@@ -84,7 +84,7 @@ The migration creates the tables and sets `backfill_target = MAX(event.rowid)` a
 
 ### D4. Consistency with deletion, revert, retention and restore
 - **Session deletion** (`runtime/deletion.rs`) deletes the doc and FTS rows of every doomed Session in its existing transaction, before the event rows go. Retention GC deletes archived Sessions through the same path, so it inherits this.
-- **Revert commit** (`snapshots-checkpoints` → Three-phase revert) deletes the rows of the deleted messages in its own transaction. A conversation rewind that only moves the active branch keeps the rows. Such a hit is marked `active_path: false`.
+- **Revert commit** (`snapshots-checkpoints` → Three-phase revert) preserves the inactive branch and its index rows. A conversation rewind moves the active branch without deleting transcript rows. Such a hit is marked `active_path: false`.
 - **Fork and import** write ordinary events, so their copies are indexed like any other. A fork's hits belong to the fork.
 - **Backup** uses the SQLite online backup API, which copies the FTS shadow tables, so a backup carries the index.
 - **Restore and upgrades.** On open, a database whose `session_search_state.version` differs from the binary's index version (tokenizer, caps or extraction rules changed) has its index rows dropped and the backfill restarted from `rowid` 0. The same happens on restore. This version is separate from migrations, so a rebuild never needs schema surgery.

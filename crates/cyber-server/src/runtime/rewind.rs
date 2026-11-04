@@ -143,6 +143,9 @@ impl Inner {
             .await
         {
             Ok(_) => Ok(()),
+            Err(RestoreError::Stale) => Err(RuntimeError::Conflict(
+                "Rewind preview changed; review a fresh preview".into(),
+            )),
             Err(RestoreError::Conflict(paths)) => Err(RuntimeError::RewindConflict(paths)),
             Err(RestoreError::Failed(message)) => Err(RuntimeError::Invalid(message)),
         }
