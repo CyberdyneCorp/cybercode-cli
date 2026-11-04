@@ -5547,6 +5547,16 @@
       "RevertState": {
         "type": "object",
         "properties": {
+          "paths": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Paths actually changed by a reviewed staged undo; absent on legacy records."
+          },
           "message_id": {
             "type": "string",
             "description": "The user message rewound to; it and everything after it go on commit."
@@ -5570,7 +5580,7 @@
           },
           "diff": {
             "type": "string",
-            "description": "Unified diff from the baseline to the restored tree."
+            "description": "Legacy baseline-to-selected-snapshot comparison. Reviewed previews expose\nthe actual three-way result separately; this field never grants file ownership."
           }
         },
         "required": [
@@ -7009,6 +7019,10 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RewindAction",
+            "default": "commit"
+          },
           "message_id": {
             "type": "string"
           },
@@ -7026,6 +7040,14 @@
           "expected_directory"
         ]
       },
+      "RewindAction": {
+        "type": "string",
+        "enum": [
+          "commit",
+          "stage",
+          "clear"
+        ]
+      },
       "Data_RewindPreview": {
         "type": "object",
         "properties": {
@@ -7040,6 +7062,19 @@
       "RewindPreview": {
         "type": "object",
         "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RewindAction"
+          },
+          "staged": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RevertState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "session_id": {
             "type": "string"
           },
@@ -7088,6 +7123,7 @@
           }
         },
         "required": [
+          "action",
           "session_id",
           "directory",
           "sequence",
@@ -7302,6 +7338,10 @@
           "confirmation"
         ],
         "properties": {
+          "action": {
+            "$ref": "#/components/schemas/RewindAction",
+            "default": "commit"
+          },
           "message_id": {
             "type": "string"
           },

@@ -190,6 +190,7 @@ impl Runtime {
             .await;
         let diff = files.iter().map(|f| f.patch.as_str()).collect();
         let revert = RevertState {
+            paths: None,
             message_id,
             target: RevertTarget::Code,
             baseline: Some(baseline),
@@ -264,6 +265,11 @@ impl Runtime {
 /// path, and a staged conversation rewind would move the tip on the next prompt, so a
 /// checkout waits for all three.
 fn ensure_checkout_allowed(handle: &Handle, state: &SessionState) -> Result<(), RuntimeError> {
+    if state.revert.as_ref().is_some_and(|r| r.paths.is_some()) {
+        return Err(RuntimeError::Invalid(
+            "Commit or clear the reviewed undo before branch checkout".into(),
+        ));
+    }
     let promotable = state.pending(Delivery::Steer).next().is_some()
         || state.pending(Delivery::Queue).next().is_some();
     // A running compaction is summarizing the active path; its summary must stay there.

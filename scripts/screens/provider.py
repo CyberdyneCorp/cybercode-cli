@@ -61,6 +61,8 @@ def last_user(body):
 
 
 def gate_tag(text):
+    if text == "Refactor authentication into a reusable verifier":
+        return "REWIND"
     if "HOLD-TURN" in text:
         return "TURN"
     at = text.find("GATED ")

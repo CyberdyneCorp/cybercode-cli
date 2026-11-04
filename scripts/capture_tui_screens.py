@@ -511,12 +511,42 @@ def capture_hex(env, edit=False):
     tui.close()
 
 
+def capture_rewind(env):
+    """Real reviewed rewind of a fixture-owned edit between actual Turn snapshots."""
+    env.tui_config("cyber", "dark")
+    path = os.path.join(env.project, "auth.rs")
+    before = "pub fn authenticate(token: &str) -> bool {\n    !token.is_empty()\n}\n"
+    after = "pub fn authenticate(token: &str) -> bool {\n    verify(token)\n}\n\nfn verify(token: &str) -> bool {\n    !token.is_empty() && token.len() >= 16\n}\n"
+    with open(path, "w") as stream:
+        stream.write(before)
+    env.start_server()
+    session = env.api("POST", "/sessions", {"title": "Review auth extraction"})["id"]
+    env.api("POST", f"/sessions/{session}/prompt", {"parts": [{"type": "text", "text": "Refactor authentication into a reusable verifier"}]})
+    wait("rewind fixture pre-snapshot", lambda: "REWIND" in env.held())
+    with open(path, "w") as stream:
+        stream.write(after)
+    env.ctl("/ctl/release", {"tag": "REWIND"})
+    wait("rewind fixture post-snapshot", lambda: env.api("GET", f"/sessions/{session}")["status"] == "idle")
+    tui = env.launch("--resume", session, cols=140, rows=36)
+    tui.type("/rewind")
+    tui.key("enter")
+    wait("rewind boundary menu", lambda: "Enter preview" in tui.text(), tui=tui)
+    env.shot(tui, "rewind-menu.png")
+    tui.key("enter")
+    wait("actual rewind file review", lambda: "REVIEW Commit" in tui.text() and "auth.rs" in tui.text(), tui=tui)
+    env.shot(tui, "rewind-review.png")
+    with open(path) as stream:
+        if stream.read() != after:
+            raise RuntimeError("review changed the source fixture")
+    tui.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--binary", default=os.path.join(REPO, "target", "debug", "cyber"))
     parser.add_argument("--out", default=os.path.join(REPO, "docs", "screenshots"))
     parser.add_argument("--chrome", default=os.environ.get("CYBER_SHOTS_CHROME", CHROME))
-    parser.add_argument("--only", choices=["hex", "hex-edit"], help="capture just the binary hex workspace")
+    parser.add_argument("--only", choices=["hex", "hex-edit", "rewind"], help="capture just the selected workspace")
     args = parser.parse_args()
     if not os.path.exists(args.chrome):
         sys.exit(f"Chrome not found at {args.chrome}; pass --chrome or set CYBER_SHOTS_CHROME. Skipping the capture.")
@@ -525,7 +555,12 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     env = Env(os.path.abspath(args.binary), args.out, args.chrome)
     try:
-        if args.only in ("hex", "hex-edit"):
+        if args.only == "rewind":
+            env.machine_fixture()
+            env.project_fixture()
+            env.config(env.start_provider())
+            capture_rewind(env)
+        elif args.only in ("hex", "hex-edit"):
             env.machine_fixture()
             env.project_fixture()
             env.config(env.start_provider())

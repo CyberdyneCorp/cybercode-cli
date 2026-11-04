@@ -21,6 +21,11 @@
 - **THEN** confirmed code restoration is refused rather than calling an unchecked legacy restore, while conversation-only rewind remains available when otherwise idle
 
 
+#### Scenario: Reviewed stage ownership survives replay
+- **WHEN** a reviewed file undo is restaged or replayed before clear
+- **THEN** it retains its original baseline and the union of paths actually changed, and clear restores only those paths through a fresh reviewed three-way plan
+- **AND** legacy stage/clear and branch checkout cannot discard that path ownership
+
 ### Requirement: Bounded non-git snapshot storage
 (P1) Non-git snapshots SHALL use private atomic BLAKE3-addressed file objects and Location-bound manifests, respecting ignores and file-size limits without following out-of-scope symlinks. Matching size/mtime SHALL NOT substitute for verified content identity. The default 200 MiB Location cap SHALL disable unavailable code rewind visibly while retaining conversation rewind. Restoration and retention SHALL preserve staged/branch/unknown-effect evidence and use the same conflict and recovery guarantees as Git snapshots.
 

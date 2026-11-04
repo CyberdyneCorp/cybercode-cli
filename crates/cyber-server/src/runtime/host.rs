@@ -1434,6 +1434,40 @@ pub trait Snapshots: Send + Sync {
         false
     }
 
+    fn reviewed_staging_available(&self) -> bool {
+        false
+    }
+
+    fn preview_restore_paths(
+        &self,
+        _directory: &str,
+        _target: &str,
+        _recorded: &str,
+        _expected: &str,
+        _paths: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<FileDiff>, RestoreError>> {
+        Box::pin(async {
+            Err(RestoreError::Failed(
+                "Reviewed path-scoped restore is unavailable".into(),
+            ))
+        })
+    }
+    fn restore_reviewed_paths(
+        &self,
+        _directory: &str,
+        _target: &str,
+        _recorded: &str,
+        _expected: &str,
+        _authorize: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+        _paths: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<String>, RestoreError>> {
+        Box::pin(async {
+            Err(RestoreError::Failed(
+                "Reviewed path-scoped restore is unavailable".into(),
+            ))
+        })
+    }
+
     /// Plan the actual three-way result, rather than a target/current comparison
     /// that would incorrectly list unrelated owner files as deletions.
     fn preview_restore(

@@ -3928,6 +3928,8 @@ export type RevertBody = {
 
 /** A staged revert: the conversation boundary and the trees involved. */
 export type RevertState = {
+  /** Paths actually changed by a reviewed staged undo; absent on legacy records. */
+  paths?: string[] | null;
   /** The user message rewound to; it and everything after it go on commit. */
   message_id: string;
   target: RevertTarget;
@@ -3935,7 +3937,10 @@ export type RevertState = {
   baseline?: string | null;
   /** The tree the working tree was restored to. */
   applied?: string | null;
-  /** Unified diff from the baseline to the restored tree. */
+  /**
+   * Legacy baseline-to-selected-snapshot comparison. Reviewed previews expose
+   * the actual three-way result separately; this field never grants file ownership.
+   */
   diff: string;
 };
 
@@ -3969,6 +3974,8 @@ export type ReviewedHook = {
   last_run?: HookLastRun | null;
 };
 
+export type RewindAction = "commit" | "stage" | "clear";
+
 export type RewindCodePreview = {
   baseline: string;
   target: string;
@@ -3978,6 +3985,7 @@ export type RewindCodePreview = {
 };
 
 export type RewindConfirmation = {
+  action?: RewindAction;
   message_id: string;
   target: RevertTarget;
   /** Exact Session Location selected by the owner, including for conversation-only rewind. */
@@ -3992,6 +4000,8 @@ export type RewindEffect = {
 };
 
 export type RewindPreview = {
+  action: RewindAction;
+  staged?: RevertState | null;
   session_id: string;
   directory: string;
   sequence: number;
@@ -4007,6 +4017,7 @@ export type RewindPreview = {
 };
 
 export type RewindSelection = {
+  action?: RewindAction;
   message_id: string;
   target: RevertTarget;
   /** Exact Session Location selected by the owner, including for conversation-only rewind. */

@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_explorer.rs
+expression: shown
+---
+┌ Undo · staged until next prompt ─────────────────────────────────────────────────────────────────┐
+│Theme baseline · /project                                                                         │
+│REVIEW Stage · Both · before msg_boundary                                                         │
+│Enter explicitly confirms · R refreshes preview · PgUp/PgDn scroll · Esc back                     │
+│Files are restored when selected; the conversation boundary is staged until the next prompt, shell│
+│command or compaction. Clear reverses the stage while preserving later owner edits. External      │
+│effects and unresolved tool/native outcomes are not undone or acknowledged.                       │
+│Composer after acknowledgement (newer edits stay): WRITE the notes                                │
+│1 proposed file changes · 0 current exclusions                                                    │
+│deleted notes.md (+0 -3)                                                                          │
+│diff --git a/notes.md b/notes.md                                                                  │
+│deleted file mode 100644                                                                          │
+│index e88847d..0000000                                                                            │
+│--- a/notes.md                                                                                    │
+│+++ /dev/null                                                                                     │
+│@@ -1,3 +0,0 @@                                                                                   │
+│-# Notes                                                                                          │
+│-one                                                                                              │
+│-two                                                                                              │
+│Retained effect call_write · write · Ok                                                           │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                           100 · —  ctrl+p commands

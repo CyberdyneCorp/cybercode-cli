@@ -307,6 +307,8 @@ pub enum RevertPhase {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reverted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
     pub session_id: String,
     pub message_id: String,
     pub target: super::model::RevertTarget,

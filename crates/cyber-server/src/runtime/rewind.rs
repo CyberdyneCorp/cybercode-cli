@@ -226,6 +226,7 @@ pub(super) fn revert_event(
     event(
         REVERTED,
         &Reverted {
+            paths: revert.paths.clone(),
             session_id: session_id.into(),
             message_id: revert.message_id.clone(),
             target: revert.target,
@@ -376,6 +377,11 @@ impl Runtime {
                         "No user message {message_id} in this session"
                     )));
                 }
+                if state.revert.as_ref().is_some_and(|r| r.paths.is_some()) {
+                    return Err(RuntimeError::Invalid(
+                        "Use a reviewed stage or clear for this undo".into(),
+                    ));
+                }
                 let previous = state.revert.clone();
                 let (baseline, applied, diff) = if target.code() {
                     self.inner.stage_code(&handle, &state, message_id).await?
@@ -385,6 +391,7 @@ impl Runtime {
                         .unwrap_or_default()
                 };
                 let revert = RevertState {
+                    paths: None,
                     message_id: message_id.into(),
                     target,
                     baseline,
@@ -413,6 +420,11 @@ impl Runtime {
                     .revert
                     .clone()
                     .ok_or_else(|| RuntimeError::Invalid("No revert is staged".into()))?;
+                if revert.paths.is_some() {
+                    return Err(RuntimeError::Invalid(
+                        "Use a reviewed clear preview for this staged undo".into(),
+                    ));
+                }
                 if let (Some(baseline), Some(applied)) = (&revert.baseline, &revert.applied) {
                     self.inner
                         .restore(&state.info.directory, baseline, applied)

@@ -5,6 +5,7 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
+    pub revert: Option<cyber_server::runtime::RevertState>,
     pub id: String,
     pub parent_id: Option<String>,
     pub title: String,
@@ -121,6 +122,10 @@ impl Session {
     pub fn parse(v: &Value) -> Self {
         let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
         Self {
+            revert: v
+                .get("revert")
+                .filter(|value| !value.is_null())
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
             id: s("id"),
             parent_id: v["parent_id"].as_str().map(str::to_string),
             title: s("title"),

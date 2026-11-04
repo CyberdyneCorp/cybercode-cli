@@ -9,16 +9,29 @@ use sha2::{Digest, Sha256};
 
 const MAX_PREVIEW_BYTES: usize = 4 * 1024 * 1024;
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RewindAction {
+    #[default]
+    Commit,
+    Stage,
+    Clear,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RewindSelection {
+    #[serde(default)]
+    pub action: RewindAction,
     pub message_id: String,
     pub target: RevertTarget,
     /// Exact Session Location selected by the owner, including for conversation-only rewind.
     pub expected_directory: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RewindConfirmation {
     #[serde(flatten)]
@@ -44,6 +57,8 @@ pub struct RewindEffect {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RewindPreview {
+    pub action: RewindAction,
+    pub staged: Option<RevertState>,
     pub session_id: String,
     pub directory: String,
     pub sequence: i64,
@@ -63,11 +78,7 @@ fn stale() -> RuntimeError {
 }
 
 fn validate(state: &SessionState, selection: &RewindSelection) -> Result<(), RuntimeError> {
-    if state.revert.is_some() {
-        return Err(RuntimeError::Invalid(
-            "A revert is already staged; commit or clear it before a reviewed rewind".into(),
-        ));
-    }
+    validate_stage(state, selection)?;
     if state.pending(super::Delivery::Steer).next().is_some()
         || state.pending(super::Delivery::Queue).next().is_some()
     {
@@ -88,6 +99,64 @@ fn validate(state: &SessionState, selection: &RewindSelection) -> Result<(), Run
     Ok(())
 }
 
+fn validate_stage(state: &SessionState, selection: &RewindSelection) -> Result<(), RuntimeError> {
+    match (&state.revert, selection.action) {
+        (Some(_), RewindAction::Commit) => Err(RuntimeError::Invalid(
+            "A revert is already staged; commit or clear it before a reviewed rewind".into(),
+        )),
+        (None, RewindAction::Clear) => Err(RuntimeError::Invalid("No revert is staged".into())),
+        (Some(staged), action)
+            if staged.target != selection.target
+                || (action == RewindAction::Clear && staged.message_id != selection.message_id) =>
+        {
+            Err(stale())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn disclosure(action: RewindAction, target: RevertTarget) -> String {
+    let local = match action {
+        RewindAction::Stage => {
+            "Files are restored when selected; the conversation boundary is staged until the next prompt, shell command or compaction. Clear reverses the stage while preserving later owner edits."
+        }
+        RewindAction::Clear => {
+            "Restore the pre-stage baseline where selected and clear the staged boundary; the active conversation is unchanged."
+        }
+        RewindAction::Commit if target == RevertTarget::Code => {
+            "Only eligible local files are rewound; the conversation is unchanged."
+        }
+        RewindAction::Commit => {
+            "Later messages leave the active path and remain on an inactive branch."
+        }
+    };
+    format!(
+        "{local} External effects and unresolved tool/native outcomes are not undone or acknowledged."
+    )
+}
+
+fn staged_paths(preview: &RewindPreview) -> Result<Option<Vec<String>>, RuntimeError> {
+    if preview.action != RewindAction::Stage || !preview.target.code() {
+        return Ok(None);
+    }
+    let mut paths: std::collections::BTreeSet<String> = preview
+        .staged
+        .as_ref()
+        .and_then(|r| r.paths.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    if let Some(code) = &preview.code {
+        paths.extend(code.files.iter().map(|file| file.file.clone()));
+    }
+    if paths.len() > 4096 {
+        return Err(RuntimeError::Invalid(
+            "Reviewed undo exceeds 4096 changed paths".into(),
+        ));
+    }
+    Ok(Some(paths.into_iter().collect()))
+}
+
 impl Inner {
     async fn build_rewind_preview(
         &self,
@@ -96,14 +165,13 @@ impl Inner {
     ) -> Result<RewindPreview, RuntimeError> {
         validate(state, selection)?;
         let code = if selection.target.code() {
-            Some(
-                self.rewind_code_preview(state, &selection.message_id)
-                    .await?,
-            )
+            Some(self.rewind_code_preview(state, selection).await?)
         } else {
             None
         };
         let mut preview = RewindPreview {
+            action: selection.action,
+            staged: state.revert.clone(),
             session_id: state.info.id.clone(),
             directory: state.info.directory.clone(),
             sequence: state.last_seq,
@@ -120,14 +188,7 @@ impl Inner {
                     status: call.status,
                 })
                 .collect(),
-            warning: format!(
-                "{} External effects and unresolved tool/native outcomes are not undone or acknowledged.",
-                if selection.target == RevertTarget::Code {
-                    "Only eligible local files are rewound; the conversation is unchanged."
-                } else {
-                    "Later messages leave the active path and remain on an inactive branch."
-                }
-            ),
+            warning: disclosure(selection.action, selection.target),
             confirmation: String::new(),
         };
         let encoded = serde_json::to_vec(&preview)
@@ -144,7 +205,7 @@ impl Inner {
     async fn rewind_code_preview(
         &self,
         state: &SessionState,
-        message_id: &str,
+        selection: &RewindSelection,
     ) -> Result<RewindCodePreview, RuntimeError> {
         let unavailable = || {
             RuntimeError::Invalid(
@@ -152,7 +213,10 @@ impl Inner {
                     .into(),
             )
         };
-        if !self.options.snapshots.reviewed_restore_available() {
+        if !self.options.snapshots.reviewed_restore_available()
+            || (selection.action != RewindAction::Commit
+                && !self.options.snapshots.reviewed_staging_available())
+        {
             return Err(unavailable());
         }
         let recorded = state
@@ -169,18 +233,45 @@ impl Inner {
             .await
             .map_err(RuntimeError::Invalid)?
             .ok_or_else(unavailable)?;
-        let target = state
-            .steps
-            .iter()
-            .find(|step| step.user_message_id.as_deref() == Some(message_id))
-            .and_then(|step| step.pre.clone())
-            .ok_or_else(unavailable)?;
-        let files = match self
-            .options
-            .snapshots
-            .preview_restore(&state.info.directory, &target, &recorded, &current.tree)
-            .await
-        {
+        let target = if selection.action == RewindAction::Clear {
+            state
+                .revert
+                .as_ref()
+                .and_then(|r| r.baseline.clone())
+                .ok_or_else(unavailable)?
+        } else {
+            state
+                .steps
+                .iter()
+                .find(|step| step.user_message_id.as_deref() == Some(&selection.message_id))
+                .and_then(|step| step.pre.clone())
+                .ok_or_else(unavailable)?
+        };
+        let planned = if selection.action == RewindAction::Clear {
+            let paths = state
+                .revert
+                .as_ref()
+                .and_then(|r| r.paths.clone())
+                .ok_or_else(|| RuntimeError::Invalid(
+                    "Legacy file stage lacks reviewed path ownership; use its original clear/commit flow".into(),
+                ))?;
+            self.options
+                .snapshots
+                .preview_restore_paths(
+                    &state.info.directory,
+                    &target,
+                    &recorded,
+                    &current.tree,
+                    paths,
+                )
+                .await
+        } else {
+            self.options
+                .snapshots
+                .preview_restore(&state.info.directory, &target, &recorded, &current.tree)
+                .await
+        };
+        let files = match planned {
             Ok(files) => files,
             Err(super::RestoreError::Stale) => return Err(stale()),
             Err(super::RestoreError::Conflict(paths)) => {
@@ -262,57 +353,106 @@ impl Runtime {
                 if state.last_seq != before.last_seq || handle.is_compacting() {
                     return Err(stale());
                 }
-                let (baseline, applied, diff) = if let Some(code) = &preview.code {
-                    match self
-                        .inner
-                        .options
-                        .snapshots
-                        .restore_reviewed(
-                            &state.info.directory,
-                            &code.target,
-                            &code.recorded,
-                            &code.baseline,
-                            authorize,
+                let paths = staged_paths(&preview)?;
+                let staged_diff = if preview.action == RewindAction::Stage {
+                    if let Some(code) = &preview.code {
+                        let baseline = state
+                            .revert
+                            .as_ref()
+                            .and_then(|r| r.baseline.as_deref())
+                            .unwrap_or(&code.baseline);
+                        Some(
+                            self.inner
+                                .preview_diff(&state.info.directory, baseline, &code.target)
+                                .await,
                         )
-                        .await
-                    {
-                        Ok(_) => {}
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                let (baseline, applied, diff) = if let Some(code) = &preview.code {
+                    let restored = if preview.action == RewindAction::Clear {
+                        let paths = state
+                            .revert
+                            .as_ref()
+                            .and_then(|r| r.paths.clone())
+                            .ok_or_else(stale)?;
+                        self.inner
+                            .options
+                            .snapshots
+                            .restore_reviewed_paths(
+                                &state.info.directory,
+                                &code.target,
+                                &code.recorded,
+                                &code.baseline,
+                                authorize,
+                                paths,
+                            )
+                            .await
+                    } else {
+                        self.inner
+                            .options
+                            .snapshots
+                            .restore_reviewed(
+                                &state.info.directory,
+                                &code.target,
+                                &code.recorded,
+                                &code.baseline,
+                                authorize,
+                            )
+                            .await
+                    };
+                    let applied = match restored {
+                        Ok(_) => code.target.clone(),
                         Err(super::RestoreError::Stale) => return Err(stale()),
                         Err(super::RestoreError::Conflict(paths)) => {
                             return Err(RuntimeError::RewindConflict(paths));
                         }
                         Err(super::RestoreError::Failed(message)) => {
-                            // The host may have partially restored files. Retain the
-                            // native activity fence and existing backup evidence.
                             handle
                                 .location_uncertain
                                 .store(true, std::sync::atomic::Ordering::SeqCst);
                             return Err(RuntimeError::Invalid(message));
                         }
-                    }
+                    };
                     (
-                        Some(code.baseline.clone()),
-                        Some(code.target.clone()),
-                        code.files.iter().map(|file| file.patch.as_str()).collect(),
+                        state
+                            .revert
+                            .as_ref()
+                            .and_then(|r| r.baseline.clone())
+                            .or_else(|| Some(code.baseline.clone())),
+                        Some(applied),
+                        staged_diff.unwrap_or_else(|| {
+                            code.files.iter().map(|file| file.patch.as_str()).collect()
+                        }),
                     )
                 } else {
                     authorize().map_err(RuntimeError::Invalid)?;
                     (None, None, String::new())
                 };
                 let revert = RevertState {
+                    paths,
                     message_id: preview.message_id,
                     target: preview.target,
                     baseline,
                     applied,
                     diff,
                 };
-                let committed = self.inner.commit_locked(
-                    &mut state,
-                    vec![
+                let events = match preview.action {
+                    RewindAction::Commit => vec![
                         revert_event(session_id, &revert, RevertPhase::Stage),
                         revert_event(session_id, &revert, RevertPhase::Commit),
                     ],
-                );
+                    RewindAction::Stage => {
+                        vec![revert_event(session_id, &revert, RevertPhase::Stage)]
+                    }
+                    RewindAction::Clear => {
+                        vec![revert_event(session_id, &revert, RevertPhase::Clear)]
+                    }
+                };
+                let committed = self.inner.commit_locked(&mut state, events);
                 if let Err(error) = committed {
                     if preview.code.is_some() {
                         handle

@@ -10,6 +10,10 @@ use crate::model::{Choice, Item, Queued, Request, Session};
 /// Results the runner applies to the App.
 #[derive(Debug, Clone)]
 pub enum Msg {
+    Rewind {
+        request: crate::rewind::Request,
+        result: Box<Result<crate::rewind::Reply, String>>,
+    },
     Computer {
         session_id: String,
         result: Result<Value, String>,
@@ -976,7 +980,8 @@ pub async fn perform_owned(
         | Action::LoadPlugins { .. }
         | Action::LoadAgents
         | Action::FindFiles(_) => load_choices(client, session, action).await,
-        Action::Hex(_)
+        Action::Rewind(_)
+        | Action::Hex(_)
         | Action::ComputerStatus
         | Action::ComputerStop
         | Action::Loop(_)
@@ -1008,6 +1013,7 @@ pub async fn perform_owned(
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Hex(request) => Ok(crate::hex::perform(client, session, request).await),
+        Action::Rewind(request) => Ok(crate::rewind::perform(client, request).await),
         Action::ComputerStatus | Action::ComputerStop => {
             crate::computer::perform(client, session, action).await
         }
