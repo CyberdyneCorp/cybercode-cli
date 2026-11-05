@@ -877,6 +877,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         } => return app.agents_done(&session_id, id, result),
         Msg::Login(reply) => return app.login_reply(reply),
         Msg::OutputStyle(reply) => return app.output_style_reply(reply),
+        Msg::Language(reply) => app.language_reply(reply),
         Msg::Toast(text) => app.toast(text),
         Msg::ExportExists(request) => app.export_exists(request),
         Msg::TaskLog {

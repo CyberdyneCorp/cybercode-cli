@@ -610,6 +610,10 @@ pub(crate) const HELP: &[(&str, &str)] = &[
     ("/model /resume /new /mode /compact /theme", "commands"),
     ("/rename [title]", "rename this session to resume it later"),
     (
+        "/language [value]",
+        "interface and reply language, saved as your default",
+    ),
+    (
         "/goal [--check cmd] <condition>",
         "work until the condition is met; /goal add, pause, resume, skip, clear, edit",
     ),

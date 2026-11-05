@@ -22,6 +22,7 @@ mod hooks;
 mod i18n;
 mod import_offer;
 mod keys;
+mod language;
 mod login;
 mod loops;
 mod markdown;
@@ -82,6 +83,8 @@ mod screens_goals;
 mod screens_history_search;
 #[cfg(test)]
 mod screens_indicators;
+#[cfg(test)]
+mod screens_language;
 #[cfg(test)]
 mod screens_locale;
 #[cfg(test)]

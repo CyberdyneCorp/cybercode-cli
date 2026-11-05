@@ -221,6 +221,7 @@ pub enum Action {
     Export(crate::export::Request),
     /// `/output-style` (`tui` → Output style picker).
     OutputStyle(crate::output_styles::Request),
+    Language(crate::language::Request),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
     EditFile(String),
     Quit,
@@ -373,6 +374,8 @@ pub enum Overlay {
     ConfirmExport(crate::export::Request),
     /// `/output-style`: the listing is `App::output_styles`.
     OutputStyles(crate::output_styles::Picker),
+    /// `/language` and the Config tab's language row.
+    Language(crate::language::Picker),
     /// `/sounds`: the selected row; the settings are `App::sounds`.
     Sounds(crate::sound::overlay::SoundsView),
 }
@@ -545,6 +548,8 @@ pub struct App {
     pub login: crate::login::LoginDialog,
     /// The output style listing of the Location, for the picker and the Config tab.
     pub output_styles: crate::output_styles::OutputStyles,
+    /// The Location's `language` setting, once loaded.
+    pub language: Option<crate::language::Setting>,
     /// The runs the indicators show and the notices of their ends.
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
@@ -649,6 +654,7 @@ impl App {
             goals: Default::default(),
             login: Default::default(),
             output_styles: Default::default(),
+            language: None,
             watch: Default::default(),
             notifications: Default::default(),
             sounds: Default::default(),
@@ -1043,6 +1049,7 @@ impl App {
             Overlay::Login => self.login_key(key),
             Overlay::ConfirmExport(_) => self.confirm_export_key(key),
             Overlay::OutputStyles(_) => self.output_styles_key(key),
+            Overlay::Language(_) => self.language_key(key),
             Overlay::Sounds(_) => self.sounds_key(key),
             Overlay::FileDiff { .. } => {
                 self.file_diff_key(key);
@@ -1856,6 +1863,7 @@ impl App {
             "rename" => self.rename_command(args),
             "export" => self.export_command(args),
             "output-style" => self.output_style_command(args),
+            "language" => self.language_command(args),
             "tree" => self.tree_command(),
             "label" => self.label_command(args),
             "btw" | "side" => self.side_command(args),

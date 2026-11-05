@@ -159,7 +159,11 @@ impl App {
                 actions
             }
             Tab::Stats => self.load_stats(),
-            Tab::Config => self.output_style_check(),
+            Tab::Config => {
+                let mut actions = self.output_style_check();
+                actions.push(Action::Language(crate::language::Request::Load));
+                actions
+            }
         }
     }
 

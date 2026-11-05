@@ -145,6 +145,7 @@ pub(crate) mod tests {
         keys.insert(crate::view::settings::TITLE.into());
         keys.extend(crate::settings::Tab::ALL.map(|tab| tab.label().to_owned()));
         keys.insert(crate::view::composer::PLACEHOLDER.into());
+        keys.insert(crate::language::CHOICES[0].1.into());
         keys
     }
 

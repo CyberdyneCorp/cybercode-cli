@@ -131,6 +131,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         None,
         false,
     ),
+    (
+        "language",
+        "interface and reply language; /language <auto|en|pt-BR|es|fr> sets it",
+        None,
+        false,
+    ),
     ("compact", "summarize older history", None, false),
     (
         "resume-at-reset",

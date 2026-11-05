@@ -170,6 +170,7 @@ pub enum Msg {
     Login(crate::login::LoginReply),
     /// `/output-style` answers.
     OutputStyle(crate::output_styles::Reply),
+    Language(crate::language::Reply),
     /// `/loop list` rows of `session_id`.
     Loops {
         session_id: String,
@@ -994,6 +995,7 @@ pub async fn perform_owned(
         | Action::Branch(_)
         | Action::Login(_)
         | Action::OutputStyle(_)
+        | Action::Language(_)
         | Action::LoadUpdate
         | Action::ResumeAtReset
         | Action::Export(_) => scheduled(client, session, action).await,
@@ -1028,11 +1030,22 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::Directory(request) => crate::agents::perform(client, session, request).await,
         Action::DirectoryOp(job) => crate::agents::perform_op(client, session, job).await,
         Action::Goal(request) => crate::goals::perform(client, request).await,
-        Action::Login(request) => crate::login::perform(client, request).await,
-        Action::OutputStyle(request) => crate::output_styles::perform(client, request).await,
+        Action::Login(_) | Action::OutputStyle(_) | Action::Language(_) => {
+            preferences(client, action).await
+        }
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),
+        _ => Ok(Msg::Done),
+    }
+}
+
+/// `/login`, the output style and the language.
+async fn preferences(client: &Client, action: Action) -> Result<Msg, String> {
+    match action {
+        Action::Login(request) => crate::login::perform(client, request).await,
+        Action::OutputStyle(request) => crate::output_styles::perform(client, request).await,
+        Action::Language(request) => crate::language::perform(client, request).await,
         _ => Ok(Msg::Done),
     }
 }

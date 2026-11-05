@@ -5,7 +5,7 @@ expression: shown
 
   Settings   Status    Config    Usage    Stats
 
-  TUI preferences
+  TUI preferences · saved to kv.json; a later edit of tui.jsonc wins
 
   › theme                         cyber          default
     theme_mode                    auto           default
@@ -21,7 +21,7 @@ expression: shown
     color                         auto           default
     accessibility.reduced_motion  off            default
     output style                  default        default
-  Saved to kv.json; a later edit of tui.jsonc wins.
+    language                      auto (English) default
   Core settings: use cyber config or edit cyber.jsonc
 
 
