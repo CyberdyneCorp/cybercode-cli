@@ -205,7 +205,7 @@ Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer
 
 ## Requirement inventory
 
-The table counts requirements in `openspec/specs` by phase tag (52 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
+The table counts requirements in `openspec/specs` by phase tag (53 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
 
 The editor deferral is already reflected in canonical phase tags: 14 editor requirements are P3 and one is P4. Its change directory remains open for archival; it does not imply another pending count shift. Counts include synchronized delivery contracts, not accepted features.
 
@@ -232,6 +232,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `harness-evaluation` | 7 |  | 1 |  |  | 8 |
 | `hooks` |  | 20 | 2 |  |  | 22 |
 | `installation-upgrade` | 12 | 1 |  |  |  | 13 |
+| `localization` |  | 3 |  |  |  | 3 |
 | `loops-scheduling` |  |  | 15 | 1 |  | 16 |
 | `mcp` | 14 | 7 | 1 |  |  | 22 |
 | `mcp-server` |  | 11 | 4 | 1 |  | 16 |
@@ -263,7 +264,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `workflows` |  |  | 36 | 2 | 1 | 39 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 12 | 4 |  |  | 16 |
-| **Total** | **343** | **344** | **143** | **180** | **15** | **1025** |
+| **Total** | **343** | **347** | **143** | **180** | **15** | **1028** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.
