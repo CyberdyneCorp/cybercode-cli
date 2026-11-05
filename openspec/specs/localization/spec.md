@@ -6,7 +6,9 @@ Localization lets people use Cyber Code in their own language: the TUI interface
 ## Requirements
 
 ### Requirement: Language selection
-(P1) The top-level configuration key `language` SHALL select the interface language and SHALL accept `auto` (the default), `en`, `pt-BR`, `es` and `fr`, ignoring case. With `auto` or no key, the interface language SHALL come from the first non-empty of `LC_ALL`, `LC_MESSAGES` and `LANG`, matched on the language alone: every Portuguese locale (`pt_BR`, `pt_PT`) selects `pt-BR`, every Spanish one `es`, every French one `fr`, and anything else (including `C` and `POSIX`) English. Any other `language` value SHALL be reported as the warning `language: expected auto, en, pt-BR, es or fr, got <value>; using auto` and read as `auto`; it SHALL never stop loading. The TUI SHALL resolve the language from the Location's configuration when it starts, and `cyber attach` from the local configuration, so a change applies from the next start.
+(P1) The top-level configuration key `language` SHALL select the interface language and SHALL accept `auto` (the default), `en`, `pt-BR`, `es` and `fr`, ignoring case. With `auto` or no key, the interface language SHALL come from the first non-empty of `LC_ALL`, `LC_MESSAGES` and `LANG`, matched on the language alone: every Portuguese locale (`pt_BR`, `pt_PT`) selects `pt-BR`, every Spanish one `es`, every French one `fr`, and anything else (including `C` and `POSIX`) English. Any other `language` value SHALL be reported as the warning `language: expected auto, en, pt-BR, es or fr, got <value>; using auto` and read as `auto`; it SHALL never stop loading. The TUI SHALL resolve the language from the Location's configuration when it starts, and `cyber attach` from the local configuration; a file edited by hand applies from the next start.
+
+(P1) The TUI SHALL also switch the language without a restart. `/language` and the `language` row of the Settings Config tab (after the output style row) SHALL open a picker listing `auto` (`Automatic (system language)`, translated) and each supported language in its own name (`English`, `Português (Brasil)`, `Español`, `Français`), with the current setting marked `current`; Up/Down select, Enter applies and Esc closes, returning to Settings when opened from there. `/language <value>` SHALL apply a value directly, ignoring case, and an unsupported value SHALL be refused with a toast that changes nothing. Applying a value SHALL save it as the user's global `language` through `PUT /api/v1/config/language`, switch the interface at once, and announce `Language: <name>` in the footer. When the Location's project configuration sets its own `language`, that one keeps applying there and the TUI SHALL say which file sets it. `/language` SHALL keep its English name in every language.
 
 #### Scenario: Language from the environment
 - **GIVEN** no `language` key and `LANG=pt_BR.UTF-8`
@@ -17,6 +19,15 @@ Localization lets people use Cyber Code in their own language: the TUI interface
 - **GIVEN** `"language": "fr"` in `cyber.jsonc` and `LANG=es_ES.UTF-8`
 - **WHEN** the user starts the TUI
 - **THEN** the interface is in French
+
+#### Scenario: Switch from the TUI
+- **WHEN** the user runs `/language`, selects `Português (Brasil)` and presses Enter
+- **THEN** the global configuration has `"language": "pt-BR"`, the interface is in Brazilian Portuguese at once, the footer shows `Idioma: Português (Brasil)`, and the model replies in Brazilian Portuguese from its next Turn
+
+#### Scenario: A project keeps its own language
+- **GIVEN** the project's `cyber.jsonc` sets `"language": "es"`
+- **WHEN** the user runs `/language fr` there
+- **THEN** the global default becomes `fr`, the Location stays Spanish, and the toast names the project file that sets it
 
 #### Scenario: Unsupported value
 - **WHEN** `cyber.jsonc` sets `"language": "de"`

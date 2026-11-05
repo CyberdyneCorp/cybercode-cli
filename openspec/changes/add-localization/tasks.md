@@ -15,7 +15,12 @@
 - [x] 3.4 Snapshot tests in `pt-BR`, `es` and `fr`.
 - [x] 3.5 Docs: configuration reference and a guide section.
 
-## 4. Later
+## 4. Switching
 
-- [ ] 4.1 The remaining TUI surfaces (sidebar, explorer, workflows, agents, memory, rewind, toasts).
-- [ ] 4.2 The web dashboard.
+- [x] 4.1 `GET`/`PUT /api/v1/config/language` (global write, project override shown, unsupported refused); API test through the production App; OpenAPI and SDK regenerated.
+- [x] 4.2 `/language [value]`, the picker and the Config tab row; the interface switches at once; screens tests against a production App and server.
+
+## 5. Later
+
+- [ ] 5.1 The remaining TUI surfaces (sidebar, explorer, workflows, agents, memory, rewind, toasts).
+- [ ] 5.2 The web dashboard.
