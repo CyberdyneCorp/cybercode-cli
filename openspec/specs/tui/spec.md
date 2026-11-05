@@ -67,6 +67,7 @@ Piped stdin SHALL be prepended to `--prompt`. Invalid combinations SHALL fail be
 (P0) The system SHALL provide a multiline composer with these behaviors:
 - Enter submits; Shift+Enter and Ctrl+J insert a newline.
 - Up/Down move through persisted prompt history (per project, last 500 entries in `~/.local/state/cyber/history.jsonl`).
+- (P1) Ctrl+R (`composer.history_search`) searches that history; see Prompt history search.
 - Ctrl+G opens the current draft in `$VISUAL`/`$EDITOR` and replaces the draft with the saved content on exit.
 - The draft is persisted when the TUI exits and restored on the next launch for the same Session.
 
@@ -77,6 +78,39 @@ Piped stdin SHALL be prepended to `--prompt`. Invalid combinations SHALL fail be
 #### Scenario: Draft survives restart
 - **WHEN** the user quits with an unsent draft and later runs `cyber -c`
 - **THEN** the composer shows the unsent draft
+
+### Requirement: Prompt history search
+(P1) The composer SHALL search the project's prompt history (the entries Up/Down browse) when the user presses `composer.history_search` (default Ctrl+R). The search SHALL work as follows:
+
+- **Start:** the current draft is set aside and the query starts empty. While the search is open the composer shows the selected entry, and the info line is replaced by `search: <query>` followed by the position `N/M` (or `no match`) and the keys `ctrl+r older · ↓ newer · enter edit · esc cancel`.
+- **Matching:** an entry matches when it contains the query as a substring. The match ignores case unless the query has an uppercase letter. Entries are ordered newest first, and an entry whose text equals a newer entry is listed once. The empty query matches every entry.
+- **Typing:** printable keys append to the query and Backspace removes its last character; either one selects the newest match again. Every occurrence of the query in the shown entry SHALL be marked with the `selection` style (reverse video under `NO_COLOR`).
+- **Moving:** Ctrl+R (the binding) and Up select the next older match, and Down the next newer one. Moving past either end keeps the current match.
+- **Accept:** Enter, Tab, Left and Right close the search and leave the selected entry in the composer for editing, with the cursor at its end; nothing is submitted. When nothing matches, accepting restores the draft.
+- **Cancel:** Esc, Ctrl+G and Ctrl+C close the search and restore the draft exactly, chips included.
+- **Other keys** are ignored while the search is open. Switching Session SHALL close the search. Because the draft never leaves the composer, a prompt or overlay that takes the keys leaves the search open beneath it, and quitting saves the draft, not the shown entry.
+
+With `composer.history_search` set to `"none"`, Ctrl+R does nothing in the composer. Search runs locally over the history already loaded; nothing is sent to the server.
+
+#### Scenario: Find an older prompt
+- **GIVEN** the project history holds `run the tests`, `fix the login bug` and `run the linter`, oldest first
+- **WHEN** the user presses Ctrl+R and types `run`
+- **THEN** the composer shows `run the linter` with `run` marked, and the info line reads `search: run  1/2`
+- **WHEN** the user presses Ctrl+R again and then Enter
+- **THEN** the composer contains `run the tests` for editing and nothing is submitted
+
+#### Scenario: Cancel keeps the draft
+- **WHEN** the user has the draft `half-written idea`, presses Ctrl+R, types `lint` and presses Esc
+- **THEN** the composer contains `half-written idea` again
+
+#### Scenario: No match
+- **WHEN** the user presses Ctrl+R and types `zzz` and no entry contains it
+- **THEN** the info line reads `search: zzz  no match`, and Enter restores the draft
+
+#### Scenario: Smart case
+- **GIVEN** the history holds `Deploy staging` and `deploy prod`
+- **WHEN** the user searches `deploy`
+- **THEN** both entries match; searching `Deploy` matches only `Deploy staging`
 
 ### Requirement: Large paste and image input
 (P0) The system SHALL summarize pasted text longer than 1,000 characters or 25 lines as a placeholder chip `[Pasted text #N +L lines]` whose full content is sent on submit, unless `tui.paste_summary` is `false`. The composer SHALL accept images (PNG, JPEG, GIF, WebP) and PDFs from:
@@ -461,7 +495,7 @@ At 80 columns, phase and elapsed time SHALL be dropped. Below 60 columns, each r
 (P0) The system SHALL merge `tui.keybinds` over the defaults, supporting:
 - a leader key (default Ctrl+X) with a 2,000 ms timeout
 - chord sequences such as `<leader>m`
-- context-scoped bindings for `composer` (`history_previous`, `history_next`, `newline`, `editor`, `paste_image`), and (P1) `palette`, `sidebar`, `settings` and `explorer`; `messages`, `picker`, `agent_view` and `permission` have no rebindable actions yet and are reported as unknown contexts
+- context-scoped bindings for `composer` (`history_previous`, `history_next`, `history_search`, `newline`, `editor`, `paste_image`), and (P1) `palette`, `sidebar`, `settings` and `explorer`; `messages`, `picker`, `agent_view` and `permission` have no rebindable actions yet and are reported as unknown contexts
 - disabling a binding with `"none"`
 
 (P0) `composer.paste_image` SHALL default to Ctrl+V, and to Alt+V on Windows, where the terminal takes Ctrl+V for text paste.

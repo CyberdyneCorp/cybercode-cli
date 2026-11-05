@@ -16,6 +16,7 @@ mod fuzzy;
 mod goals;
 mod hex;
 mod highlight;
+mod history_search;
 mod hook_definitions;
 mod hooks;
 mod i18n;
@@ -77,6 +78,8 @@ mod screens_explorer;
 mod screens_export;
 #[cfg(test)]
 mod screens_goals;
+#[cfg(test)]
+mod screens_history_search;
 #[cfg(test)]
 mod screens_indicators;
 #[cfg(test)]

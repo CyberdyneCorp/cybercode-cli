@@ -84,3 +84,19 @@ async fn english_is_unchanged_and_palette_search_finds_commands_by_name() {
     let settings = entries.iter().find(|e| e.name == "Ajustes");
     assert!(settings.is_some(), "UI actions are translated");
 }
+
+#[tokio::test]
+async fn the_history_search_line_is_translated() {
+    let server = Server::start().await;
+    let id = server.session().await;
+    let mut app = server.app(&id).await;
+    app.locale = Locale::PtBr;
+    app.composer = crate::composer::Composer::new(vec!["run the linter".into()]);
+    app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+    for c in "zzz".chars() {
+        press(&mut app, KeyCode::Char(c));
+    }
+    let screen = render(&mut app, 100, 30, &Opts::default());
+    assert!(screen.contains("busca: zzz  nenhum resultado"), "{screen}");
+    assert!(screen.contains("ctrl+r anterior"), "{screen}");
+}

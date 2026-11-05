@@ -139,6 +139,18 @@ impl Composer {
         *self = Self::new(std::mem::take(&mut self.history));
     }
 
+    /// The prompt history, oldest first.
+    pub fn history(&self) -> &[String] {
+        &self.history
+    }
+
+    /// Replace the draft with a history entry found by search, ending any browsing.
+    pub fn recall(&mut self, text: &str) {
+        self.browsing = None;
+        self.stash.clear();
+        self.set_text(text);
+    }
+
     /// Up: move within the text, or to older history from the first line.
     pub fn up(&mut self) {
         if !self.cursor_up() {

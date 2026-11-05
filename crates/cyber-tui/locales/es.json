@@ -133,6 +133,7 @@
   "next row": "siguiente fila",
   "next tab": "siguiente pestaña",
   "next theme in the switcher's filter": "siguiente tema en el filtro del selector",
+  "no match": "sin coincidencias",
   "no matches": "sin coincidencias",
   "open": "abrir",
   "open another session": "abrir otra sesión",
@@ -182,6 +183,8 @@
   "save": "guardar",
   "script": "script",
   "scroll": "desplazar",
+  "search prompt history": "buscar en el historial de prompts",
+  "search: {query}": "buscar: {query}",
   "select a code block to copy": "selecciona un bloque de código para copiar",
   "send (steer while running)": "enviar (dirigir durante la ejecución)",
   "session usage and cost": "uso y costo de la sesión",
@@ -221,5 +224,6 @@
   "work until the condition is met; /goal add, pause, resume, skip, clear, edit": "trabajar hasta cumplir la condición; /goal add, pause, resume, skip, clear, edit",
   "write this session to a file in the Location": "guardar esta sesión en un archivo en la Ubicación",
   "write this session to an HTML page in the Location": "guardar esta sesión como página HTML en la Ubicación",
-  "write this session to an HTML, Markdown or JSON file": "guardar esta sesión en un archivo HTML, Markdown o JSON"
+  "write this session to an HTML, Markdown or JSON file": "guardar esta sesión en un archivo HTML, Markdown o JSON",
+  "{older} older · ↓ newer · enter edit · esc cancel": "{older} anterior · ↓ más reciente · enter editar · esc cancelar"
 }

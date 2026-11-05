@@ -11,6 +11,7 @@ use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, InputMode, Overlay};
+use crate::history_search::HistorySearch;
 
 const MAX_ROWS: u16 = 8;
 /// The bar, then a space, before the text.
@@ -23,7 +24,16 @@ pub fn height(app: &App) -> u16 {
 }
 
 fn text_rows(app: &App) -> u16 {
-    (app.composer.lines().len() as u16).clamp(1, MAX_ROWS)
+    let lines = match searched(app) {
+        Some(entry) => entry.split('\n').count(),
+        None => app.composer.lines().len(),
+    };
+    (lines as u16).clamp(1, MAX_ROWS)
+}
+
+/// The entry an open history search shows in place of the draft.
+fn searched(app: &App) -> Option<&str> {
+    app.history_search.as_ref()?.current(app.composer.history())
 }
 
 /// The color of the agent's configured `color`, else `accent`. An unparsable value
@@ -62,6 +72,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let (row, col) = app.composer.cursor();
     let skip = (row as u16).saturating_sub(rows - 1);
     let mut lines = vec![Line::from(bar.clone())];
+    if let Some(search) = &app.history_search {
+        return draw_search(f, app, area, search);
+    }
     if app.composer.is_empty() {
         lines.push(Line::from(vec![
             bar.clone(),
@@ -91,6 +104,73 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
             area.y + 1 + row as u16 - skip,
         ));
     }
+}
+
+/// An open history search: the selected entry (else the draft) with the query marked,
+/// and `search: <query>  N/M` with its keys in place of the info line.
+fn draw_search(f: &mut Frame, app: &App, area: Rect, search: &HistorySearch) {
+    let t = &app.theme;
+    let bar = Span::styled("┃ ", Style::default().fg(t.info).bg(t.surface));
+    let text = searched(app).map_or_else(|| app.composer.text(), str::to_string);
+    let rows = text_rows(app) as usize;
+    let mut lines = vec![Line::from(bar.clone())];
+    for line in text.split('\n').take(rows) {
+        let mut spans = vec![bar.clone()];
+        spans.extend(marked_spans(line, &search.query, chip_style(app)));
+        lines.push(Line::from(spans));
+    }
+    while lines.len() < rows + 2 {
+        lines.push(Line::from(bar.clone()));
+    }
+    let muted = Style::default().fg(t.text_muted);
+    let position = search.position().map_or_else(
+        || app.tr("no match").to_string(),
+        |(n, m)| format!("{n}/{m}"),
+    );
+    let older = app
+        .keymap
+        .label("composer", "history_search")
+        .unwrap_or_else(|| "↑".into());
+    let prompt = app.trf("search: {query}", &[("query", &search.query)]);
+    let cursor_x = area.x + INDENT + prompt.width() as u16;
+    lines.push(Line::from(vec![
+        bar,
+        Span::styled(prompt, Style::default().fg(t.info)),
+        Span::styled(format!("  {position}"), Style::default().fg(t.text)),
+        Span::styled(
+            format!(
+                "   {}",
+                app.trf(
+                    "{older} older · ↓ newer · enter edit · esc cancel",
+                    &[("older", &older)]
+                )
+            ),
+            muted,
+        ),
+    ]));
+    let info_row = area.y + lines.len() as u16 - 1;
+    let surface = Style::default().fg(t.text).bg(t.surface);
+    f.render_widget(Paragraph::new(lines).style(surface), area);
+    if matches!(app.overlay, Overlay::None) && info_row < area.bottom() {
+        f.set_cursor_position((cursor_x.min(area.right().saturating_sub(1)), info_row));
+    }
+}
+
+/// `line` with each occurrence of `query` styled `mark`.
+fn marked_spans(line: &str, query: &str, mark: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut at = 0;
+    for range in crate::history_search::marks(line, query) {
+        if range.start > at {
+            spans.push(Span::raw(line[at..range.start].to_owned()));
+        }
+        spans.push(Span::styled(line[range.clone()].to_owned(), mark));
+        at = range.end;
+    }
+    if at < line.len() || spans.is_empty() {
+        spans.push(Span::raw(line[at..].to_owned()));
+    }
+    spans
 }
 
 /// Chips stand out from typed text; under `NO_COLOR` in reverse video.
