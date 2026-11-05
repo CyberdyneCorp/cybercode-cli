@@ -199,12 +199,11 @@ async fn restore_brings_back_deleted_files_and_keeps_a_backup() {
 }
 
 #[tokio::test]
-async fn disabled_or_non_git_locations_take_no_snapshots() {
+async fn disabled_locations_take_no_snapshots() {
     let r = Repo::new();
     *r.config.lock().unwrap() = json!({"snapshots": false});
     assert_eq!(r.snaps.track(&r.dir()).await.unwrap(), None);
     let plain = tempfile::tempdir().unwrap();
-    *r.config.lock().unwrap() = json!({});
     assert_eq!(
         r.snaps
             .track(&plain.path().display().to_string())

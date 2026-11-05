@@ -1410,8 +1410,26 @@ pub enum RestoreError {
     Failed(String),
 }
 
+/// Retained filesystem evidence; completion does not acknowledge a Session/native receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SnapshotRecovery {
+    pub id: String,
+    /// The filesystem worker flushed its final record; not Session/native receipt acknowledgement.
+    pub filesystem_complete: bool,
+    pub paths: Vec<String>,
+    /// Durably observed file checkpoints; absence does not prove that no effect occurred.
+    pub applied: Vec<String>,
+}
+
 /// Working-tree snapshots for a Location.
 pub trait Snapshots: Send + Sync {
+    /// Actionable unavailability retained after a one-time automatic warning.
+    fn unavailable_reason(&self, _directory: &str) -> Option<String> {
+        None
+    }
+    fn recovery(&self, _directory: &str) -> BoxFuture<'_, Result<Vec<SnapshotRecovery>, String>> {
+        Box::pin(async { Err("Snapshot recovery inspection is unavailable".into()) })
+    }
     /// Record the current tree; `None` when snapshots are off or unsupported here.
     fn track(&self, directory: &str) -> BoxFuture<'_, Result<Option<Snapshot>, String>>;
 
@@ -1430,6 +1448,13 @@ pub trait Snapshots: Send + Sync {
         to: &str,
     ) -> BoxFuture<'_, Result<Vec<FileDiff>, String>>;
 
+    fn exclusions(
+        &self,
+        _directory: &str,
+        _trees: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<String>, String>> {
+        Box::pin(async { Ok(vec![]) })
+    }
     fn reviewed_restore_available(&self) -> bool {
         false
     }

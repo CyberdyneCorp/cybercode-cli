@@ -345,6 +345,7 @@ pub fn routes() -> Router<AppState> {
         .route(&format!("{s}/recap"), get(recap).post(generate_recap))
         .route(&format!("{s}/rewind"), post(rewind))
         .route(&format!("{s}/rewind/preview"), post(rewind_preview))
+        .route(&format!("{s}/rewind/recovery"), get(snapshot_recovery))
         .route(&format!("{s}/rewind/confirm"), post(rewind_confirm))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
@@ -1188,6 +1189,14 @@ async fn answer_question(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn snapshot_recovery(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<Vec<crate::runtime::SnapshotRecovery>>>> {
+    Ok(Json(Data {
+        data: state.runtime.snapshot_recovery(&id).await?,
+    }))
+}
 async fn rewind_preview(
     State(state): State<AppState>,
     Path(id): Path<String>,

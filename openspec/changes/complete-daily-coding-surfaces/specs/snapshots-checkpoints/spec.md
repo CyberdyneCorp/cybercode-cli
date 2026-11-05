@@ -49,3 +49,31 @@
 #### Scenario: Interrupted restore
 - **WHEN** a file-copy restore loses its owner after a possible partial replacement
 - **THEN** recovery retains the journal and backup evidence and does not report success or blindly repeat the mutation
+
+
+#### Scenario: Inspect retained restore evidence
+- **WHEN** an authenticated owner inspects recovery journals for a Session's Location
+- **THEN** the read-only bounded response reports filesystem completion and durable progress without restoring, acknowledging native receipts, creating an absent namespace or starting inference
+- **AND** inspection remains available while a native writer is paused
+
+#### Scenario: Excluded file is not a deletion
+- **WHEN** an otherwise recorded non-Git path is excluded by a later capture
+- **THEN** its absence does not authorize deletion or synthesize a deletion diff, and retained target/recorded exclusions appear in a rewind review
+
+#### Scenario: Snapshot cap does not fail conversation
+- **WHEN** the fallback cap makes file-copy capture unavailable
+- **THEN** a one-time diagnostic leaves conversation execution and conversation-only rewind available, and successful exec exits remain successful
+
+#### Scenario: Recreate an admitted deleted file
+- **WHEN** a file-copy restore recreates a deleted file and its missing parents
+- **THEN** it prepares the recorded ordinary ownership/mode before publishing the file, creates missing parents privately, and refuses unsupported metadata rather than widening access
+- **AND** captures disclose exclusions for ACLs, extended attributes, platform flags or other metadata that cannot be recreated safely
+
+## MODIFIED Requirements
+
+### Requirement: Non-git fallback
+(P1) In non-git Locations the system SHALL snapshot by copying changed files with verified BLAKE3 identity into private `<data>/snapshot/<project_id>/<Location identity>/files/<hash>` storage, up to `snapshots.fallback_max_bytes` (default 200 MiB per Location). Non-git projects SHALL use `global` with an isolated Location namespace. When the limit is exceeded it SHALL disable code rewind for that Location with a one-time warning while conversation work continues. Unsupported native storage SHALL be unavailable explicitly rather than weakening restore guarantees.
+
+#### Scenario: Non-git project
+- **WHEN** a Session runs in an admitted folder without git
+- **THEN** edits remain rewindable through private Location-bound file-copy snapshots

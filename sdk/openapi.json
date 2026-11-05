@@ -7015,6 +7015,52 @@
           "data"
         ]
       },
+      "Data_Array_of_SnapshotRecovery": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotRecovery"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotRecovery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "filesystem_complete": {
+            "type": "boolean",
+            "description": "The filesystem worker flushed its final record; not Session/native receipt acknowledgement."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "applied": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Durably observed file checkpoints; absence does not prove that no effect occurred."
+          }
+        },
+        "required": [
+          "id",
+          "filesystem_complete",
+          "paths",
+          "applied"
+        ],
+        "description": "Retained filesystem evidence; completion does not acknowledge a Session/native receipt."
+      },
       "RewindSelection": {
         "type": "object",
         "additionalProperties": false,
@@ -23764,6 +23810,47 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/RevertBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery": {
+      "get": {
+        "operationId": "v1.session.snapshotRecovery",
+        "summary": "Inspect retained filesystem restore journals without acknowledging or replaying native effects",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_SnapshotRecovery"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

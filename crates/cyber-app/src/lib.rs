@@ -323,9 +323,28 @@ impl App {
         }))?;
         let snapshots: Arc<dyn Snapshots> = if opts.snapshots {
             let loader = Arc::clone(&config);
-            let snaps = cyber_snapshot::GitSnapshots::new(
+            let snapshot_store = store.clone();
+            let references: Arc<cyber_snapshot::ReferencesFn> = Arc::new(move || {
+                let rows = snapshot_store.read(|db| {
+                    let mut query = db.prepare("SELECT DISTINCT j.value FROM event e,json_tree(e.data) j WHERE j.type='text' AND j.value LIKE 'copy:%' LIMIT 100001")?;
+                    let rows = query.query_map([], |row|row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+                    Ok(rows)
+                }).map_err(|error|error.to_string())?;
+                if rows.len() > 100000 {
+                    return Err("Snapshot reference limit exceeded; pruning refused".into());
+                }
+                Ok(rows.into_iter().collect())
+            });
+            let snaps = cyber_snapshot::GitSnapshots::with_policy(
                 opts.paths.data.clone(),
                 Arc::new(move |p| loader(p).map(|(v, _)| v).unwrap_or(Value::Null)),
+                vec![
+                    opts.paths.config.clone(),
+                    opts.paths.state.clone(),
+                    opts.paths.cache.clone(),
+                    opts.paths.tmp.clone(),
+                ],
+                Some(references),
             );
             snaps.spawn_gc();
             snaps

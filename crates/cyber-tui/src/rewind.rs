@@ -567,6 +567,20 @@ mod tests {
         assert!(matches!(app.overlay, Overlay::None));
     }
     #[test]
+    fn optional_snapshot_warning_keeps_the_running_session_and_draft() {
+        let mut app = app();
+        app.session.running = true;
+        app.composer.set_text("keep this draft");
+        let actions = app.on_event(
+            "session.error",
+            &serde_json::json!({"kind":"snapshot","message":"storage cap reached"}),
+        );
+        assert!(app.session.running);
+        assert_eq!(app.composer.text(), "keep this draft");
+        assert_eq!(actions, vec![Action::Refresh]);
+        assert!(app.toast.as_ref().unwrap().0.contains("snapshot warning"));
+    }
+    #[test]
     fn permission_and_attachment_drafts_keep_their_priority() {
         let mut app = app();
         app.overlay = Overlay::Permission(crate::app::PermStep::Choose(0));

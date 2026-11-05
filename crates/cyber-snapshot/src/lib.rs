@@ -1,14 +1,19 @@
-//! Shadow-git working-tree snapshots and conflict-aware restore (`snapshots-checkpoints`).
+//! Shadow-Git and private non-Git snapshots with conflict-aware restore.
 //!
 //! Each worktree gets a separate git directory under `<data>/snapshot/<project_id>/` that
 //! uses the project worktree as its work tree and borrows the project's objects through
 //! alternates. The user's index, refs, stash and config are never touched.
+//! Admitted Linux/macOS Locations outside Git use Location-bound BLAKE3 storage.
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod copy;
 mod git;
 mod restore;
+pub use cyber_server::runtime::SnapshotRecovery;
 
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cyber_server::runtime::{FileDiff, RestoreError, Snapshot, Snapshots};
@@ -19,18 +24,38 @@ use git::Shadow;
 
 /// Resolved configuration for a Location.
 pub type ConfigFn = dyn Fn(&Path) -> Value + Send + Sync;
+/// Durable roots supplied by the application. Failure disables pruning.
+pub type ReferencesFn = dyn Fn() -> Result<BTreeSet<String>, String> + Send + Sync;
 
 const DEFAULT_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
 pub struct GitSnapshots {
     data_dir: PathBuf,
     config: Arc<ConfigFn>,
+    private_roots: Vec<PathBuf>,
+    references: Option<Arc<ReferencesFn>>,
+    unavailable: Mutex<HashMap<String, String>>,
 }
 
 impl GitSnapshots {
     /// `data_dir` is the Cyber data directory; snapshots live under `<data_dir>/snapshot`.
     pub fn new(data_dir: PathBuf, config: Arc<ConfigFn>) -> Arc<Self> {
-        Arc::new(Self { data_dir, config })
+        Self::with_policy(data_dir, config, vec![], None)
+    }
+
+    pub fn with_policy(
+        data_dir: PathBuf,
+        config: Arc<ConfigFn>,
+        private_roots: Vec<PathBuf>,
+        references: Option<Arc<ReferencesFn>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            data_dir,
+            config,
+            private_roots,
+            references,
+            unavailable: Mutex::new(HashMap::new()),
+        })
     }
 
     fn root(&self) -> PathBuf {
@@ -46,8 +71,89 @@ impl GitSnapshots {
         Shadow::locate(&self.root(), location)
     }
 
+    fn non_git(&self, directory: &str) -> bool {
+        !self
+            .private_roots
+            .iter()
+            .any(|root| Path::new(directory).starts_with(root))
+            && (self.config)(Path::new(directory)).get("snapshots") != Some(&Value::Bool(false))
+            && cyber_core::project::worktree_root(Path::new(directory)).is_none()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn file_copy<T: Send + 'static>(
+        &self,
+        directory: String,
+        operation: impl FnOnce(copy::Store) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, String> {
+        let config = (self.config)(Path::new(&directory));
+        if config.get("snapshots") == Some(&Value::Bool(false)) {
+            return Err("Snapshots are disabled for this Location".into());
+        }
+        let (ignore, max_file) = Self::options_value(&config);
+        let max_total = config
+            .pointer("/snapshots/fallback_max_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(200 * 1024 * 1024);
+        let data = self.data_dir.clone();
+        let private_roots = self.private_roots.clone();
+        let lock = cyber_server::workspace::mutation_lock(Path::new(&directory))
+            .map_err(|e| e.to_string())?;
+        let guard = lock.lock_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            let store = copy::Store::open(
+                &data,
+                &directory,
+                copy::Options {
+                    ignore,
+                    max_file: max_file.min(max_total).min(64 * 1024 * 1024),
+                    max_total,
+                    private_roots,
+                },
+            )?;
+            operation(store)
+        })
+        .await
+        .map_err(|e| format!("Snapshot worker did not acknowledge completion: {e}"))?
+    }
+
+    /// Inspect retained journals without restoring files or acknowledging native effects.
+    pub async fn recovery(&self, directory: &str) -> Result<Vec<SnapshotRecovery>, String> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let (ignore, max_file) = self.options(Path::new(directory));
+            let max_total = (self.config)(Path::new(directory))
+                .pointer("/snapshots/fallback_max_bytes")
+                .and_then(Value::as_u64)
+                .unwrap_or(200 * 1024 * 1024);
+            let options = copy::Options {
+                ignore,
+                max_file: max_file.min(max_total).min(64 * 1024 * 1024),
+                max_total,
+                private_roots: self.private_roots.clone(),
+            };
+            let data = self.data_dir.clone();
+            let directory = directory.to_owned();
+            tokio::task::spawn_blocking(move || {
+                copy::Store::existing(&data, &directory, options)?
+                    .map(|store| store.recovery())
+                    .unwrap_or_else(|| Ok(vec![]))
+            })
+            .await
+            .map_err(|e| e.to_string())?
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let _ = directory;
+            Err("Snapshot recovery inspection is unavailable on this host".into())
+        }
+    }
+
     fn options(&self, location: &Path) -> (Vec<String>, u64) {
-        let config = (self.config)(location);
+        Self::options_value(&(self.config)(location))
+    }
+    fn options_value(config: &Value) -> (Vec<String>, u64) {
         let ignore = config
             .pointer("/snapshots/ignore")
             .and_then(Value::as_array)
@@ -77,6 +183,16 @@ impl GitSnapshots {
     }
 
     pub async fn gc(&self) {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if let Some(references) = &self.references
+            && let Ok(protected) = references()
+        {
+            let data = self.data_dir.clone();
+            let config = self.config.clone();
+            let _ = tokio::task::spawn_blocking(move || copy::gc(&data, &config, &protected)).await;
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let _ = &self.references;
         for git_dir in git::shadow_dirs(&self.root()) {
             git::gc(&git_dir).await;
         }
@@ -84,9 +200,56 @@ impl GitSnapshots {
 }
 
 impl Snapshots for GitSnapshots {
+    fn recovery(&self, directory: &str) -> BoxFuture<'_, Result<Vec<SnapshotRecovery>, String>> {
+        let directory = directory.to_owned();
+        Box::pin(async move { GitSnapshots::recovery(self, &directory).await })
+    }
+    fn unavailable_reason(&self, directory: &str) -> Option<String> {
+        self.unavailable
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(directory)
+            .cloned()
+    }
     fn track(&self, directory: &str) -> BoxFuture<'_, Result<Option<Snapshot>, String>> {
         let directory = directory.to_string();
         Box::pin(async move {
+            if self.non_git(&directory) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                {
+                    let result = self
+                        .file_copy(directory.clone(), |store| store.track())
+                        .await;
+                    let mut unavailable = self
+                        .unavailable
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    return match result {
+                        Ok(snapshot) => {
+                            unavailable.remove(&directory);
+                            Ok(Some(snapshot))
+                        }
+                        Err(error) => {
+                            let repeated = unavailable.get(&directory) == Some(&error);
+                            if unavailable.len() < 1024 || unavailable.contains_key(&directory) {
+                                unavailable.insert(directory, error.clone());
+                            }
+                            if repeated { Ok(None) } else { Err(error) }
+                        }
+                    };
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                {
+                    let mut unavailable = self
+                        .unavailable
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    if unavailable.len() < 1024 {
+                        unavailable.insert(directory,"Non-Git snapshots require native private storage support on this host; conversation rewind remains available".into());
+                    }
+                    return Ok(None);
+                }
+            }
             let Some(shadow) = self.shadow(&directory) else {
                 return Ok(None);
             };
@@ -106,6 +269,14 @@ impl Snapshots for GitSnapshots {
     ) -> BoxFuture<'_, Result<Vec<String>, String>> {
         let (directory, from, to) = (directory.to_string(), from.to_string(), to.to_string());
         Box::pin(async move {
+            if self.non_git(&directory) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                return self
+                    .file_copy(directory, move |store| store.changed(&from, &to))
+                    .await;
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                return Err("Non-Git snapshots are unavailable on this host".into());
+            }
             let Some(shadow) = self.shadow(&directory) else {
                 return Ok(Vec::new());
             };
@@ -121,6 +292,14 @@ impl Snapshots for GitSnapshots {
     ) -> BoxFuture<'_, Result<Vec<FileDiff>, String>> {
         let (directory, from, to) = (directory.to_string(), from.to_string(), to.to_string());
         Box::pin(async move {
+            if self.non_git(&directory) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                return self
+                    .file_copy(directory, move |store| store.diff(&from, &to))
+                    .await;
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                return Err("Non-Git snapshots are unavailable on this host".into());
+            }
             let Some(shadow) = self.shadow(&directory) else {
                 return Ok(Vec::new());
             };
@@ -128,6 +307,23 @@ impl Snapshots for GitSnapshots {
         })
     }
 
+    fn exclusions(
+        &self,
+        directory: &str,
+        trees: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<String>, String>> {
+        let directory = directory.to_owned();
+        Box::pin(async move {
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            if self.non_git(&directory) {
+                return self
+                    .file_copy(directory, move |store| store.exclusions(&trees))
+                    .await;
+            }
+            let _ = (&directory, &trees);
+            Ok(vec![])
+        })
+    }
     fn reviewed_restore_available(&self) -> bool {
         true
     }
@@ -146,6 +342,19 @@ impl Snapshots for GitSnapshots {
             expected.to_owned(),
         );
         Box::pin(async move {
+            if self.non_git(&directory) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                return self
+                    .file_copy(directory, move |store| {
+                        Ok(store.preview(&target, &recorded, &expected, None))
+                    })
+                    .await
+                    .map_err(RestoreError::Failed)?;
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                return Err(RestoreError::Failed(
+                    "Non-Git restore is unavailable on this host".into(),
+                ));
+            }
             let shadow = self
                 .shadow(&directory)
                 .ok_or_else(|| RestoreError::Failed("Snapshots are unavailable".into()))?;
@@ -179,6 +388,19 @@ impl Snapshots for GitSnapshots {
             expected.to_owned(),
         );
         Box::pin(async move {
+            if self.non_git(&directory) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                return self
+                    .file_copy(directory, move |store| {
+                        Ok(store.restore(&target, &recorded, &expected, None, authorize.as_ref()))
+                    })
+                    .await
+                    .map_err(RestoreError::Failed)?;
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                return Err(RestoreError::Failed(
+                    "Non-Git restore is unavailable on this host".into(),
+                ));
+            }
             let shadow = self.shadow(&directory).ok_or_else(|| {
                 RestoreError::Failed("Snapshots are unavailable for this Location".into())
             })?;
@@ -222,6 +444,19 @@ impl Snapshots for GitSnapshots {
             expected.to_owned(),
         );
         Box::pin(async move {
+            if self.non_git(&directory) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                return self
+                    .file_copy(directory, move |store| {
+                        Ok(store.preview(&target, &recorded, &expected, Some(&paths)))
+                    })
+                    .await
+                    .map_err(RestoreError::Failed)?;
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                return Err(RestoreError::Failed(
+                    "Non-Git restore is unavailable on this host".into(),
+                ));
+            }
             let shadow = self
                 .shadow(&directory)
                 .ok_or_else(|| RestoreError::Failed("Snapshots are unavailable".into()))?;
@@ -255,6 +490,25 @@ impl Snapshots for GitSnapshots {
             expected.to_owned(),
         );
         Box::pin(async move {
+            if self.non_git(&directory) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                return self
+                    .file_copy(directory, move |store| {
+                        Ok(store.restore(
+                            &target,
+                            &recorded,
+                            &expected,
+                            Some(&paths),
+                            authorize.as_ref(),
+                        ))
+                    })
+                    .await
+                    .map_err(RestoreError::Failed)?;
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                return Err(RestoreError::Failed(
+                    "Non-Git restore is unavailable on this host".into(),
+                ));
+            }
             let shadow = self
                 .shadow(&directory)
                 .ok_or_else(|| RestoreError::Failed("Snapshots are unavailable".into()))?;
@@ -298,6 +552,24 @@ impl Snapshots for GitSnapshots {
             recorded.to_string(),
         );
         Box::pin(async move {
+            if self.non_git(&directory) {
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                return self
+                    .file_copy(directory, move |store| {
+                        Ok(match store.track() {
+                            Ok(current) => {
+                                store.restore(&target, &recorded, &current.tree, None, &|| Ok(()))
+                            }
+                            Err(error) => Err(RestoreError::Failed(error)),
+                        })
+                    })
+                    .await
+                    .map_err(RestoreError::Failed)?;
+                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                return Err(RestoreError::Failed(
+                    "Non-Git restore is unavailable on this host".into(),
+                ));
+            }
             let shadow = self.shadow(&directory).ok_or_else(|| {
                 RestoreError::Failed("snapshots are unavailable for this Location".into())
             })?;
