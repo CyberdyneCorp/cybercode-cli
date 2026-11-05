@@ -106,7 +106,7 @@ fn right_side(app: &App) -> Vec<Span<'static>> {
     if let Some(key) = app.keymap.label("global", "command_palette") {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(key, Style::default().fg(t.text)));
-        spans.push(Span::styled(" commands", muted));
+        spans.push(Span::styled(format!(" {}", app.tr("commands")), muted));
     }
     spans.push(Span::raw(" "));
     spans

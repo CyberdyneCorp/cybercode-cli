@@ -302,6 +302,7 @@ fn options(server: &Server, root: &Path, id: &str) -> crate::TuiOptions {
         mode: None,
         prompt: None,
         hex: None,
+        locale: Default::default(),
     }
 }
 
@@ -425,7 +426,7 @@ fn an_event_toggled_off_and_on_keeps_its_custom_file() {
 fn sounds_is_offered_in_the_palette_and_help_without_a_key() {
     let mut app = App::new(Default::default(), Vec::new(), "cyber");
     assert_eq!(app.keymap.label("global", "sounds_view"), None);
-    let entries = crate::palette::entries(&app.keymap, &[]);
+    let entries = crate::palette::entries(&app.keymap, &[], app.locale);
     let entry = entries.iter().find(|e| e.name == "/sounds").unwrap();
     assert_eq!(entry.key, None);
     app.overlay = Overlay::Help;

@@ -54,6 +54,7 @@ pub fn run(args: &AttachArgs, ctx: &Context) -> Result<(), CliError> {
             mode: None,
             prompt: None,
             hex: None,
+            locale: super::tui::locale(ctx),
         };
         let summary = cyber_tui::run(opts).await.map_err(CliError::runtime);
         let _ = client.detach().await;

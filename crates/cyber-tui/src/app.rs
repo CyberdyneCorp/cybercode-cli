@@ -431,6 +431,8 @@ pub struct App {
     pub requests: Vec<Request>,
     shown_request: Option<String>,
     pub composer: Composer,
+    /// The interface language (`localization`).
+    pub locale: cyber_core::locale::Locale,
     /// The composer's chips and the clipboard (`tui` → Large paste and image input).
     pub attachments: crate::attachments::Attachments,
     pub overlay: Overlay,
@@ -577,6 +579,7 @@ impl App {
             requests: Vec::new(),
             shown_request: None,
             composer: Composer::new(history),
+            locale: Default::default(),
             attachments: Default::default(),
             overlay: Overlay::None,
             completion: None,
@@ -1069,7 +1072,7 @@ impl App {
 
     pub fn open_palette(&mut self) {
         self.completion = None;
-        let entries = crate::palette::entries(&self.keymap, &self.server_commands);
+        let entries = crate::palette::entries(&self.keymap, &self.server_commands, self.locale);
         self.overlay = Overlay::Palette(crate::palette::Palette::new(entries));
     }
 

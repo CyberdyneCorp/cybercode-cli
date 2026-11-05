@@ -77,6 +77,7 @@ mod tests {
             mode: None,
             prompt: None,
             hex: None,
+            locale: Default::default(),
         };
         let store = crate::store::LocalStore::new(&opts.state_dir);
         let home = home.display().to_string();

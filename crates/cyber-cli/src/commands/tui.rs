@@ -68,6 +68,7 @@ pub fn run(
             CliError::usage("the TUI needs a terminal").with_hint("use \"cyber exec\" for scripts")
         );
     }
+    let locale = locale(&ctx);
     let summary = super::serve::runtime()?.block_on(async {
         let (client, _app) = connect(&ctx, launch).await?;
         if let Start::Resume(wanted) = &start {
@@ -96,6 +97,7 @@ pub fn run(
             mode: global.mode.clone(),
             prompt,
             hex:launch.hex.clone(),
+            locale,
         };
         let summary = cyber_tui::run(opts).await.map_err(CliError::runtime);
         if let Some(id) = &owned {
@@ -114,6 +116,16 @@ pub fn run(
     );
     println!("resume with: cyber -r {}", summary.session_id);
     Ok(())
+}
+
+/// The interface language: the Location's `language`, else the environment's. A
+/// configuration that fails to load leaves it to the environment; the server reports it.
+pub(super) fn locale(ctx: &Context) -> cyber_tui::Locale {
+    let config = ctx
+        .config()
+        .map(|resolved| resolved.value)
+        .unwrap_or_default();
+    cyber_core::locale::resolve(&config, &cyber_core::env::ProcessEnv)
 }
 
 fn start(launch: &LaunchArgs) -> Result<Start, CliError> {

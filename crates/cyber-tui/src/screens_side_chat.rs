@@ -120,7 +120,7 @@ async fn btw_overlay_discards_on_close_and_insert_answer_inserts() {
 #[test]
 fn btw_is_offered_in_the_palette_and_help() {
     let mut app = App::new(Default::default(), Vec::new(), "cyber");
-    let entries = crate::palette::entries(&app.keymap, &[]);
+    let entries = crate::palette::entries(&app.keymap, &[], app.locale);
     assert!(entries.iter().any(|e| e.name == "/btw"), "command");
     app.overlay = Overlay::Help;
     let screen = render(&mut app, 120, 48, &Opts::default());

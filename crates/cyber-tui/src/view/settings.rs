@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::mouse::{List, Target};
@@ -14,7 +15,7 @@ use crate::settings::Tab;
 
 /// Columns of padding on the left.
 const PAD: u16 = 2;
-const TITLE: &str = "Settings";
+pub(crate) const TITLE: &str = "Settings";
 
 pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let t = &app.theme;
@@ -72,9 +73,9 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 
 /// Each tab of the bar is a target that presses its number key.
 fn push_tabs(app: &App, bar: Rect) {
-    let mut x = bar.x.saturating_add(TITLE.len() as u16);
+    let mut x = bar.x.saturating_add(app.tr(TITLE).width() as u16);
     for (i, tab) in Tab::ALL.into_iter().enumerate() {
-        let width = tab.label().len() as u16 + 2;
+        let width = app.tr(tab.label()).width() as u16 + 2;
         x = x.saturating_add(2);
         let rect = Rect { x, width, ..bar };
         let key = KeyEvent::new(KeyCode::Char((b'1' + i as u8) as char), KeyModifiers::NONE);
@@ -87,7 +88,7 @@ fn push_tabs(app: &App, bar: Rect) {
 fn tab_bar(app: &App) -> Line<'static> {
     let t = &app.theme;
     let mut spans = vec![Span::styled(
-        TITLE,
+        app.tr(TITLE),
         Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
     )];
     for tab in Tab::ALL {
@@ -97,7 +98,7 @@ fn tab_bar(app: &App) -> Line<'static> {
         } else {
             Style::default().fg(t.text)
         };
-        spans.push(Span::styled(format!(" {} ", tab.label()), style));
+        spans.push(Span::styled(format!(" {} ", app.tr(tab.label())), style));
     }
     Line::from(spans)
 }

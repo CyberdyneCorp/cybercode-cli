@@ -20,6 +20,12 @@ pub const CONTEXTS: &[&str] = &[
     "workflows",
 ];
 
+/// What each action does, as the help screen and tips show it (`localization`).
+#[cfg(test)]
+pub(crate) fn descriptions() -> impl Iterator<Item = &'static str> {
+    DEFAULTS.iter().map(|&(_, _, _, description)| description)
+}
+
 /// `(context, action, default, what it does)`.
 const DEFAULTS: &[(&str, &str, &str, &str)] = &[
     ("global", "leader", "ctrl+x", "leader key"),

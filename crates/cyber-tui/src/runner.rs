@@ -61,6 +61,7 @@ pub(crate) async fn start(
     let plugin_themes = crate::plugins::theme_dirs(&plugins);
     let prefs = crate::prefs::load_with_plugins(store, &dirs, &plugin_themes, env);
     let mut app = App::new(session, store.history(&opts.directory), "cyber");
+    app.locale = opts.locale;
     app.reduced_motion = prefs.reduced_motion;
     app.screen_reader = prefs.screen_reader;
     app.keymap = prefs.keymap;

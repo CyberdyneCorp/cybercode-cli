@@ -1,7 +1,10 @@
 //! The command palette (`tui` → Command palette): built-in TUI commands, the server's
 //! custom commands, skills and MCP prompts, and UI actions, filtered by fuzzy match.
 
+use cyber_core::locale::Locale;
+
 use crate::fuzzy;
+use crate::i18n::tr;
 use crate::keys::Keymap;
 
 /// A command the server lists at `/commands`.
@@ -350,6 +353,18 @@ const LATER_ACTIONS: &[(&str, &str, Option<&str>, Ui)] = &[
     ),
 ];
 
+/// Server command kinds shown before their description.
+const KINDS: [&str; 3] = ["skill", "MCP prompt", "command"];
+
+/// Every text the palette translates (`localization`).
+#[cfg(test)]
+pub(crate) fn texts() -> Vec<&'static str> {
+    let ui = ACTIONS.iter().chain(LATER_ACTIONS).flat_map(|a| [a.0, a.1]);
+    ui.chain(BUILTINS.iter().map(|b| b.1))
+        .chain(KINDS)
+        .collect()
+}
+
 /// Untrusted names and descriptions (skills, MCP prompts) on one line, without control
 /// characters that could reach the terminal.
 fn clean(text: &str) -> String {
@@ -363,11 +378,13 @@ fn clean(text: &str) -> String {
 
 /// Every entry: UI actions, built-ins, later UI actions, then server commands not
 /// shadowed by a built-in.
-pub fn entries(keys: &Keymap, server: &[ServerCommand]) -> Vec<Entry> {
+/// UI action names and every description are in `locale`; command names are not
+/// (`localization` → Interface translation).
+pub fn entries(keys: &Keymap, server: &[ServerCommand], locale: Locale) -> Vec<Entry> {
     let key = |action: Option<&str>| action.and_then(|a| keys.label("global", a));
     let ui = |&(name, description, action, ui): &(&str, &str, Option<&str>, Ui)| Entry {
-        name: name.into(),
-        description: description.into(),
+        name: tr(locale, name).into(),
+        description: tr(locale, description).into(),
         key: key(action),
         run: Run::Ui(ui),
     };
@@ -377,7 +394,7 @@ pub fn entries(keys: &Keymap, server: &[ServerCommand]) -> Vec<Entry> {
             .iter()
             .map(|&(name, description, action, arguments)| Entry {
                 name: format!("/{name}"),
-                description: description.into(),
+                description: tr(locale, description).into(),
                 key: key(action),
                 run: if arguments {
                     Run::Compose(name.into())
@@ -393,13 +410,13 @@ pub fn entries(keys: &Keymap, server: &[ServerCommand]) -> Vec<Entry> {
             continue;
         }
         let kind = match command.source.as_str() {
-            "skill" => "skill",
-            "mcp" => "MCP prompt",
-            _ => "command",
+            "skill" => KINDS[0],
+            "mcp" => KINDS[1],
+            _ => KINDS[2],
         };
         out.push(Entry {
             name: format!("/{name}"),
-            description: format!("{kind} · {}", clean(&command.description)),
+            description: format!("{} · {}", tr(locale, kind), clean(&command.description)),
             key: None,
             run: if command.takes_arguments {
                 Run::Compose(name)
@@ -478,7 +495,7 @@ mod tests {
                 takes_arguments: false,
             },
         ];
-        let entries = entries(&Keymap::default(), &server);
+        let entries = entries(&Keymap::default(), &server, Locale::En);
         let deploy = entries.iter().find(|e| e.name == "/deploy").unwrap();
         assert_eq!(deploy.description, "command · ship it]52;c;x");
         assert_eq!(deploy.run, Run::Compose("deploy".into()));
@@ -491,7 +508,7 @@ mod tests {
 
     #[test]
     fn typing_filters_and_the_usage_action_ranks_first() {
-        let mut palette = Palette::new(entries(&Keymap::default(), &[]));
+        let mut palette = Palette::new(entries(&Keymap::default(), &[], Locale::En));
         palette.query = "usage".into();
         palette.filter();
         assert_eq!(
