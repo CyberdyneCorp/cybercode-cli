@@ -2552,3 +2552,25 @@ fn project_profile_permissions_string_keeps_user_untrusted_content_settings() {
         BypassSetting::Deny
     );
 }
+
+#[test]
+fn language_is_known_and_an_unsupported_one_warns_without_failing() {
+    let f = Fixture::new();
+    f.write("cyber.jsonc", r#"{ "language": "pt-BR" }"#);
+    let resolved = f.load().unwrap();
+    assert!(
+        !resolved.warnings.iter().any(|w| w.contains("language")),
+        "{:?}",
+        resolved.warnings
+    );
+    assert_eq!(
+        cyber_core::locale::configured(&resolved.value),
+        Some(cyber_core::locale::Locale::PtBr)
+    );
+    f.write("cyber.jsonc", r#"{ "language": "de" }"#);
+    let resolved = f.load().unwrap();
+    assert!(resolved.warnings.contains(
+        &"language: expected auto, en, pt-BR, es or fr, got \"de\"; using auto".to_string()
+    ));
+    assert_eq!(cyber_core::locale::configured(&resolved.value), None);
+}

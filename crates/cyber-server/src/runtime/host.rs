@@ -767,6 +767,12 @@ pub trait ToolHost: Send + Sync {
         super::context::Observed::Absent
     }
 
+    /// The Location's configured `language`; `None` for `auto` or when unset, so the
+    /// model answers in the language it is written to (`localization` → Reply language).
+    fn language(&self, _directory: &str) -> Option<cyber_core::locale::Locale> {
+        None
+    }
+
     /// `compat.claude` of the Location's resolved config (`CLAUDE.md` loads in place);
     /// `None` uses the server-wide [`super::RuntimeOptions::claude_compat`].
     fn claude_compat(&self, _directory: &str) -> Option<bool> {

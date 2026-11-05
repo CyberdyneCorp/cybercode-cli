@@ -75,6 +75,25 @@ pub(crate) fn observe(tools: &dyn super::ToolHost, state: &SessionState) -> cont
     tools.output_style(&state.info.directory, state.info.output_style.as_deref())
 }
 
+/// The `core/language` context source key.
+pub(crate) const LANGUAGE_KEY: &str = "core/language";
+
+/// The reply language of a primary Session: a configured `language` asks the model to
+/// answer in it. Sessions with a parent write for another agent and have none.
+pub(crate) fn observe_language(
+    tools: &dyn super::ToolHost,
+    state: &SessionState,
+) -> context::Observed {
+    if !state.info.takes_output_style() {
+        return context::Observed::Absent;
+    }
+    tools
+        .language(&state.info.directory)
+        .map_or(context::Observed::Absent, |locale| {
+            context::Observed::Value(cyber_core::locale::reply_instruction(locale))
+        })
+}
+
 /// Whether the observed style differs from the epoch's; an unavailable one keeps it.
 pub(crate) fn changed(
     snapshot: &std::collections::BTreeMap<String, String>,

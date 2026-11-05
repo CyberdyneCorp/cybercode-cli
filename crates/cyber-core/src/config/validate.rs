@@ -15,6 +15,7 @@ const KNOWN_KEYS: &[&str] = &[
     "default_agent",
     "mode",
     "output_style",
+    "language",
     "permissions",
     "sandbox",
     "hooks",
@@ -108,6 +109,7 @@ pub fn validate(
     }
     check_mode(map.get("mode"), "mode", &mut issues);
     check_output_style(map.get("output_style"), &mut issues);
+    check_language(map.get("language"), warnings);
     super::agents::check(map.get("agents"), &mut issues);
     for key in ["model", "small_model"] {
         check_model_ref(map.get(key), key, &mut issues);
@@ -192,6 +194,18 @@ fn check_output_style(value: Option<&Value>, issues: &mut Vec<String>) {
         Some(Value::String(name)) if crate::output_styles::valid_name(name) => {}
         Some(other) => issues.push(format!(
             "output_style: expected a style name (lowercase letters, digits, '_' and '-'), got {other}"
+        )),
+    }
+}
+
+/// An unsupported `language` is reported and read as `auto`, so a typo never stops
+/// the agent (`localization` → Language selection).
+fn check_language(value: Option<&Value>, warnings: &mut Vec<String>) {
+    match value {
+        None => {}
+        Some(Value::String(tag)) if crate::locale::valid(tag) => {}
+        Some(other) => warnings.push(format!(
+            "language: expected auto, en, pt-BR, es or fr, got {other}; using auto"
         )),
     }
 }
