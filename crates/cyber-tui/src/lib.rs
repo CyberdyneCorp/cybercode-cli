@@ -19,8 +19,10 @@ mod highlight;
 mod history_search;
 mod hook_definitions;
 mod hooks;
+mod i18n;
 mod import_offer;
 mod keys;
+mod language;
 mod login;
 mod loops;
 mod markdown;
@@ -81,6 +83,10 @@ mod screens_goals;
 mod screens_history_search;
 #[cfg(test)]
 mod screens_indicators;
+#[cfg(test)]
+mod screens_language;
+#[cfg(test)]
+mod screens_locale;
 #[cfg(test)]
 mod screens_machine;
 #[cfg(test)]
@@ -157,6 +163,8 @@ pub struct HexStart {
     pub recover: Option<String>,
 }
 
+pub use cyber_core::locale::Locale;
+
 pub struct TuiOptions {
     pub client: cyber_client::Client,
     pub directory: String,
@@ -172,6 +180,8 @@ pub struct TuiOptions {
     /// Submitted once the UI is up.
     pub prompt: Option<String>,
     pub hex: Option<HexStart>,
+    /// The interface language (`localization` → Language selection).
+    pub locale: cyber_core::locale::Locale,
 }
 
 /// Printed after the TUI exits.

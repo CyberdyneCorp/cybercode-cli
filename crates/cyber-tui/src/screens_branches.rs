@@ -278,7 +278,7 @@ async fn tree_refuses_to_switch_while_a_turn_runs() {
 #[test]
 fn tree_and_label_are_offered_in_the_palette_and_help() {
     let mut app = App::new(Default::default(), Vec::new(), "cyber");
-    let entries = crate::palette::entries(&app.keymap, &[]);
+    let entries = crate::palette::entries(&app.keymap, &[], app.locale);
     for name in ["Session tree", "Label branch", "/tree", "/label"] {
         assert!(entries.iter().any(|e| e.name == name), "{name}");
     }

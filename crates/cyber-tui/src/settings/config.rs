@@ -13,6 +13,8 @@ use crate::prefs::{EDITABLE, Origin};
 pub const CORE_POINTER: &str = "Core settings: use cyber config or edit cyber.jsonc";
 /// The row after the preferences: the Session's output style, which opens its picker.
 pub const OUTPUT_STYLE: &str = "output style";
+/// The row after the output style: the `language` setting, which opens its picker.
+pub const LANGUAGE: &str = "language";
 
 /// The preference's value as the UI uses it now, and where it comes from: a toggle
 /// made in this run (Ctrl+T, `/timestamps`) shows as `session`.
@@ -52,8 +54,16 @@ pub const FIRST_ROW: usize = 2;
 pub fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
     let t = &app.theme;
     let key_width = EDITABLE.iter().map(|(k, _)| k.len()).max().unwrap_or(0) + 2;
+    // The heading carries where changes are saved, so at 80x24 the core-settings
+    // pointer stays on screen below the output style and language rows.
     let mut out = vec![
-        super::status::heading(app, "TUI preferences"),
+        Line::from(vec![
+            super::status::heading(app, "TUI preferences").spans[0].clone(),
+            Span::styled(
+                " · saved to kv.json; a later edit of tui.jsonc wins",
+                Style::default().fg(t.text_subtle),
+            ),
+        ]),
         Line::default(),
     ];
     for (index, (key, _)) in EDITABLE.iter().enumerate() {
@@ -77,11 +87,8 @@ pub fn lines(app: &App, width: usize) -> Vec<Line<'static>> {
         ]));
     }
     out.push(output_style_row(app, key_width, width));
+    out.push(language_row(app, key_width, width));
     // No blank line here: at 80x24 the core-settings pointer must stay on screen.
-    out.push(Line::from(Span::styled(
-        "Saved to kv.json; a later edit of tui.jsonc wins.",
-        Style::default().fg(t.text_subtle),
-    )));
     out.push(Line::from(Span::styled(
         CORE_POINTER,
         Style::default().fg(t.text_muted),
@@ -124,10 +131,41 @@ fn output_style_row(app: &App, key_width: usize, width: usize) -> Line<'static> 
     ])
 }
 
+/// `language  Português (Brasil)  config`: the setting and whether a file sets it.
+fn language_row(app: &App, key_width: usize, width: usize) -> Line<'static> {
+    let t = &app.theme;
+    // `auto` with the language it resolves to, short enough for the value column.
+    let value = match app.language_value().as_str() {
+        "auto" => format!("auto ({})", crate::language::name(app, app.locale.tag())),
+        tag => crate::language::name(app, tag),
+    };
+    let source = match &app.language {
+        Some(setting) if setting.source.is_some() => "config",
+        Some(_) => "default",
+        None => "",
+    };
+    let selected = app.settings.config_row == EDITABLE.len() + 1;
+    let marker = if selected { "› " } else { "  " };
+    let row = format!("{marker}{LANGUAGE:<key_width$}{value:<14}");
+    let row = crate::view::layout::truncate_end(&row, width.saturating_sub(source.len() + 1));
+    let (style, label) = if selected {
+        (t.selected(), t.selected())
+    } else {
+        (
+            Style::default().fg(t.text),
+            Style::default().fg(t.text_subtle),
+        )
+    };
+    Line::from(vec![
+        Span::styled(row, style),
+        Span::styled(format!(" {source}"), label),
+    ])
+}
+
 impl App {
     pub(crate) fn config_key(&mut self, key: KeyEvent) -> Vec<Action> {
-        // The output style row follows the preferences.
-        let last = EDITABLE.len();
+        // The output style and language rows follow the preferences.
+        let last = EDITABLE.len() + 1;
         let row = &mut self.settings.config_row;
         match key.code {
             KeyCode::Up => *row = row.saturating_sub(1),
@@ -135,6 +173,9 @@ impl App {
             KeyCode::Home => *row = 0,
             KeyCode::End => *row = last,
             KeyCode::Enter | KeyCode::Char(' ') if *row == last => {
+                return self.open_language(crate::output_styles::Opener::Settings);
+            }
+            KeyCode::Enter | KeyCode::Char(' ') if *row == EDITABLE.len() => {
                 return self.open_output_styles(crate::output_styles::Opener::Settings);
             }
             KeyCode::Enter | KeyCode::Char(' ')

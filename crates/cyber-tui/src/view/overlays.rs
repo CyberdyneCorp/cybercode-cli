@@ -136,7 +136,7 @@ pub fn picker(f: &mut Frame, app: &App, p: &Picker, area: Rect) {
     }
     if p.filtered.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  no matches",
+            format!("  {}", app.tr("no matches")),
             Style::default().fg(app.theme.text_muted),
         )));
     }
@@ -167,12 +167,15 @@ pub fn palette(f: &mut Frame, app: &App, p: &crate::palette::Palette, area: Rect
     }
     if p.filtered.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  no matches",
+            format!("  {}", app.tr("no matches")),
             Style::default().fg(t.text_muted),
         )));
     }
     f.render_widget(Clear, rect);
-    f.render_widget(Paragraph::new(lines).block(frame(app, "Commands")), rect);
+    f.render_widget(
+        Paragraph::new(lines).block(frame(app, app.tr("Commands"))),
+        rect,
+    );
 }
 
 fn palette_row(
@@ -210,6 +213,10 @@ fn request_title(request: &Request) -> Option<String> {
         .or_else(|| request.origin_title().map(str::to_owned))
 }
 
+/// The choices of a permission prompt; the letters stay the keys in every language.
+pub(crate) const PERMISSION_CHOICES: [&str; 3] =
+    ["Allow once (y)", "Allow always… (a)", "Reject (n)"];
+
 pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     let Some(Request::Permission {
         action,
@@ -246,25 +253,30 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     lines.extend(resource_lines);
     if action == "auto_override" {
         if let Some(reason) = metadata["classifier_reason"].as_str() {
-            lines.push(Line::from(format!("Classifier blocked: {reason}")));
+            lines.push(Line::from(
+                app.trf("Classifier blocked: {reason}", &[("reason", &reason)]),
+            ));
         }
-        lines.push(Line::from(format!(
-            "Tool: {}",
-            metadata["tool"].as_str().unwrap_or_default()
-        )));
-        lines.push(Line::from(format!("Arguments: {}", metadata["input"])));
+        let tool = metadata["tool"].as_str().unwrap_or_default();
+        lines.push(Line::from(app.trf("Tool: {tool}", &[("tool", &tool)])));
+        let input = &metadata["input"];
+        lines.push(Line::from(
+            app.trf("Arguments: {input}", &[("input", input)]),
+        ));
         lines.push(Line::default());
         let selected = match step {
             PermStep::Choose(i) => *i,
             _ => 0,
         };
         let mut controls = vec![
-            selectable(app, "Confirm replay once (y)".into(), selected == 0),
-            selectable(app, "Cancel (n)".into(), selected == 1),
+            selectable(app, app.tr("Confirm replay once (y)").into(), selected == 0),
+            selectable(app, app.tr("Cancel (n)").into(), selected == 1),
         ];
-        controls.push(Line::from("PgUp/PgDn review details · Home return to top"));
+        controls.push(Line::from(
+            app.tr("PgUp/PgDn review details · Home return to top"),
+        ));
         f.render_widget(Clear, rect);
-        let block = frame(app, "Approve blocked call once");
+        let block = frame(app, app.tr("Approve blocked call once"));
         let inner = block.inner(rect);
         let panels = Layout::vertical([Constraint::Min(1), Constraint::Length(3)]).split(inner);
         f.render_widget(block, rect);
@@ -290,29 +302,26 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     let options = lines.len();
     match step {
         PermStep::Choose(i) => {
-            for (n, label) in ["Allow once (y)", "Allow always… (a)", "Reject (n)"]
-                .iter()
-                .enumerate()
-            {
-                lines.push(selectable(app, (*label).into(), *i == n));
+            for (n, label) in PERMISSION_CHOICES.iter().enumerate() {
+                lines.push(selectable(app, app.tr(label).into(), *i == n));
             }
         }
         PermStep::ConfirmAlways => {
             lines.push(Line::from(Span::styled(
-                "Save these approvals for this project:",
+                app.tr("Save these approvals for this project:"),
                 Style::default().fg(t.warning),
             )));
             for p in patterns {
                 lines.push(Line::from(format!("  {action} {p}")));
             }
             lines.push(Line::from(Span::styled(
-                "Enter to confirm · Esc to go back",
+                app.tr("Enter to confirm · Esc to go back"),
                 Style::default().fg(t.text_muted),
             )));
         }
         PermStep::Feedback(text) => {
             lines.push(Line::from(Span::styled(
-                "Tell the model what to do instead (optional), then Enter:",
+                app.tr("Tell the model what to do instead (optional), then Enter:"),
                 Style::default().fg(t.warning),
             )));
             lines.push(Line::from(format!("› {text}")));
@@ -327,7 +336,10 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     f.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .block(frame(app, &format!("Permission: {action}"))),
+            .block(frame(
+                app,
+                &app.trf("Permission: {action}", &[("action", action)]),
+            )),
         rect,
     );
 }
@@ -356,7 +368,7 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
         .collect();
     if questions.len() > 1 {
         tabs.push(Span::styled(
-            " Review ",
+            format!(" {} ", app.tr("Review")),
             if form.tab == questions.len() {
                 Style::default()
                     .fg(t.accent)
@@ -403,15 +415,17 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
             if q.custom {
                 let typed = form.custom[form.tab].clone().unwrap_or_default();
                 let text = if form.typing || !typed.is_empty() {
-                    format!("Your answer: {typed}")
+                    app.trf("Your answer: {typed}", &[("typed", &typed)])
                 } else {
-                    "Type your own answer".into()
+                    app.tr("Type your own answer").into()
                 };
                 lines.push(selectable(app, text, form.cursor == q.options.len()));
             }
         }
         None => {
-            lines.push(Line::from("Review your answers, then Enter to submit:"));
+            lines.push(Line::from(
+                app.tr("Review your answers, then Enter to submit:"),
+            ));
             for (i, q) in questions.iter().enumerate() {
                 let picked: Vec<&str> = form.chosen[i]
                     .iter()
@@ -423,7 +437,7 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
     }
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
-        "Enter select · Space toggle · Tab next · Esc dismiss",
+        app.tr("Enter select · Space toggle · Tab next · Esc dismiss"),
         Style::default().fg(t.text_muted),
     )));
     // While an answer is typed, the keys go to it.
@@ -435,7 +449,7 @@ pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {
     f.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .block(frame(app, "Question")),
+            .block(frame(app, app.tr("Question"))),
         rect,
     );
 }
@@ -570,74 +584,81 @@ pub fn side_chat(f: &mut Frame, app: &App, chat: &crate::side_chat::SideChat, ar
     );
 }
 
+/// The help screen's rows after the bound keys.
+pub(crate) const HELP: &[(&str, &str)] = &[
+    ("Enter", "send (steer while running)"),
+    ("/hooks", "review definitions and exact checkout approvals"),
+    (
+        "/memory [global]",
+        "review notes, deletion and pinned recovery",
+    ),
+    ("/cost", "token classes, subtree cost and cache hit rate"),
+    (
+        "/hooks history",
+        "page recorded hook outcomes without replay",
+    ),
+    ("/admissions", "inspect or cancel pending delegation"),
+    (
+        "/review [target]",
+        "review changes, a range, a commit or pr <n>",
+    ),
+    ("Tab / Alt+Enter", "queue while running"),
+    ("Shift+Enter, Ctrl+J", "newline"),
+    ("Esc", "interrupt"),
+    ("Shift+Tab", "cycle mode"),
+    ("Ctrl+G", "edit in $EDITOR"),
+    ("/model /resume /new /mode /compact /theme", "commands"),
+    ("/rename [title]", "rename this session to resume it later"),
+    (
+        "/language [value]",
+        "interface and reply language, saved as your default",
+    ),
+    (
+        "/goal [--check cmd] <condition>",
+        "work until the condition is met; /goal add, pause, resume, skip, clear, edit",
+    ),
+    (
+        "/export [html|md|json] [path]",
+        "write this session to a file in the Location",
+    ),
+    (
+        "/output-style [name]",
+        "how replies are written, from the next turn; d in the picker saves the default",
+    ),
+    (
+        "/tree · /label <name>",
+        "branches: check one out (c restores code, l labels); /label --clear <name>",
+    ),
+    (
+        "/loop [5m] <prompt>",
+        "repeat a prompt every interval, or self-paced; /loop list, /loop stop",
+    ),
+    (
+        "/login openai · /logout openai",
+        "sign in to or out of a ChatGPT subscription",
+    ),
+    ("/subtask <prompt> · /tasks · /stop", "background tasks"),
+    ("/agent · /subagents", "browse child and parent threads"),
+    (
+        "/agents",
+        "Sessions reachable from this one: message, watch, open, rename",
+    ),
+    ("/sounds", "sound alerts: pack, volume, events; p previews"),
+    (
+        "/btw <question> · /side",
+        "side question; not added to the session",
+    ),
+    (
+        "@path  !cmd  &cmd",
+        "mention a file · run a shell command · in the background",
+    ),
+    ("Alt+Up", "take back the last queued message"),
+    ("PageUp / PageDown", "scroll"),
+    ("Ctrl+C", "clear, or quit when empty"),
+];
+
 pub fn help(f: &mut Frame, app: &App, area: Rect) {
-    let rows = [
-        ("Enter", "send (steer while running)"),
-        ("/hooks", "review definitions and exact checkout approvals"),
-        (
-            "/memory [global]",
-            "review notes, deletion and pinned recovery",
-        ),
-        ("/cost", "token classes, subtree cost and cache hit rate"),
-        (
-            "/hooks history",
-            "page recorded hook outcomes without replay",
-        ),
-        ("/admissions", "inspect or cancel pending delegation"),
-        (
-            "/review [target]",
-            "review changes, a range, a commit or pr <n>",
-        ),
-        ("Tab / Alt+Enter", "queue while running"),
-        ("Shift+Enter, Ctrl+J", "newline"),
-        ("Esc", "interrupt"),
-        ("Shift+Tab", "cycle mode"),
-        ("Ctrl+G", "edit in $EDITOR"),
-        ("/model /resume /new /mode /compact /theme", "commands"),
-        ("/rename [title]", "rename this session to resume it later"),
-        (
-            "/goal [--check cmd] <condition>",
-            "work until the condition is met; /goal add, pause, resume, skip, clear, edit",
-        ),
-        (
-            "/export [html|md|json] [path]",
-            "write this session to a file in the Location",
-        ),
-        (
-            "/output-style [name]",
-            "how replies are written, from the next turn; d in the picker saves the default",
-        ),
-        (
-            "/tree · /label <name>",
-            "branches: check one out (c restores code, l labels); /label --clear <name>",
-        ),
-        (
-            "/loop [5m] <prompt>",
-            "repeat a prompt every interval, or self-paced; /loop list, /loop stop",
-        ),
-        (
-            "/login openai · /logout openai",
-            "sign in to or out of a ChatGPT subscription",
-        ),
-        ("/subtask <prompt> · /tasks · /stop", "background tasks"),
-        ("/agent · /subagents", "browse child and parent threads"),
-        (
-            "/agents",
-            "Sessions reachable from this one: message, watch, open, rename",
-        ),
-        ("/sounds", "sound alerts: pack, volume, events; p previews"),
-        (
-            "/btw <question> · /side",
-            "side question; not added to the session",
-        ),
-        (
-            "@path  !cmd  &cmd",
-            "mention a file · run a shell command · in the background",
-        ),
-        ("Alt+Up", "take back the last queued message"),
-        ("PageUp / PageDown", "scroll"),
-        ("Ctrl+C", "clear, or quit when empty"),
-    ];
+    let rows = HELP;
     // Bound keys come from the table, so a disabled binding is never listed.
     let bound = app.keymap.help_rows(crate::app::UNAVAILABLE).into_iter();
     let lines: Vec<Line> = bound
@@ -645,13 +666,16 @@ pub fn help(f: &mut Frame, app: &App, area: Rect) {
         .map(|(k, v)| {
             Line::from(vec![
                 Span::styled(format!("{k:<44}"), Style::default().fg(app.theme.accent)),
-                Span::raw(v),
+                Span::raw(app.tr(v)),
             ])
         })
         .collect();
     let rect = centered(area, 80, lines.len() as u16 + 2);
     f.render_widget(Clear, rect);
-    f.render_widget(Paragraph::new(lines).block(frame(app, "Keys")), rect);
+    f.render_widget(
+        Paragraph::new(lines).block(frame(app, app.tr("Keys"))),
+        rect,
+    );
 }
 
 pub fn completion(f: &mut Frame, app: &App, c: &Completion, composer: Rect) {

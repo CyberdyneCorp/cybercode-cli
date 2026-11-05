@@ -112,10 +112,13 @@ async fn status_and_config_tabs_at_80_and_120_columns_and_without_color() {
     };
     insta::assert_snapshot!("status_no_color_80x24", render(&mut app, 80, 24, &plain));
 
-    // `2` jumps to Config; it loads only the output styles, for the `output style` row.
+    // `2` jumps to Config; it loads the output styles and the language, for their rows.
     let actions = press(&mut app, KeyCode::Char('2'));
     assert!(
-        matches!(actions.as_slice(), [Action::OutputStyle(_)]),
+        matches!(
+            actions.as_slice(),
+            [Action::OutputStyle(_), Action::Language(_)]
+        ),
         "{actions:?}"
     );
     load(&server, &mut app, actions).await;
@@ -167,10 +170,13 @@ async fn status_and_config_tabs_at_80_and_120_columns_and_without_color() {
     assert_eq!(app.settings.tab, Tab::Config);
     press(&mut app, KeyCode::Esc);
     assert!(matches!(app.overlay, Overlay::None));
-    // It reopens on Config, which only reloads the output styles.
+    // It reopens on Config, which only reloads the output styles and the language.
     let actions = typed(&mut app, "/settings");
     assert!(
-        matches!(actions.as_slice(), [Action::OutputStyle(_)]),
+        matches!(
+            actions.as_slice(),
+            [Action::OutputStyle(_), Action::Language(_)]
+        ),
         "{actions:?}"
     );
     assert_eq!(app.settings.tab, Tab::Config);
@@ -227,6 +233,7 @@ async fn started(server: &Server, id: &str) -> App {
         mode: None,
         prompt: None,
         hex: None,
+        locale: Default::default(),
     };
     let store = crate::store::LocalStore::new(&opts.state_dir);
     let (app, _) = crate::runner::start(&server.client, &store, &opts, &|_: &str| None)
@@ -385,11 +392,16 @@ async fn output_style_row_opens_the_picker() {
 
     let actions = typed(&mut app, "/config");
     assert!(
-        matches!(actions.as_slice(), [Action::OutputStyle(_)]),
+        matches!(
+            actions.as_slice(),
+            [Action::OutputStyle(_), Action::Language(_)]
+        ),
         "{actions:?}"
     );
     load(&server, &mut app, actions).await;
+    // The language row follows the output style row.
     press(&mut app, KeyCode::End);
+    press(&mut app, KeyCode::Up);
     let shown = render(&mut app, 120, 40, &Opts::default());
     let row = shown
         .lines()

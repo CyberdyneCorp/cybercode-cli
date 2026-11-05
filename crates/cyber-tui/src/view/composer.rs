@@ -16,7 +16,7 @@ use crate::history_search::HistorySearch;
 const MAX_ROWS: u16 = 8;
 /// The bar, then a space, before the text.
 const INDENT: u16 = 2;
-const PLACEHOLDER: &str = "Ask anything… \"/\" commands · \"@\" files · \"!\" shell";
+pub(crate) const PLACEHOLDER: &str = "Ask anything… \"/\" commands · \"@\" files · \"!\" shell";
 
 /// Rows: a padding row, the text, a padding row and the info line.
 pub fn height(app: &App) -> u16 {
@@ -78,7 +78,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     if app.composer.is_empty() {
         lines.push(Line::from(vec![
             bar.clone(),
-            Span::styled(PLACEHOLDER, Style::default().fg(t.text_subtle)),
+            Span::styled(app.tr(PLACEHOLDER), Style::default().fg(t.text_subtle)),
         ]));
     } else {
         let labels: Vec<String> = app.attachments.chips.iter().map(|c| c.label()).collect();
@@ -123,21 +123,28 @@ fn draw_search(f: &mut Frame, app: &App, area: Rect, search: &HistorySearch) {
         lines.push(Line::from(bar.clone()));
     }
     let muted = Style::default().fg(t.text_muted);
-    let position = search
-        .position()
-        .map_or_else(|| "no match".to_string(), |(n, m)| format!("{n}/{m}"));
+    let position = search.position().map_or_else(
+        || app.tr("no match").to_string(),
+        |(n, m)| format!("{n}/{m}"),
+    );
     let older = app
         .keymap
         .label("composer", "history_search")
         .unwrap_or_else(|| "↑".into());
-    let prompt = format!("search: {}", search.query);
+    let prompt = app.trf("search: {query}", &[("query", &search.query)]);
     let cursor_x = area.x + INDENT + prompt.width() as u16;
     lines.push(Line::from(vec![
         bar,
         Span::styled(prompt, Style::default().fg(t.info)),
         Span::styled(format!("  {position}"), Style::default().fg(t.text)),
         Span::styled(
-            format!("   {older} older · ↓ newer · enter edit · esc cancel"),
+            format!(
+                "   {}",
+                app.trf(
+                    "{older} older · ↓ newer · enter edit · esc cancel",
+                    &[("older", &older)]
+                )
+            ),
             muted,
         ),
     ]));
@@ -206,12 +213,15 @@ fn info_line(app: &App) -> Vec<Span<'static>> {
     let muted = Style::default().fg(t.text_muted);
     let s = &app.session;
     let mut spans = match app.input_mode() {
-        InputMode::Shell => vec![Span::styled("shell", Style::default().fg(t.warning))],
-        InputMode::Background => vec![Span::styled(
-            "background shell",
+        InputMode::Shell => vec![Span::styled(
+            app.tr("shell"),
             Style::default().fg(t.warning),
         )],
-        InputMode::Command => vec![Span::styled("command", Style::default().fg(t.info))],
+        InputMode::Background => vec![Span::styled(
+            app.tr("background shell"),
+            Style::default().fg(t.warning),
+        )],
+        InputMode::Command => vec![Span::styled(app.tr("command"), Style::default().fg(t.info))],
         InputMode::Prompt => {
             let (provider, variant) = provider_and_variant(&s.model);
             let mut spans = vec![
@@ -235,13 +245,19 @@ fn info_line(app: &App) -> Vec<Span<'static>> {
     };
     if let Some(entry) = app.admissions.pending(&s.id) {
         spans.push(Span::styled(
-            format!("   delegation {} · esc cancels request", entry.status),
+            format!(
+                "   {}",
+                app.trf(
+                    "delegation {status} · esc cancels request",
+                    &[("status", &entry.status)]
+                )
+            ),
             muted,
         ));
     } else if s.running && !super::progress::shown(app) {
         spans.push(Span::raw("   "));
         spans.push(Span::styled("esc", Style::default().fg(t.text)));
-        spans.push(Span::styled(" interrupt", muted));
+        spans.push(Span::styled(format!(" {}", app.tr("interrupt")), muted));
     }
     spans
 }

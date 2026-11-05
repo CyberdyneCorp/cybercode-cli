@@ -696,6 +696,26 @@ impl Services for AppServices {
         self.output_styles(location)
     }
 
+    fn language(
+        &self,
+        location: &Path,
+    ) -> Result<cyber_core::locale::LanguageSetting, cyber_server::http::ApiError> {
+        let resolved = (self.resolved)(location).map_err(cyber_server::http::ApiError::invalid)?;
+        Ok(cyber_core::locale::setting(&resolved))
+    }
+
+    fn set_language(
+        &self,
+        location: &Path,
+        language: &str,
+    ) -> Result<cyber_core::locale::LanguageSetting, cyber_server::http::ApiError> {
+        cyber_core::config::set_global_key(&self.global_config_dir, "language", |_| {
+            serde_json::Value::from(language)
+        })
+        .map_err(cyber_server::http::ApiError::invalid)?;
+        self.language(location)
+    }
+
     /// Read from the Location's resolved (trust-gated) configuration; an invalid
     /// configuration fails closed.
     fn location_defaults(

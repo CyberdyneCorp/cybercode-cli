@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_locale.rs
+expression: palette
+---
+ cyber · New session                                                                           idle
+            ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗
+           ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+           ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗
+           ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝
+          ┌ Commandes ───────────────────────────────────────────────────────────────────┐
+          │›                                                                             │
+          │                                                                              │
+          │› Paramètres  état, préférences, utilisation et stats                 ctrl+x ,│
+          │  Paramètres : État  versions, session, modèle, contexte et serveurs          │
+          │  Paramètres : Config  modifier les préférences de la TUI                     │
+          │  Paramètres : Utilisation  utilisation et coût de la session                 │
+          │  Paramètres : Stats  activité, séries et totaux par modèle                   │
+          │  Renommer la session  changer le titre de cette session pour la reprendre p  │
+          │  Afficher/masquer la barre la  afficher ou masquer la barre latéral  ctrl+x b│
+          │  Thème…  prévisualiser et choisir un thème                           ctrl+x s│
+          │  Copier le dernier bloc de co  copier le dernier bloc de code dans   ctrl+x y│
+          │  Afficher/masquer le raisonne  afficher ou masquer le raisonnement du  ctrl+t│
+          │  Afficher/masquer la sortie d  déplier ou replier les longues sorties  ctrl+o│
+          │  Afficher/masquer les horodat  afficher ou masquer l'heure des messages      │
+          │  /help  touches et commandes                                         ctrl+x h│
+          │  /model  changer de modèle                                           ctrl+x m│
+          │  /sessions  ouvrir une autre session                                 ctrl+x l│
+          │                                                                              │
+          └──────────────────────────────────────────────────────────────────────────────┘
+┃
+┃ Demandez ce que vous voulez… "/" commandes · "@" fichiers · "!" shell
+┃
+┃ Build · main test · default
+ ~/work/app                                                                 $0.00  ctrl+p commandes

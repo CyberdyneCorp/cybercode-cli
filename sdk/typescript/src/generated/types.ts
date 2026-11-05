@@ -2439,6 +2439,23 @@ export type LabelBody = {
   message_id: string;
 };
 
+/** `{ language: "auto" | "en" | "pt-BR" | "es" | "fr" }`, matched ignoring case. */
+export type LanguageBody = {
+  language: string;
+};
+
+/** The `language` setting of a Location (`GET`/`PUT /api/v1/config/language`). */
+export type LanguageSetting = {
+  /** `auto`, or the tag the Location's configuration sets. */
+  language: string;
+  /** The layer that set it; absent for `auto` by default. */
+  source?: string | null;
+  /** The language the model is asked to reply in; absent for `auto`. */
+  reply?: string | null;
+  /** Every value `language` accepts. */
+  supported: string[];
+};
+
 /** A member's newest message; `text` is cut to 200 characters. */
 export type LastMessage = {
   /** `in` (received) or `out` (sent). */
@@ -2673,6 +2690,12 @@ export type Located_HookReview = {
 export type Located_HookRevocation = {
   location: LocationInfo;
   data: HookRevocation;
+};
+
+/** A Location-scoped response. */
+export type Located_LanguageSetting = {
+  location: LocationInfo;
+  data: LanguageSetting;
 };
 
 /** A Location-scoped response. */

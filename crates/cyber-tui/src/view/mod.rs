@@ -3,20 +3,21 @@
 mod agents;
 mod branches;
 mod collaboration;
-mod composer;
+pub(crate) mod composer;
 mod explorer;
 pub(crate) mod footer;
 pub(crate) mod hex;
+mod language;
 pub mod layout;
 mod login;
 mod messages;
 mod messaging;
 mod output_styles;
-mod overlays;
+pub(crate) mod overlays;
 pub(crate) mod progress;
 mod rename;
 mod rewind;
-mod settings;
+pub(crate) mod settings;
 pub(crate) mod sidebar;
 mod sounds;
 mod team;
@@ -166,6 +167,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmExport(request) => overlays::confirm_export(f, app, request, area),
         Overlay::OutputStyles(picker) => output_styles::draw(f, app, picker, area),
+        Overlay::Language(picker) => language::draw(f, app, picker, area),
         Overlay::Sounds(view) => sounds::draw(f, app, view, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),
     }

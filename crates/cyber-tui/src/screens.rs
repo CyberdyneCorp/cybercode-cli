@@ -661,6 +661,7 @@ async fn startup_reads_tui_jsonc_custom_themes_and_no_color() {
         mode: None,
         prompt: None,
         hex: None,
+        locale: Default::default(),
     };
     let store = crate::store::LocalStore::new(&opts.state_dir);
     let env = |name: &str| (name == "COLORTERM").then(|| "truecolor".to_owned());

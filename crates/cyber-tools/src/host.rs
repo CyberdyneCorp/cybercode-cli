@@ -1058,6 +1058,17 @@ impl ToolHost for BuiltinHost {
         self.file_observers.remove(&session_id);
         Box::pin(async move { self.end_browser_session(&session_id).await })
     }
+    /// Through the full resolver when one is attached, like the output style; a
+    /// configuration that fails to resolve has no language.
+    fn language(&self, directory: &str) -> Option<cyber_core::locale::Locale> {
+        let location = Path::new(directory);
+        let config = match self.hook_config.get() {
+            Some(config) => (config.resolve)(location).ok()?.value,
+            None => self.config_for(location),
+        };
+        cyber_core::locale::configured(&config)
+    }
+
     /// A config that fails to load turns `CLAUDE.md` off rather than on: `config_for`'s
     /// `Null` fallback would read as the default `true` and override an opt-out.
     fn claude_compat(&self, directory: &str) -> Option<bool> {

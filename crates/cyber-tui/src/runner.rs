@@ -61,6 +61,7 @@ pub(crate) async fn start(
     let plugin_themes = crate::plugins::theme_dirs(&plugins);
     let prefs = crate::prefs::load_with_plugins(store, &dirs, &plugin_themes, env);
     let mut app = App::new(session, store.history(&opts.directory), "cyber");
+    app.locale = opts.locale;
     app.reduced_motion = prefs.reduced_motion;
     app.screen_reader = prefs.screen_reader;
     app.keymap = prefs.keymap;
@@ -876,6 +877,7 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         } => return app.agents_done(&session_id, id, result),
         Msg::Login(reply) => return app.login_reply(reply),
         Msg::OutputStyle(reply) => return app.output_style_reply(reply),
+        Msg::Language(reply) => app.language_reply(reply),
         Msg::Toast(text) => app.toast(text),
         Msg::ExportExists(request) => app.export_exists(request),
         Msg::TaskLog {

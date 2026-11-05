@@ -199,11 +199,23 @@ export interface Operations {
     body: S.CommandBody;
     response: S.Receipt;
   };
+  "v1.config.language": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_LanguageSetting;
+  };
   "v1.config.outputStyles": {
     path: Record<string, never>;
     query: Record<string, never>;
     body: undefined;
     response: S.Located_StyleListing;
+  };
+  "v1.config.setLanguage": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.LanguageBody;
+    response: S.Located_LanguageSetting;
   };
   "v1.config.setOutputStyle": {
     path: Record<string, never>;
@@ -2153,6 +2165,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.config.language": {
+    tag: "config",
+    name: "language",
+    method: "GET",
+    path: "/api/v1/config/language",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
   "v1.config.outputStyles": {
     tag: "config",
     name: "outputStyles",
@@ -2161,6 +2185,18 @@ export const operations = {
     pathParams: [],
     query: [],
     body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.config.setLanguage": {
+    tag: "config",
+    name: "setLanguage",
+    method: "PUT",
+    path: "/api/v1/config/language",
+    pathParams: [],
+    query: [],
+    body: "required",
     located: true,
     unwrap: false,
     stream: false,
@@ -5317,9 +5353,15 @@ export function createGroups(caller: Caller) {
         caller.call("v1.command.run", { path: { sessionID }, body }, options),
     },
     config: {
+      /** The Location's language setting: auto or a tag, the layer that set it, the reply language and the accepted values (`GET /api/v1/config/language`) */
+      language: (options?: RequestOptions): Promise<Operations["v1.config.language"]["response"]> =>
+        caller.call("v1.config.language", {}, options),
       /** Output styles of the Location (project ones only from a trusted checkout), the files that failed to load or are held for trust, and the configured and effective style (`GET /api/v1/config/output-styles`) */
       outputStyles: (options?: RequestOptions): Promise<Operations["v1.config.outputStyles"]["response"]> =>
         caller.call("v1.config.outputStyles", {}, options),
+      /** Set the global default language (auto, en, pt-BR, es or fr, ignoring case), keeping every other byte of the document; a project that sets its own still wins at its Location (`PUT /api/v1/config/language`) */
+      setLanguage: (body: Operations["v1.config.setLanguage"]["body"], options?: RequestOptions): Promise<Operations["v1.config.setLanguage"]["response"]> =>
+        caller.call("v1.config.setLanguage", { body }, options),
       /** Set the global default output style (a built-in or user style; null sets default), keeping every other byte of the document (`PUT /api/v1/config/output-style`) */
       setOutputStyle: (body: Operations["v1.config.setOutputStyle"]["body"], options?: RequestOptions): Promise<Operations["v1.config.setOutputStyle"]["response"]> =>
         caller.call("v1.config.setOutputStyle", { body }, options),

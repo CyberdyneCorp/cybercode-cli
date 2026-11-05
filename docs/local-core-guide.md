@@ -1209,6 +1209,32 @@ An explicit selection naming an invalid, unknown or held style is refused. A con
 
 Not implemented yet: output styles from plugins, importing `.claude/output-styles/` with `cyber import` (copy the files; the format is compatible), and a per-agent `output_style`.
 
+## Language
+
+In the TUI, run `/language` (or open Settings → Config and press Enter on the `language` row) and pick a language: each is listed in its own name, and `Automatic (system language)` returns to `auto`. `/language pt-BR` sets it directly. The choice is saved as `language` in your global `cyber.jsonc` (comments kept), the interface switches at once, and the model replies in it from its next turn. If the project's own `cyber.jsonc` sets `language`, that one keeps applying in the project and the TUI tells you which file sets it. Clients can do the same with `GET`/`PUT /api/v1/config/language`.
+
+Or set `language` in `cyber.jsonc` by hand to `en`, `pt-BR`, `es` or `fr`, or leave it at `auto` (the default):
+
+```jsonc
+{ "language": "pt-BR" }
+```
+
+**Interface.** With `auto`, the TUI takes its language from the first non-empty of `LC_ALL`, `LC_MESSAGES` and `LANG`. Every Portuguese locale gives Brazilian Portuguese, every Spanish one Spanish and every French one French; anything else, including `C`, gives English. A file edited by hand is read when the TUI starts (`cyber attach` reads your local configuration); `/language` applies at once.
+
+Translated: the composer placeholder and info line, the footer hint, the welcome panel and tips, the help screen, the command palette (UI action names and descriptions), the permission and question prompts, and the Settings tabs. Other screens are still English for now.
+
+Kept in English for everyone, so commands, scripts and docs are shared:
+- slash command names and arguments (`/model`, `/goal add`);
+- key names and the letters of a choice (`Permitir uma vez (y)` is still `y`);
+- configuration keys, the CLI and `cyber --help`;
+- anything the TUI shows from elsewhere: model and tool output, server messages, and skill and MCP descriptions.
+
+An unsupported value such as `"de"` is a warning, `language: expected auto, en, pt-BR, es or fr, got "de"; using auto`, and never stops Cyber Code.
+
+**Replies.** A set language, unlike `auto`, also asks the model to answer in it. It is sent as the `core/language` context source: write for the user in that language, but keep code, identifiers, commands, paths, configuration keys and quoted output as they are, and follow the project's conventions for commit messages and comments. Only primary Sessions carry it; subagents and workflow agents write for another agent. A change reaches a running Session at its next Turn. With `auto` the model simply answers in the language you write in.
+
+**Translations** live in `crates/cyber-tui/locales/<tag>.json`, keyed by the English text. A test fails when a catalog misses a text the TUI translates, keeps one nothing uses, or changes a `{placeholder}`.
+
 ## Hook configuration and trust review
 
 `cyber hooks list --format json` shows resolved hook definitions, file origins, scope, SHA-256 digests and individual trust state, with credentials redacted. Checkout definitions remain withheld until configuration approval with `cyber trust inspect|approve`; the list reports those withheld paths. After reviewing a resolved project/local handler, use `cyber hooks trust --digest <digest>`. A changed handler needs its new digest approved. `cyber hooks untrust --digest <digest>` also revokes obsolete digests when current configuration cannot be parsed.

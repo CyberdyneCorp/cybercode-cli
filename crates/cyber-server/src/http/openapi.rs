@@ -1100,6 +1100,25 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .error::<ErrorBody>(g, 400, "InvalidRequestError: an invalid or unknown style, or one defined only by a project"),
         op(
             "get",
+            "/config/language",
+            "v1.config.language",
+            "The Location's language setting: auto or a tag, the layer that set it, the reply language and the accepted values",
+        )
+        .located()
+        .ok::<Located<cyber_core::locale::LanguageSetting>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: the Location's configuration is invalid"),
+        op(
+            "put",
+            "/config/language",
+            "v1.config.setLanguage",
+            "Set the global default language (auto, en, pt-BR, es or fr, ignoring case), keeping every other byte of the document; a project that sets its own still wins at its Location",
+        )
+        .located()
+        .body::<super::language::LanguageBody>(g)
+        .ok::<Located<cyber_core::locale::LanguageSetting>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError: an unsupported language"),
+        op(
+            "get",
             "/team-definitions",
             "v1.teams.definitions",
             "Team definitions of the Location (project ones only from a trusted checkout) and the files that failed to load, naming the field",

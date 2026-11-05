@@ -205,6 +205,10 @@ pub const BUILTIN: &[(&str, &str)] = &[
         "Switch this Session's output style from the next Turn",
     ),
     (
+        "language",
+        "Choose the interface and reply language, saved as your default",
+    ),
+    (
         "approve",
         "Confirm and replay the last classifier-blocked call once",
     ),

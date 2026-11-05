@@ -901,6 +901,10 @@ impl Inner {
         observed
             .sources
             .insert(super::output_style::CONTEXT_KEY.into(), style);
+        let language = super::output_style::observe_language(&*self.options.tools, state);
+        observed
+            .sources
+            .insert(super::output_style::LANGUAGE_KEY.into(), language);
         observed
     }
 

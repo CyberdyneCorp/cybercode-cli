@@ -92,7 +92,7 @@ async fn rename_retitles_the_session_from_the_command_and_the_dialog() {
 #[test]
 fn rename_is_offered_in_the_palette_and_help() {
     let mut app = App::new(Default::default(), Vec::new(), "cyber");
-    let entries = crate::palette::entries(&app.keymap, &[]);
+    let entries = crate::palette::entries(&app.keymap, &[], app.locale);
     assert!(
         entries.iter().any(|e| e.name == "Rename session"),
         "palette"

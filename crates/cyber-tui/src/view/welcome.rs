@@ -19,7 +19,7 @@ const COMPACT: &str = include_str!("../../assets/logo-compact.txt");
 /// The wide logo needs this many transcript columns; the compact one, [`COMPACT_FROM`].
 const WIDE_FROM: u16 = 82;
 const COMPACT_FROM: u16 = 45;
-const TAGLINE: &str = "local-first coding agent";
+pub(crate) const TAGLINE: &str = "local-first coding agent";
 const PANEL_MAX: usize = 64;
 const LABEL: usize = 7;
 /// Binding actions the tips list, in order.
@@ -66,7 +66,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         lines.extend(
             panel_rows(app)
                 .into_iter()
-                .map(|(label, value)| Line::from(format!("{label}: {value}"))),
+                .map(|(label, value)| Line::from(format!("{}: {value}", app.tr(label)))),
         );
         f.render_widget(Paragraph::new(lines), area);
         return;
@@ -133,7 +133,7 @@ fn version_text(app: &App, prefix: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     if prefix.is_empty() {
-        [head.as_str(), TAGLINE]
+        [head.as_str(), app.tr(TAGLINE)]
             .into_iter()
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
@@ -245,6 +245,10 @@ impl Gradient {
 }
 
 /// `(label, value)` rows from the Session, the catalog and the sidebar's sources.
+/// The panel's row labels, translated when drawn.
+#[cfg(test)]
+pub(crate) const LABELS: [&str; 6] = ["Agent", "Model", "Mode", "Path", "MCP", "LSP"];
+
 fn panel_rows(app: &App) -> Vec<(&'static str, String)> {
     let s = &app.session;
     let (provider, variant) = super::composer::provider_and_variant(&s.model);
@@ -272,7 +276,7 @@ fn panel_rows(app: &App) -> Vec<(&'static str, String)> {
             .map(|s| s.id.as_str())
             .collect();
         let text = if active.is_empty() {
-            "LSPs will activate as files are read".to_owned()
+            app.tr("LSPs will activate as files are read").to_owned()
         } else {
             active.join(", ")
         };
@@ -302,16 +306,25 @@ fn panel(app: &App, width: usize) -> Vec<Line<'static>> {
     let surface = Style::default().fg(t.text).bg(t.surface);
     let blank = || Line::from(Span::styled(" ".repeat(inner + 4), surface));
     let mut lines = vec![blank()];
-    for (label, value) in panel_rows(app) {
-        let value = truncate_end(&value, inner.saturating_sub(LABEL));
-        let fill = inner.saturating_sub(LABEL + value.width());
+    let rows = panel_rows(app);
+    // At least `LABEL`, and one space after the longest translated label.
+    let label_width = rows
+        .iter()
+        .map(|(label, _)| app.tr(label).width() + 1)
+        .fold(LABEL, usize::max);
+    for (label, value) in rows {
+        let value = truncate_end(&value, inner.saturating_sub(label_width));
+        let fill = inner.saturating_sub(label_width + value.width());
         let value_style = if label == "MCP" && value.contains("failed") {
             surface.fg(t.error)
         } else {
             surface
         };
         lines.push(Line::from(vec![
-            Span::styled(format!("  {label:<LABEL$}"), surface.fg(t.text_muted)),
+            Span::styled(
+                format!("  {:<label_width$}", app.tr(label)),
+                surface.fg(t.text_muted),
+            ),
             Span::styled(value, value_style),
             Span::styled(" ".repeat(fill + 2), surface),
         ]));
@@ -333,11 +346,11 @@ fn tips(app: &App, width: usize) -> Vec<Line<'static>> {
     }
     let key_width = hints.iter().map(|(k, _)| k.width()).max().unwrap_or(0) + 2;
     let mut lines = vec![Line::from(Span::styled(
-        format!("{:<inner$}", "Tips"),
+        format!("{:<inner$}", app.tr("Tips")),
         Style::default().fg(t.text).add_modifier(Modifier::BOLD),
     ))];
     for (key, description) in hints {
-        let text = truncate_end(description, inner.saturating_sub(key_width));
+        let text = truncate_end(app.tr(description), inner.saturating_sub(key_width));
         let fill = inner.saturating_sub(key_width + text.width());
         lines.push(Line::from(vec![
             Span::styled(format!("{key:<key_width$}"), Style::default().fg(t.accent)),

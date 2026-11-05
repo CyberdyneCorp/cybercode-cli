@@ -26,6 +26,7 @@ mod intelligence;
 mod interactive;
 mod jobs;
 mod jsonrpc;
+mod language;
 mod loops;
 mod mcp;
 mod mcp_serve;
@@ -519,6 +520,28 @@ pub trait Services: Send + Sync {
             "Output styles are unavailable in this host",
         ))
     }
+    /// The `language` setting of a Location (`localization` → Language selection);
+    /// hosts without configuration have `auto`.
+    fn language(&self, _location: &Path) -> Result<cyber_core::locale::LanguageSetting, ApiError> {
+        Ok(cyber_core::locale::LanguageSetting {
+            language: "auto".into(),
+            source: None,
+            reply: None,
+            supported: cyber_core::locale::choices(),
+        })
+    }
+    /// Set `language` in the user's global configuration and return the Location's
+    /// setting after the edit.
+    fn set_language(
+        &self,
+        _location: &Path,
+        _language: &str,
+    ) -> Result<cyber_core::locale::LanguageSetting, ApiError> {
+        Err(ApiError::service_unavailable(
+            "language",
+            "Changing the language is unavailable in this host",
+        ))
+    }
     /// The configured `mode` and `default_agent` of a Location; hosts without
     /// configuration have none.
     fn location_defaults(&self, _location: &Path) -> Result<LocationDefaults, ApiError> {
@@ -747,6 +770,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(telemetry::routes())
         .merge(teams::routes())
         .merge(output_styles::routes())
+        .merge(language::routes())
         .merge(files::routes())
         .merge(binary_files::routes())
         .merge(worktrees::routes())

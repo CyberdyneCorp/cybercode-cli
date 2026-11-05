@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_locale.rs
+expression: welcome
+---
+ cyber · New session                                                                           idle
+            ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗
+           ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+           ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗
+           ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝
+           ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗
+            ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+
+                                1.0.0 · agente de código local-first
+
+
+                  Agente  Build
+                  Modelo  main test
+                  Modo    default
+                  Caminho ~/work/app
+                  LSP     LSPs serão ativados conforme arquivos forem lidos
+
+
+                  Dicas
+                  ctrl+p    paleta de comandos
+                  ctrl+x b  mostrar ou ocultar a barra lateral
+                  ctrl+x m  trocar modelo
+                  ctrl+x l  sessões
+                  ctrl+x h  teclas
+
+┃
+┃ Pergunte algo… "/" comandos · "@" arquivos · "!" shell
+┃
+┃ Build · main test · default
+ ~/work/app                                                                  $0.00  ctrl+p comandos

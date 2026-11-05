@@ -1,0 +1,34 @@
+---
+source: crates/cyber-tui/src/screens_language.rs
+expression: picker
+---
+ cyber · New session                                                                           idle
+            ██████╗██╗   ██╗██████╗ ███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗
+           ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
+           ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝    ██║     ██║   ██║██║  ██║█████╗
+           ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗    ██║     ██║   ██║██║  ██║██╔══╝
+           ╚██████╗   ██║   ██████╔╝███████╗██║  ██║    ╚██████╗╚██████╔╝██████╔╝███████╗
+            ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝     ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+
+                                  1.0.0 · local-first coding agent
+               ┌ Language ──────────────────────────────────────────────────────────┐
+               │› Automatic (system language)   current                             │
+               │  English                                                           │
+               │  Português (Brasil)                                                │
+               │  Español                                                           │
+               │  Français                                                          │
+               │                                                                    │
+               │Saved as your default; the model replies in it from its next turn.  │
+               │↑↓ select · enter apply · esc close                                 │
+               │                                                                    │
+               │                                                                    │
+               └────────────────────────────────────────────────────────────────────┘
+                  ctrl+x m  switch model
+                  ctrl+x l  sessions
+                  ctrl+x h  keys
+
+┃
+┃ Ask anything… "/" commands · "@" files · "!" shell
+┃
+┃ Build · main test · default
+ ~/work/app                                                                  $0.00  ctrl+p commands

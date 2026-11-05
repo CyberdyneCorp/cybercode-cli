@@ -16,6 +16,7 @@ pub mod hooks;
 pub mod ids;
 pub mod import;
 pub mod intelligence;
+pub mod locale;
 pub mod log;
 pub mod loops;
 pub mod memory;

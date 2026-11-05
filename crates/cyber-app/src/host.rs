@@ -76,6 +76,10 @@ impl ToolHost for AppHost {
         self.builtin.claude_compat(directory)
     }
 
+    fn language(&self, directory: &str) -> Option<cyber_core::locale::Locale> {
+        self.builtin.language(directory)
+    }
+
     fn output_style(
         &self,
         directory: &str,
