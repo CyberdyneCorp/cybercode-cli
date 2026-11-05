@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/CyberdyneCorp/cybercode-cli/security/advisories/new
+    about: Report security problems privately, not as a public issue.
+  - name: Feature reference
+    url: https://github.com/CyberdyneCorp/cybercode-cli/blob/main/docs/features.md
+    about: What is available today and what remains.
