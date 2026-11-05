@@ -105,6 +105,12 @@ const DEFAULTS: &[(&str, &str, &str, &str)] = &[
         "down",
         "line down, then newer history",
     ),
+    (
+        "composer",
+        "history_search",
+        "ctrl+r",
+        "search prompt history",
+    ),
     ("composer", "newline", "ctrl+j", "insert a newline"),
     ("composer", "editor", "ctrl+g", "edit in $EDITOR"),
     (
