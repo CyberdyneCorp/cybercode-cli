@@ -156,13 +156,43 @@ async fn failed_native_ack_keeps_activity_unknown_without_moving_the_branch() {
     let after = runtime.state(&id).await.unwrap();
     assert_eq!(after.last_seq, before.last_seq);
     assert_eq!(after.entries, before.entries);
+    let source = id.clone();
     let status: String = h.store.read(move |db| {
-        Ok(db.query_row("SELECT json_extract(data,'$.status') FROM event WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 ORDER BY rowid DESC LIMIT 1", [id], |row| row.get(0))?)
+        Ok(db.query_row("SELECT json_extract(data,'$.status') FROM event WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 ORDER BY rowid DESC LIMIT 1", [source], |row| row.get(0))?)
     }).unwrap();
     assert_eq!(
         status, "unknown",
         "possible native effects cannot be settled as failure"
     );
+    runtime.shutdown().await;
+    let restarted = runtime_with_images(&h, images.clone());
+    let reloaded = restarted.state(&id).await.unwrap();
+    assert_eq!(reloaded.last_seq, before.last_seq);
+    assert_eq!(reloaded.entries, before.entries);
+    assert_eq!(reloaded.revert, before.revert);
+    let report = restarted.stop_subtree(&id).await.unwrap();
+    assert_eq!(report.status, SubtreeStopStatus::Unknown);
+    assert!(report.persisted);
+    assert!(
+        report
+            .problems
+            .iter()
+            .any(|problem| problem.contains("retains unknown evidence")),
+        "{:?}",
+        report.problems
+    );
+    assert!(
+        restarted
+            .admit(&id, Admission::text("must not resume", Delivery::Queue))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        images.restored.load(Ordering::SeqCst),
+        1,
+        "recovery must not replay a native effect"
+    );
+    restarted.shutdown().await;
 }
 
 #[tokio::test]

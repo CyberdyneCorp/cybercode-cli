@@ -107,3 +107,22 @@ crash/restart/interrupt acceptance, complete historical exclusion reporting, the
 private non-Git backend and recoverable restore journal remain unfinished. Path
 rules/context, root structured output and JSONL input are also outstanding. The
 retry-count specification reconciliation does not implement root structured output.
+
+
+## Recovery acceptance coverage
+
+The real-binary regression suite kills the fixture-owned service after an
+acknowledged code/combined stage, reloads its durable state, restages, kills it
+again and clears through a fresh review. It checks the original baseline,
+changed-path ownership, owner edits, stale-review refusal and no new inference.
+Conversation-only stages are also exercised after service loss with no Git and
+with snapshots disabled; continuing preserves the inactive branch for export.
+Busy confirmation and post-interruption stale review are refused through the CLI.
+A fresh TUI App separately verifies that clear preserves a new terminal's draft.
+
+An instrumented snapshot-port test loses native acknowledgement, reloads the
+runtime and checks that subtree stop reports retained unknown evidence, keeps
+admission closed and does not replay restoration. This is not a native
+partial-replacement crash test. Process-kill cuts during file replacement, the
+recoverable restore journal and complete historical exclusion reporting remain
+required acceptance work alongside the non-Git backend.

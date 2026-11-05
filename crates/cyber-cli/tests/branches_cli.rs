@@ -482,3 +482,245 @@ fn conversation_rewind_works_without_git_and_stale_context_never_applies() {
         2,
     );
 }
+
+/// Use the same authenticated reviewed actions as the TUI, through the actual CLI.
+fn reviewed_selection(env: &Env, message: &str, target: &str, action: &str) -> Value {
+    json!({"message_id":message,"target":target,"action":action,
+        "expected_directory":env.root.join("repo").display().to_string()})
+}
+fn reviewed_preview(env: &Env, id: &str, selection: &Value) -> Value {
+    json(&env.cyber(&[
+        "api",
+        "POST",
+        &format!("/sessions/{id}/rewind/preview"),
+        "-d",
+        &selection.to_string(),
+    ]))["data"]
+        .clone()
+}
+fn reviewed_confirm(env: &Env, id: &str, selection: &Value, preview: &Value) -> Output {
+    let mut body = selection.clone();
+    body["confirmation"] = preview["confirmation"].clone();
+    env.cyber(&[
+        "api",
+        "POST",
+        &format!("/sessions/{id}/rewind/confirm"),
+        "-d",
+        &body.to_string(),
+    ])
+}
+fn reviewed_apply(env: &Env, id: &str, selection: &Value) -> Value {
+    let preview = reviewed_preview(env, id, selection);
+    json(&reviewed_confirm(env, id, selection, &preview))["data"].clone()
+}
+fn session_revert(env: &Env, id: &str) -> Value {
+    json(&env.cyber(&["api", "GET", &format!("/sessions/{id}")]))["data"]["revert"].clone()
+}
+
+/// Only kill the service registered in this fixture's private CYBER_HOME.
+fn kill_registered_service(env: &Env) {
+    let path = env.root.join("cyber-home/state/server.json");
+    let registration: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let pid = registration["pid"].as_u64().unwrap().to_string();
+    assert_ne!(pid, std::process::id().to_string());
+    #[cfg(unix)]
+    let killed = Command::new("kill").args(["-KILL", &pid]).output().unwrap();
+    #[cfg(windows)]
+    let killed = Command::new("taskkill")
+        .args(["/F", "/PID", &pid])
+        .output()
+        .unwrap();
+    assert!(killed.status.success(), "{killed:?}");
+    let address = registration["url"]
+        .as_str()
+        .unwrap()
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::net::TcpStream::connect(address).is_ok() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "killed fixture service still answers"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn reviewed_recovery_code_stages_survive_kill_restage_and_clear_without_adopting_owner_files() {
+    code_stage_recovery("code");
+    code_stage_recovery("both");
+}
+
+fn code_stage_recovery(target: &str) {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    let id = env.exec(None, "WRITE-A");
+    env.exec(Some(&id), "WRITE-B");
+    let users = env.user_ids(&id);
+    let selection = reviewed_selection(&env, &users[0], target, "stage");
+    let staged = reviewed_apply(&env, &id, &selection);
+    assert_eq!(env.file("a.txt"), None);
+    assert_eq!(env.file("b.txt"), None);
+    assert_eq!(env.user_ids(&id), users, "stage does not commit the branch");
+    let requests = model.requests().len();
+    kill_registered_service(&env);
+    assert_eq!(session_revert(&env, &id), staged);
+    std::fs::write(env.root.join("repo/owner.txt"), "owner after restart\n").unwrap();
+    let later = reviewed_selection(&env, &users[1], target, "stage");
+    let restaged = reviewed_apply(&env, &id, &later);
+    assert_eq!(restaged["baseline"], staged["baseline"]);
+    assert_eq!(restaged["paths"], staged["paths"]);
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(env.file("b.txt"), None);
+    kill_registered_service(&env);
+    assert_eq!(session_revert(&env, &id), restaged);
+    clear_recovered_code_stage(&env, &id, &users, target, &restaged);
+    assert_eq!(
+        model.requests().len(),
+        requests,
+        "recovery never starts inference"
+    );
+}
+
+fn clear_recovered_code_stage(
+    env: &Env,
+    id: &str,
+    users: &[String],
+    target: &str,
+    restaged: &Value,
+) {
+    let clear = reviewed_selection(env, &users[1], target, "clear");
+    let preview = reviewed_preview(env, id, &clear);
+    std::fs::write(env.root.join("repo/owner.txt"), "newer owner bytes\n").unwrap();
+    let refused = exits(&reviewed_confirm(env, id, &clear, &preview), 1);
+    assert!(refused.contains("preview changed"), "{refused}");
+    assert_eq!(&session_revert(env, id), restaged);
+    reviewed_apply(env, id, &clear);
+    assert!(session_revert(env, id).is_null());
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(env.file("b.txt").as_deref(), Some("beta\n"));
+    assert_eq!(
+        env.file("owner.txt").as_deref(),
+        Some("newer owner bytes\n")
+    );
+    assert_eq!(env.user_ids(id), users);
+}
+
+#[test]
+fn reviewed_recovery_conversation_stage_survives_kill_and_commits_on_new_input_without_git() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let id = env.exec(None, "first prompt");
+    env.exec(Some(&id), "second prompt");
+    let users = env.user_ids(&id);
+    let selection = reviewed_selection(&env, &users[1], "conversation", "stage");
+    let staged = reviewed_apply(&env, &id, &selection);
+    kill_registered_service(&env);
+    assert_eq!(session_revert(&env, &id), staged);
+    assert_eq!(env.user_ids(&id), users);
+    env.exec(Some(&id), "new continuation");
+    assert!(session_revert(&env, &id).is_null());
+    let active = env.user_ids(&id);
+    assert_eq!(active.len(), 2);
+    assert_eq!(active[0], users[0]);
+    assert!(!active.contains(&users[1]));
+    let exported = json(&env.cyber(&["sessions", "export", &id, "--all-branches"]));
+    assert!(exported.to_string().contains(&users[1]));
+}
+
+#[test]
+fn reviewed_recovery_disabled_snapshots_keep_conversation_clear_available_after_restart() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    let mut config = model.config();
+    config["snapshots"] = json!(false);
+    std::fs::write(
+        env.root.join("cyber-home/config/cyber.jsonc"),
+        config.to_string(),
+    )
+    .unwrap();
+    let id = env.exec(None, "first prompt");
+    let first = env.user_ids(&id)[0].clone();
+    let refused = exits(&env.cyber(&["sessions", "rewind", &id, "--to", &first]), 2);
+    assert!(refused.contains("Snapshots are unavailable"), "{refused}");
+    let stage = reviewed_selection(&env, &first, "conversation", "stage");
+    reviewed_apply(&env, &id, &stage);
+    kill_registered_service(&env);
+    let clear = reviewed_selection(&env, &first, "conversation", "clear");
+    reviewed_apply(&env, &id, &clear);
+    assert!(session_revert(&env, &id).is_null());
+    assert_eq!(env.user_ids(&id), [first]);
+}
+
+#[test]
+fn reviewed_recovery_busy_confirmation_requires_interrupt_ack_and_a_new_review() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    let id = env.exec(None, "WRITE-A");
+    let first = env.user_ids(&id)[0].clone();
+    let preview = rewind_preview(&env, &id, &first, "both");
+    let mut gated = env
+        .command(&["exec", "--session", &id, "--format", "json", "GATE"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while model.held().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "GATE never reached provider"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let refused = exits(&confirm_rewind(&env, &id, &first, "both", &preview), 1);
+    assert!(refused.contains("SessionBusyError"), "{refused}");
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    interrupt_and_wait_idle(&env, &id);
+    model.open_gate();
+    // The owner API settles server work; it does not send SIGINT to exec.
+    assert!(gated.wait().unwrap().success());
+    let users = env.user_ids(&id);
+    assert_eq!(users.len(), 2);
+    let refused = exits(&confirm_rewind(&env, &id, &first, "both", &preview), 1);
+    assert!(refused.contains("preview changed"), "{refused}");
+    assert_eq!(env.user_ids(&id), users);
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    let fresh = rewind_preview(&env, &id, &first, "both");
+    json(&confirm_rewind(&env, &id, &first, "both", &fresh));
+    assert_eq!(env.file("a.txt"), None);
+    assert!(env.user_ids(&id).is_empty());
+    let exported = json(&env.cyber(&["sessions", "export", &id, "--all-branches"]));
+    for user in users {
+        assert!(exported.to_string().contains(&user));
+    }
+}
+
+fn interrupt_and_wait_idle(env: &Env, id: &str) {
+    exits(
+        &env.cyber(&[
+            "api",
+            "POST",
+            &format!("/sessions/{id}/interrupt"),
+            "-d",
+            "{}",
+        ]),
+        0,
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let status =
+            json(&env.cyber(&["api", "GET", &format!("/sessions/{id}")]))["data"]["status"].clone();
+        if status == "idle" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "interrupt never acknowledged idle: {status}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}

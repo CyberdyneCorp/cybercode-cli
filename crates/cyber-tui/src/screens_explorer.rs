@@ -1494,3 +1494,37 @@ async fn rewind_menu_commits_code_only_without_replacing_the_composer() {
     assert_eq!(app.composer.text(), "keep this draft");
     assert!(app.session.revert.is_none());
 }
+
+#[tokio::test]
+async fn rewind_reloaded_tui_clears_a_retained_stage_without_reconstructing_an_unsent_draft() {
+    use crate::rewind::{Intent, Phase};
+    let f = Fixture::new().await;
+    let mut original = f.app().await;
+    original.composer.set_text("draft from the old terminal");
+    let actions = original.open_rewind(Intent::Undo);
+    f.run(&mut original, actions).await;
+    assert_eq!(original.rewind.phase, Phase::Review);
+    let actions = press(&mut original, KeyCode::Enter);
+    f.run(&mut original, actions).await;
+    let retained = original.session.revert.clone().unwrap();
+    assert!(!f.work.join("notes.md").exists());
+    drop(original);
+
+    // A fresh production App loads the durable stage over HTTP, but has no local
+    // authority to recreate the former terminal's unsent text or attachments.
+    let mut reopened = f.app().await;
+    assert_eq!(reopened.session.revert.as_ref(), Some(&retained));
+    assert!(reopened.rewind.saved_draft(&reopened.session).is_none());
+    reopened.composer.set_text("new terminal draft");
+    let requests = f.server.model.requests().len();
+    let actions = reopened.open_rewind(Intent::Redo);
+    f.run(&mut reopened, actions).await;
+    assert_eq!(reopened.rewind.phase, Phase::Review);
+    assert_eq!(reopened.composer.text(), "new terminal draft");
+    let actions = press(&mut reopened, KeyCode::Enter);
+    f.run(&mut reopened, actions).await;
+    assert!(reopened.session.revert.is_none());
+    assert!(f.work.join("notes.md").exists());
+    assert_eq!(reopened.composer.text(), "new terminal draft");
+    assert_eq!(f.server.model.requests().len(), requests);
+}
