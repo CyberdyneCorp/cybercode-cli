@@ -26,6 +26,19 @@
 - **THEN** it retains its original baseline and the union of paths actually changed, and clear restores only those paths through a fresh reviewed three-way plan
 - **AND** legacy stage/clear and branch checkout cannot discard that path ownership
 
+#### Scenario: Recover a staged undo after service loss
+- **WHEN** the service is killed after acknowledging a reviewed stage and the owner reconnects
+- **THEN** the retained stage, original baseline and changed-path ownership replay unchanged
+- **AND** restaging and clearing require fresh reviews, preserve unrelated owner edits and do not start inference
+
+#### Scenario: Interrupt invalidates an earlier review
+- **WHEN** new input makes the Session busy after a rewind preview and the owner explicitly interrupts it
+- **THEN** confirmation while busy is refused, and the old preview cannot apply after idle acknowledgement without a new review
+
+#### Scenario: Unknown native outcome survives runtime reload
+- **WHEN** a native restore loses acknowledgement and a new runtime loads its durable evidence
+- **THEN** stopping the subtree reports an unknown outcome instead of acknowledgement, keeps admission closed, and does not replay the native restore
+
 ### Requirement: Bounded non-git snapshot storage
 (P1) Non-git snapshots SHALL use private atomic BLAKE3-addressed file objects and Location-bound manifests, respecting ignores and file-size limits without following out-of-scope symlinks. Matching size/mtime SHALL NOT substitute for verified content identity. The default 200 MiB Location cap SHALL disable unavailable code rewind visibly while retaining conversation rewind. Restoration and retention SHALL preserve staged/branch/unknown-effect evidence and use the same conflict and recovery guarantees as Git snapshots.
 

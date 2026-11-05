@@ -143,3 +143,41 @@ slash completion and the public command catalog expose them. The existing
 regression remains unchanged. All 41 `cyber-app` library tests then passed;
 core/app library Clippy with warnings denied, formatting and diff checks passed.
 The full platform suites must rerun on the corrected PR head.
+
+## Post-merge rewind recovery acceptance increment
+
+Starting from merged #108 (`cf392c83`), the unchanged-main baseline passed four
+real CLI/server branch scenarios and four server rewind ownership tests. This
+increment adds recovery coverage without changing production behavior:
+
+| Boundary | Evidence |
+| --- | --- |
+| Acknowledged code/both stage, then service kill | Real `cyber` CLI, private registered service killed with SIGKILL/TerminateProcess, fresh service reload, same baseline/path manifest, restage, second kill and reviewed clear; unrelated owner edits remain and stale clear reviews refuse |
+| Conversation stage outside Git | Kill/reload, next input commits the staged boundary, inactive continuation remains exportable |
+| Explicitly disabled snapshots | Code preview refuses; conversation stage survives kill/reload and a reviewed clear remains available |
+| Busy Session and explicit interruption | Old confirmation refuses while busy and after acknowledged idle; only a fresh review applies, with inactive messages retained |
+| Native acknowledgement loss | Instrumented snapshot port, then a fresh Runtime over the same durable Store; subtree stop reports unknown evidence and closes admission without replaying restore |
+| Reopened terminal | Fresh production TUI App loads a server stage over HTTP; reviewed clear preserves the new terminal's draft without reconstructing the old unsent input |
+
+The four new real-CLI recovery cases and server ownership suite are explicitly
+selected by the native Windows nextest profile. Linux/macOS already run these
+binaries in full. SIGKILL/TerminateProcess targets only a PID read from the
+fixture's private `CYBER_HOME` registration; no production fault switch or
+external process selection was introduced. Fixtures use scripted local providers,
+real Git snapshots and authenticated owner routes.
+
+Task 2.4 remains open for native partial-replacement crash cuts and complete
+recovery acceptance. The unknown-acknowledgement test is an instrumented host
+contract test, not proof of a killed native file replacement. The recoverable
+restore journal, historical exclusion reporting and non-Git backend remain
+unfinished; this test increment does not claim those capabilities.
+
+Local macOS results: eight CLI branch/recovery scenarios passed; four server
+ownership tests passed; nine focused TUI rewind tests passed. CLI/server/TUI
+all-target Clippy with warnings denied, formatting, diff checks and generated SDK
+consistency passed. Strict OpenSpec validation passed 114 items; lint reported
+zero errors and 25 warnings. The code-review pass found no remaining blocker in
+this increment; two long test scenarios were split into named recovery phases
+rather than exempting them from Clippy's complexity limit. Linux/Windows execution
+remains pending CI. Existing native C deprecation and linker unwind warnings were
+observed during local builds; successful checks do not substitute for platform CI.
