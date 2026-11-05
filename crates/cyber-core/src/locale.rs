@@ -91,6 +91,53 @@ pub fn valid(value: &str) -> bool {
             .any(|locale| locale.tag().eq_ignore_ascii_case(value))
 }
 
+/// The `language` setting of a Location (`GET`/`PUT /api/v1/config/language`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
+pub struct LanguageSetting {
+    /// `auto`, or the tag the Location's configuration sets.
+    pub language: String,
+    /// The layer that set it; absent for `auto` by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// The language the model is asked to reply in; absent for `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply: Option<String>,
+    /// Every value `language` accepts.
+    pub supported: Vec<String>,
+}
+
+/// The values a client offers, `auto` first.
+pub fn choices() -> Vec<String> {
+    std::iter::once("auto")
+        .chain(Locale::ALL.iter().map(|l| l.tag()))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The canonical spelling of an accepted value (`PT-br` → `pt-BR`); `None` otherwise.
+pub fn canonical(value: &str) -> Option<String> {
+    choices()
+        .into_iter()
+        .find(|choice| choice.eq_ignore_ascii_case(value))
+}
+
+/// The setting of a resolved configuration.
+pub fn setting(resolved: &crate::config::Resolved) -> LanguageSetting {
+    let reply = configured(&resolved.value);
+    let source = resolved
+        .value
+        .get("language")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| valid(value))
+        .and_then(|_| resolved.sources.get("/language").cloned());
+    LanguageSetting {
+        language: reply.map_or_else(|| "auto".into(), |l| l.tag().to_owned()),
+        source,
+        reply: reply.map(|l| l.tag().to_owned()),
+        supported: choices(),
+    }
+}
+
 /// The `core/language` context text for a set language. Code and anything the user
 /// or a tool must type stays as it is.
 pub fn reply_instruction(locale: Locale) -> String {
@@ -156,6 +203,14 @@ mod tests {
             "a tag, not a POSIX name"
         );
         assert_eq!(configured(&json!({"language": "de"})), None);
+    }
+
+    #[test]
+    fn canonical_spelling_and_choices() {
+        assert_eq!(canonical("PT-br").as_deref(), Some("pt-BR"));
+        assert_eq!(canonical("Auto").as_deref(), Some("auto"));
+        assert_eq!(canonical("de"), None);
+        assert_eq!(choices(), ["auto", "en", "pt-BR", "es", "fr"]);
     }
 
     #[test]

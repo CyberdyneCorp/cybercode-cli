@@ -10989,6 +10989,70 @@
         ],
         "description": "The configured `output_style` of a Location and the layer that set it."
       },
+      "Located_LanguageSetting": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/LanguageSetting"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "LanguageSetting": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string",
+            "description": "`auto`, or the tag the Location's configuration sets."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The layer that set it; absent for `auto` by default."
+          },
+          "reply": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The language the model is asked to reply in; absent for `auto`."
+          },
+          "supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Every value `language` accepts."
+          }
+        },
+        "required": [
+          "language",
+          "supported"
+        ],
+        "description": "The `language` setting of a Location (`GET`/`PUT /api/v1/config/language`)."
+      },
+      "LanguageBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "language"
+        ],
+        "description": "`{ language: \"auto\" | \"en\" | \"pt-BR\" | \"es\" | \"fr\" }`, matched ignoring case."
+      },
       "Located_Definitions": {
         "type": "object",
         "properties": {
@@ -26196,6 +26260,140 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/StyleBody"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config/language": {
+      "get": {
+        "operationId": "v1.config.language",
+        "summary": "The Location's language setting: auto or a tag, the layer that set it, the reply language and the accepted values",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_LanguageSetting"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: the Location's configuration is invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "v1.config.setLanguage",
+        "summary": "Set the global default language (auto, en, pt-BR, es or fr, ignoring case), keeping every other byte of the document; a project that sets its own still wins at its Location",
+        "tags": [
+          "config"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_LanguageSetting"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError: an unsupported language",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LanguageBody"
               }
             }
           }
