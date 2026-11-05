@@ -253,3 +253,35 @@ checks passed. Native C deprecation and linker unwind warnings were observed;
 Linux/Windows and additional macOS architectures require the PR's platform CI.
 
 Workspace all-target Clippy with warnings denied also passed on the final code.
+
+
+### PR #110 CI correction and merged-history integration
+
+The initial PR head `6a8a33b8` failed its Linux x64/ARM snapshot proofs and the
+Linux Rust suite because directory sync called fsync on cap-std O_PATH handles.
+Sync now reopens `.` relative to the pinned descriptor with read/directory/no-follow
+flags, retaining descriptor authority while obtaining an fsync-capable handle.
+The new Linux regression explicitly constructs an O_PATH directory and syncs it.
+The macOS ARM proof also reported a storage-lock acquisition failure; acquisition
+now retries only bounded short contention/interruption before any restore starts,
+keeps a live owner exclusive and reports other lock errors distinctly. Regression
+coverage checks both lock handoff and refusal while the owner remains live.
+No source mutation is retried by this acquisition change.
+
+Merged current main `913fe1b0`, including #111's Ctrl+R history search, into the
+existing PR branch without conflicts. The roadmap's 1026-requirement inventory and
+history-search feature/docs/specs are preserved. A combined regression verifies
+that a snapshot warning preserves the search and draft, cancelling search does
+not arm rewind, and subsequent Esc-Esc opens rewind without replacing the draft.
+Managed recovery resolution and journal reclamation remain outside this correction.
+
+
+After integration, local macOS checks passed: two storage regressions, 17 file-copy
+cases, 12 Git snapshot cases, 11 rewind-filtered TUI cases, nine history-search-
+filtered TUI cases (one overlap), and three real non-Git CLI cases. Ten additional
+parallel file-copy suite repetitions passed. Workspace all-target Clippy with
+warnings denied, formatting/diff checks, generated SDK consistency and requirement
+inventory checks passed. Strict OpenSpec passed 115 items after #111; lint reported
+zero errors and 25 warnings. Linux O_PATH execution cannot run on this macOS host;
+the corrected head requires fresh Linux x64/ARM and macOS platform proof CI. No
+old-head green checks are used to accept this integrated revision.

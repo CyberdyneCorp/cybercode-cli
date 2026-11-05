@@ -28,9 +28,19 @@ pub fn dir_identity(dir: &Dir) -> Result<String> {
     identity(&dir.try_clone().map_err(fail)?.into_std_file())
 }
 pub fn sync(dir: &Dir) -> Result<()> {
-    let file = dir.try_clone().map_err(fail)?.into_std_file();
-    file.sync_all().map_err(fail)?;
-    Ok(())
+    // cap-std can hold O_PATH directories on Linux, which fsync rejects.
+    // Reopen the pinned directory itself for I/O, without resolving an ambient path.
+    let fd = rustix::fs::openat(
+        dir,
+        ".",
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::DIRECTORY
+            | rustix::fs::OFlags::CLOEXEC
+            | rustix::fs::OFlags::NOFOLLOW,
+        rustix::fs::Mode::empty(),
+    )
+    .map_err(fail)?;
+    File::from(fd).sync_all().map_err(fail)
 }
 pub fn private_child(parent: &Dir, name: &str) -> Result<Dir> {
     child(parent, name, 0o077)
@@ -142,9 +152,25 @@ pub fn lock(dir: &Dir, create: bool) -> Result<File> {
     if !m.is_file() || m.nlink() != 1 || m.mode() & 0o077 != 0 {
         return Err("Unsafe snapshot lock".into());
     }
-    file.try_lock()
-        .map_err(|_| "Snapshot storage is busy".to_string())?;
+    acquire_lock(&file)?;
     Ok(file)
+}
+fn acquire_lock(file: &File) -> Result<()> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(error))
+                if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(format!("Cannot lock snapshot storage: {error}")),
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("Snapshot storage is busy".into());
+        }
+        // Bounded acquisition only: no restore operation has started or is replayed.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 pub fn names(dir: &Dir, max: usize) -> Result<Vec<String>> {
     let mut names = vec![];
@@ -171,4 +197,43 @@ pub fn valid_digest(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn directory_sync_uses_a_readable_descriptor() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
+        #[cfg(target_os = "linux")]
+        let dir = {
+            let fd = rustix::fs::openat(
+                &dir,
+                ".",
+                rustix::fs::OFlags::PATH | rustix::fs::OFlags::DIRECTORY,
+                rustix::fs::Mode::empty(),
+            )
+            .unwrap();
+            Dir::from_std_file(File::from(fd))
+        };
+        sync(&dir).unwrap();
+    }
+
+    #[test]
+    fn lock_acquisition_waits_for_a_short_handoff_but_keeps_a_live_owner_exclusive() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
+        let owner = lock(&dir, true).unwrap();
+        assert!(matches!(lock(&dir, false), Err(error) if error.contains("busy")));
+        let contender = dir.try_clone().unwrap();
+        let waiting = std::thread::spawn(move || lock(&contender, false));
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        drop(owner);
+        let next = waiting.join().unwrap().unwrap();
+        assert!(matches!(lock(&dir, false), Err(error) if error.contains("busy")));
+        drop(next);
+        assert!(lock(&dir, false).is_ok());
+    }
 }

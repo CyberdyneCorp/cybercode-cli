@@ -581,6 +581,27 @@ mod tests {
         assert!(app.toast.as_ref().unwrap().0.contains("snapshot warning"));
     }
     #[test]
+    fn history_search_cancel_and_snapshot_warning_do_not_arm_rewind_or_replace_the_draft() {
+        let mut app = app();
+        app.composer = crate::composer::Composer::new(vec!["older prompt".into()]);
+        app.composer.set_text("keep this draft");
+        app.on_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
+        assert!(app.history_search.is_some());
+        app.on_event(
+            "session.error",
+            &serde_json::json!({"kind":"snapshot","message":"cap reached"}),
+        );
+        assert!(app.history_search.is_some());
+        let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(app.on_key(esc).is_empty());
+        assert!(app.history_search.is_none());
+        assert!(app.rewind.escape.is_none());
+        assert_eq!(app.composer.text(), "keep this draft");
+        assert!(app.on_key(esc).is_empty());
+        assert!(matches!(app.on_key(esc).as_slice(), [Action::Rewind(_)]));
+        assert_eq!(app.composer.text(), "keep this draft");
+    }
+    #[test]
     fn permission_and_attachment_drafts_keep_their_priority() {
         let mut app = app();
         app.overlay = Overlay::Permission(crate::app::PermStep::Choose(0));
