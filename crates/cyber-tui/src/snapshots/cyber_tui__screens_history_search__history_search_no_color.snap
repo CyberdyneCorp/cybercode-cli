@@ -1,0 +1,35 @@
+---
+source: crates/cyber-tui/src/screens_history_search.rs
+expression: screen
+---
+ cyber · Theme baseline                                                                        idle
+› How do I speed up fib?
+
+  Plan
+
+  This keeps the cache warm:
+
+  1. Memoization: results are cached
+
+  • avoids recomputation
+
+    rust
+    fn fib(n: u64) -> u64 { n }
+
+  ▣ Build · main · 11.3s
+
+
+
+
+
+
+
+
+
+
+┃
+┃ run the linter
+┃
+┃ search: run  1/2   ctrl+r older · ↓ newer · enter edit · esc cancel
+ ~/work/app                                                                100 · —  ctrl+p commands
+row 26: 2-4 reverse
