@@ -140,7 +140,7 @@ fn review(app: &App, lines: &mut Vec<Line<'static>>) {
     }
     if let Some(code) = &preview.code {
         lines.push(Line::from(format!(
-            "{} proposed file changes · {} current exclusions",
+            "{} proposed file changes · {} snapshot exclusions",
             code.files.len(),
             code.skipped.len()
         )));

@@ -18,11 +18,11 @@ keeps the conversation; `conversation` moves the active path before that message
 `cyber sessions tree`, checkout and `export --all-branches`.
 
 The fingerprint binds the Session, exact Location, sequence, boundary, active tip,
-snapshot identities, proposed patches, current exclusions and retained tool status.
-A changed context requires a fresh review. Code planning uses the existing
+snapshot identities, proposed patches, available current/historical exclusions and retained tool status.
+A changed context requires a fresh review. Code planning uses
 three-way merge rules; unrelated owner files stay intact and are not shown as
-proposed deletions. Conflicts are reported before application. Planning uses a
-separate shadow Git index and never installs proposed files into the workspace.
+proposed deletions. Conflicts are reported before application. Git planning uses a separate shadow index; file-copy planning uses private objects.
+Neither installs proposed files into the workspace.
 
 Confirmation obtains native Location ownership, rechecks the current tree under
 the workspace mutation lock and refreshes admission before file changes. A failed
@@ -30,13 +30,20 @@ native acknowledgement or event commit after a possible effect retains the nativ
 activity fence and backup evidence; it is not a successful rewind. Do not repeat a
 mutation to infer its outcome. Inspect the Session and retained recovery evidence.
 
-Code rewind currently needs an available Git snapshot with an implementing
-reviewed-restore host. Non-Git Locations and disabled snapshots support
-conversation-only rewind; their code rewind fails visibly. Current snapshot
-exclusions are listed; complete historical exclusion reporting remains acceptance
-work. Legacy stages keep their original owner-route behavior. A reviewed file stage
-cannot be replaced or cleared through legacy stage/clear routes, or discarded by
-branch checkout; use a reviewed clear or explicitly commit it.
+Code rewind uses shadow Git snapshots in repositories. On Linux/macOS, an
+admitted non-Git Location uses private BLAKE3 file-copy snapshots. The filesystem
+must expose stable directory creation identity and support native metadata and
+replacement operations; restore currently needs the Location and Cyber data on
+the same filesystem. Unsupported cases refuse code restore visibly. Windows
+currently supports Git snapshots and conversation-only rewind outside Git.
+Disabled snapshots also retain conversation-only rewind.
+
+Current exclusions are listed; file-copy previews also disclose exclusions from
+the target and recorded manifests. Complete historical Git exclusion reporting
+remains unfinished. Legacy stages keep their original owner-route behavior. A
+reviewed file stage cannot be replaced or cleared through legacy stage/clear
+routes, or discarded by branch checkout; use a reviewed clear or explicitly
+commit it.
 
 Owner routes, under the normal authenticated server boundary:
 
@@ -63,7 +70,7 @@ available through slash completion and `GET /commands`.
 
 ![Rewind boundary menu](screenshots/rewind-menu.png)
 
-The review shows the actual proposed patches, current exclusions, retained tool
+The review shows the actual proposed patches, snapshot exclusions, retained tool
 statuses and external-effect warning before confirmation.
 
 ![Reviewed code and conversation rewind](screenshots/rewind-review.png)
@@ -101,13 +108,11 @@ The screenshots are real terminal captures against a local scripted provider.
 The capture fixture writes the sample edit during a held Turn to exercise actual
 Git snapshots and preview rendering; it does not confirm the rewind.
 
-This implements the CLI and TUI rewind surfaces of
-[#93](https://github.com/CyberdyneCorp/cybercode-cli/issues/93). Broader native
-crash/restart/interrupt acceptance, complete historical exclusion reporting, the
-private non-Git backend and recoverable restore journal remain unfinished. Path
-rules/context, root structured output and JSONL input are also outstanding. The
-retry-count specification reconciliation does not implement root structured output.
-
+This implements the CLI and TUI rewind surfaces and the initial file-copy backend
+of [#93](https://github.com/CyberdyneCorp/cybercode-cli/issues/93). Managed recovery
+resolution, journal reclamation, complete historical Git exclusions and broader
+native acceptance remain open. Path rules/context, root structured output and
+JSONL input are also outstanding.
 
 ## Recovery acceptance coverage
 
@@ -123,6 +128,63 @@ A fresh TUI App separately verifies that clear preserves a new terminal's draft.
 An instrumented snapshot-port test loses native acknowledgement, reloads the
 runtime and checks that subtree stop reports retained unknown evidence, keeps
 admission closed and does not replay restoration. This is not a native
-partial-replacement crash test. Process-kill cuts during file replacement, the
-recoverable restore journal and complete historical exclusion reporting remain
-required acceptance work alongside the non-Git backend.
+partial-replacement crash test. The file-copy suite additionally kills a real
+worker between native file replacements, then verifies retained preimages, an incomplete journal and refusal
+to replay. Broader cut-point/metadata/platform acceptance and managed resolution
+remain required. Git restore has not gained this new journal.
+
+## Non-Git storage and retained restore intents
+
+File-copy snapshots live under
+`<data>/snapshot/global/<Location identity>/`: immutable BLAKE3 objects in `files`,
+versioned Location-bound manifests in `manifests`, and native restore evidence in
+`journals`. The Location identity binds the canonical directory, native device/
+inode and creation time. Replacing a directory or using a foreign snapshot cannot
+transfer restore authority. Capture hashes bytes every time; matching size and
+mtime never establish content identity.
+
+Capture respects `.gitignore`, `.cyberignore` and `snapshots.ignore`; configured
+ignores cannot be undone by a project whitelist. Private owner roots and `.git`,
+`.cyber` and `.claude` directories are excluded. Symlinks, hardlinks, read-only
+files, non-plain ACL/extended metadata and unsupported objects are skipped. Snapshot exclusions are retained in each manifest so omitted
+files are not falsely described as deletions. File modes appear in review. Existing
+ownership is preserved; recreating a deleted file uses its recorded ordinary ownership/mode or refuses before publishing it.
+Missing parents are created privately. Non-plain metadata is excluded until it can
+be retained and recreated safely.
+
+`snapshots.max_file_bytes` defaults to 2 MiB (hard per-file bound 64 MiB),
+`snapshots.fallback_max_bytes` to 200 MiB per Location, and
+`snapshots.retention_days` to seven days. Limits account for retained logical
+payloads, records and displaced preimages; filesystem allocation overhead differs.
+A cap warning is emitted once per Location/condition in the running service;
+conversation work and successful `exec` results continue. A fresh capture retries
+availability after conditions change. Durable Session references protect staged
+baselines and inactive branches. Unreferenced old manifests/objects can be pruned
+only with a complete durable reference view. Every namespace containing journals
+is conservatively retained; no quota or timeout discards unresolved evidence.
+
+Before file changes, restore durably publishes an intent and prepares private
+stages. Replacements retain displaced inodes; progress and completion are flushed
+independently. Admission and content/route identities are rechecked. A failure or
+process loss leaves the journal and preimages intact and blocks later file-copy
+capture/restore in that Location. It does not automatically roll back, retry or
+acknowledge uncertain native effects.
+
+Inspect retained evidence through the normal authenticated owner API:
+
+```sh
+cyber api GET /sessions/<session-id>/rewind/recovery
+```
+
+`GET /api/v1/sessions/{id}/rewind/recovery` and SDK
+`client.session.snapshotRecovery(sessionID)` list the selected Session's
+Location journals. Inspection is bounded and read-only, remains available while a
+native writer is paused, and does not create an absent namespace or start
+inference. `filesystem_complete` means only that the worker flushed its final
+filesystem record; it does not acknowledge the Session/native receipt. `applied`
+contains durable checkpoints; a missing entry is not proof of no effect.
+
+Managed keep/rollback resolution and acknowledgement/reclamation of retained
+journals are not implemented yet. Do not edit records or remove evidence to force
+a retry. This increment preserves recovery material and provides inspection; it
+does not claim complete operator recovery or arbitrary external-writer atomicity.

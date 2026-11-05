@@ -96,3 +96,38 @@ attachment chips to preserve those inputs. Historical prompt restoration copies
 text, without manufacturing media attachment authority. After a restart without
 a retained original draft, clear preserves the current composer. No uncertain
 operation is replayed automatically.
+
+
+### Non-Git file-copy implementation increment
+
+The first production backend supports admitted Linux/macOS filesystems and keeps
+Git selection and disabled snapshots compatible. Objects/manifests/journals use
+`<data>/snapshot/global/<Location identity>/`, adding a Location namespace to the
+canonical fallback layout because non-Git projects share the `global` project ID.
+The identity hashes canonical path plus native device/inode/creation time, avoiding
+mtime/size authority and inode-reuse adoption. Bounded descriptor-relative walks
+never follow directory symlinks; configured ignores and private roots take priority.
+Mode changes are explicit in review. Unsupported native metadata, directory
+identity or cross-filesystem replacement refuses visibly; Windows fallback remains
+unavailable rather than using unchecked writes.
+
+Versioned manifests retain excluded classes. Current/target/recorded exclusions
+enter the reviewed fingerprint; excluded paths are unknown, not deletions. A bounded
+private store accounts for logical payloads, records and displaced preimages.
+Native restore prepares stages and durably records its intent before namespace
+mutation; admission, contents and directory routes are refreshed per file.
+Unknown/interrupted intents block reuse and keep actual displaced preimages.
+`GET /sessions/{id}/rewind/recovery` is read-only owner inspection, uses durable
+Session Location metadata without waiting on a held live projection, and never
+settles native evidence. Its `filesystem_complete` flag describes the filesystem
+record only. Live inspection takes no mutation lease and reads atomically published
+records; missing progress never implies no effect.
+
+GC uses the application's bounded complete durable `copy:` reference set. It
+preserves all referenced manifests, including inactive branches and stages, and
+refuses pruning without that view. Any namespace with journals is retained until
+a future explicit managed-resolution protocol can prove acknowledgement; this
+increment does not invent a keep/rollback policy or clear native fences. That
+resolution and journal reclamation, Git restore journaling, full native acceptance
+and complete historical Git exclusions remain open under tasks 2.4/3.2–3.4.
+Snapshot warnings are optional capture diagnostics, not failed conversation results.

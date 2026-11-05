@@ -208,10 +208,8 @@ impl Inner {
         selection: &RewindSelection,
     ) -> Result<RewindCodePreview, RuntimeError> {
         let unavailable = || {
-            RuntimeError::Invalid(
-                "Snapshots are unavailable for this Location; only the conversation can be rewound"
-                    .into(),
-            )
+            RuntimeError::Invalid(self.options.snapshots.unavailable_reason(&state.info.directory).unwrap_or_else(||
+                "Snapshots are unavailable for this Location; only the conversation can be rewound".into()))
         };
         if !self.options.snapshots.reviewed_restore_available()
             || (selection.action != RewindAction::Commit
@@ -281,17 +279,56 @@ impl Inner {
                 return Err(RuntimeError::Invalid(message));
             }
         };
+        let mut skipped = current.skipped;
+        skipped.extend(
+            self.options
+                .snapshots
+                .exclusions(
+                    &state.info.directory,
+                    vec![target.clone(), recorded.clone()],
+                )
+                .await
+                .map_err(RuntimeError::Invalid)?,
+        );
+        skipped.sort();
+        skipped.dedup();
         Ok(RewindCodePreview {
             baseline: current.tree,
             target,
             recorded,
             files,
-            skipped: current.skipped,
+            skipped,
         })
     }
 }
 
 impl Runtime {
+    /// Read-only owner inspection; never settles evidence, restores files or starts work.
+    pub async fn snapshot_recovery(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<super::SnapshotRecovery>, RuntimeError> {
+        use rusqlite::OptionalExtension;
+        let id = session_id.to_owned();
+        // Inspection must remain available while restore holds the live projection.
+        let directory = self
+            .inner
+            .store
+            .read(move |db| {
+                Ok(db
+                    .query_row("SELECT directory FROM session WHERE id=?1", [id], |row| {
+                        row.get::<_, String>(0)
+                    })
+                    .optional()?)
+            })?
+            .ok_or_else(|| RuntimeError::SessionNotFound(session_id.into()))?;
+        self.inner
+            .options
+            .snapshots
+            .recovery(&directory)
+            .await
+            .map_err(RuntimeError::Invalid)
+    }
     /// Build a review without restoring files, staging a revert, or changing the branch.
     pub async fn rewind_preview(
         &self,

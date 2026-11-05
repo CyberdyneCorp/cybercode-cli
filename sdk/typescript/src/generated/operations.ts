@@ -1553,6 +1553,12 @@ export interface Operations {
     body: undefined;
     response: S.Data_Nullable_Goal;
   };
+  "v1.session.snapshotRecovery": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotRecovery[];
+  };
   "v1.session.startDelegation": {
     path: { sessionID: string; requestID: string };
     query: Record<string, never>;
@@ -4626,6 +4632,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.snapshotRecovery": {
+    tag: "session",
+    name: "snapshotRecovery",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.startDelegation": {
     tag: "session",
     name: "startDelegation",
@@ -6016,6 +6034,9 @@ export function createGroups(caller: Caller) {
       /** Clear the current Goal and activate the next queued one; null when the queue was empty (`POST /api/v1/sessions/{sessionID}/goals/skip`) */
       skipGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.skipGoal"]["response"]> =>
         caller.call("v1.session.skipGoal", { path: { sessionID } }, options),
+      /** Inspect retained filesystem restore journals without acknowledging or replaying native effects (`GET /api/v1/sessions/{sessionID}/rewind/recovery`) */
+      snapshotRecovery: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecovery"]["response"]> =>
+        caller.call("v1.session.snapshotRecovery", { path: { sessionID } }, options),
       /** Durably reserve a named user delegation request (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
       startDelegation: (sessionID: string, requestID: string, body: Operations["v1.session.startDelegation"]["body"], options?: RequestOptions): Promise<Operations["v1.session.startDelegation"]["response"]> =>
         caller.call("v1.session.startDelegation", { path: { sessionID, requestID }, body }, options),

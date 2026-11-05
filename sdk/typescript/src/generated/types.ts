@@ -902,6 +902,10 @@ export type Data_Array_of_RemoteReach = {
   data: RemoteReach[];
 };
 
+export type Data_Array_of_SnapshotRecovery = {
+  data: SnapshotRecovery[];
+};
+
 export type Data_Array_of_Task = {
   data: Task[];
 };
@@ -4680,6 +4684,16 @@ export type SkillInfo = {
 
 /** The scope a skill was discovered in. */
 export type SkillOrigin = "builtin" | "user" | "project" | "config" | "plugin";
+
+/** Retained filesystem evidence; completion does not acknowledge a Session/native receipt. */
+export type SnapshotRecovery = {
+  id: string;
+  /** The filesystem worker flushed its final record; not Session/native receipt acknowledgement. */
+  filesystem_complete: boolean;
+  paths: string[];
+  /** Durably observed file checkpoints; absence does not prove that no effect occurred. */
+  applied: string[];
+};
 
 export type SolveCandidateEvidence = {
   candidate_id: string;

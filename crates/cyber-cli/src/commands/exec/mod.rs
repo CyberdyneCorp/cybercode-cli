@@ -515,6 +515,16 @@ async fn handle(
                 event.data["message"].as_str().unwrap_or_default()
             );
         }
+        "session.error" if event.data["kind"] == "snapshot" => {
+            // Snapshot capture is optional; its warning cannot turn a completed
+            // conversation into a failed exec result.
+            eprintln!(
+                "snapshot warning: {}",
+                event.data["message"]
+                    .as_str()
+                    .unwrap_or("code rewind unavailable")
+            );
+        }
         "session.error" => {
             if event.data["kind"] == "budget_exceeded" {
                 run.stop_reason

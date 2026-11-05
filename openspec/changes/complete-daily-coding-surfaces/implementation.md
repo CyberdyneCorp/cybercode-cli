@@ -181,3 +181,107 @@ this increment; two long test scenarios were split into named recovery phases
 rather than exempting them from Clippy's complexity limit. Linux/Windows execution
 remains pending CI. Existing native C deprecation and linker unwind warnings were
 observed during local builds; successful checks do not substitute for platform CI.
+
+
+## Private non-Git snapshots and retained restore intents
+
+This increment starts from merged #109 (`3dac1557`). The snapshot port selects
+private file-copy storage for admitted Linux/macOS Locations outside Git, retaining
+the existing Git backend. Task 3.1 is implemented. Tasks 3.2–3.4 and acceptance 2.4
+remain open: managed keep/rollback resolution, native receipt acknowledgement,
+journal reclamation and broader native crash/platform acceptance are unfinished.
+The goal and issue #93 are not complete; #92 and owner-closed #94 keep their scope.
+
+Objects are BLAKE3-addressed; manifests bind the canonical Location plus native
+device/inode/creation identity. Every capture hashes bytes, including same-size/
+same-mtime changes. Descriptor-relative no-follow traversal applies ignores,
+private roots, per-file limits and unsupported metadata exclusions. An omitted
+historical/current path is not a deletion. Review includes retained file-copy
+exclusions and ordinary mode changes. Existing ownership is preserved; recreating
+a deleted file prepares recorded uid/gid/mode in private storage or refuses before
+publication. Missing parents are private. ACL/xattr/platform-flag/read-only files
+are excluded until their metadata can be retained and recreated safely.
+
+Restore checks the reviewed tree and admission under owned mutation/storage locks,
+publishes a durable intent, prepares stages and uses native exchange/no-replace
+operations. Actual displaced inodes are retained, with independently flushed
+progress and final filesystem completion. Locks remain owned by the blocking
+worker after async request cancellation. An incomplete/malformed journal refuses
+further file-copy capture/restore; no automatic retry or rollback is inferred.
+The read-only authenticated owner recovery route remains usable while the native
+writer is paused, does not create absent namespaces, and never acknowledges a
+Session/native receipt. `filesystem_complete` is deliberately limited to worker
+filesystem completion; an absent `applied` entry does not establish no effect.
+
+The default per-Location 200 MiB logical cap includes retained stages/preimages.
+Optional snapshot warnings do not fail a successful CLI conversation or stop the
+TUI Session. A complete application durable-reference view protects event-held
+roots, including stages and inactive branches. Failed/missing reference collection
+refuses pruning; every namespace containing a journal remains retained. Aged
+unpublished temporary objects/manifests can be reclaimed when no journal exists.
+
+The substantive code-review pass resolved: treating omitted files as deletions;
+configured ignores overridden by project whitelists; blocking live inspection on
+a writer-held lock; missing displaced-preimage quota reservation; privacy gaps
+from inherited macOS ACL grants; and recreating files with weaker metadata.
+Regressions exercise these corrections. Snapshot I/O remains behind the existing
+server port; the application supplies private scopes and durable references, while
+CLI/TUI only classify optional diagnostics and render existing reviewed responses.
+No external reviewer or external model provider was used.
+
+Local verification and CI results are recorded in the PR. Platform constraints are
+explicit: stable creation identity, admitted metadata/native operations and
+same-filesystem private restore storage are required; Windows file-copy writes
+remain unavailable with an actionable reason and conversation-only fallback.
+Git restore has not gained the new journal. The native CI matrix runs snapshot
+proofs on Linux x64/arm64 and macOS Intel/ARM; Windows CI selects the explicit
+unsupported-file-copy test. Broader cut points, metadata/platform combinations and
+managed resolution remain coverage gaps rather than completed acceptance.
+
+
+Local macOS validation for this increment: 17 file-copy tests and 12 existing Git
+snapshot tests passed, including whole-plan conflict refusal and preimage-space
+reservation before mutation. All 11 real CLI branch/recovery scenarios passed with
+serialized fixtures; the initial parallel run stalled during first exec startup
+before prompt admission and was terminated, not counted as a pass. Ten focused TUI
+rewind tests and four server ownership/recovery tests passed. The current OpenAPI
+artifact and generated SDK consistency checks passed; SDK typecheck and 128 tests
+passed with ten configured external skips. Real Git-backed terminal menu/review
+screenshots were recaptured and visually checked. Strict OpenSpec 1.13.2 passed all
+114 items; spec lint reported zero errors and 25 warnings. Formatting and diff
+checks passed. Native C deprecation and linker unwind warnings were observed;
+Linux/Windows and additional macOS architectures require the PR's platform CI.
+
+Workspace all-target Clippy with warnings denied also passed on the final code.
+
+
+### PR #110 CI correction and merged-history integration
+
+The initial PR head `6a8a33b8` failed its Linux x64/ARM snapshot proofs and the
+Linux Rust suite because directory sync called fsync on cap-std O_PATH handles.
+Sync now reopens `.` relative to the pinned descriptor with read/directory/no-follow
+flags, retaining descriptor authority while obtaining an fsync-capable handle.
+The new Linux regression explicitly constructs an O_PATH directory and syncs it.
+The macOS ARM proof also reported a storage-lock acquisition failure; acquisition
+now retries only bounded short contention/interruption before any restore starts,
+keeps a live owner exclusive and reports other lock errors distinctly. Regression
+coverage checks both lock handoff and refusal while the owner remains live.
+No source mutation is retried by this acquisition change.
+
+Merged current main `913fe1b0`, including #111's Ctrl+R history search, into the
+existing PR branch without conflicts. The roadmap's 1026-requirement inventory and
+history-search feature/docs/specs are preserved. A combined regression verifies
+that a snapshot warning preserves the search and draft, cancelling search does
+not arm rewind, and subsequent Esc-Esc opens rewind without replacing the draft.
+Managed recovery resolution and journal reclamation remain outside this correction.
+
+
+After integration, local macOS checks passed: two storage regressions, 17 file-copy
+cases, 12 Git snapshot cases, 11 rewind-filtered TUI cases, nine history-search-
+filtered TUI cases (one overlap), and three real non-Git CLI cases. Ten additional
+parallel file-copy suite repetitions passed. Workspace all-target Clippy with
+warnings denied, formatting/diff checks, generated SDK consistency and requirement
+inventory checks passed. Strict OpenSpec passed 115 items after #111; lint reported
+zero errors and 25 warnings. Linux O_PATH execution cannot run on this macOS host;
+the corrected head requires fresh Linux x64/ARM and macOS platform proof CI. No
+old-head green checks are used to accept this integrated revision.

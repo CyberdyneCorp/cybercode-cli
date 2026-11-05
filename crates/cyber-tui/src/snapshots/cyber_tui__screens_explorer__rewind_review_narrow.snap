@@ -14,7 +14,7 @@ expression: shown
 │undone or acknowledged.                                        │
 │Composer after acknowledgement (newer edits stay): WRITE the   │
 │notes                                                          │
-│1 proposed file changes · 0 current exclusions                 │
+│1 proposed file changes · 0 snapshot exclusions                │
 │deleted notes.md (+0 -3)                                       │
 │diff --git a/notes.md b/notes.md                               │
 │deleted file mode 100644                                       │

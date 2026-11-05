@@ -459,6 +459,13 @@ fn conversation_rewind_works_without_git_and_stale_context_never_applies() {
     let model = scripted_model::ScriptedModel::start(reply);
     let env = Env::new(&model);
     std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let mut config = model.config();
+    config["snapshots"] = json!(false);
+    std::fs::write(
+        env.root.join("cyber-home/config/cyber.jsonc"),
+        config.to_string(),
+    )
+    .unwrap();
     let id = env.exec(None, "first prompt");
     let first = env.user_ids(&id)[0].clone();
     let refused = exits(&env.cyber(&["sessions", "rewind", &id, "--to", &first]), 2);
@@ -723,4 +730,112 @@ fn interrupt_and_wait_idle(env: &Env, id: &str) {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reviewed_non_git_code_rewind_uses_private_snapshots_and_keeps_owner_files() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let id = env.exec(None, "WRITE-A");
+    let first = env.user_ids(&id)[0].clone();
+    std::fs::write(env.root.join("repo/owner.txt"), "owner bytes\n").unwrap();
+    let preview = rewind_preview(&env, &id, &first, "both");
+    assert!(
+        preview["code"]["target"]
+            .as_str()
+            .unwrap()
+            .starts_with("copy:")
+    );
+    let requests = model.requests().len();
+    json(&confirm_rewind(&env, &id, &first, "both", &preview));
+    let journals =
+        json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/recovery")]))["data"]
+            .as_array()
+            .unwrap()
+            .clone();
+    assert_eq!(journals.len(), 1);
+    assert_eq!(journals[0]["filesystem_complete"], true);
+    assert!(
+        journals[0]["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "a.txt")
+    );
+    assert_eq!(env.file("a.txt"), None);
+    assert_eq!(env.file("owner.txt").as_deref(), Some("owner bytes\n"));
+    assert!(env.user_ids(&id).is_empty());
+    assert_eq!(model.requests().len(), requests);
+    let all = json(&env.cyber(&["sessions", "export", &id, "--all-branches"]));
+    assert!(all.to_string().contains(&first));
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reviewed_non_git_cap_warns_once_without_failing_the_conversation() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let mut config = model.config();
+    config["snapshots"] = json!({"fallback_max_bytes":1});
+    std::fs::write(
+        env.root.join("cyber-home/config/cyber.jsonc"),
+        config.to_string(),
+    )
+    .unwrap();
+    let output = env.cyber(&["exec", "--format", "json", "first prompt"]);
+    exits(&output, 0);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(stderr.matches("snapshot warning:").count(), 1, "{stderr}");
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let id = result["session_id"].as_str().unwrap();
+    let first = env.user_ids(id)[0].clone();
+    let refused = exits(&env.cyber(&["sessions", "rewind", id, "--to", &first]), 2);
+    assert!(refused.contains("cap reached"), "{refused}");
+    let review = rewind_preview(&env, id, &first, "conversation");
+    json(&confirm_rewind(&env, id, &first, "conversation", &review));
+    assert!(env.user_ids(id).is_empty());
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn non_git_recovery_inspection_creates_no_namespace_and_starts_no_inference() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let session = json(&env.cyber(&[
+        "api",
+        "POST",
+        "/sessions",
+        "-d",
+        &json!({"model":"test/main","mode":"accept-edits"}).to_string(),
+    ]));
+    let id = session["data"]["id"].as_str().unwrap();
+    let result = json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/recovery")]));
+    assert_eq!(result["data"], json!([]));
+    assert!(model.requests().is_empty());
+    let registration: Value = serde_json::from_slice(
+        &std::fs::read(env.root.join("cyber-home/state/server.json")).unwrap(),
+    )
+    .unwrap();
+    let url = format!(
+        "{}/api/v1/sessions/{id}/rewind/recovery",
+        registration["url"].as_str().unwrap().trim_end_matches('/')
+    );
+    let status = tokio::runtime::Runtime::new().unwrap().block_on(async {
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap()
+            .get(url)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    });
+    assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
+    assert!(!env.root.join("cyber-home/data/snapshot/global").exists());
 }

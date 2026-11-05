@@ -95,6 +95,32 @@ pub(super) fn private_acl(file: &File) -> Result<(), Error> {
     Ok(())
 }
 
+/// Check that a mode-private directory has no macOS ACL grants bypassing its mode.
+#[cfg(target_os = "macos")]
+pub fn validate_private_directory_acl(file: &File) -> Result<(), Error> {
+    if !file.metadata().map_err(|_| Error::Io)?.is_dir() {
+        return Err(Error::File);
+    }
+    private_acl(file)
+}
+
+/// Metadata a snapshot can recreate from ordinary ownership/mode fields alone.
+/// ACLs, extended attributes and platform flags require separate retained metadata.
+pub fn plain_snapshot_metadata(file: &File) -> Result<Metadata, Error> {
+    let value = metadata(file)?;
+    if !attributes(file)?.is_empty() {
+        return Err(Error::File);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        private_acl(file)?;
+        if file.metadata().map_err(|_| Error::Io)?.st_flags() != 0 {
+            return Err(Error::File);
+        }
+    }
+    Ok(value)
+}
+
 pub fn metadata(file: &File) -> Result<Metadata, Error> {
     let m = file.metadata().map_err(|_| Error::Io)?;
     if !m.is_file() || m.nlink() != 1 || m.mode() & 0o7000 != 0 || m.permissions().readonly() {

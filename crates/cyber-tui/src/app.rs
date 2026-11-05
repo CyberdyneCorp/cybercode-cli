@@ -2378,6 +2378,15 @@ impl App {
                 ));
                 Vec::new()
             }
+            "session.error" if data["kind"] == "snapshot" => {
+                self.toast(format!(
+                    "snapshot warning: {}",
+                    data["message"]
+                        .as_str()
+                        .unwrap_or("code rewind unavailable")
+                ));
+                vec![Action::Refresh]
+            }
             "session.error" => {
                 let text = format!("error: {}", data["message"].as_str().unwrap_or_default());
                 self.alert(crate::sound::Alert::Error, &format!("cyber: {text}"));
