@@ -1,0 +1,68 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For a security problem, don't file an issue: see SECURITY.md.
+        Remove API keys, tokens and private paths from anything you paste.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. cyber ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `cyber --version`, or the commit you built.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      multiple: true
+      options:
+        - TUI
+        - cyber exec / CLI
+        - Web dashboard
+        - Server API / SDK
+        - Sandbox / permissions
+        - MCP / plugins / hooks / skills
+        - Install / upgrade
+        - Other
+  - type: input
+    id: model
+    attributes:
+      label: Provider and model
+      placeholder: openai/gpt-6.1-sol, anthropic/claude-..., a local model through Ollama, ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Relevant output, `cyber doctor`, or log lines (`cyber --print-logs ...`).
+      render: text

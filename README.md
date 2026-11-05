@@ -32,7 +32,7 @@ Examples below use the built binary. If you installed it on your PATH, use `cybe
 
 ## Install a release
 
-Tagged releases publish signed archives for macOS, Linux (glibc and musl) and Windows (preview) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary.
+**No release has been published yet**, so the install script below does not work until the first one; build from source as in the [Quickstart](#quickstart) meanwhile. Tagged releases publish signed archives for macOS, Linux (glibc and musl) and Windows (preview) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary.
 
 ```bash
 curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh | sh
@@ -208,3 +208,9 @@ The TUI, web dashboard, CLI, SDK and MCP clients call one server. That server en
 | Check builds, tests or evaluations | [Development guide](docs/local-core-guide.md#build-and-development) · [Evaluation guide](eval/README.md) |
 
 Run `just` for available development tasks and `just ci` for local checks. Browse the [documentation index](docs/README.md) for the full guide set.
+
+## Contributing and license
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md), and report security problems privately as described in [SECURITY.md](SECURITY.md). Notable changes are listed in the [CHANGELOG](CHANGELOG.md).
+
+Cyber Code is licensed under the [Apache License 2.0](LICENSE).
