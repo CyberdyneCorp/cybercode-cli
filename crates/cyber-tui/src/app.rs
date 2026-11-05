@@ -431,6 +431,8 @@ pub struct App {
     pub requests: Vec<Request>,
     shown_request: Option<String>,
     pub composer: Composer,
+    /// An open Ctrl+R search; the draft stays in `composer` meanwhile.
+    pub history_search: Option<crate::history_search::HistorySearch>,
     /// The composer's chips and the clipboard (`tui` → Large paste and image input).
     pub attachments: crate::attachments::Attachments,
     pub overlay: Overlay,
@@ -577,6 +579,7 @@ impl App {
             requests: Vec::new(),
             shown_request: None,
             composer: Composer::new(history),
+            history_search: None,
             attachments: Default::default(),
             overlay: Overlay::None,
             completion: None,
@@ -749,6 +752,7 @@ impl App {
             }
         }
         if session.id != self.session.id {
+            self.history_search = None;
             self.forget_session_views();
             self.thread_session(&session.id);
             self.team_session(&session.id);
@@ -1413,6 +1417,9 @@ impl App {
     }
 
     fn composer_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        if self.history_search.is_some() {
+            return self.history_search_key(key);
+        }
         if let Some(actions) = self.leader_key(key) {
             return actions;
         }
@@ -1498,6 +1505,7 @@ impl App {
         match self.keymap.action("composer", &key, false) {
             Some("history_previous") => self.composer.up(),
             Some("history_next") => self.composer.down(),
+            Some("history_search") => self.open_history_search(),
             Some("newline") => self.composer.newline(),
             Some("editor") => return vec![Action::Editor(self.composer.text())],
             Some("paste_image") => self.paste_image(),
