@@ -244,7 +244,7 @@ impl Runtime {
         state.ensure_worktree_ready()?;
         if state.child_continuation_unknown
             || handle.snapshot_active.load(Ordering::SeqCst)
-            || handle.location_uncertain.load(Ordering::SeqCst)
+            || handle.has_location_uncertainty()
             || state.calls.values().any(|call| {
                 matches!(
                     call.status,

@@ -101,6 +101,7 @@ pub use subtree_reopen::SubtreeReopenReport;
 pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
 mod interactive;
 mod location;
+mod location_uncertainty;
 mod mcp;
 mod mcp_depth;
 pub mod messaging;
@@ -745,7 +746,9 @@ pub(crate) struct Handle {
     pub title_requested: std::sync::atomic::AtomicBool,
     /// Set by a reject without feedback or a dismissed question: stop after the current tool group.
     pub halt: std::sync::atomic::AtomicBool,
+    /// Opaque process/checkout outcomes cannot be cleared by snapshot proof.
     pub location_uncertain: std::sync::atomic::AtomicBool,
+    snapshot_uncertain: StdMutex<std::collections::HashSet<String>>,
     /// Fingerprints of calls since the last promoted input, for doom-loop detection.
     pub recent_calls: StdMutex<Vec<String>>,
     /// Serialized auto reviews and consecutive blocks, reset for each new Drain.
@@ -2587,17 +2590,15 @@ impl Inner {
                 RuntimeError::Invalid("browser-managed Session capacity reached".into())
             })?;
         }
-        let snapshot_source = id.to_owned();
-        let snapshot_unknown = self.store.read(move |db| {
-            Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM event e WHERE e.type='native.activity.changed.1' AND json_extract(e.data,'$.session_id')=?1 AND json_extract(e.data,'$.snapshot_worker')=1 AND json_extract(e.data,'$.status')<>'settled' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq))", [snapshot_source], |row| row.get::<_, bool>(0))?)
-        })?;
+        let (opaque_unknown, snapshot_unknown) = location_uncertainty::load(&self.store, id)?;
         let handle = Arc::new(Handle {
             title_requested: std::sync::atomic::AtomicBool::new(!state.info.default_title),
             state: Mutex::new(state),
             snapshot_active: std::sync::atomic::AtomicBool::new(false),
             pending_compaction: StdMutex::default(),
             halt: std::sync::atomic::AtomicBool::new(false),
-            location_uncertain: std::sync::atomic::AtomicBool::new(snapshot_unknown),
+            location_uncertain: std::sync::atomic::AtomicBool::new(opaque_unknown),
+            snapshot_uncertain: StdMutex::new(snapshot_unknown),
             recent_calls: StdMutex::default(),
             auto_blocks: Mutex::new(0),
             stop_continuations: std::sync::atomic::AtomicUsize::new(0),

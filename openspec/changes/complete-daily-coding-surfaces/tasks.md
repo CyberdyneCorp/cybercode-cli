@@ -55,9 +55,12 @@ Late original-scope disposal now checks durable identity and status within the
 writer transaction after native store-lock release. It preserves an already
 acknowledged activity and its complete receipt; changed ownership/sequence refuses
 the append. This does not implement recovery acknowledgement. Before enabling M5,
-preserve opaque/generic Location uncertainty;
-the current shared `location_uncertain` boolean is not proof that every reason
-belongs to the resolved snapshot. Reconciliation must distinguish a durable writer
+preserve opaque/generic Location uncertainty. Snapshot uncertainty is now tracked
+by exact activity ID separately from the opaque flag; reload reconstructs generic
+fences and snapshot owners independently. A late-scope no-op clears only its exact
+snapshot reason after observing the matching durable acknowledgement at the writer.
+The consuming recovery commit still needs to apply this distinction. Reconciliation
+must distinguish a durable writer
 acknowledgement with missing journal acknowledgement from an uncommitted filesystem
 outcome, and must not revalidate or replay later owner edits as the old request.
 Unprepared reservation/origin/intent cuts still require exact resource ownership

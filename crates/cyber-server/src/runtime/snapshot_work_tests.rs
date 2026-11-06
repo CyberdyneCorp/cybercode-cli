@@ -62,8 +62,8 @@ fn restart(runtime: &Runtime, root: &std::path::Path) -> Runtime {
 
 #[tokio::test]
 async fn late_snapshot_disposal_preserves_durable_acknowledgement_and_unrelated_uncertainty() {
-    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
-    for unrelated_uncertainty in [false, true] {
+    for (unrelated_uncertainty, other_snapshot) in [(false, false), (true, false), (false, true)] {
+        let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
         let owner = worker(&runtime, &session).await;
         let native_binding = binding(temp.path().canonicalize().unwrap());
         let completed = owner
@@ -99,16 +99,24 @@ async fn late_snapshot_disposal_preserves_durable_acknowledgement_and_unrelated_
         handle
             .location_uncertain
             .store(unrelated_uncertainty, Ordering::SeqCst);
+        if other_snapshot {
+            handle.mark_snapshot_uncertain("op_other_snapshot");
+        }
         drop(completed);
         assert!(notifications.try_recv().is_err());
         assert_eq!(runtime.inner.store.aggregate_seq(&id).unwrap(), sequence);
         assert_eq!(latest(&runtime, &session), receipt);
         assert_eq!(
+            handle.has_location_uncertainty(),
+            unrelated_uncertainty || other_snapshot
+        );
+        assert_eq!(
             handle.location_uncertain.load(Ordering::SeqCst),
             unrelated_uncertainty
         );
+        assert!(!handle.snapshot_uncertain.lock().unwrap().contains(&id));
+        runtime.shutdown().await;
     }
-    runtime.shutdown().await;
 }
 
 #[tokio::test]
@@ -152,9 +160,87 @@ async fn late_snapshot_disposal_refuses_changed_native_ownership() {
             .handle(&session)
             .await
             .unwrap()
-            .location_uncertain
-            .load(Ordering::SeqCst)
+            .has_location_uncertainty()
     );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn reload_preserves_generic_uncertainty_separately_from_snapshot_owners() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let owner = worker(&runtime, &session).await;
+    let native_binding = binding(temp.path().canonicalize().unwrap());
+    assert!(
+        owner
+            .run(move |work| {
+                work.begin(native_binding).unwrap();
+                Err(RestoreError::Failed("interrupted snapshot".into()))
+            })
+            .await
+            .is_err()
+    );
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    assert!(handle.has_location_uncertainty());
+    assert!(!handle.location_uncertain.load(Ordering::SeqCst));
+    let snapshot = latest(&runtime, &session);
+    let activity_id = snapshot["snapshot_origin"]["activity_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        handle
+            .snapshot_uncertain
+            .lock()
+            .unwrap()
+            .contains(&activity_id)
+    );
+    let mut generic = activity::Scope::reserve(&runtime.inner, &handle)
+        .await
+        .unwrap();
+    generic.launch().unwrap();
+    drop(generic);
+    assert!(handle.location_uncertain.load(Ordering::SeqCst));
+    let reloaded = restart(&runtime, temp.path());
+    let restored = reloaded.inner.handle(&session).await.unwrap();
+    assert!(restored.location_uncertain.load(Ordering::SeqCst));
+    assert!(
+        restored
+            .snapshot_uncertain
+            .lock()
+            .unwrap()
+            .contains(&activity_id)
+    );
+    assert!(
+        reloaded
+            .admit(
+                &session,
+                Admission::text("must stay fenced", Delivery::Hold)
+            )
+            .await
+            .is_err()
+    );
+    // Simulate a separate writer's exact durable snapshot acknowledgement. Reload
+    // must retain the generic fence even when no snapshot activity remains unknown.
+    let mut receipt = snapshot;
+    receipt["status"] = "settled".into();
+    runtime
+        .inner
+        .store
+        .append(
+            &activity_id,
+            cyber_store::Expected::Seq(2),
+            vec![NewEvent::new(activity::CHANGED, receipt)],
+        )
+        .unwrap();
+    let after_ack = restart(&runtime, temp.path());
+    let restored = after_ack.inner.handle(&session).await.unwrap();
+    assert!(restored.snapshot_uncertain.lock().unwrap().is_empty());
+    assert!(restored.location_uncertain.load(Ordering::SeqCst));
+    let state = restored.state.lock().await;
+    assert!(after_ack.snapshot_worker(&restored, &state).await.is_err());
+    drop(state);
+    after_ack.shutdown().await;
+    reloaded.shutdown().await;
     runtime.shutdown().await;
 }
 
@@ -332,7 +418,7 @@ async fn snapshot_completion_commits_session_and_exact_origin_before_native_ack(
         .unwrap();
     assert_eq!(unrelated.events.last().unwrap().data["status"], "unknown");
     assert!(
-        handle.location_uncertain.load(Ordering::SeqCst),
+        handle.has_location_uncertainty(),
         "snapshot receipt cleared another process's unknown outcome"
     );
     assert!(!handle.snapshot_active.load(Ordering::SeqCst));
@@ -454,7 +540,7 @@ async fn snapshot_pre_effect_refusal_does_not_manufacture_an_unknown_native_effe
     assert!(record.get("snapshot_origin").is_none());
     let handle = runtime.inner.handle(&session).await.unwrap();
     assert!(!handle.snapshot_active.load(Ordering::SeqCst));
-    assert!(!handle.location_uncertain.load(Ordering::SeqCst));
+    assert!(!handle.has_location_uncertainty());
     runtime.shutdown().await;
 }
 
@@ -546,8 +632,7 @@ async fn rejected_runtime_commit_keeps_origin_unknown_and_never_acknowledges_the
             .handle(&session)
             .await
             .unwrap()
-            .location_uncertain
-            .load(Ordering::SeqCst)
+            .has_location_uncertainty()
     );
     restarted.shutdown().await;
 }

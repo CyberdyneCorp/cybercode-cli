@@ -239,7 +239,9 @@ impl SnapshotCompletion {
         self.native
             .guard
             .acknowledge(self.worker.scope.snapshot_origin())
-            .map_err(RuntimeError::Conflict)
+            .map_err(|error| RuntimeError::Conflict(format!(
+                "Snapshot runtime acknowledgement committed; native journal acknowledgement requires reconciliation: {error}"
+            )))
     }
 }
 

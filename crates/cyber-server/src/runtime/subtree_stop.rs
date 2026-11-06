@@ -273,9 +273,7 @@ impl Runtime {
         for id in ids {
             let handle = self.inner.handle(id).await?;
             let state = handle.state.lock().await.clone();
-            if handle
-                .location_uncertain
-                .load(std::sync::atomic::Ordering::SeqCst)
+            if handle.has_location_uncertainty()
                 || state.child_continuation_unknown
                 || state.child_worktree_setup_pending
                 || state.open_step.is_some()

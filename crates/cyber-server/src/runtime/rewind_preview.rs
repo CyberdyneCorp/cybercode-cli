@@ -553,13 +553,14 @@ impl Runtime {
                 vec![revert_event(session_id, &revert, RevertPhase::Clear)]
             }
         };
+        let owned_commit = completion.is_some();
         let committed = if let Some(completed) = completion {
             completed.commit(&mut state, events)
         } else {
             self.inner.commit_locked(&mut state, events).map(drop)
         };
         if let Err(error) = committed {
-            if preview.code.is_some() {
+            if preview.code.is_some() && !owned_commit {
                 handle
                     .location_uncertain
                     .store(true, std::sync::atomic::Ordering::SeqCst);

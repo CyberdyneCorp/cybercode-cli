@@ -192,7 +192,7 @@ impl Runtime {
     /// Location and the call runs alone. [`Self::enter_worktree`] checks again.
     pub async fn check_enterable(&self, id: &str, call_id: &str) -> Result<(), RuntimeError> {
         let handle = self.inner.handle(id).await?;
-        if handle.location_uncertain.load(Ordering::SeqCst) {
+        if handle.has_location_uncertainty() {
             return Err(RuntimeError::Invalid(
                 "Location outcome unknown; recovery is required".into(),
             ));
@@ -334,7 +334,7 @@ impl Runtime {
     ) -> Result<Option<(Managed, WorktreeExit)>, RuntimeError> {
         let _admission = self.inner.open().await?;
         let handle = self.inner.handle(id).await?;
-        if handle.location_uncertain.load(Ordering::SeqCst) {
+        if handle.has_location_uncertainty() {
             return Err(RuntimeError::Invalid(
                 "Location outcome unknown; recovery is required".into(),
             ));
@@ -388,7 +388,7 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         let _admission = self.inner.open().await?;
         let handle = self.inner.handle(id).await?;
-        if handle.location_uncertain.load(Ordering::SeqCst) {
+        if handle.has_location_uncertainty() {
             return Err(RuntimeError::Invalid(
                 "Location outcome unknown; recovery is required".into(),
             ));

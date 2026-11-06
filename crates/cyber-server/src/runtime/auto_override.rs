@@ -369,9 +369,7 @@ impl Inner {
             record.status = "cancelled".into();
             self.commit(handle, vec![change(&record)]).await?;
         }
-        if !handle
-            .location_uncertain
-            .load(std::sync::atomic::Ordering::SeqCst)
+        if !handle.has_location_uncertainty()
             && !handle.state.lock().await.calls.values().any(|c| {
                 matches!(
                     c.status,

@@ -68,7 +68,7 @@ impl Inner {
         if let Some(slot) = slot {
             lease = slot.empty();
         }
-        let unsettled = handle.location_uncertain.load(Ordering::SeqCst)
+        let unsettled = handle.has_location_uncertainty()
             || handle.state.lock().await.calls.values().any(|call| {
                 matches!(
                     call.status,
@@ -129,7 +129,7 @@ impl Inner {
                 }
             }).await
         }).await;
-        if !handle.location_uncertain.load(Ordering::SeqCst) {
+        if !handle.has_location_uncertainty() {
             scope.settle()?;
         }
         result

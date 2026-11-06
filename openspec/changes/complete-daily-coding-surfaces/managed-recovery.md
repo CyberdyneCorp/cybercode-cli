@@ -64,6 +64,13 @@ activity. Acquiring the exact bound store/checkout locks plus validating that or
 is proof about this worker only. It cannot acknowledge a shell, child process,
 other document, another runtime's live worker or an unrelated unknown activity.
 
+Runtime Location uncertainty distinguishes exact snapshot activity IDs from opaque
+process/checkout outcomes. Reload preserves both kinds independently. Observing an
+exact durable snapshot acknowledgement can remove only that snapshot reason; it
+cannot clear the opaque reason or another snapshot owner. A committed runtime
+acknowledgement followed by failed journal acknowledgement requires reconciliation,
+without reclassifying the already-committed native effect as unknown.
+
 Resolution is available through a dedicated owner recovery path while ordinary
 admission is fenced. It does not use a blanket admission bypass. It requires idle
 Session/Location scope, no active origin worker, exact captured authority and

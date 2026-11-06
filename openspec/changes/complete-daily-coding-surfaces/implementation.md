@@ -645,3 +645,57 @@ its in-memory state with recovery acknowledgement, including acknowledgement tha
 follows a successful unknown-disposal append. Git, runtime request ownership,
 reconciliation, cleanup and native/client acceptance remain open. No Linux/Windows,
 full-workspace or real recovery operator acceptance was run for this safeguard.
+
+### Snapshot uncertainty provenance and committed journal-ack failure
+
+The Handle now retains exact snapshot activity IDs separately from opaque native
+process/checkout uncertainty. All existing Location uncertainty checks combine
+both reasons. Reload reconstructs both from durable latest activity records,
+bounded to 4096 unresolved owners; it no longer folds snapshots into an opaque
+boolean or drops generic native fences. Document-specific workers keep their
+separate document recovery contract, and ambiguous mixed worker kinds are opaque.
+No legacy record gains snapshot authority from reload.
+
+Snapshot disposal publishes its exact in-memory reason before enqueueing its
+writer decision. If that writer observes the already-settled exact owner, it
+removes only that reason. There is no caller-side post-commit snapshot flag write
+that can re-fence an acknowledgement after the writer has consumed it. The opaque
+flag and every other snapshot ID survive. Combined reads hold the snapshot mutex
+while reading the opaque flag so removing a snapshot reason cannot hide an opaque
+reason published before that removal. The eventual consuming recovery transaction
+still needs its exact native proof and post-commit reconciliation.
+
+Owned rewind now delegates uncertainty to the actual worker instead of marking an
+opaque outcome for every commit error. If the Session/native writer pair commits
+and the later journal acknowledgement fails, the error explicitly reports the
+committed runtime acknowledgement and need for journal reconciliation. The native
+activity stays settled, the committed branch change remains visible, and repeating
+the stale rewind confirmation cannot replay the restore. This does not implement
+the missing journal reconciliation operation or authorize cleanup.
+
+The restart regression combines an interrupted snapshot and generic process, then
+simulates an independent exact snapshot acknowledgement and verifies that reload
+still refuses new snapshot work because of the generic fence. The late-disposal
+regression covers no unrelated reason, an opaque reason and another snapshot ID
+in independent fixtures. A new scripted-provider server integration exercises the
+owned rewind confirm path with an injected journal-ack failure, checks the committed
+branch/native state, stale-confirm refusal, held input admission before/after
+reload, and exactly one restore invocation. Filesystem identities and the failed
+journal flush are instrumented; this is not native recovery/reconciliation proof.
+
+Local macOS checks passed: 397 server unit tests (one ignored subprocess fixture,
+invoked by its parent Location identity tests), four idle-cancellation, thirteen
+Location activity and five rewind-preview integration cases. Strict OpenSpec
+passed all 117 items; server all-target Clippy with warnings denied and
+formatting/diff checks passed. No external model provider,
+new public schema or SDK contract is involved. Linux/Windows, full-workspace,
+real CLI/TUI recovery, native resolution crash cuts and lost-writer-reply journal
+reconciliation remain unperformed for this increment. M2–M8 and both issues remain
+open.
+
+Substantive code/security review covered all combined reads, opaque writers,
+reload classification, exact-ID removal at the writer, failure/lifetime ordering,
+the owned versus legacy commit paths and shared binary worker behavior. It
+corrected the potential post-commit flag race and combined-read ordering. The
+broader recovery authority, native consuming transaction and reconciliation gates
+remain required before operator apply or cleanup is admitted.

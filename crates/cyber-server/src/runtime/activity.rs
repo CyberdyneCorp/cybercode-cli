@@ -231,7 +231,14 @@ impl Scope {
     fn dispose(&self, record: Record) -> Result<bool, cyber_store::StoreError> {
         let id = self.id.clone();
         let original = self.record.clone();
+        let handle = self.handle.clone();
         let sequence = if self.launched { 1 } else { 0 };
+        // Publish before enqueueing. Even an unavailable writer retains the exact
+        // owner; a later writer acknowledgement can clear it without racing a
+        // post-commit caller-side flag write.
+        if self.launched && original.snapshot_worker {
+            handle.mark_snapshot_uncertain(&id);
+        }
         let (_, uncertain) = self.store.append_checked(&self.id, Expected::Any, move |tx| {
             let latest = tx.query_row(
                 "SELECT seq,type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
@@ -256,6 +263,9 @@ impl Scope {
             // Recovery may have committed after the native lock was released but
             // before this scope unwound. Preserve the complete durable receipt.
             if current.status == "settled" {
+                if current.snapshot_worker {
+                    handle.acknowledge_snapshot_uncertainty(&id);
+                }
                 return Ok((vec![], false));
             }
             if seq != sequence {
@@ -288,7 +298,11 @@ impl Drop for Scope {
             }
             disposed.admission_bindings = None;
             let result = self.dispose(disposed);
-            if self.launched && !filesystem_only && result.as_ref().copied().unwrap_or(true) {
+            if self.launched
+                && !filesystem_only
+                && !self.record.snapshot_worker
+                && result.as_ref().copied().unwrap_or(true)
+            {
                 self.handle.location_uncertain.store(true, Ordering::SeqCst);
             }
             if let Err(error) = result {
@@ -364,7 +378,7 @@ impl Inner {
                 },
             ));
         }
-        if handle.location_uncertain.load(Ordering::SeqCst) {
+        if handle.has_location_uncertainty() {
             return Err(RuntimeError::Invalid(
                 "Idle operation did not acknowledge interruption; recovery is required".into(),
             ));
