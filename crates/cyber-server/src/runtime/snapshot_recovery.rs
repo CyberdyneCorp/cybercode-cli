@@ -3,6 +3,155 @@ use super::{Runtime, RuntimeError, SnapshotRecoveryReview, SnapshotRecoverySelec
 use rusqlite::OptionalExtension;
 
 impl Runtime {
+    /// A repeated request is always lookup-only, even after a partial outcome or
+    /// later owner edits. Reconciliation is a separate operation.
+    pub async fn snapshot_recovery_confirm(
+        &self,
+        session: &str,
+        confirmation: &super::SnapshotRecoveryConfirmation,
+    ) -> Result<super::SnapshotRecoveryResult, RuntimeError> {
+        validate_request(confirmation)?;
+        if let Some(existing) = self
+            .snapshot_recovery_lookup(session, &confirmation.request_id)
+            .await?
+        {
+            if existing.request != *confirmation {
+                return Err(RuntimeError::Conflict(
+                    "Recovery request ID was reused with different content".into(),
+                ));
+            }
+            return Ok(existing);
+        }
+        let review = self
+            .snapshot_recovery_review(
+                session,
+                &SnapshotRecoverySelection {
+                    journal_id: confirmation.journal_id.clone(),
+                    action: confirmation.action,
+                },
+            )
+            .await?;
+        if review.confirmation.as_deref() != Some(&confirmation.confirmation) {
+            return Err(RuntimeError::Conflict(
+                "Recovery confirmation is stale or unavailable".into(),
+            ));
+        }
+        let original = review
+            .origin
+            .ok_or_else(|| RuntimeError::Conflict("Recovery lacks exact native origin".into()))?;
+        let handle = self.inner.handle(session).await?;
+        let state = handle.state.lock().await;
+        let directory = state.info.directory.clone();
+        let worker = self
+            .snapshot_recovery_worker(
+                &handle,
+                &state,
+                super::snapshot_recovery_types::RecoveryRequest {
+                    confirmation: confirmation.clone(),
+                    original,
+                    authority: None,
+                },
+            )
+            .await?;
+        drop(state);
+        let completed = self
+            .inner
+            .options
+            .snapshots
+            .resolve_recovery(directory, confirmation.clone(), worker)
+            .await
+            .map_err(|error| {
+                RuntimeError::Conflict(format!(
+                    "Recovery retains its request and native evidence: {error:?}"
+                ))
+            })?;
+        let state = handle.state.lock().await;
+        completed.commit_recovery(&state)?;
+        drop(state);
+        let mut result = self
+            .snapshot_recovery_lookup(session, &confirmation.request_id)
+            .await?
+            .ok_or_else(|| {
+                RuntimeError::Corrupt("Committed recovery request disappeared".into())
+            })?;
+        result.journal_acknowledged = Some(true);
+        Ok(result)
+    }
+
+    /// Durable request lookup never opens a native namespace or starts inference.
+    pub async fn snapshot_recovery_lookup(
+        &self,
+        session: &str,
+        request_id: &str,
+    ) -> Result<Option<super::SnapshotRecoveryResult>, RuntimeError> {
+        validate_request_id(request_id)?;
+        self.session_info(session).await?;
+        let created = self
+            .inner
+            .store
+            .read_events(session, -1, 1)?
+            .events
+            .first()
+            .ok_or_else(|| RuntimeError::Conflict("Recovery Session creation is missing".into()))?
+            .id
+            .clone();
+        let id = request_owner(&created, request_id);
+        let owner = id.clone();
+        let data = self.inner.store.read(move |db| {
+            Ok(db
+                .query_row(
+                    "SELECT type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+                    [owner],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?)
+        })?;
+        let Some((kind, data)) = data else {
+            return Ok(None);
+        };
+        let record: activity::Record = serde_json::from_str(&data)
+            .map_err(|error| RuntimeError::Corrupt(error.to_string()))?;
+        let request = record.snapshot_request.ok_or_else(|| {
+            RuntimeError::Conflict("Request ID belongs to another native operation".into())
+        })?;
+        if kind != activity::CHANGED
+            || !record.snapshot_worker
+            || record.binary_document.is_some()
+            || record.session_id != session
+            || request.original.session_id != session
+            || request.original.session_created_id != created
+            || request.confirmation.request_id != request_id
+            || record
+                .snapshot_origin
+                .as_ref()
+                .is_some_and(|origin| origin.activity_id != id)
+        {
+            return Err(RuntimeError::Conflict(
+                "Recovery request owner differs from the current Session".into(),
+            ));
+        }
+        let state = match (record.status.as_str(), &record.snapshot_receipt) {
+            ("pending", None) => super::SnapshotRecoveryState::Pending,
+            ("unknown", None) | ("settled", None) => super::SnapshotRecoveryState::Unknown,
+            ("settled", Some(receipt)) if receipt.request_id == request_id => {
+                super::SnapshotRecoveryState::Acknowledged
+            }
+            ("settled", Some(_)) => super::SnapshotRecoveryState::ResolvedByAnotherRequest,
+            _ => {
+                return Err(RuntimeError::Corrupt(
+                    "Invalid recovery request settlement".into(),
+                ));
+            }
+        };
+        Ok(Some(super::SnapshotRecoveryResult {
+            request: request.confirmation,
+            original: request.original,
+            resolution: record.snapshot_origin,
+            state,
+            receipt: record.snapshot_receipt,
+            journal_acknowledged: None,
+        }))
+    }
     pub async fn snapshot_recovery_review(
         &self,
         session: &str,
@@ -60,6 +209,18 @@ impl Runtime {
         review: &mut SnapshotRecoveryReview,
     ) -> Result<(), RuntimeError> {
         let origin = review.origin.as_ref().expect("caller checked origin");
+        if origin
+            .binding
+            .lock_identity
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            review.confirmation = None;
+            review
+                .conflicts
+                .push("Legacy snapshot origin has no exact native lock proof".into());
+            return Ok(());
+        }
         let id = origin.activity_id.clone();
         let rows = self.inner.store.read(move |db| {
             let latest = db.query_row("SELECT data FROM event WHERE aggregate_id=?1 AND type='native.activity.changed.1' ORDER BY seq DESC LIMIT 1", [&id], |row| row.get::<_,String>(0)).optional()?;
@@ -112,6 +273,47 @@ impl Runtime {
         }
         Ok(())
     }
+}
+
+fn validate_request_id(id: &str) -> Result<(), RuntimeError> {
+    if id.is_empty() || id.len() > 256 || id.contains('\0') {
+        return Err(RuntimeError::Invalid(
+            "Recovery request ID must contain 1–256 bytes without NUL".into(),
+        ));
+    }
+    Ok(())
+}
+pub(super) fn validate_request(
+    request: &super::SnapshotRecoveryConfirmation,
+) -> Result<(), RuntimeError> {
+    validate_request_id(&request.request_id)?;
+    if request.confirmation.len() != 64
+        || !request
+            .confirmation
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || !request.journal_id.starts_with("restore_")
+        || request.journal_id.len() > 256
+        || !request
+            .journal_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(RuntimeError::Invalid(
+            "Invalid recovery journal or fingerprint".into(),
+        ));
+    }
+    Ok(())
+}
+pub(super) fn request_owner(created: &str, request: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(b"snapshot-recovery-request-v1");
+    digest.update((created.len() as u64).to_be_bytes());
+    digest.update(created.as_bytes());
+    digest.update((request.len() as u64).to_be_bytes());
+    digest.update(request.as_bytes());
+    format!("op_snapshot_recovery_{:x}", digest.finalize())
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -192,14 +394,31 @@ mod tests {
                 .unwrap(),
             sequence
         );
-        // Use an independently owned typed scope to exercise acknowledged state.
-        let mut settled = activity::Scope::reserve_snapshot(&runtime.inner, session.clone())
-            .await
+        // Model an independently committed acknowledgement of this exact owner;
+        // ordinary admission must not create another scope through its fence.
+        let mut acknowledged_record = runtime
+            .inner
+            .store
+            .read_events(&bound.activity_id, -1, 10)
+            .unwrap()
+            .events
+            .last()
+            .unwrap()
+            .data
+            .clone();
+        acknowledged_record["status"] = "settled".into();
+        runtime
+            .inner
+            .store
+            .append(
+                &bound.activity_id,
+                cyber_store::Expected::Seq(sequence.unwrap()),
+                vec![cyber_store::NewEvent::new(
+                    activity::CHANGED,
+                    acknowledged_record,
+                )],
+            )
             .unwrap();
-        let bound = origin(&runtime, &session, settled.id());
-        settled.launch_snapshot(bound.clone()).unwrap();
-        settled.settle().unwrap();
-        drop(settled);
         let mut acknowledged = review(bound);
         runtime
             .validate_recovery_activity(&mut acknowledged)
@@ -226,6 +445,7 @@ mod tests {
             runtime.inner.store.aggregate_seq(scope.id()).unwrap(),
             before
         );
+        scope.settle().unwrap();
         drop(scope);
         let mut typed = activity::Scope::reserve_snapshot(&runtime.inner, session.clone())
             .await
@@ -241,6 +461,41 @@ mod tests {
         drop(typed);
         runtime.shutdown().await;
     }
+    #[tokio::test]
+    async fn legacy_origin_without_exact_lock_proof_stays_inspectable_and_fenced() {
+        let (_temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let mut scope = activity::Scope::reserve_snapshot(&runtime.inner, session.clone())
+            .await
+            .unwrap();
+        let mut bound = origin(&runtime, &session, scope.id());
+        bound.binding.lock_identity = None;
+        scope.launch_snapshot(bound.clone()).unwrap();
+        drop(scope);
+        let sequence = runtime
+            .inner
+            .store
+            .aggregate_seq(&bound.activity_id)
+            .unwrap();
+        let mut legacy = review(bound.clone());
+        runtime.validate_recovery_activity(&mut legacy).unwrap();
+        assert!(legacy.confirmation.is_none());
+        assert!(
+            legacy
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.contains("exact native lock proof"))
+        );
+        assert_eq!(
+            runtime
+                .inner
+                .store
+                .aggregate_seq(&bound.activity_id)
+                .unwrap(),
+            sequence
+        );
+        runtime.shutdown().await;
+    }
+
     #[tokio::test]
     async fn missing_native_evidence_disables_confirmation_without_creating_activity() {
         let (_temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;

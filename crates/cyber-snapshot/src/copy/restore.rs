@@ -34,6 +34,10 @@ pub(super) struct Journal {
     pub origin: Option<SnapshotOrigin>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub acknowledged: bool,
+    /// A failed restore remains incomplete. Only an acknowledged, independently
+    /// retained resolution can settle its native fence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ownership: Option<Ownership>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -55,6 +59,10 @@ impl Store {
     pub(super) fn ensure_recovered(&self) -> Result<()> {
         for id in storage::names(&self.journals, ENTRY_LIMIT)? {
             let (_, record) = self.journal(&id)?;
+            if record.settled_by.is_some() {
+                self.verify_settlement(&record)?;
+                continue;
+            }
             if !record.completed
                 || ((record.origin.is_some() || record.resolution.is_some())
                     && !record.acknowledged)
@@ -87,6 +95,16 @@ impl Store {
                 .all(|(path, change)| path == &change.path)
             || (record.completed && record.applied.len() != record.changes.len())
             || (record.origin.is_none() && record.acknowledged)
+            || record.settled_by.as_ref().is_some_and(|resolution| {
+                !record.acknowledged
+                    || record.origin.is_none()
+                    || resolution == id
+                    || resolution.len() > 256
+                    || !resolution.starts_with("restore_")
+                    || !resolution
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            })
             || (record.version < 3 && record.ownership.is_some())
             || (record.version == 3
                 && record.ownership.is_none()
@@ -464,6 +482,7 @@ impl Store {
             changes,
             origin,
             acknowledged: worker.is_some(),
+            settled_by: Some("0".repeat(256)),
             ownership,
             context,
             resolution,
@@ -472,6 +491,18 @@ impl Store {
         if bytes > RECORD_LIMIT {
             return Err("Restore journal exceeds limit".into());
         }
+        let parent_reserve = if let Some(resolution) = &journal.resolution {
+            let (_, mut parent) = self.journal(&resolution.original.binding.journal_id)?;
+            parent.acknowledged = true;
+            parent.settled_by = Some(id.to_owned());
+            let bytes = serde_json::to_vec(&parent).map_err(fail)?.len() as u64;
+            if bytes > RECORD_LIMIT {
+                return Err("Original settlement journal exceeds limit".into());
+            }
+            bytes.checked_mul(2).ok_or("Restore size overflow")?
+        } else {
+            0
+        };
         let reserve = journal
             .changes
             .iter()
@@ -483,13 +514,17 @@ impl Store {
                     .max(change.after.as_ref().map_or(0, |entry| entry.length))
             })
             .try_fold(
-                bytes.checked_mul(2).ok_or("Restore size overflow")?,
+                bytes
+                    .checked_mul(2)
+                    .and_then(|bytes| bytes.checked_add(parent_reserve))
+                    .ok_or("Restore size overflow")?,
                 |sum, length| sum.checked_add(length).ok_or("Restore size overflow"),
             )?;
         self.reserve(reserve)?;
         journal.applied.clear();
         journal.origin = None;
         journal.acknowledged = false;
+        journal.settled_by = None;
         journal.ownership = None;
         if let Some(resolution) = &mut journal.resolution {
             resolution.outcome = None;
@@ -563,6 +598,10 @@ impl Store {
         let (dir, mut journal) = self.journal(&origin.binding.journal_id)?;
         if journal.origin.as_ref() != Some(origin) || !journal.completed {
             return Err("Snapshot acknowledgement differs from its completed worker".into());
+        }
+        self.verify_worker_namespace(origin)?;
+        if journal.resolution.is_some() {
+            return self.acknowledge_resolution(origin, dir, journal);
         }
         journal.acknowledged = true;
         Self::record(&dir, &journal)
@@ -801,6 +840,7 @@ mod tests {
                 applied: vec![],
                 origin: Some(origin.clone()),
                 acknowledged: false,
+                settled_by: None,
                 ownership: None,
                 context: None,
                 resolution: None,

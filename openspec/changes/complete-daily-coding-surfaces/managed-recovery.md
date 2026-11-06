@@ -8,6 +8,13 @@ acknowledgement/reference checks. The earlier 2026-11-05 feature request alone
 did not select this protocol. Approval does not establish implementation or
 acceptance; the native/platform and complete recovery tests remain required.
 
+Implementation checkpoint: the non-Git review/confirm/lookup API and SDK now use
+durable request reservation and paired native settlement. Local real-service
+partial-restore kills exercise keep/rollback and lookup without replay. Explicit
+journal acknowledgement reconciliation, pre-origin resource cuts, Git journaling,
+reclamation, complete clients and the platform matrix remain unfinished. Parent
+tasks are open; the complete recovery delivery is not merge-ready.
+
 ## Owner-visible contract
 
 The owner selects a retained restore by Session/Location and journal ID, requests a

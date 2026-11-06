@@ -295,12 +295,17 @@ impl Snapshots for GitSnapshots {
                             .map_err(RestoreError::Failed)?;
                         let receipt = store.resolve_recovery(&request, &|| Ok(()), Some(work))?;
                         let origin = work.origin().cloned();
+                        let digest = store
+                            .worker_digest(origin.as_ref())
+                            .map_err(RestoreError::Failed)?;
                         let mut native = cyber_server::runtime::SnapshotNativeResult::new(
                             vec![],
                             Box::new(copy::WorkerGuard {
                                 store,
                                 workspace,
                                 origin,
+                                digest,
+                                receipt: Some(receipt.clone()),
                             }),
                         );
                         native.recovery = Some(receipt);
@@ -363,12 +368,17 @@ impl Snapshots for GitSnapshots {
                             Some(work),
                         )?;
                         let origin = work.origin().cloned();
+                        let digest = store
+                            .worker_digest(origin.as_ref())
+                            .map_err(RestoreError::Failed)?;
                         Ok(cyber_server::runtime::SnapshotNativeResult::new(
                             paths,
                             Box::new(copy::WorkerGuard {
                                 store,
                                 workspace,
                                 origin,
+                                digest,
+                                receipt: None,
                             }),
                         ))
                     })

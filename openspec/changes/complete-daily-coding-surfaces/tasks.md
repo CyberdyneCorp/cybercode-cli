@@ -36,31 +36,37 @@ recovery implementation.
 - [ ] M4 Implement bounded keep/rollback planning and fingerprint revalidation under exact native locks. Preserve unrelated edits, refuse the complete plan on conflicts, and retain any interrupted resolution as independent evidence. Test keep and rollback after actual partial namespace replacement, including staged undo and inactive branches.
 - [ ] M5 Atomically validate and commit the exact origin acknowledgement and resolution receipt at the Store writer. Determine the bounded owner aggregates before extending the single-aggregate append API. Test late CAS/projector/validation failure rollback, absence of uncommitted notifications and committed-but-lost writer replies; repeat request lookup must never mutate files again.
 
-M5 prerequisite: `Store::append_pair_checked` implements the bounded two-owner
-transaction with exact sequences, post-commit notifications and rollback/lost-ack
-regressions. Native origin validation and resolution request ownership are not
-implemented by that primitive; M5 remains open until the runtime uses it with
-exact native proof and actual restart/retry acceptance.
+M5 implementation now uses `Store::append_pair_checked` for the exact original
+native owner and the resolution request owner. A Session-creation/request-derived
+reservation precedes native work, and the consuming writer checks captured
+recovery authority, current Session revision, both immutable origins and the exact
+request/receipt. A WAL-hook reply-loss regression reopens the actual Store and
+finds both committed owners without notifications or replay. M5 remains open for
+complete failure/reconciliation and native acceptance; the primitive alone did not
+satisfy these obligations.
 
-M4/M7 continuation: the read-only recovery review API and native file-copy
-resolution backend now exist. The backend writes a separate intent and retains
-actual displaced live inodes; existing request IDs are lookup-only. This is not
-operator apply acceptance. Dedicated recovery admission, global durable request
-ownership and the exact original/resolution writer pair remain required. Ordinary
-rewind commit explicitly refuses a recovery receipt. No native fence is cleared by
-backend filesystem completion. Created source directories remain protected for
-acknowledged, ownership-checked cleanup.
+M4/M7 continuation: review, confirm and request lookup HTTP/SDK operations now
+exist for the file-copy backend. Dedicated snapshot-only admission preserves
+captured closed boundaries; ordinary native/hook admission is fenced at the writer.
+Actual CLI/API service-kill cases resolve a partial namespace with keep and
+rollback, preserve unrelated/later owner files and the transcript, and repeat only
+lookup after restart. This is local non-Git evidence, not complete operator/client
+or platform acceptance. Typed CLI/TUI recovery, explicit acknowledgement
+reconciliation, pre-origin cuts and Git-native equivalents remain required.
+Ordinary rewind commit still refuses recovery receipts. Filesystem completion alone
+never clears a native fence. Created source directories remain protected for safe
+acknowledged cleanup.
 
 Late original-scope disposal now checks durable identity and status within the
 writer transaction after native store-lock release. It preserves an already
 acknowledged activity and its complete receipt; changed ownership/sequence refuses
-the append. This does not implement recovery acknowledgement. Before enabling M5,
-preserve opaque/generic Location uncertainty. Snapshot uncertainty is now tracked
+the append. The consuming recovery pair now removes only its exact snapshot
+reason after observed durable commit, preserving opaque/generic Location
+uncertainty. Snapshot uncertainty is tracked
 by exact activity ID separately from the opaque flag; reload reconstructs generic
 fences and snapshot owners independently. A late-scope no-op clears only its exact
 snapshot reason after observing the matching durable acknowledgement at the writer.
-The consuming recovery commit still needs to apply this distinction. Reconciliation
-must distinguish a durable writer
+Explicit reconciliation still needs to distinguish a durable writer
 acknowledgement with missing journal acknowledgement from an uncommitted filesystem
 outcome, and must not revalidate or replay later owner edits as the old request.
 Unprepared reservation/origin/intent cuts still require exact resource ownership
@@ -74,9 +80,10 @@ Implementation source map:
 
 The non-Git reviewed-confirm path now uses a runtime-issued synchronous worker,
 origin-bound intent and paired Session/native commit followed by journal
-acknowledgement. M2–M8 remain open: Git and legacy entry-point integration,
-managed keep/rollback and request lookup, resolution receipts, lost-reply journal
-reconciliation, cleanup and complete native/platform acceptance are still required.
+acknowledgement. The recovery path adds globally reserved request ownership and
+paired original/resolution settlement. M2–M8 remain open: Git and legacy entry-point
+integration, pre-origin resource proof, lost-reply journal reconciliation, cleanup,
+complete clients and native/platform acceptance are still required.
 
 New version-3 file-copy intents retain native per-change source/staged file and
 parent identities, including privately staged identities for new parents before
@@ -84,18 +91,20 @@ publication. Read-only inspection classifies actual source/private slots without
 using progress as proof; five storage-level process-kill cuts verify this after
 fresh ownership. Legacy version-1/2 intents have no historical per-file proof.
 Do not infer rollback ownership from matching bytes or missing progress. Git
-equivalence, managed resolution intents/operations, runtime crash cuts and the
-complete native platform matrix remain open with M3/M8.
+equivalence, the remaining runtime/crash boundaries and the complete native platform
+matrix remain open with M3/M8. Two real non-Git CLI/API scenarios now kill the
+service after a partial exchange, restart, keep/rollback and verify lookup without
+replay; these do not cover every cut or reclamation.
 Crash acceptance must also cover reservation before origin publication and origin
 publication before intent publication. Those durable fences cannot be force-cleared
 or resolved by inventing a missing journal; implement exact pre-effect ownership
 proof/reconciliation for these cuts before claiming complete managed recovery.
 
 - `cyber-server/src/runtime/activity.rs` owns native activity records; `binary_documents.rs` retains a real synchronous worker's resources and `binary_recovery.rs` demonstrates document-specific recovery proof. Snapshot workers require their own origin/proof rather than calling binary recovery.
-- `cyber-server/src/runtime/host.rs::Snapshots` currently exposes restore and read-only recovery inspection; `rewind_preview.rs` owns reviewed confirmation. A dedicated owner recovery admission must work while ordinary admission remains fenced.
+- `cyber-server/src/runtime/host.rs::Snapshots` exposes restore, recovery inspection and owned resolution; `rewind_preview.rs` owns reviewed rewind confirmation. `snapshot_recovery.rs` owns durable recovery admission/lookup, with snapshot-only captured authority and the paired native consuming commit in `activity.rs`.
 - `cyber-snapshot/src/copy/restore.rs` reads legacy version-1/2 intents and writes version-3 native ownership records. `copy/ownership.rs` prepares file/parent evidence and inspects actual slots; `copy/storage.rs` owns private descriptor-relative I/O. `restore.rs` and `git_history.rs` cover Git restore and historical exclusions. Keep historical evidence readable as the new protocol is added.
-- `cyber-snapshot/src/copy/resolution.rs` freezes native observations, reads actual retained preimages, publishes independent keep/rollback intents and rejects request replay. Runtime `snapshot_recovery.rs` attests the selected Session/activity for read-only review; its consuming admission/commit is still required. Origins now bind the exact private lock inode; older origins without that proof remain inspectable and fenced.
-- `cyber-store/src/store.rs::append_checked` currently appends one aggregate. Separate independent appends cannot establish atomic acknowledgement plus resolution ownership.
+- `cyber-snapshot/src/copy/resolution.rs` freezes native observations, reads retained preimages, publishes independent intents and rejects request replay. Acknowledged child journals settle incomplete parents through validated links without inventing original completion. The retained worker guard pins immutable intent/receipt data. Origins bind the exact private lock inode; older origins without that proof remain inspectable and fenced.
+- `cyber-store/src/store.rs::append_pair_checked` commits the bounded original/resolution owner pair. Independent single-owner appends cannot establish this atomic acknowledgement.
 
 ## 4. Rules and context inspection
 

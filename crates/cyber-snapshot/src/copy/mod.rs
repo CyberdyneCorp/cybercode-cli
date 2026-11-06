@@ -72,6 +72,8 @@ pub(crate) struct WorkerGuard {
     pub store: Store,
     pub workspace: tokio::sync::OwnedMutexGuard<()>,
     pub origin: Option<cyber_server::runtime::SnapshotOrigin>,
+    pub digest: Option<String>,
+    pub receipt: Option<cyber_server::runtime::SnapshotRecoveryReceipt>,
 }
 
 impl cyber_server::runtime::SnapshotNativeGuard for WorkerGuard {
@@ -79,6 +81,12 @@ impl cyber_server::runtime::SnapshotNativeGuard for WorkerGuard {
         let _retained_workspace = &self.workspace;
         if origin != self.origin.as_ref() {
             return Err("Snapshot receipt belongs to another worker".into());
+        }
+        if self.store.worker_digest(origin)? != self.digest {
+            return Err("Snapshot immutable intent changed before consumption".into());
+        }
+        if let Some(receipt) = &self.receipt {
+            self.store.verify_receipt(origin, receipt)?;
         }
         self.store.verify_worker_origin(origin)
     }

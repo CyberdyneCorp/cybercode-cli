@@ -699,3 +699,98 @@ the owned versus legacy commit paths and shared binary worker behavior. It
 corrected the potential post-commit flag race and combined-read ordering. The
 broader recovery authority, native consuming transaction and reconciliation gates
 remain required before operator apply or cleanup is admitted.
+
+### Non-Git recovery admission and consuming owner pair
+
+The file-copy recovery path now connects review to a durable request reservation,
+the actual owned filesystem worker and the exact consuming native transaction.
+`POST /sessions/{sessionID}/rewind/recovery/confirm` accepts the journal, action,
+fingerprint and stable request ID. `GET .../recovery/requests/{requestID}` reads only
+the durable request (404 when absent). OpenAPI and typed SDK methods are generated.
+Existing request IDs return lookup before native access, including unknown outcomes
+and later owner edits; different content cannot reuse the request. Lookup reports
+journal acknowledgement as unobserved rather than inferring it from runtime
+settlement. A request resolved by another request has a distinct result state.
+
+The reservation aggregate derives from Session creation and a length-framed request
+ID hash, before checkout/native preparation. Snapshot-only recovery authority
+captures ancestry, local/subtree revisions, active closed scopes and solve fence
+revisions. It preserves those boundaries and cannot lend ordinary launch authority.
+The Store projector validates the exact reservation and immutable launch metadata;
+it does not grant generic hook/process admission through a snapshot fence. Ordinary
+native admission and new ordinary snapshot admission are mutually fenced at the
+writer. Prompt, child and tool admission targets also check the durable snapshot
+fence there, so a stale caller precheck cannot race a newly committed reservation.
+Regressions verify rejected native reservation and input append leave no published
+ownership or inbox row. Recovery refuses live local native controls/background work. The
+actual callback retains checkout/lifecycle/workspace/private-store ownership.
+
+After native guard revalidation, the writer pair checks both original/resolution
+origins, the captured cancellation boundary, current Session revision and exact
+request/receipt. Only an observed durable pair settles the original native owner
+and records the resolution receipt, removing only the original snapshot reason.
+It emits no old rewind or transcript events and preserves generic unknown outcomes.
+Normal rewind commit cannot consume a recovery result or lend its authority.
+
+Native journal acknowledgement follows that observed writer commit. It publishes
+the resolution acknowledgement first, then a validated settlement link in the
+original journal. The original may remain `completed: false`; its history is never
+rewritten as a completed restore. Missing/mismatched acknowledgement references
+retain the fence. Metadata budgeting includes atomic replacement of the parent
+settlement record, and no source directory or retained payload is reclaimed.
+
+Substantive code/security review corrected ordinary hook admission through the
+snapshot fence and private intent changes during the consuming handoff. The native
+worker now pins the immutable intent digest and exact filesystem receipt. The
+resolution retains the reviewed completion/acknowledgement state, allowing its
+fingerprint to be verified independently of later mutable acknowledgement flags.
+Tests reject a changed frozen review and changed intent context even when live
+files and the returned receipt are unchanged. Old resolutions without this frozen
+review state remain readable but cannot acquire that missing consuming proof.
+Origins without the exact native lock proof remain inspectable and fenced.
+
+Real CLI/API acceptance creates 1280 non-Git files, records two snapshots, observes
+an actual source exchange during restore and kills the real service while the
+namespace is partial. A fresh service observes both applied and unapplied source
+files. Separate keep and rollback scenarios then confirm recovery, inspect the
+durable settlement link, preserve unrelated owner data and the unchanged
+conversation, and verify no additional scripted-provider inference. Keep also
+preserves a later ordinary owner image. Retries after another owner edit and after
+another service restart are lookup-only; changed request content is refused. This
+uses actual file-copy operations, server, CLI and process kills, without a restore
+fault hook. It covers one observed partial-exchange cut per action, not every cut.
+
+Runtime regressions preserve a captured closed boundary and unrelated generic
+unknown evidence, reject a new stop boundary before effects, and reject a changed
+Session revision before acknowledgement. The WAL-hook commit-reply-loss regression
+uses a real file-backed Store: both owner settlements persist, no commit
+notification or file acknowledgement is emitted, and lookup finds the same receipt
+after the Store is closed and reopened. Its filesystem callback is instrumented;
+it is not a service kill at the writer boundary or journal reconciliation proof.
+
+Final local macOS evidence: 404 server unit tests passed (one ignored subprocess
+fixture invoked by its parent Location identity tests), four idle-cancellation,
+thirteen Location and five rewind-preview integration cases passed. Snapshot
+evidence includes 35 final unit cases, eighteen file-copy and seventeen Git cases
+(70 unique tests). All fourteen CLI branch/recovery cases passed; the new real-kill
+case was rerun after the helper refactor and added request-content refusal and
+passed for both actions. SDK typecheck and generation checks passed; SDK tests
+passed 130 cases with ten configured process end-to-end cases skipped because
+`CYBER_BIN` was unset. OpenAPI consistency passed. Server/snapshot/CLI all-target
+Clippy with warnings denied passed. The complexity skill has no Rust analyzer;
+Clippy found the test helper at 32/15, and extracting its kill, settlement-link and
+retry phases passed the repository threshold without allowances. Formatting and
+diff checks passed. macOS sandbox deprecation and Darwin linker warnings were
+observed without assigning their origin to main.
+
+The complete feature is not merge-ready. Explicit journal acknowledgement
+reconciliation after lost replies or failed flushes is still absent. Reservations
+that never publish a native origin remain unknown and lookup-only; missing records
+do not prove no effects or authorize clearing checkout/process uncertainty. Those
+resource/intent cuts require their own exact proof and operator resolution. Git
+journaling, interrupted-resolution/pre-origin acceptance, reference/reader/lease
+protection and two-phase reclamation, typed CLI/TUI/App recovery, full native cuts,
+cross-platform results and complete delivery review remain open. Linux/Windows,
+full-workspace checks and real SDK process acceptance were not run here. M2–M8 and
+both issues remain open. A remote refresh still reports main `db9e171e` and no open
+PRs; this increment has not been pushed or merged.

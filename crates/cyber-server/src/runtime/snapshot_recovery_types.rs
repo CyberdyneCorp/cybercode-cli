@@ -76,3 +76,32 @@ pub struct SnapshotRecoveryReceipt {
     pub original: super::SnapshotOrigin,
     pub filesystem_complete: bool,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct RecoveryRequest {
+    pub confirmation: SnapshotRecoveryConfirmation,
+    pub original: super::SnapshotOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<super::snapshot_recovery_authority::RecoveryAuthority>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotRecoveryState {
+    Pending,
+    Unknown,
+    Acknowledged,
+    ResolvedByAnotherRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SnapshotRecoveryResult {
+    pub request: SnapshotRecoveryConfirmation,
+    pub original: super::SnapshotOrigin,
+    pub resolution: Option<super::SnapshotOrigin>,
+    pub state: SnapshotRecoveryState,
+    pub receipt: Option<SnapshotRecoveryReceipt>,
+    /// Lookup does not inspect native files. None means journal acknowledgement
+    /// has not been observed by this response, even if runtime settlement is durable.
+    pub journal_acknowledged: Option<bool>,
+}

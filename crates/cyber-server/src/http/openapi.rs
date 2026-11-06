@@ -763,6 +763,11 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         op("post", "/sessions/{sessionID}/rewind/recovery/review", "v1.session.snapshotRecoveryReview", "Review retained snapshot effects without restoring, acknowledging native activity or starting inference")
             .body::<crate::runtime::SnapshotRecoverySelection>(g)
             .ok::<Data<crate::runtime::SnapshotRecoveryReview>>(g),
+        op("post", "/sessions/{sessionID}/rewind/recovery/confirm", "v1.session.snapshotRecoveryConfirm", "Resolve fingerprint-confirmed native snapshot effects with an exact durable request; repeated IDs are lookup-only")
+            .body::<crate::runtime::SnapshotRecoveryConfirmation>(g)
+            .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
+        op("get", "/sessions/{sessionID}/rewind/recovery/requests/{requestID}", "v1.session.snapshotRecoveryLookup", "Look up a durable recovery request without native access, acknowledgement reconciliation, replay or inference")
+            .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
         op("post", "/sessions/{sessionID}/rewind/preview", "v1.session.rewindPreview", "Review a rewind without changing files or the active conversation")
             .body::<crate::runtime::RewindSelection>(g)
             .ok::<Data<crate::runtime::RewindPreview>>(g),

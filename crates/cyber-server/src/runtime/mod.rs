@@ -107,6 +107,8 @@ mod mcp_depth;
 pub mod messaging;
 pub mod peers;
 pub mod presence;
+mod snapshot_recovery_authority;
+mod snapshot_recovery_record;
 pub use mcp_depth::RunMarker;
 mod memory;
 pub use mcp::{
@@ -132,8 +134,8 @@ pub use rewind_preview::{
 };
 pub use snapshot_recovery_types::{
     SnapshotRecoveryAction, SnapshotRecoveryConfirmation, SnapshotRecoveryImage,
-    SnapshotRecoveryPath, SnapshotRecoveryReceipt, SnapshotRecoveryReview,
-    SnapshotRecoverySelection,
+    SnapshotRecoveryPath, SnapshotRecoveryReceipt, SnapshotRecoveryResult, SnapshotRecoveryReview,
+    SnapshotRecoverySelection, SnapshotRecoveryState,
 };
 pub use snapshot_work::{
     SnapshotBinding, SnapshotCompletion, SnapshotNativeGuard, SnapshotNativeResult, SnapshotOrigin,
@@ -403,7 +405,8 @@ impl From<StoreError> for RuntimeError {
         match error {
             StoreError::Projector { reason, .. }
                 if reason == admission_authority::STALE
-                    || reason == admission_authority::CLOSED =>
+                    || reason == admission_authority::CLOSED
+                    || reason == snapshot_recovery_record::FENCED =>
             {
                 Self::Conflict(reason)
             }

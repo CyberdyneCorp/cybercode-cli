@@ -31,3 +31,18 @@ test("snapshot recovery review preserves owner scope and honest acknowledgement 
   assert.equal(calls[0]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/recovery/review");
   assert.deepEqual(JSON.parse(calls[0]!.body!), { journal_id: "restore_one", action: "keep" });
 });
+
+test("snapshot recovery confirmation and lookup retain the exact request without implying journal acknowledgement", async () => {
+  const request = { journal_id: "restore_one", action: "keep" as const, confirmation: "a".repeat(64), request_id: "request/with space" };
+  const result = { request, original: {}, resolution: null, state: "unknown", receipt: null, journal_acknowledged: null };
+  const { client, calls } = mockClient(() => json(200, { data: result }));
+  assert.equal((await client.session.snapshotRecoveryConfirm("ses_owner", request)).state, "unknown");
+  const lookup = await client.session.snapshotRecoveryLookup("ses_owner", request.request_id);
+  assert.equal(lookup?.journal_acknowledged, null);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]!.method, "POST");
+  assert.equal(calls[0]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/recovery/confirm");
+  assert.deepEqual(JSON.parse(calls[0]!.body!), request);
+  assert.equal(calls[1]!.method, "GET");
+  assert.equal(calls[1]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/recovery/requests/request%2Fwith%20space");
+});

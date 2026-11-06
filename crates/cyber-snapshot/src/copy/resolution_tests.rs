@@ -45,6 +45,137 @@ impl Prepared {
     }
 }
 
+#[tokio::test]
+async fn immutable_intent_handoff_rejects_changed_context_with_unchanged_files_and_receipt() {
+    use cyber_server::runtime::SnapshotNativeGuard;
+    let p = Prepared::managed();
+    p.apply(0);
+    let request = p.confirmation(Action::Rollback, "immutable-handoff");
+    let receipt = p.resolve(&request);
+    let (dir, mut journal) = p.store.journal(&receipt.resolution_id).unwrap();
+    let mut origin = p.record.origin.as_ref().unwrap().clone();
+    origin.activity_id = "op_resolution_fixture".into();
+    origin.binding.journal_id = receipt.resolution_id.clone();
+    origin.binding.journal_identity = storage::dir_identity(&dir).unwrap();
+    journal.origin = Some(origin.clone());
+    Store::record(&dir, &journal).unwrap();
+    let digest = p.store.worker_digest(Some(&origin)).unwrap();
+    let workspace = std::sync::Arc::new(tokio::sync::Mutex::new(()))
+        .lock_owned()
+        .await;
+    let guard = crate::copy::WorkerGuard {
+        store: p.store,
+        workspace,
+        origin: Some(origin.clone()),
+        digest,
+        receipt: Some(receipt),
+    };
+    guard.verify(Some(&origin)).unwrap();
+    let snapshot = format!("copy:{}", "0".repeat(64));
+    journal.context = Some(super::super::RestoreContext {
+        target: snapshot.clone(),
+        recorded: snapshot.clone(),
+        expected: snapshot,
+        exclusions: vec!["changed after handoff".into()],
+    });
+    Store::record(&dir, &journal).unwrap();
+    guard.store.verify_worker_origin(Some(&origin)).unwrap();
+    assert!(
+        guard.verify(Some(&origin)).is_err(),
+        "native intent changed after its completion handoff"
+    );
+    assert!(
+        !guard
+            .store
+            .journal("restore_fixture")
+            .unwrap()
+            .1
+            .acknowledged
+    );
+}
+
+#[test]
+fn changed_frozen_resolution_review_cannot_be_consumed_or_acknowledged() {
+    let p = Prepared::managed();
+    p.apply(0);
+    let request = p.confirmation(Action::Rollback, "immutable-review");
+    let receipt = p.resolve(&request);
+    let (dir, mut journal) = p.store.journal(&receipt.resolution_id).unwrap();
+    let mut origin = p.record.origin.as_ref().unwrap().clone();
+    origin.activity_id = "op_resolution_fixture".into();
+    origin.binding.journal_id = receipt.resolution_id.clone();
+    origin.binding.journal_identity = storage::dir_identity(&dir).unwrap();
+    journal.origin = Some(origin.clone());
+    Store::record(&dir, &journal).unwrap();
+    let before = p.store.worker_digest(Some(&origin)).unwrap();
+    journal
+        .resolution
+        .as_mut()
+        .unwrap()
+        .reviewed_state
+        .as_mut()
+        .unwrap()
+        .completed = true;
+    Store::record(&dir, &journal).unwrap();
+    assert_ne!(p.store.worker_digest(Some(&origin)).unwrap(), before);
+    assert!(p.store.verify_worker_origin(Some(&origin)).is_err());
+    assert!(p.store.acknowledge_worker(Some(&origin)).is_err());
+    assert!(!p.store.journal("restore_fixture").unwrap().1.acknowledged);
+    assert!(
+        !p.store
+            .journal(&receipt.resolution_id)
+            .unwrap()
+            .1
+            .acknowledged
+    );
+}
+
+#[test]
+fn acknowledged_resolution_settles_incomplete_parent_without_replaying_later_owner_edits() {
+    let p = Prepared::managed();
+    p.apply(0);
+    let request = p.confirmation(Action::Rollback, "settlement-link");
+    let receipt = p.resolve(&request);
+    let (dir, mut resolution) = p.store.journal(&receipt.resolution_id).unwrap();
+    let mut origin = p.record.origin.as_ref().unwrap().clone();
+    origin.activity_id = "op_resolution_fixture".into();
+    origin.binding.journal_id = receipt.resolution_id.clone();
+    origin.binding.journal_identity = storage::dir_identity(&dir).unwrap();
+    resolution.origin = Some(origin.clone());
+    Store::record(&dir, &resolution).unwrap();
+    // Model a cut after child acknowledgement but before the parent link. These
+    // synthetic origins do not confer runtime acknowledgement authority.
+    resolution.acknowledged = true;
+    Store::record(&dir, &resolution).unwrap();
+    assert!(p.store.ensure_recovered().is_err());
+    std::fs::write(p.root.join("existing/replace"), b"later owner edit").unwrap();
+    assert!(p.store.verify_worker_origin(Some(&origin)).is_err());
+    // After a durable consuming receipt, acknowledgement reconciliation checks
+    // immutable native evidence and must not revalidate/replay owner file edits.
+    p.store.acknowledge_worker(Some(&origin)).unwrap();
+    let (_, parent) = p.store.journal("restore_fixture").unwrap();
+    assert!(!parent.completed);
+    assert!(parent.acknowledged);
+    assert_eq!(
+        parent.settled_by.as_deref(),
+        Some(receipt.resolution_id.as_str())
+    );
+    p.store.ensure_recovered().unwrap();
+    p.store.acknowledge_worker(Some(&origin)).unwrap();
+    assert_eq!(
+        std::fs::read(p.root.join("existing/replace")).unwrap(),
+        b"later owner edit"
+    );
+    assert_eq!(storage::read(&p.dir, "stage_0", 65536).unwrap(), b"before");
+    let mut missing = parent;
+    missing.settled_by = Some("restore_missing_resolution".into());
+    Store::record(&p.dir, &missing).unwrap();
+    assert!(
+        p.store.ensure_recovered().is_err(),
+        "missing reference licensed native settlement"
+    );
+}
+
 #[test]
 fn rollback_reverses_proven_files_and_retains_actual_displaced_live_inodes() {
     let p = Prepared::managed();

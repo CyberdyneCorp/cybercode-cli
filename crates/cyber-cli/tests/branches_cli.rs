@@ -786,6 +786,192 @@ fn recovery_review_binds_the_session_discloses_acknowledgement_and_starts_no_inf
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+fn managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay()
+{
+    managed_native_recovery_after_partial_kill("keep");
+    managed_native_recovery_after_partial_kill("rollback");
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn managed_native_recovery_after_partial_kill(action: &str) {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    let repo = env.root.join("repo");
+    std::fs::remove_dir_all(repo.join(".git")).unwrap();
+    // Enough separately flushed exchanges to observe an actual partial source
+    // namespace before killing the real server; no restore fault hook is used.
+    for index in 0..1280 {
+        std::fs::write(repo.join(format!("bulk_{index:04}")), "before").unwrap();
+    }
+    let id = env.exec(None, "before snapshot");
+    let first = env.user_ids(&id)[0].clone();
+    for index in 0..1280 {
+        std::fs::write(repo.join(format!("bulk_{index:04}")), "after").unwrap();
+    }
+    env.exec(Some(&id), "after snapshot");
+    let messages = kill_partial_restore(&env, &id, &first);
+    let requests = model.requests().len();
+    std::fs::write(repo.join("unrelated-owner"), "owner data").unwrap();
+    if action == "keep" {
+        std::fs::write(repo.join("bulk_1279"), "later owner image").unwrap();
+    }
+    let catalog = json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/recovery")]));
+    let journals = catalog["data"].as_array().unwrap();
+    assert_eq!(journals.len(), 1);
+    assert_eq!(journals[0]["filesystem_complete"], false);
+    let journal = journals[0]["id"].as_str().unwrap();
+    let review = json(&env.cyber(&[
+        "api",
+        "POST",
+        &format!("/sessions/{id}/rewind/recovery/review"),
+        "-d",
+        &json!({"journal_id":journal,"action":action}).to_string(),
+    ]))["data"]
+        .clone();
+    assert!(
+        review["conflicts"].as_array().unwrap().is_empty(),
+        "{review}"
+    );
+    let request_id = format!("real-kill-{action}");
+    let request = json!({"journal_id":journal,"action":action,"confirmation":review["confirmation"],"request_id":request_id});
+    let confirm_path = format!("/sessions/{id}/rewind/recovery/confirm");
+    let result =
+        json(&env.cyber(&["api", "POST", &confirm_path, "-d", &request.to_string()]))["data"]
+            .clone();
+    assert_eq!(result["state"], "acknowledged");
+    assert_eq!(result["journal_acknowledged"], true);
+    assert_eq!(env.file("unrelated-owner").as_deref(), Some("owner data"));
+    let expected = if action == "rollback" {
+        "after"
+    } else {
+        "before"
+    };
+    assert_eq!(env.file("bulk_0000").as_deref(), Some(expected));
+    assert_eq!(env.messages(&id), messages);
+    assert_eq!(
+        model.requests().len(),
+        requests,
+        "recovery started inference"
+    );
+    assert_native_settlement_link(&env, journal, &result);
+    assert_recovery_lookup_does_not_replay(&env, &id, &request_id, &request, &result, &messages);
+    assert_eq!(model.requests().len(), requests);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn kill_partial_restore(env: &Env, id: &str, first: &str) -> Vec<Value> {
+    let selection = reviewed_selection(env, first, "both", "commit");
+    let preview = reviewed_preview(env, id, &selection);
+    let mut body = selection;
+    body["confirmation"] = preview["confirmation"].clone();
+    let body = body.to_string();
+    let path = format!("/sessions/{id}/rewind/confirm");
+    let mut pending = env
+        .command(&["api", "POST", &path, "-d", &body])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    while env.file("bulk_0000").as_deref() != Some("before") {
+        assert!(
+            pending.try_wait().unwrap().is_none(),
+            "restore exited before a source exchange"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "source exchange was never observed"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        env.file("bulk_1279").as_deref(),
+        Some("after"),
+        "no partial restore window was observed"
+    );
+    kill_registered_service(env);
+    assert!(!pending.wait_with_output().unwrap().status.success());
+    let messages = env.messages(id); // Starts a fresh server over the durable evidence.
+    assert_eq!(env.file("bulk_0000").as_deref(), Some("before"));
+    assert_eq!(
+        env.file("bulk_1279").as_deref(),
+        Some("after"),
+        "kill did not retain a partial namespace"
+    );
+    assert_eq!(
+        env.user_ids(id).len(),
+        2,
+        "failed restore moved the transcript"
+    );
+    messages
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_native_settlement_link(env: &Env, journal: &str, result: &Value) {
+    let namespace = std::fs::read_dir(env.root.join("cyber-home/data/snapshot/global"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let old: Value = serde_json::from_slice(
+        &std::fs::read(namespace.join("journals").join(journal).join("intent.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(old["completed"], false);
+    assert_eq!(old["acknowledged"], true);
+    assert_eq!(old["settled_by"], result["receipt"]["resolution_id"]);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_recovery_lookup_does_not_replay(
+    env: &Env,
+    id: &str,
+    request_id: &str,
+    request: &Value,
+    result: &Value,
+    messages: &[Value],
+) {
+    let repo = env.root.join("repo");
+    let confirm_path = format!("/sessions/{id}/rewind/recovery/confirm");
+    std::fs::write(repo.join("bulk_0000"), "new owner edit after recovery").unwrap();
+    let retry =
+        json(&env.cyber(&["api", "POST", &confirm_path, "-d", &request.to_string()]))["data"]
+            .clone();
+    assert_eq!(retry["state"], "acknowledged");
+    assert!(
+        retry["journal_acknowledged"].is_null(),
+        "lookup invented native acknowledgement observation"
+    );
+    assert_eq!(
+        env.file("bulk_0000").as_deref(),
+        Some("new owner edit after recovery")
+    );
+    let mut changed = request.clone();
+    changed["confirmation"] = "b".repeat(64).into();
+    assert!(
+        !env.cyber(&["api", "POST", &confirm_path, "-d", &changed.to_string()])
+            .status
+            .success(),
+        "changed request content reused an existing owner"
+    );
+    kill_registered_service(env);
+    let lookup = json(&env.cyber(&[
+        "api",
+        "GET",
+        &format!("/sessions/{id}/rewind/recovery/requests/{request_id}"),
+    ]))["data"]
+        .clone();
+    assert_eq!(lookup["receipt"], result["receipt"]);
+    assert_eq!(
+        env.file("bulk_0000").as_deref(),
+        Some("new owner edit after recovery")
+    );
+    assert_eq!(env.messages(id).as_slice(), messages);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn reviewed_non_git_stage_and_clear_keep_exact_acknowledged_worker_receipts() {
     let model = scripted_model::ScriptedModel::start(reply);
     let env = Env::new(&model);

@@ -558,6 +558,10 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
     if event.kind == super::hooks::STARTED && event.data["synthetic"] == true {
         return Ok(());
     }
+    if super::snapshot_recovery_record::project_pending(tx, event)? {
+        return Ok(());
+    }
+    super::snapshot_recovery_record::check_ordinary_admission(tx, event)?;
     check_closed_admission(tx, event)?;
     let source = match event.kind.as_str() {
         super::events::CREATED => event.data["info"]["parent_id"].as_str().map(str::to_string),
@@ -659,6 +663,7 @@ fn check_closed_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(
         _ => return Ok(()),
     };
     for target in targets {
+        super::snapshot_recovery_record::check_session_admission(tx, target, &event.aggregate_id)?;
         let chain = snapshot_chain(tx, target)
             .map_err(|e| e.to_string())?
             .ok_or("Admission ancestry has a cycle or a missing ancestor")?;

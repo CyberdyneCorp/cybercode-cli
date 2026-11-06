@@ -1106,6 +1106,10 @@ export type Data_SideAnswer = {
   data: SideAnswer;
 };
 
+export type Data_SnapshotRecoveryResult = {
+  data: SnapshotRecoveryResult;
+};
+
 export type Data_SnapshotRecoveryReview = {
   data: SnapshotRecoveryReview;
 };
@@ -4720,6 +4724,13 @@ export type SnapshotRecovery = {
 
 export type SnapshotRecoveryAction = "keep" | "rollback";
 
+export type SnapshotRecoveryConfirmation = {
+  journal_id: string;
+  action: SnapshotRecoveryAction;
+  confirmation: string;
+  request_id: string;
+};
+
 export type SnapshotRecoveryImage = {
   hash: string;
   bytes: number;
@@ -4743,6 +4754,29 @@ export type SnapshotRecoveryPath = {
   changes: boolean;
 };
 
+export type SnapshotRecoveryReceipt = {
+  journal_id: string;
+  resolution_id: string;
+  request_id: string;
+  action: SnapshotRecoveryAction;
+  confirmation: string;
+  original: SnapshotOrigin;
+  filesystem_complete: boolean;
+};
+
+export type SnapshotRecoveryResult = {
+  request: SnapshotRecoveryConfirmation;
+  original: SnapshotOrigin;
+  resolution?: SnapshotOrigin | null;
+  state: SnapshotRecoveryState;
+  receipt?: SnapshotRecoveryReceipt | null;
+  /**
+   * Lookup does not inspect native files. None means journal acknowledgement
+   * has not been observed by this response, even if runtime settlement is durable.
+   */
+  journal_acknowledged?: boolean | null;
+};
+
 export type SnapshotRecoveryReview = {
   journal_id: string;
   action: SnapshotRecoveryAction;
@@ -4763,6 +4797,8 @@ export type SnapshotRecoverySelection = {
   journal_id: string;
   action: SnapshotRecoveryAction;
 };
+
+export type SnapshotRecoveryState = "pending" | "unknown" | "acknowledged" | "resolved_by_another_request";
 
 export type SolveCandidateEvidence = {
   candidate_id: string;

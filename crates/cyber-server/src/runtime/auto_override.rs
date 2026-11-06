@@ -460,7 +460,7 @@ impl Inner {
             call_id: replay.id.clone(),
             tool: replay.name.clone(),
             input,
-            authority: scope.authority(),
+            authority: scope.authority()?,
             cancel: scope.control.stop.clone(),
             done: invocation_done.clone(),
         });

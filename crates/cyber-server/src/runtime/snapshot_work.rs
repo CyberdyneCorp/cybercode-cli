@@ -117,8 +117,7 @@ impl SnapshotWork<'_> {
         }
         self.owner
             .scope
-            .authority()
-            .verify(&self.owner.runtime, &self.owner.scope.control.source)
+            .verify_authority()
             .map_err(|error| error.to_string())?;
         let source = self.owner.scope.control.source.clone();
         let sequence = self.owner.sequence;
@@ -219,6 +218,28 @@ impl SnapshotCompletion {
     pub fn recovery_receipt(&self) -> Option<&super::SnapshotRecoveryReceipt> {
         self.native.recovery.as_ref()
     }
+    pub(crate) fn commit_recovery(
+        mut self,
+        state: &SessionState,
+    ) -> Result<super::SnapshotRecoveryReceipt, RuntimeError> {
+        let receipt = self
+            .native
+            .recovery
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Conflict("Missing recovery filesystem receipt".into()))?
+            .clone();
+        self.native
+            .guard
+            .verify(self.worker.scope.snapshot_origin())
+            .map_err(RuntimeError::Conflict)?;
+        self.worker
+            .scope
+            .commit_recovery(state, self.worker.sequence, &receipt)?;
+        self.native.guard.acknowledge(self.worker.scope.snapshot_origin()).map_err(|error| RuntimeError::Conflict(format!(
+            "Recovery runtime acknowledgement committed; native journal acknowledgement requires reconciliation: {error}"
+        )))?;
+        Ok(receipt)
+    }
     pub(crate) fn commit(
         mut self,
         state: &mut SessionState,
@@ -246,6 +267,87 @@ impl SnapshotCompletion {
 }
 
 impl Runtime {
+    pub(super) async fn snapshot_recovery_worker(
+        &self,
+        handle: &Arc<Handle>,
+        state: &SessionState,
+        mut request: super::snapshot_recovery_types::RecoveryRequest,
+    ) -> Result<SnapshotWorker, RuntimeError> {
+        let lifecycle = self.memory_mutation_lease().await?;
+        self.inner.ensure_idle(&state.info.id)?;
+        self.ensure_no_background(&state.info.id)?;
+        if self
+            .inner
+            .activities
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .any(|control| control.source == state.info.id)
+        {
+            return Err(RuntimeError::Busy(state.info.id.clone()));
+        }
+        state.ensure_worktree_ready()?;
+        if request.original.session_id != state.info.id
+            || request.original.worktree_id != state.info.worktree_id
+        {
+            return Err(RuntimeError::Conflict(
+                "Recovery Session/checkout changed".into(),
+            ));
+        }
+        handle
+            .snapshot_active
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map_err(|_| RuntimeError::Busy(state.info.id.clone()))?;
+        let admission = SnapshotAdmission(handle.clone());
+        let authority =
+            super::snapshot_recovery_authority::RecoveryAuthority::capture(self, &state.info.id)?;
+        request.authority = Some(authority.clone());
+        let id = super::snapshot_recovery::request_owner(
+            &request.original.session_created_id,
+            &request.confirmation.request_id,
+        );
+        let scope = activity::Scope::reserve_recovery(
+            self,
+            handle.clone(),
+            id,
+            request.clone(),
+            authority,
+        )?;
+        let lease = self
+            .inner
+            .claim_location(&state.info, false, scope.control.stop.clone())
+            .await?;
+        let directory = std::fs::canonicalize(&state.info.directory)
+            .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
+        let created_id = self
+            .inner
+            .store
+            .read_events(&state.info.id, -1, 1)?
+            .events
+            .first()
+            .ok_or_else(|| RuntimeError::Conflict("Recovery Session origin missing".into()))?
+            .id
+            .clone();
+        if directory != request.original.binding.directory
+            || created_id != request.original.session_created_id
+            || lease.worktree_id != request.original.worktree_id
+        {
+            return Err(RuntimeError::Conflict(
+                "Recovery native Location/creation binding changed".into(),
+            ));
+        }
+        Ok(SnapshotWorker {
+            scope,
+            admission,
+            sequence: state.last_seq,
+            runtime: self.clone(),
+            directory,
+            created_id,
+            worktree_id: state.info.worktree_id.clone(),
+            _location: lease.settle_retained().map_err(RuntimeError::Invalid)?,
+            _lifecycle: lifecycle,
+        })
+    }
     pub(crate) async fn snapshot_worker(
         &self,
         handle: &Arc<Handle>,

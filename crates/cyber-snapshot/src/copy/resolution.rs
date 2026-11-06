@@ -21,6 +21,15 @@ pub(super) struct Resolution {
     pub original_digest: String,
     pub review: Observations,
     pub outcome: Option<Observations>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_state: Option<ReviewedState>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReviewedState {
+    pub(super) completed: bool,
+    pub(super) acknowledged: bool,
 }
 
 impl Resolution {
@@ -160,7 +169,125 @@ fn immutable_digest(record: &Journal) -> Result<String> {
     ))
 }
 
+fn fingerprint(
+    action: Action,
+    binding: &SnapshotBinding,
+    digest: &str,
+    observations: &Observations,
+    state: &ReviewedState,
+) -> Result<String> {
+    Ok(storage::digest(
+        &serde_json::to_vec(&(
+            1u32,
+            action,
+            binding,
+            digest,
+            observations,
+            state.completed,
+            state.acknowledged,
+        ))
+        .map_err(fail)?,
+    ))
+}
+
+fn verify_fingerprint(resolution: &Resolution) -> Result<()> {
+    let state = resolution
+        .reviewed_state
+        .as_ref()
+        .ok_or("Legacy resolution has no frozen review state")?;
+    if fingerprint(
+        resolution.request.action,
+        &resolution.original.binding,
+        &resolution.original_digest,
+        &resolution.review,
+        state,
+    )? != resolution.request.confirmation
+    {
+        return Err("Resolution differs from its confirmed immutable review".into());
+    }
+    Ok(())
+}
+
 impl Store {
+    pub(crate) fn worker_digest(&self, origin: Option<&SnapshotOrigin>) -> Result<Option<String>> {
+        origin
+            .map(|origin| {
+                let (_, journal) = self.journal(&origin.binding.journal_id)?;
+                if journal.origin.as_ref() != Some(origin) {
+                    return Err("Snapshot native origin changed".into());
+                }
+                immutable_digest(&journal)
+            })
+            .transpose()
+    }
+    pub(super) fn verify_receipt(
+        &self,
+        origin: Option<&SnapshotOrigin>,
+        expected: &Receipt,
+    ) -> Result<()> {
+        let origin = origin.ok_or("Recovery completion has no reserved native worker origin")?;
+        let (_, journal) = self.journal(&origin.binding.journal_id)?;
+        if receipt(&origin.binding.journal_id, &journal)? != *expected {
+            return Err("Native resolution receipt changed".into());
+        }
+        Ok(())
+    }
+    pub(super) fn verify_settlement(&self, parent: &Journal) -> Result<()> {
+        let id = parent
+            .settled_by
+            .as_deref()
+            .ok_or("Missing native settlement reference")?;
+        let (_, journal) = self.journal(id)?;
+        let resolution = journal
+            .resolution
+            .as_ref()
+            .ok_or("Native settlement reference is not a resolution")?;
+        verify_fingerprint(resolution)?;
+        if !parent.acknowledged
+            || !journal.acknowledged
+            || !journal.completed
+            || resolution.outcome.is_none()
+            || parent.origin.as_ref() != Some(&resolution.original)
+            || immutable_digest(parent)? != resolution.original_digest
+        {
+            return Err("Native settlement reference differs from acknowledged resolution".into());
+        }
+        Ok(())
+    }
+
+    /// Called only after the runtime consumed the exact two-owner receipt. This
+    /// deliberately checks immutable native proof, not later owner file edits.
+    pub(super) fn acknowledge_resolution(
+        &self,
+        origin: &SnapshotOrigin,
+        dir: Dir,
+        mut journal: Journal,
+    ) -> Result<()> {
+        let resolution = journal
+            .resolution
+            .as_ref()
+            .ok_or("Missing resolution intent")?;
+        verify_fingerprint(resolution)?;
+        let _receipt = receipt(&origin.binding.journal_id, &journal)?;
+        self.verify_worker_namespace(&resolution.original)?;
+        let (parent_dir, mut parent) = self.journal(&resolution.original.binding.journal_id)?;
+        if parent.origin.as_ref() != Some(&resolution.original)
+            || immutable_digest(&parent)? != resolution.original_digest
+            || parent
+                .settled_by
+                .as_ref()
+                .is_some_and(|id| id != &origin.binding.journal_id)
+        {
+            return Err("Original intent differs from consuming resolution acknowledgement".into());
+        }
+        // The child acknowledgement is durable before publishing the parent's
+        // settlement link. A cut between writes stays fenced and is idempotent.
+        journal.acknowledged = true;
+        Self::record(&dir, &journal)?;
+        parent.acknowledged = true;
+        parent.settled_by = Some(origin.binding.journal_id.clone());
+        Self::record(&parent_dir, &parent)
+    }
     pub(super) fn resolution_preimages<'a>(
         &self,
         resolution: Option<&'a Resolution>,
@@ -296,17 +423,16 @@ impl Store {
                 .and_then(|origin| origin.binding.lock_identity.clone()),
         };
         if review.conflicts.is_empty() {
-            let raw = serde_json::to_vec(&(
-                1u32,
+            review.confirmation = Some(fingerprint(
                 action,
                 &binding,
                 &digest,
                 &observations,
-                record.completed,
-                record.acknowledged,
-            ))
-            .map_err(fail)?;
-            review.confirmation = Some(storage::digest(&raw));
+                &ReviewedState {
+                    completed: record.completed,
+                    acknowledged: record.acknowledged,
+                },
+            )?);
         }
         if serde_json::to_vec(&review).map_err(fail)?.len() > 16 * 1024 * 1024 {
             return Err("Recovery review exceeds response limit".into());
@@ -365,6 +491,10 @@ impl Store {
             original_digest: plan.digest,
             review: plan.observations.clone(),
             outcome: None,
+            reviewed_state: Some(ReviewedState {
+                completed: parent.completed,
+                acknowledged: parent.acknowledged,
+            }),
         };
         let mut record = self
             .prepare_journal(
@@ -440,6 +570,7 @@ impl Store {
         let Some(resolution) = &record.resolution else {
             return Ok(());
         };
+        verify_fingerprint(resolution)?;
         self.verify_worker_namespace(&resolution.original)?;
         let (parent_dir, parent) = self.journal(&resolution.original.binding.journal_id)?;
         if immutable_digest(&parent)? != resolution.original_digest {

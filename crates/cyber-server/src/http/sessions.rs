@@ -350,6 +350,14 @@ pub fn routes() -> Router<AppState> {
             &format!("{s}/rewind/recovery/review"),
             post(snapshot_recovery_review),
         )
+        .route(
+            &format!("{s}/rewind/recovery/confirm"),
+            post(snapshot_recovery_confirm),
+        )
+        .route(
+            &format!("{s}/rewind/recovery/requests/{{request_id}}"),
+            get(snapshot_recovery_lookup),
+        )
         .route(&format!("{s}/rewind/confirm"), post(rewind_confirm))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
@@ -1211,6 +1219,35 @@ async fn snapshot_recovery_review(
             .runtime
             .snapshot_recovery_review(&id, &selection)
             .await?,
+    }))
+}
+async fn snapshot_recovery_confirm(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(confirmation): Json<crate::runtime::SnapshotRecoveryConfirmation>,
+) -> Result<Json<Data<crate::runtime::SnapshotRecoveryResult>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_confirm(&id, &confirmation)
+            .await?,
+    }))
+}
+async fn snapshot_recovery_lookup(
+    State(state): State<AppState>,
+    Path((id, request_id)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotRecoveryResult>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_lookup(&id, &request_id)
+            .await?
+            .ok_or_else(|| {
+                ApiError::not_found(
+                    "RequestNotFoundError",
+                    "No retained snapshot recovery request",
+                )
+            })?,
     }))
 }
 async fn rewind_preview(

@@ -7353,6 +7353,131 @@
           "gid"
         ]
       },
+      "SnapshotRecoveryConfirmation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "journal_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/SnapshotRecoveryAction"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "journal_id",
+          "action",
+          "confirmation",
+          "request_id"
+        ]
+      },
+      "Data_SnapshotRecoveryResult": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotRecoveryResult"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotRecoveryResult": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/SnapshotRecoveryConfirmation"
+          },
+          "original": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/SnapshotRecoveryState"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "journal_acknowledged": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Lookup does not inspect native files. None means journal acknowledgement\nhas not been observed by this response, even if runtime settlement is durable."
+          }
+        },
+        "required": [
+          "request",
+          "original",
+          "state"
+        ]
+      },
+      "SnapshotRecoveryState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "unknown",
+          "acknowledged",
+          "resolved_by_another_request"
+        ]
+      },
+      "SnapshotRecoveryReceipt": {
+        "type": "object",
+        "properties": {
+          "journal_id": {
+            "type": "string"
+          },
+          "resolution_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/SnapshotRecoveryAction"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "original": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "filesystem_complete": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "journal_id",
+          "resolution_id",
+          "request_id",
+          "action",
+          "confirmation",
+          "original",
+          "filesystem_complete"
+        ]
+      },
       "RewindSelection": {
         "type": "object",
         "additionalProperties": false,
@@ -24266,6 +24391,114 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SnapshotRecoverySelection"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/confirm": {
+      "post": {
+        "operationId": "v1.session.snapshotRecoveryConfirm",
+        "summary": "Resolve fingerprint-confirmed native snapshot effects with an exact durable request; repeated IDs are lookup-only",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRecoveryResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotRecoveryConfirmation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}": {
+      "get": {
+        "operationId": "v1.session.snapshotRecoveryLookup",
+        "summary": "Look up a durable recovery request without native access, acknowledgement reconciliation, replay or inference",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRecoveryResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

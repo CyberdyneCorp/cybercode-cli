@@ -43,9 +43,26 @@ fn latest(runtime: &Runtime, session: &str) -> serde_json::Value {
         Ok(serde_json::from_str(&data).unwrap())
     }).unwrap()
 }
+
+fn legacy_generic_unknown(runtime: &Runtime, handle: &Handle, session: &str) -> String {
+    // Historical opaque evidence can coexist with a snapshot fence. This does
+    // not launch new work through an already-fenced ordinary admission path.
+    let id = cyber_core::ids::new_id("op");
+    runtime.inner.store.append(&id, cyber_store::Expected::Seq(-1), vec![NewEvent::new(activity::CHANGED,
+        serde_json::json!({"session_id":session,"status":"unknown","phase":"legacy_process_unknown"}))]).unwrap();
+    handle.location_uncertain.store(true, Ordering::SeqCst);
+    id
+}
 fn restart(runtime: &Runtime, root: &std::path::Path) -> Runtime {
+    runtime_with_store(runtime, runtime.inner.store.clone(), root)
+}
+fn runtime_with_store(
+    runtime: &Runtime,
+    store: Arc<cyber_store::Store>,
+    root: &std::path::Path,
+) -> Runtime {
     Runtime::new(RuntimeOptions {
-        store: runtime.inner.store.clone(),
+        store,
         resolver: runtime.inner.resolver.clone(),
         tools: runtime.inner.tools.clone(),
         global_config_dir: root.join("config"),
@@ -58,6 +75,397 @@ fn restart(runtime: &Runtime, root: &std::path::Path) -> Runtime {
         interactive: false,
         snapshots: Arc::new(super::super::NoSnapshots),
     })
+}
+
+#[tokio::test]
+async fn recovery_pair_lost_commit_reply_is_lookup_only_after_reopening_the_real_store() {
+    fn lost_reply(_: &rusqlite::hooks::Wal, _: i32) -> rusqlite::Result<()> {
+        Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("injected recovery pair reply loss".into()),
+        ))
+    }
+    let (temp, base, _, _, _) = super::super::binary_documents_tests::fixture().await;
+    let path = temp.path().join("recovery-pair.db");
+    let store = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        cyber_core::paths::DatabaseLocation::File(path.clone()),
+        Runtime::registry(),
+    ))
+    .unwrap();
+    let runtime = runtime_with_store(&base, Arc::new(store), temp.path());
+    let session = runtime
+        .create_session(super::super::CreateSession {
+            directory: temp.path().to_str().unwrap().into(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    let request = recovery_request(original.clone());
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let state = handle.state.lock().await;
+    let owner = runtime
+        .snapshot_recovery_worker(&handle, &state, request.clone())
+        .await
+        .unwrap();
+    drop(state);
+    let count = Arc::new(AtomicUsize::new(0));
+    let completed = finish_recovery(owner, request.clone(), count.clone()).await;
+    runtime
+        .inner
+        .store
+        .transaction(|tx| {
+            tx.wal_hook(Some(lost_reply));
+            Ok(())
+        })
+        .unwrap();
+    let notifications = runtime.inner.store.subscribe();
+    let state = handle.state.lock().await;
+    assert!(completed.commit_recovery(&state).is_err());
+    drop(state);
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    assert!(
+        notifications.try_recv().is_err(),
+        "unknown commit reply published a notification"
+    );
+    let original_record = runtime
+        .inner
+        .store
+        .read_events(&original.activity_id, -1, 10)
+        .unwrap();
+    assert_eq!(
+        original_record.events.last().unwrap().data["status"],
+        "settled"
+    );
+    let lookup = runtime
+        .snapshot_recovery_confirm(&session, &request.confirmation)
+        .await
+        .unwrap();
+    assert_eq!(
+        lookup.state,
+        super::super::SnapshotRecoveryState::Acknowledged
+    );
+    assert_eq!(lookup.journal_acknowledged, None);
+    let receipt = lookup.receipt.unwrap();
+    runtime.shutdown().await;
+    drop(handle);
+    drop(runtime);
+    let reopened = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        cyber_core::paths::DatabaseLocation::File(path),
+        Runtime::registry(),
+    ))
+    .unwrap();
+    let reloaded = runtime_with_store(&base, Arc::new(reopened), temp.path());
+    let lookup = reloaded
+        .snapshot_recovery_confirm(&session, &request.confirmation)
+        .await
+        .unwrap();
+    assert_eq!(lookup.receipt, Some(receipt));
+    assert_eq!(
+        lookup.state,
+        super::super::SnapshotRecoveryState::Acknowledged
+    );
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        0,
+        "lookup replayed native work"
+    );
+    reloaded.shutdown().await;
+    base.shutdown().await;
+}
+
+async fn failed_snapshot(runtime: &Runtime, session: &str, directory: PathBuf) -> SnapshotOrigin {
+    let owner = worker(runtime, session).await;
+    assert!(
+        owner
+            .run(move |work| {
+                work.begin(binding(directory)).unwrap();
+                Err(RestoreError::Failed("interrupted native restore".into()))
+            })
+            .await
+            .is_err()
+    );
+    serde_json::from_value(latest(runtime, session)["snapshot_origin"].clone()).unwrap()
+}
+
+fn recovery_request(
+    original: SnapshotOrigin,
+) -> super::super::snapshot_recovery_types::RecoveryRequest {
+    super::super::snapshot_recovery_types::RecoveryRequest {
+        confirmation: super::super::SnapshotRecoveryConfirmation {
+            journal_id: original.binding.journal_id.clone(),
+            action: super::super::SnapshotRecoveryAction::Keep,
+            confirmation: "a".repeat(64),
+            request_id: "owned-recovery-request".into(),
+        },
+        original,
+        authority: None,
+    }
+}
+
+async fn finish_recovery(
+    owner: SnapshotWorker,
+    request: super::super::snapshot_recovery_types::RecoveryRequest,
+    count: Arc<AtomicUsize>,
+) -> SnapshotCompletion {
+    owner
+        .run(move |work| {
+            let mut native_binding = request.original.binding.clone();
+            native_binding.journal_id = "restore_resolution_owned".into();
+            native_binding.journal_identity = "resolution_journal_identity".into();
+            let origin = work.begin(native_binding).unwrap();
+            work.effect(|| Ok(())).unwrap();
+            let mut native = SnapshotNativeResult::new(
+                vec![],
+                Box::new(Guard {
+                    origin: Some(origin.clone()),
+                    acknowledgements: count,
+                }),
+            );
+            native.recovery = Some(super::super::SnapshotRecoveryReceipt {
+                journal_id: request.confirmation.journal_id,
+                resolution_id: origin.binding.journal_id,
+                request_id: request.confirmation.request_id,
+                action: request.confirmation.action,
+                confirmation: request.confirmation.confirmation,
+                original: request.original,
+                filesystem_complete: true,
+            });
+            Ok(native)
+        })
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn writer_snapshot_fence_rejects_input_even_when_the_callers_precheck_is_stale() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let admitted = runtime
+        .admit(&session, Admission::text("held seed", Delivery::Hold))
+        .await
+        .unwrap();
+    let source = session.clone();
+    let mut payload: serde_json::Value = runtime.inner.store.read(move |db| {
+        let data: String = db.query_row("SELECT data FROM event WHERE aggregate_id=?1 AND type=?2 ORDER BY seq DESC LIMIT 1", [&source, events::ADMITTED], |row| row.get(0))?;
+        Ok(serde_json::from_str(&data).unwrap())
+    }).unwrap();
+    payload["message_id"] = "msg_stale_admission".into();
+    let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    let before = runtime.inner.store.aggregate_seq(&session).unwrap();
+    let failed = runtime.inner.store.append(
+        &session,
+        cyber_store::Expected::Seq(before.unwrap()),
+        vec![NewEvent::new(events::ADMITTED, payload)],
+    );
+    assert!(
+        matches!(failed, Err(cyber_store::StoreError::Projector { reason, .. }) if reason == super::super::snapshot_recovery_record::FENCED)
+    );
+    assert_eq!(runtime.inner.store.aggregate_seq(&session).unwrap(), before);
+    let state = runtime.state(&session).await.unwrap();
+    assert!(state.input(&admitted.message_id).is_some());
+    assert!(state.input("msg_stale_admission").is_none());
+    assert_eq!(
+        runtime
+            .inner
+            .store
+            .aggregate_seq(&original.activity_id)
+            .unwrap(),
+        Some(2)
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn ordinary_snapshot_reservation_cannot_race_a_pending_generic_native_owner() {
+    let (_temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let mut generic = activity::Scope::reserve(&runtime.inner, &handle)
+        .await
+        .unwrap();
+    let source = session.clone();
+    let events_before: i64 = runtime.inner.store.read(move |db| Ok(db.query_row("SELECT count(*) FROM event WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1", [source], |row| row.get(0))?)).unwrap();
+    let state = handle.state.lock().await;
+    assert!(runtime.snapshot_worker(&handle, &state).await.is_err());
+    drop(state);
+    assert!(!handle.snapshot_active.load(Ordering::SeqCst));
+    let source = session.clone();
+    let events_after: i64 = runtime.inner.store.read(move |db| Ok(db.query_row("SELECT count(*) FROM event WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1", [source], |row| row.get(0))?)).unwrap();
+    assert_eq!(
+        events_after, events_before,
+        "failed admission published native ownership"
+    );
+    generic.launch().unwrap();
+    generic.settle().unwrap();
+    drop(generic);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn recovery_preserves_closed_admission_and_acknowledges_only_its_exact_native_pair() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    legacy_generic_unknown(&runtime, &handle, &session);
+    let boundary = runtime.close_subtree_admissions(&session).await.unwrap();
+    assert!(runtime.capture_child_admission(&session).is_err());
+    let request = recovery_request(original.clone());
+    let state = handle.state.lock().await;
+    let sequence = state.last_seq;
+    let owner = runtime
+        .snapshot_recovery_worker(&handle, &state, request.clone())
+        .await
+        .unwrap();
+    assert!(owner.scope.authority().is_err());
+    drop(state);
+    let reserved = runtime
+        .snapshot_recovery_lookup(&session, &request.confirmation.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reserved.state, super::super::SnapshotRecoveryState::Pending);
+    assert!(reserved.resolution.is_none() && reserved.receipt.is_none());
+    let count = Arc::new(AtomicUsize::new(0));
+    let completed = finish_recovery(owner, request.clone(), count.clone()).await;
+    let state = handle.state.lock().await;
+    completed.commit_recovery(&state).unwrap();
+    assert_eq!(state.last_seq, sequence, "recovery moved the transcript");
+    drop(state);
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert!(
+        handle.location_uncertain.load(Ordering::SeqCst),
+        "generic unknown outcome was cleared"
+    );
+    assert!(
+        !handle
+            .snapshot_uncertain
+            .lock()
+            .unwrap()
+            .contains(&original.activity_id)
+    );
+    assert!(runtime.capture_child_admission(&session).is_err());
+    let source = session.clone();
+    assert_eq!(
+        runtime
+            .inner
+            .store
+            .read(move |db| super::super::subtree_reopen::active_scope(db, &source))
+            .unwrap(),
+        Some(boundary)
+    );
+    let lookup = runtime
+        .snapshot_recovery_confirm(&session, &request.confirmation)
+        .await
+        .unwrap();
+    assert_eq!(
+        lookup.state,
+        super::super::SnapshotRecoveryState::Acknowledged
+    );
+    assert!(lookup.receipt.is_some());
+    assert_eq!(lookup.journal_acknowledged, None);
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "retry replayed native acknowledgement"
+    );
+    let mut foreign = request.confirmation;
+    foreign.journal_id = "restore_foreign".into();
+    assert!(
+        runtime
+            .snapshot_recovery_confirm(&session, &foreign)
+            .await
+            .is_err()
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_new_stop_boundary_revokes_recovery_before_native_origin_or_effects() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    let request = recovery_request(original);
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let state = handle.state.lock().await;
+    let owner = runtime
+        .snapshot_recovery_worker(&handle, &state, request.clone())
+        .await
+        .unwrap();
+    drop(state);
+    runtime.fence_subtree_admissions(&session).await.unwrap();
+    let native_binding = binding(temp.path().canonicalize().unwrap());
+    assert!(
+        owner
+            .run(move |work| {
+                assert!(work.authorize().is_err());
+                assert!(work.begin(native_binding).is_err());
+                assert!(
+                    work.effect::<()>(|| panic!("revoked recovery changed source files"))
+                        .is_err()
+                );
+                Err(RestoreError::Failed("recovery revoked".into()))
+            })
+            .await
+            .is_err()
+    );
+    let lookup = runtime
+        .snapshot_recovery_confirm(&session, &request.confirmation)
+        .await
+        .unwrap();
+    assert_eq!(lookup.state, super::super::SnapshotRecoveryState::Unknown);
+    assert!(lookup.resolution.is_none() && lookup.receipt.is_none());
+    assert!(handle.has_location_uncertainty());
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn changed_session_rejects_recovery_pair_and_retry_only_looks_up_unknown_request() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    let request = recovery_request(original.clone());
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let state = handle.state.lock().await;
+    let owner = runtime
+        .snapshot_recovery_worker(&handle, &state, request.clone())
+        .await
+        .unwrap();
+    drop(state);
+    let count = Arc::new(AtomicUsize::new(0));
+    let completed = finish_recovery(owner, request.clone(), count.clone()).await;
+    let mut state = handle.state.lock().await;
+    runtime
+        .inner
+        .commit_locked(
+            &mut state,
+            vec![events::event(
+                events::TITLE_GENERATED,
+                &events::Titled {
+                    title: "changed revision".into(),
+                    usage: None,
+                    cost: None,
+                    model: None,
+                },
+            )],
+        )
+        .unwrap();
+    assert!(completed.commit_recovery(&state).is_err());
+    drop(state);
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        runtime
+            .inner
+            .store
+            .aggregate_seq(&original.activity_id)
+            .unwrap(),
+        Some(2)
+    );
+    let lookup = runtime
+        .snapshot_recovery_confirm(&session, &request.confirmation)
+        .await
+        .unwrap();
+    assert_eq!(lookup.state, super::super::SnapshotRecoveryState::Unknown);
+    assert!(lookup.receipt.is_none());
+    runtime.shutdown().await;
 }
 
 #[tokio::test]
@@ -194,11 +602,13 @@ async fn reload_preserves_generic_uncertainty_separately_from_snapshot_owners() 
             .unwrap()
             .contains(&activity_id)
     );
-    let mut generic = activity::Scope::reserve(&runtime.inner, &handle)
-        .await
-        .unwrap();
-    generic.launch().unwrap();
-    drop(generic);
+    assert!(
+        activity::Scope::reserve(&runtime.inner, &handle)
+            .await
+            .is_err(),
+        "snapshot fence admitted a new generic native scope"
+    );
+    legacy_generic_unknown(&runtime, &handle, &session);
     assert!(handle.location_uncertain.load(Ordering::SeqCst));
     let reloaded = restart(&runtime, temp.path());
     let restored = reloaded.inner.handle(&session).await.unwrap();
@@ -344,6 +754,24 @@ async fn rejected_origin_append_cannot_authorize_source_effects_even_if_the_adap
 #[tokio::test]
 async fn snapshot_completion_commits_session_and_exact_origin_before_native_ack() {
     let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let mut unrelated = activity::Scope::reserve(&runtime.inner, &handle)
+        .await
+        .unwrap();
+    let fake = SnapshotOrigin {
+        version: 1,
+        session_id: session.clone(),
+        session_created_id: "untrusted_attempt".into(),
+        activity_id: unrelated.id().to_owned(),
+        worktree_id: None,
+        binding: binding(temp.path().canonicalize().unwrap()),
+    };
+    assert!(
+        unrelated.launch_snapshot(fake).is_err(),
+        "generic activity adopted a snapshot origin"
+    );
+    unrelated.settle().unwrap();
+    drop(unrelated);
     let owner = worker(&runtime, &session).await;
     let native_binding = binding(temp.path().canonicalize().unwrap());
     let acknowledgements = Arc::new(AtomicUsize::new(0));
@@ -368,17 +796,12 @@ async fn snapshot_completion_commits_session_and_exact_origin_before_native_ack(
         .unwrap();
     assert_eq!(acknowledgements.load(Ordering::SeqCst), 0);
     let handle = runtime.inner.handle(&session).await.unwrap();
-    let mut unrelated = activity::Scope::reserve(&runtime.inner, &handle)
-        .await
-        .unwrap();
-    let unrelated_id = unrelated.id().to_owned();
-    let origin = completed.worker.scope.snapshot_origin().unwrap().clone();
     assert!(
-        unrelated.launch_snapshot(origin).is_err(),
-        "generic activity adopted a snapshot origin"
+        activity::Scope::reserve(&runtime.inner, &handle)
+            .await
+            .is_err()
     );
-    unrelated.launch().unwrap();
-    drop(unrelated);
+    let unrelated_id = legacy_generic_unknown(&runtime, &handle, &session);
     let mut state = handle.state.lock().await;
     completed
         .commit(
