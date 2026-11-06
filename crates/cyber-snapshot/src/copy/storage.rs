@@ -7,6 +7,8 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 pub type Result<T> = std::result::Result<T, String>;
+/// Three u64 decimal fields, nanoseconds (at most nine digits) and separators.
+pub const IDENTITY_MAX_BYTES: usize = 20 * 3 + 9 + 3;
 pub fn fail(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -16,13 +18,17 @@ pub fn identity(file: &File) -> Result<String> {
         .created()
         .map_err(|_| "Filesystem does not expose stable directory creation identity")?;
     let birth = birth.duration_since(std::time::UNIX_EPOCH).map_err(fail)?;
-    Ok(format!(
+    let value = format!(
         "{}:{}:{}:{}",
         m.dev(),
         m.ino(),
         birth.as_secs(),
         birth.subsec_nanos()
-    ))
+    );
+    if value.len() > IDENTITY_MAX_BYTES {
+        return Err("Snapshot directory identity exceeds its encoded bound".into());
+    }
+    Ok(value)
 }
 pub fn dir_identity(dir: &Dir) -> Result<String> {
     identity(&dir.try_clone().map_err(fail)?.into_std_file())

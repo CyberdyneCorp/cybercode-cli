@@ -122,9 +122,14 @@ mod model;
 mod requests;
 mod rewind;
 mod rewind_preview;
+mod snapshot_work;
 pub use rewind_preview::{
     RewindAction, RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview,
     RewindSelection,
+};
+pub use snapshot_work::{
+    SnapshotBinding, SnapshotCompletion, SnapshotNativeGuard, SnapshotNativeResult, SnapshotOrigin,
+    SnapshotRestoreRequest, SnapshotWork, SnapshotWorker,
 };
 mod routing;
 mod sandbox_events;
@@ -728,6 +733,7 @@ pub struct SessionPage {
 
 pub(crate) struct Handle {
     pub state: Mutex<SessionState>,
+    pub snapshot_active: std::sync::atomic::AtomicBool,
     pub pending_compaction: StdMutex<Option<Option<String>>>,
     pub title_requested: std::sync::atomic::AtomicBool,
     /// Set by a reject without feedback or a dismissed question: stop after the current tool group.
@@ -1613,6 +1619,30 @@ impl Runtime {
             .await
     }
 
+    async fn admission_effects(
+        &self,
+        session_id: &str,
+        admission: &Admission,
+        check: &PromptCheck,
+        message_id: &str,
+        digest: &str,
+    ) -> Result<(PromptEffects, PromptAttachments), RuntimeError> {
+        match check {
+            PromptCheck::Run | PromptCheck::RunWithFiles(_) => {
+                self.prompt_hooks(session_id, admission, check.files(), message_id, digest)
+                    .await
+            }
+            PromptCheck::Checked(context) => Ok((
+                PromptEffects {
+                    context: context.clone(),
+                    stop: None,
+                },
+                self.checked_attachments(session_id, &admission.parts)
+                    .await?,
+            )),
+        }
+    }
+
     /// Admit with the input's `untrusted` record. A Channel event is always scanned
     /// here, so no Channel admission path can skip the detector.
     async fn admit_recorded(
@@ -1630,31 +1660,22 @@ impl Runtime {
             .clone()
             .unwrap_or_else(|| cyber_core::ids::new_id("msg"));
         let digest = admission.digest(check.files());
+        {
+            let handle = self.inner.handle(session_id).await?;
+            let state = handle.state.lock().await;
+            if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
+                return Ok(receipt);
+            }
+            self.inner.ensure_snapshot_admission(&handle, session_id)?;
+        }
         // A denied prompt leaves no durable trace, including a staged revert.
         let prompt = check.runs_hooks();
-        let (effects, attachments) = match &check {
-            PromptCheck::Run | PromptCheck::RunWithFiles(_) => {
-                self.prompt_hooks(session_id, &admission, check.files(), &message_id, &digest)
-                    .await?
-            }
-            PromptCheck::Checked(context) => (
-                PromptEffects {
-                    context: context.clone(),
-                    stop: None,
-                },
-                self.checked_attachments(session_id, &admission.parts)
-                    .await?,
-            ),
-        };
+        let (effects, attachments) = self
+            .admission_effects(session_id, &admission, &check, &message_id, &digest)
+            .await?;
         let _admission = self.inner.open().await?;
         self.inner.ensure_admission_open(session_id)?;
-        let admission_bindings = self.callback_admission_bindings(session_id)?;
-        if let Some(bindings) = attempt
-            .as_ref()
-            .and_then(|attempt| attempt.admission_bindings.as_ref())
-        {
-            self.verify_admission_bindings(bindings)?;
-        }
+        let admission_bindings = self.admitted_bindings(session_id, attempt.as_ref())?;
         let handle = self.inner.handle(session_id).await?;
         handle.state.lock().await.ensure_worktree_ready()?;
         self.inner.commit_staged_revert(&handle).await?;
@@ -1674,6 +1695,7 @@ impl Runtime {
                 blobs.keep();
                 return Ok(receipt);
             }
+            self.inner.ensure_snapshot_admission(&handle, session_id)?;
             // The state lock makes accepted input visible before settlement chooses cleanup.
             if self.child_is_settling(session_id) {
                 return Err(RuntimeError::Busy(session_id.into()));
@@ -2558,12 +2580,17 @@ impl Inner {
                 RuntimeError::Invalid("browser-managed Session capacity reached".into())
             })?;
         }
+        let snapshot_source = id.to_owned();
+        let snapshot_unknown = self.store.read(move |db| {
+            Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM event e WHERE e.type='native.activity.changed.1' AND json_extract(e.data,'$.session_id')=?1 AND json_extract(e.data,'$.snapshot_worker')=1 AND json_extract(e.data,'$.status')<>'settled' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq))", [snapshot_source], |row| row.get::<_, bool>(0))?)
+        })?;
         let handle = Arc::new(Handle {
             title_requested: std::sync::atomic::AtomicBool::new(!state.info.default_title),
             state: Mutex::new(state),
+            snapshot_active: std::sync::atomic::AtomicBool::new(false),
             pending_compaction: StdMutex::default(),
             halt: std::sync::atomic::AtomicBool::new(false),
-            location_uncertain: std::sync::atomic::AtomicBool::new(false),
+            location_uncertain: std::sync::atomic::AtomicBool::new(snapshot_unknown),
             recent_calls: StdMutex::default(),
             auto_blocks: Mutex::new(0),
             stop_continuations: std::sync::atomic::AtomicUsize::new(0),

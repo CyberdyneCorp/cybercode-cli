@@ -11,6 +11,7 @@ tokio::task_local! { static CANCEL: CancellationToken; }
 pub(super) struct Control {
     pub source: String,
     pub binary_document: Option<String>,
+    pub snapshot_worker: bool,
     pub admission_sessions: std::collections::HashSet<String>,
     pub stop: CancellationToken,
     pub done: CancellationToken,
@@ -23,6 +24,10 @@ pub(super) struct Record {
     /// Trusted synchronous filesystem-only workers; no subprocess can escape this scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary_document: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub snapshot_worker: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_origin: Option<super::SnapshotOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_bindings: Option<Vec<super::admission_authority::Binding>>,
 }
@@ -60,10 +65,24 @@ impl Scope {
         handle: &Handle,
         binary_document: Option<String>,
     ) -> Result<Self, RuntimeError> {
+        let source = handle.state.lock().await.info.id.clone();
+        Self::reserve_owner(inner, source, binary_document, false).await
+    }
+    pub(super) async fn reserve_snapshot(
+        inner: &Inner,
+        source: String,
+    ) -> Result<Self, RuntimeError> {
+        Self::reserve_owner(inner, source, None, true).await
+    }
+    async fn reserve_owner(
+        inner: &Inner,
+        source: String,
+        binary_document: Option<String>,
+        snapshot_worker: bool,
+    ) -> Result<Self, RuntimeError> {
         let runtime = Runtime {
             inner: inner.me.upgrade().ok_or(RuntimeError::ShuttingDown)?,
         };
-        let source = handle.state.lock().await.info.id.clone();
         let authority = runtime.capture_child_admission(&source)?;
         let owned_handle = runtime.inner.handle(&source).await?;
         let id = cyber_core::ids::new_id("op");
@@ -72,6 +91,8 @@ impl Scope {
             status: "pending".into(),
             phase: "reserved".into(),
             binary_document,
+            snapshot_worker,
+            snapshot_origin: None,
             admission_bindings: Some(authority.bindings.clone()),
         };
         inner
@@ -80,6 +101,7 @@ impl Scope {
         let control = Arc::new(Control {
             source: source.clone(),
             binary_document: record.binary_document.clone(),
+            snapshot_worker,
             admission_sessions: super::admission_authority::binding_sessions(&authority.bindings),
             stop: inner.closed.child_token(),
             done: CancellationToken::new(),
@@ -115,6 +137,75 @@ impl Scope {
         self.store
             .append(&self.id, Expected::Seq(0), vec![change(&self.record)])?;
         self.launched = true;
+        Ok(())
+    }
+    pub(super) fn launch_snapshot(
+        &mut self,
+        origin: super::SnapshotOrigin,
+    ) -> Result<(), RuntimeError> {
+        if !self.record.snapshot_worker
+            || self.record.snapshot_origin.is_some()
+            || self.launched
+            || origin.version != 1
+            || origin.binding.directory.to_str().is_none()
+            || origin.activity_id != self.id
+            || origin.session_id != self.control.source
+        {
+            return Err(RuntimeError::Conflict(
+                "Snapshot origin cannot replace another activity".into(),
+            ));
+        }
+        self.record.snapshot_origin = Some(origin);
+        self.launch()
+    }
+    pub(super) fn snapshot_origin(&self) -> Option<&super::SnapshotOrigin> {
+        self.launched
+            .then_some(self.record.snapshot_origin.as_ref())
+            .flatten()
+    }
+    pub(super) fn commit_snapshot(
+        &mut self,
+        state: &mut super::SessionState,
+        sequence: i64,
+        events: Vec<NewEvent>,
+    ) -> Result<(), RuntimeError> {
+        let runtime = Runtime {
+            inner: self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?,
+        };
+        self.authority.verify(&runtime, &self.control.source)?;
+        if state.last_seq != sequence
+            || !self.record.snapshot_worker
+            || state.info.id != self.control.source
+            || self.control.stop.is_cancelled()
+        {
+            return Err(RuntimeError::Conflict(
+                "Snapshot commit authority changed".into(),
+            ));
+        }
+        let mut settled = self.record.clone();
+        settled.status = "settled".into();
+        settled.phase = "snapshot_restore_committed".into();
+        settled.admission_bindings = None;
+        let bindings = self.authority.bindings.clone();
+        let acknowledgement = change(&settled);
+        let owners = [
+            (state.info.id.clone(), state.last_seq),
+            (self.id.clone(), if self.launched { 1 } else { 0 }),
+        ];
+        let (stored, ()) = self.store.append_pair_checked(owners, move |tx| {
+            if !super::admission_authority::bindings_current(tx, &bindings)? {
+                return Err(cyber_store::StoreError::InvalidAppend(
+                    super::admission_authority::STALE.into(),
+                ));
+            }
+            Ok(([events, vec![acknowledgement]], ()))
+        })?;
+        self.record = settled;
+        self.settled = true;
+        for event in &stored[0] {
+            state.apply(event).map_err(RuntimeError::Corrupt)?;
+        }
+        runtime.inner.publish(&stored[0]);
         Ok(())
     }
     pub fn settle(&mut self) -> Result<(), RuntimeError> {
@@ -210,7 +301,8 @@ impl Inner {
         }
         let filesystem_only = controls
             .iter()
-            .all(|control| control.binary_document.is_some());
+            .all(|control| control.binary_document.is_some() || control.snapshot_worker);
+        let snapshot_worker = controls.iter().any(|control| control.snapshot_worker);
         let acknowledged = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             for control in controls {
                 control.done.cancelled().await;
@@ -222,12 +314,16 @@ impl Inner {
             if !filesystem_only {
                 handle.location_uncertain.store(true, Ordering::SeqCst);
             }
-            return Err(RuntimeError::Invalid(if filesystem_only {
-                "Binary filesystem work is still settling; query its operation before retrying"
-                    .into()
-            } else {
-                "Idle operation did not acknowledge interruption; recovery is required".into()
-            }));
+            return Err(RuntimeError::Invalid(
+                if filesystem_only && snapshot_worker {
+                    "Snapshot filesystem work is still settling; inspect recovery evidence before retrying".into()
+                } else if filesystem_only {
+                    "Binary filesystem work is still settling; query its operation before retrying"
+                        .into()
+                } else {
+                    "Idle operation did not acknowledge interruption; recovery is required".into()
+                },
+            ));
         }
         if handle.location_uncertain.load(Ordering::SeqCst) {
             return Err(RuntimeError::Invalid(

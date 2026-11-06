@@ -364,142 +364,216 @@ impl Runtime {
         }
         self.inner.ensure_idle(session_id)?;
         let handle = self.inner.handle(session_id).await?;
-        self.inner
-            .with_idle_location(&handle, async {
-                self.ensure_no_background(session_id)?;
-                let before = handle.state.lock().await.clone();
-                let preview = self
-                    .inner
-                    .build_rewind_preview(&before, &confirmation.selection)
-                    .await?;
-                if preview.confirmation != confirmation.confirmation {
-                    return Err(stale());
-                }
-                let authority = self.capture_child_admission(session_id)?;
-                let runtime = self.clone();
-                let source = session_id.to_owned();
-                let authorize = std::sync::Arc::new(move || {
-                    authority
-                        .verify(&runtime, &source)
-                        .map_err(|error| error.to_string())
-                });
-                let mut state = handle.state.lock().await;
-                self.inner.ensure_idle(session_id)?;
-                self.ensure_no_background(session_id)?;
-                validate(&state, &confirmation.selection)?;
-                if state.last_seq != before.last_seq || handle.is_compacting() {
-                    return Err(stale());
-                }
-                let paths = staged_paths(&preview)?;
-                let staged_diff = if preview.action == RewindAction::Stage {
-                    if let Some(code) = &preview.code {
-                        let baseline = state
-                            .revert
-                            .as_ref()
-                            .and_then(|r| r.baseline.as_deref())
-                            .unwrap_or(&code.baseline);
-                        Some(
-                            self.inner
-                                .preview_diff(&state.info.directory, baseline, &code.target)
-                                .await,
-                        )
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                let (baseline, applied, diff) = if let Some(code) = &preview.code {
-                    let restored = if preview.action == RewindAction::Clear {
-                        let paths = state
-                            .revert
-                            .as_ref()
-                            .and_then(|r| r.paths.clone())
-                            .ok_or_else(stale)?;
-                        self.inner
-                            .options
-                            .snapshots
-                            .restore_reviewed_paths(
-                                &state.info.directory,
-                                &code.target,
-                                &code.recorded,
-                                &code.baseline,
-                                authorize,
-                                paths,
-                            )
-                            .await
-                    } else {
-                        self.inner
-                            .options
-                            .snapshots
-                            .restore_reviewed(
-                                &state.info.directory,
-                                &code.target,
-                                &code.recorded,
-                                &code.baseline,
-                                authorize,
-                            )
-                            .await
-                    };
-                    let applied = match restored {
-                        Ok(_) => code.target.clone(),
-                        Err(super::RestoreError::Stale) => return Err(stale()),
-                        Err(super::RestoreError::Conflict(paths)) => {
-                            return Err(RuntimeError::RewindConflict(paths));
-                        }
-                        Err(super::RestoreError::Failed(message)) => {
-                            handle
-                                .location_uncertain
-                                .store(true, std::sync::atomic::Ordering::SeqCst);
-                            return Err(RuntimeError::Invalid(message));
-                        }
-                    };
-                    (
-                        state
-                            .revert
-                            .as_ref()
-                            .and_then(|r| r.baseline.clone())
-                            .or_else(|| Some(code.baseline.clone())),
-                        Some(applied),
-                        staged_diff.unwrap_or_else(|| {
-                            code.files.iter().map(|file| file.patch.as_str()).collect()
-                        }),
-                    )
-                } else {
-                    authorize().map_err(RuntimeError::Invalid)?;
-                    (None, None, String::new())
-                };
-                let revert = RevertState {
+        let directory = handle.state.lock().await.info.directory.clone();
+        let owned = confirmation.selection.target != RevertTarget::Conversation
+            && self
+                .inner
+                .options
+                .snapshots
+                .owned_restore_available(&directory);
+        if owned {
+            self.confirm_rewind(&handle, confirmation, true).await
+        } else {
+            self.inner
+                .with_idle_location(&handle, self.confirm_rewind(&handle, confirmation, false))
+                .await
+        }
+    }
+
+    async fn restore_reviewed_code<'a>(
+        &self,
+        handle: &'a std::sync::Arc<super::Handle>,
+        state: tokio::sync::MutexGuard<'a, SessionState>,
+        preview: &RewindPreview,
+        authorize: std::sync::Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+        owned: bool,
+    ) -> Result<
+        (
+            tokio::sync::MutexGuard<'a, SessionState>,
+            Option<super::SnapshotCompletion>,
+        ),
+        RuntimeError,
+    > {
+        let code = preview.code.as_ref().ok_or_else(stale)?;
+        let paths = if preview.action == RewindAction::Clear {
+            Some(
+                state
+                    .revert
+                    .as_ref()
+                    .and_then(|r| r.paths.clone())
+                    .ok_or_else(stale)?,
+            )
+        } else {
+            None
+        };
+        if owned {
+            let request = super::SnapshotRestoreRequest {
+                directory: state.info.directory.clone(),
+                target: code.target.clone(),
+                recorded: code.recorded.clone(),
+                expected: code.baseline.clone(),
+                paths,
+            };
+            let worker = self.snapshot_worker(handle, &state).await?;
+            drop(state);
+            let completed = self
+                .inner
+                .options
+                .snapshots
+                .restore_owned(request, worker)
+                .await
+                .map_err(restore_failure)?;
+            return Ok((handle.state.lock().await, Some(completed)));
+        }
+        let restored = if let Some(paths) = paths {
+            self.inner
+                .options
+                .snapshots
+                .restore_reviewed_paths(
+                    &state.info.directory,
+                    &code.target,
+                    &code.recorded,
+                    &code.baseline,
+                    authorize,
                     paths,
-                    message_id: preview.message_id,
-                    target: preview.target,
-                    baseline,
-                    applied,
-                    diff,
-                };
-                let events = match preview.action {
-                    RewindAction::Commit => vec![
-                        revert_event(session_id, &revert, RevertPhase::Stage),
-                        revert_event(session_id, &revert, RevertPhase::Commit),
-                    ],
-                    RewindAction::Stage => {
-                        vec![revert_event(session_id, &revert, RevertPhase::Stage)]
-                    }
-                    RewindAction::Clear => {
-                        vec![revert_event(session_id, &revert, RevertPhase::Clear)]
-                    }
-                };
-                let committed = self.inner.commit_locked(&mut state, events);
-                if let Err(error) = committed {
-                    if preview.code.is_some() {
-                        handle
-                            .location_uncertain
-                            .store(true, std::sync::atomic::Ordering::SeqCst);
-                    }
-                    return Err(error);
-                }
-                Ok(revert)
-            })
-            .await
+                )
+                .await
+        } else {
+            self.inner
+                .options
+                .snapshots
+                .restore_reviewed(
+                    &state.info.directory,
+                    &code.target,
+                    &code.recorded,
+                    &code.baseline,
+                    authorize,
+                )
+                .await
+        };
+        if matches!(restored, Err(super::RestoreError::Failed(_))) {
+            handle
+                .location_uncertain
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        restored.map_err(restore_failure)?;
+        Ok((state, None))
+    }
+
+    async fn confirm_rewind(
+        &self,
+        handle: &std::sync::Arc<super::Handle>,
+        confirmation: &RewindConfirmation,
+        owned: bool,
+    ) -> Result<RevertState, RuntimeError> {
+        let session_id = handle.state.lock().await.info.id.clone();
+        let session_id = session_id.as_str();
+        self.ensure_no_background(session_id)?;
+        let before = handle.state.lock().await.clone();
+        let preview = self
+            .inner
+            .build_rewind_preview(&before, &confirmation.selection)
+            .await?;
+        if preview.confirmation != confirmation.confirmation {
+            return Err(stale());
+        }
+        let authority = self.capture_child_admission(session_id)?;
+        let runtime = self.clone();
+        let source = session_id.to_owned();
+        let authorize = std::sync::Arc::new(move || {
+            authority
+                .verify(&runtime, &source)
+                .map_err(|error| error.to_string())
+        });
+        let mut state = handle.state.lock().await;
+        self.inner.ensure_idle(session_id)?;
+        self.ensure_no_background(session_id)?;
+        validate(&state, &confirmation.selection)?;
+        if state.last_seq != before.last_seq || handle.is_compacting() {
+            return Err(stale());
+        }
+        let paths = staged_paths(&preview)?;
+        let staged_diff = if preview.action == RewindAction::Stage {
+            if let Some(code) = &preview.code {
+                let baseline = state
+                    .revert
+                    .as_ref()
+                    .and_then(|r| r.baseline.as_deref())
+                    .unwrap_or(&code.baseline);
+                Some(
+                    self.inner
+                        .preview_diff(&state.info.directory, baseline, &code.target)
+                        .await,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let mut completion = None;
+        let (baseline, applied, diff) = if let Some(code) = &preview.code {
+            let (restored_state, completed) = self
+                .restore_reviewed_code(handle, state, &preview, authorize, owned)
+                .await?;
+            state = restored_state;
+            completion = completed;
+            let applied = code.target.clone();
+            (
+                state
+                    .revert
+                    .as_ref()
+                    .and_then(|r| r.baseline.clone())
+                    .or_else(|| Some(code.baseline.clone())),
+                Some(applied),
+                staged_diff
+                    .unwrap_or_else(|| code.files.iter().map(|file| file.patch.as_str()).collect()),
+            )
+        } else {
+            authorize().map_err(RuntimeError::Invalid)?;
+            (None, None, String::new())
+        };
+        let revert = RevertState {
+            paths,
+            message_id: preview.message_id,
+            target: preview.target,
+            baseline,
+            applied,
+            diff,
+        };
+        let events = match preview.action {
+            RewindAction::Commit => vec![
+                revert_event(session_id, &revert, RevertPhase::Stage),
+                revert_event(session_id, &revert, RevertPhase::Commit),
+            ],
+            RewindAction::Stage => {
+                vec![revert_event(session_id, &revert, RevertPhase::Stage)]
+            }
+            RewindAction::Clear => {
+                vec![revert_event(session_id, &revert, RevertPhase::Clear)]
+            }
+        };
+        let committed = if let Some(completed) = completion {
+            completed.commit(&mut state, events)
+        } else {
+            self.inner.commit_locked(&mut state, events).map(drop)
+        };
+        if let Err(error) = committed {
+            if preview.code.is_some() {
+                handle
+                    .location_uncertain
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            return Err(error);
+        }
+        Ok(revert)
+    }
+}
+
+fn restore_failure(error: super::RestoreError) -> RuntimeError {
+    match error {
+        super::RestoreError::Stale => stale(),
+        super::RestoreError::Conflict(paths) => RuntimeError::RewindConflict(paths),
+        super::RestoreError::Failed(message) => RuntimeError::Invalid(message),
     }
 }

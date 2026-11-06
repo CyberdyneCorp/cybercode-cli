@@ -188,7 +188,17 @@ inference. `filesystem_complete` means only that the worker flushed its final
 filesystem record; it does not acknowledge the Session/native receipt. `applied`
 contains durable checkpoints; a missing entry is not proof of no effect.
 
-Managed keep/rollback resolution and acknowledgement/reclamation of retained
-journals are not implemented yet. Do not edit records or remove evidence to force
-a retry. This increment preserves recovery material and provides inspection; it
-does not claim complete operator recovery or arbitrary external-writer atomicity.
+Reviewed non-Git restores retain their actual worker ownership after a client
+disconnects. New input is refused while that worker is active or has unresolved
+effects; Stop and read-only inspection remain available between source changes.
+On success, Session changes and the exact worker acknowledgement commit together,
+followed by acknowledgement of the retained journal. A completed filesystem
+record without that acknowledgement still blocks another restore. Legacy journals
+remain readable without acquiring new authority to acknowledge native effects.
+The snapshot-worker compatibility migration makes older binaries open this
+database read-only; they cannot safely enforce the new admission fences.
+
+Managed keep/rollback resolution, lost-reply acknowledgement reconciliation and
+reclamation of retained journals are not implemented yet. Do not edit records or
+remove evidence to force a retry. Complete operator recovery and broader native
+crash/platform acceptance remain unfinished.

@@ -85,6 +85,35 @@
 - **THEN** its file tree remains readable and inspection reports unavailable exclusion history
 - **AND** a Location-bound record from a different Location is refused even when its objects are available in the same shadow repository
 
+### Requirement: Runtime-owned snapshot workers
+(P1) Managed snapshot restoration SHALL use a runtime-issued synchronous worker owner binding Session creation, native activity, checkout, Location and private journal identities. The actual worker SHALL retain lifecycle, checkout, workspace and private-store ownership through its last filesystem operation and consuming commit even if the requesting task is disposed. Session changes SHALL be excluded from each source mutation and revalidated before the final commit. Ordinary prompt admission SHALL refuse active or unresolved managed snapshot work while exact retries remain inspectable. A successful restore SHALL atomically commit its Session events and exact worker acknowledgement, then acknowledge its journal under retained native proof. A journal alone SHALL NOT settle a generic process, binary document, foreign worker or legacy unknown activity.
+
+#### Scenario: Request disappears during a live worker
+- **WHEN** a requester is disposed after a managed worker records its immutable origin
+- **THEN** its actual native owners remain held until the synchronous worker exits, Stop and read-only Session inspection remain available between source effects, and shutdown waits for actual ownership settlement
+- **AND** uncertain effects retain their origin and admission fence across runtime reload without replay
+
+#### Scenario: Session changes before a source effect
+- **WHEN** the Session revision changes after preparation but before the next source mutation
+- **THEN** that mutation is refused and existing owner bytes remain unchanged
+
+#### Scenario: Receipt cannot acknowledge another process
+- **WHEN** a managed snapshot completes while an unrelated native process has unknown outcome
+- **THEN** only the exact snapshot activity can be acknowledged and the unrelated process retains its own unknown evidence and fence
+
+#### Scenario: Managed journal completion needs writer acknowledgement
+- **WHEN** a managed journal records filesystem completion but its runtime commit or journal acknowledgement is unobserved
+- **THEN** the retained evidence blocks another restore and is not treated as successful recovery or eligible for deletion
+
+#### Scenario: Legacy journal compatibility
+- **WHEN** inspection reads an origin-less version-1 file-copy intent
+- **THEN** it remains readable with its original completion semantics and is never upgraded into authority to acknowledge an unknown native activity
+
+#### Scenario: Journal quota includes its complete durable record
+- **WHEN** restore reserves storage before publishing an intent
+- **THEN** the bound includes worker metadata, escaped paths, complete progress and acknowledgement fields, atomic record replacement and retained stage/preimage payloads
+- **AND** exceeding the bound refuses before creating the intent or mutating source files
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

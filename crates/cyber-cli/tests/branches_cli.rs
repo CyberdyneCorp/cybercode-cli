@@ -734,6 +734,40 @@ fn interrupt_and_wait_idle(env: &Env, id: &str) {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reviewed_non_git_stage_and_clear_keep_exact_acknowledged_worker_receipts() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let id = env.exec(None, "WRITE-A");
+    let first = env.user_ids(&id)[0].clone();
+    std::fs::write(env.root.join("repo/owner.txt"), "owner before stage").unwrap();
+    let requests = model.requests().len();
+    reviewed_apply(
+        &env,
+        &id,
+        &reviewed_selection(&env, &first, "code", "stage"),
+    );
+    assert_eq!(env.file("a.txt"), None);
+    std::fs::write(env.root.join("repo/owner.txt"), "later owner bytes").unwrap();
+    reviewed_apply(
+        &env,
+        &id,
+        &reviewed_selection(&env, &first, "code", "clear"),
+    );
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(env.file("owner.txt").as_deref(), Some("later owner bytes"));
+    assert!(session_revert(&env, &id).is_null());
+    let catalog = json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/recovery")]));
+    let journals = catalog["data"].as_array().unwrap();
+    assert_eq!(journals.len(), 2);
+    for journal in journals {
+        assert_owned_snapshot_receipt(&env, &id, journal["id"].as_str().unwrap());
+    }
+    assert_eq!(model.requests().len(), requests);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn reviewed_non_git_code_rewind_uses_private_snapshots_and_keeps_owner_files() {
     let model = scripted_model::ScriptedModel::start(reply);
     let env = Env::new(&model);
@@ -757,6 +791,7 @@ fn reviewed_non_git_code_rewind_uses_private_snapshots_and_keeps_owner_files() {
             .clone();
     assert_eq!(journals.len(), 1);
     assert_eq!(journals[0]["filesystem_complete"], true);
+    assert_owned_snapshot_receipt(&env, &id, journals[0]["id"].as_str().unwrap());
     assert!(
         journals[0]["paths"]
             .as_array()
@@ -770,6 +805,65 @@ fn reviewed_non_git_code_rewind_uses_private_snapshots_and_keeps_owner_files() {
     assert_eq!(model.requests().len(), requests);
     let all = json(&env.cyber(&["sessions", "export", &id, "--all-branches"]));
     assert!(all.to_string().contains(&first));
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
+    let namespaces: Vec<_> = std::fs::read_dir(env.root.join("cyber-home/data/snapshot/global"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(namespaces.len(), 1);
+    let intent: Value = serde_json::from_slice(
+        &std::fs::read(
+            namespaces[0]
+                .join("journals")
+                .join(journal)
+                .join("intent.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(intent["version"], 2);
+    assert_eq!(intent["completed"], true);
+    assert_eq!(intent["acknowledged"], true);
+    let origin = &intent["origin"];
+    assert_eq!(origin["session_id"], session);
+    assert_eq!(origin["binding"]["journal_id"], journal);
+    let databases: Vec<_> = std::fs::read_dir(env.root.join("cyber-home/data"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "db"))
+        .collect();
+    assert_eq!(
+        databases.len(),
+        1,
+        "fixture must identify the actual channel database"
+    );
+    let db = rusqlite::Connection::open_with_flags(
+        &databases[0],
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let data: String = db
+        .query_row(
+            "SELECT data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+            [origin["activity_id"].as_str().unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let activity: Value = serde_json::from_str(&data).unwrap();
+    assert_eq!(activity["snapshot_origin"], *origin);
+    assert_eq!(activity["status"], "settled");
+    assert_eq!(activity["phase"], "snapshot_restore_committed");
+    let created: String = db
+        .query_row(
+            "SELECT id FROM event WHERE aggregate_id=?1 ORDER BY seq LIMIT 1",
+            [session],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(origin["session_created_id"], created);
 }
 
 #[test]

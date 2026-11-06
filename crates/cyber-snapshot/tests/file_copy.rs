@@ -45,6 +45,52 @@ impl Project {
         self.snapshots.track(&self.dir()).await.unwrap().unwrap()
     }
 }
+
+#[tokio::test]
+async fn replaced_location_after_plan_never_supplies_a_new_restore_target() {
+    refuses_replaced_location(false).await;
+    refuses_replaced_location(true).await;
+}
+
+async fn refuses_replaced_location(symlink: bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let p = Project::new();
+    p.write("a.txt", "before\n");
+    let before = p.track().await;
+    p.write("a.txt", "after\n");
+    let after = p.track().await;
+    let root = p.root.clone();
+    let displaced = root.with_file_name("displaced-root");
+    let moved = displaced.clone();
+    let calls = AtomicUsize::new(0);
+    let result = p
+        .snapshots
+        .restore_reviewed(
+            &p.dir(),
+            &before.tree,
+            &after.tree,
+            &after.tree,
+            Arc::new(move || {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    std::fs::rename(&root, &moved).unwrap();
+                    if symlink {
+                        std::os::unix::fs::symlink(&moved, &root).unwrap();
+                    } else {
+                        std::fs::create_dir(&root).unwrap();
+                        std::fs::write(root.join("a.txt"), "after\n").unwrap();
+                    }
+                }
+                Ok(())
+            }),
+        )
+        .await;
+    assert!(
+        matches!(result, Err(RestoreError::Failed(message)) if message.contains("Location identity changed"))
+    );
+    assert_eq!(std::fs::read(p.root.join("a.txt")).unwrap(), b"after\n");
+    assert_eq!(std::fs::read(displaced.join("a.txt")).unwrap(), b"after\n");
+}
+
 #[tokio::test]
 async fn non_git_snapshots_hash_bytes_preserve_owner_edits_and_restore_without_a_repository() {
     let p = Project::new();

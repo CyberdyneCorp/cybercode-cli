@@ -196,6 +196,18 @@ impl AdmissionAuthority {
 }
 
 impl Runtime {
+    pub(super) fn admitted_bindings(
+        &self,
+        source: &str,
+        attempt: Option<&super::names::Resumed>,
+    ) -> Result<Option<Vec<Binding>>, RuntimeError> {
+        let bindings = self.callback_admission_bindings(source)?;
+        if let Some(captured) = attempt.and_then(|attempt| attempt.admission_bindings.as_ref()) {
+            self.verify_admission_bindings(captured)?;
+        }
+        Ok(bindings)
+    }
+
     pub(super) fn verify_admission_bindings(
         &self,
         bindings: &[Binding],

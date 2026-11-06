@@ -200,6 +200,72 @@ impl GitSnapshots {
 }
 
 impl Snapshots for GitSnapshots {
+    fn owned_restore_available(&self, directory: &str) -> bool {
+        cfg!(any(target_os = "macos", target_os = "linux")) && self.non_git(directory)
+    }
+
+    fn restore_owned(
+        &self,
+        request: cyber_server::runtime::SnapshotRestoreRequest,
+        worker: cyber_server::runtime::SnapshotWorker,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::SnapshotCompletion, RestoreError>> {
+        Box::pin(async move {
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                let _ = (request, worker);
+                Err(RestoreError::Failed(
+                    "Owned snapshot restore is unavailable on this host".into(),
+                ))
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                if !self.non_git(&request.directory) {
+                    return Err(RestoreError::Failed(
+                        "Owned file-copy restore is unavailable for this Location".into(),
+                    ));
+                }
+                let config = (self.config)(Path::new(&request.directory));
+                let (ignore, max_file) = Self::options_value(&config);
+                let max_total = config
+                    .pointer("/snapshots/fallback_max_bytes")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(200 * 1024 * 1024);
+                let options = copy::Options {
+                    ignore,
+                    max_file: max_file.min(max_total).min(64 * 1024 * 1024),
+                    max_total,
+                    private_roots: self.private_roots.clone(),
+                };
+                let data = self.data_dir.clone();
+                let lock = cyber_server::workspace::mutation_lock(Path::new(&request.directory))
+                    .map_err(|error| RestoreError::Failed(error.to_string()))?;
+                let workspace = lock.lock_owned().await;
+                worker
+                    .run(move |work| {
+                        let store = copy::Store::open(&data, &request.directory, options)
+                            .map_err(RestoreError::Failed)?;
+                        let paths = store.restore_worker(
+                            &request.target,
+                            &request.recorded,
+                            &request.expected,
+                            request.paths.as_deref(),
+                            &|| Ok(()),
+                            Some(work),
+                        )?;
+                        let origin = work.origin().cloned();
+                        Ok(cyber_server::runtime::SnapshotNativeResult::new(
+                            paths,
+                            Box::new(copy::WorkerGuard {
+                                store,
+                                workspace,
+                                origin,
+                            }),
+                        ))
+                    })
+                    .await
+            }
+        })
+    }
     fn recovery(&self, directory: &str) -> BoxFuture<'_, Result<Vec<SnapshotRecovery>, String>> {
         let directory = directory.to_owned();
         Box::pin(async move { GitSnapshots::recovery(self, &directory).await })

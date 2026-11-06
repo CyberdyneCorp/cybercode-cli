@@ -403,3 +403,68 @@ No HTTP/SDK/CLI contract or database schema is changed yet. Exact snapshot-worke
 origin, worker lock retention, new journals, owner recovery operations and safe
 reclamation remain required before M2–M8 or the parent recovery tasks can close.
 No recovery success or native acknowledgement is inferred from this prerequisite.
+
+## Owned non-Git restore worker checkpoint
+
+Reviewed non-Git code rewind, stage and clear now use runtime-issued synchronous
+snapshot workers. The actual blocking callback retains its lifecycle, checkout,
+workspace and private-store owners after requester disposal. A separate admission
+owner permits inspection and Stop between source effects; each mutation takes the
+Session projection lock and rechecks captured authority and revision. New prompt
+admission refuses active or durable unresolved snapshot work before hooks and at
+consuming admission; exact input retries remain readable. Reload restores the
+typed worker fence. Generic and binary scopes cannot adopt snapshot origins.
+
+Version-2 file-copy intents bind Session creation, activity, checkout, canonical
+Location, native root and journal namespace/directory identities. Successful
+restoration uses the paired writer to commit Session events and only its own
+native acknowledgement, then acknowledges the journal under retained native locks.
+Unacknowledged managed completion blocks reuse. Version-1 journals retain their
+previous inspection semantics and never gain native settlement authority. The
+semantic compatibility migration `20261106000000_snapshot_worker_ownership` adds
+no tables, retains existing evidence and makes older migration catalogs refuse
+mutation instead of ignoring typed fences.
+
+The substantive code-review pass corrected holding the Session mutex across the
+whole callback, early admission/hook bypass, treating an unobserved origin append
+as effect authority, root rebinding, non-UTF-8 origin serialization, downgrade
+compatibility and insufficient quota padding. Restore now budgets the full escaped
+intent, all progress paths and acknowledgement metadata plus an atomic publication
+copy and stage/preimage payloads before creating an intent. A fixture that fits
+the former changes-only estimate is refused, while its larger-cap control passes.
+Root replacement and symlink-to-displaced-root controls leave both roots unchanged.
+
+Final macOS snapshot tests passed 39 cases (four unit, 18 file-copy and 17 Git).
+The unsupported-platform integration binary selected zero on macOS. Store passed
+58 cases including the new migration downgrade/reopen test. Affected server,
+snapshot and Store all-target Clippy with warnings denied passed after the final
+quota and migration changes. Earlier in this checkpoint, workspace all-target
+Clippy passed; 12 admission-authority, three callback-authority, 13 Location
+activity, four rewind-preview and six binary-document tests passed. The native
+root identity test passed. OpenAPI consistency and SDK generation checks passed;
+there is no network DTO change. Strict OpenSpec 1.13.2 passed 117 items; lint
+reported zero errors/25 warnings and inventory remained 53 capabilities/1030
+requirements with no ROADMAP change. Formatting and diff checks passed.
+All seven runtime snapshot-worker tests passed on the final quota/migration code:
+normal exact settlement, requester disposal/Stop/shutdown/reload, pre-effect
+refusal, changed revision, rejected consuming commit, ignored failed origin append
+and a non-UTF-8 metadata binding. The last is a serialization fixture, not positive
+native support for non-UTF-8 filesystem paths.
+All 12 real CLI branch/recovery cases passed serialized on that final code,
+including owned non-Git stage/clear receipts and preservation of later owner edits.
+The CLI build emitted native macOS sandbox deprecation warnings and a Darwin
+linker unwind-size warning; these were observed, not classified against main.
+
+This is partial M2/M3 infrastructure. It does not implement per-change native
+source/stage/parent ownership evidence, managed keep/rollback review/confirmation,
+request lookup/reconciliation or reclamation. Worker binding and matching bytes
+are insufficient rollback proof. Git and legacy restore entrypoints are not yet
+migrated to owned workers. Instrumented callback disposal/revision tests are not
+real process-kill proof for the new typed restore path; existing killed legacy
+file-copy tests do not substitute for that acceptance. Linux/Windows execution,
+expanded native crash/race coverage and the SDK TypeScript suite were not run in
+this checkpoint. No external model provider was used; CLI fixtures use a scripted
+HTTP model. M2–M8 and parent recovery tasks remain open; neither issue is complete.
+Crash reconciliation must include reservation-before-origin and
+origin-before-intent cuts; this checkpoint conservatively retains their fences
+and does not provide their owner recovery operation yet.

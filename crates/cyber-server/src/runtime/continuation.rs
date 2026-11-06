@@ -42,6 +42,7 @@ impl Runtime {
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
             return Ok(receipt);
         }
+        self.inner.ensure_snapshot_admission(&handle, id)?;
         if state.info.parent_id.is_none() {
             drop(lifecycle);
             return self.admit_prompt(id, admission, files).await;
@@ -242,6 +243,7 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         state.ensure_worktree_ready()?;
         if state.child_continuation_unknown
+            || handle.snapshot_active.load(Ordering::SeqCst)
             || handle.location_uncertain.load(Ordering::SeqCst)
             || state.calls.values().any(|call| {
                 matches!(

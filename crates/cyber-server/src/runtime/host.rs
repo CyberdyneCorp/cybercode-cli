@@ -1429,6 +1429,21 @@ pub struct SnapshotRecovery {
 
 /// Working-tree snapshots for a Location.
 pub trait Snapshots: Send + Sync {
+    /// Only synchronous filesystem hosts retaining runtime-issued worker ownership.
+    fn owned_restore_available(&self, _directory: &str) -> bool {
+        false
+    }
+    fn restore_owned(
+        &self,
+        _request: super::SnapshotRestoreRequest,
+        _worker: super::SnapshotWorker,
+    ) -> BoxFuture<'_, Result<super::SnapshotCompletion, RestoreError>> {
+        Box::pin(async {
+            Err(RestoreError::Failed(
+                "Owned snapshot restore is unsupported".into(),
+            ))
+        })
+    }
     /// Actionable unavailability retained after a one-time automatic warning.
     fn unavailable_reason(&self, _directory: &str) -> Option<String> {
         None

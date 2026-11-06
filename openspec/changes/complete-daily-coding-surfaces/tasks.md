@@ -48,9 +48,26 @@ exact native proof and actual restart/retry acceptance.
 
 Implementation source map:
 
+The non-Git reviewed-confirm path now uses a runtime-issued synchronous worker,
+origin-bound version-2 intent and paired Session/native commit followed by journal
+acknowledgement. M2–M8 remain open: Git and legacy entry-point integration,
+managed keep/rollback and request lookup, resolution receipts, lost-reply journal
+reconciliation, cleanup and complete native/platform acceptance are still required.
+
+Before rollback admission, M3 must retain exact per-change source/staged file and
+parent identities, including creation evidence for any new parents. Version-2
+worker origin binds the activity and journal, but file content hashes/mode alone
+cannot prove that a current same-byte replacement still belongs to that restore.
+Do not infer per-file rollback ownership from the worker binding or from missing
+progress. This prerequisite remains open with the complete native crash cuts.
+Crash acceptance must also cover reservation before origin publication and origin
+publication before intent publication. Those durable fences cannot be force-cleared
+or resolved by inventing a missing journal; implement exact pre-effect ownership
+proof/reconciliation for these cuts before claiming complete managed recovery.
+
 - `cyber-server/src/runtime/activity.rs` owns native activity records; `binary_documents.rs` retains a real synchronous worker's resources and `binary_recovery.rs` demonstrates document-specific recovery proof. Snapshot workers require their own origin/proof rather than calling binary recovery.
 - `cyber-server/src/runtime/host.rs::Snapshots` currently exposes restore and read-only recovery inspection; `rewind_preview.rs` owns reviewed confirmation. A dedicated owner recovery admission must work while ordinary admission remains fenced.
-- `cyber-snapshot/src/copy/restore.rs` has version-1 intents without native activity origin; `copy/storage.rs` owns private descriptor-relative I/O. `restore.rs` and `git_history.rs` cover Git restore and historical exclusions. Keep historical evidence readable as the new protocol is added.
+- `cyber-snapshot/src/copy/restore.rs` reads legacy version-1 intents and writes worker-bound version-2 intents for the owned path; `copy/storage.rs` owns private descriptor-relative I/O. `restore.rs` and `git_history.rs` cover Git restore and historical exclusions. Keep historical evidence readable as the new protocol is added.
 - `cyber-store/src/store.rs::append_checked` currently appends one aggregate. Separate independent appends cannot establish atomic acknowledgement plus resolution ownership.
 
 ## 4. Rules and context inspection

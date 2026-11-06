@@ -35,6 +35,10 @@ namespace identity and version. The runtime marks the activity as a snapshot
 filesystem-only worker before it can launch. Snapshot callbacks cannot label a
 generic shell/process activity as filesystem-only.
 
+The snapshot-worker compatibility migration records the new event semantics even
+without new tables. Older migration catalogs must refuse mutation rather than
+ignore typed worker fences. Existing native evidence remains unchanged.
+
 A trusted synchronous worker owns the actual mutation lock, private cross-process
 store lock and checkout/lifecycle resource through its last filesystem call,
 including when its async requester disappears. Reuse the binary worker's retained

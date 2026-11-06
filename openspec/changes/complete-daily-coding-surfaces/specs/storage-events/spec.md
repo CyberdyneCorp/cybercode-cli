@@ -23,3 +23,8 @@
 #### Scenario: Bounded decision refuses
 - **WHEN** a checked pair has duplicate, empty or oversized owner IDs, an invalid expected sequence, too many events or an oversized encoding
 - **THEN** it returns an explicit nonfatal refusal and commits no decision or event changes
+
+#### Scenario: Older binary cannot ignore new snapshot fences
+- **WHEN** a database is upgraded for snapshot-worker ownership
+- **THEN** migration `20261106000000_snapshot_worker_ownership` persists without rewriting legacy evidence or adding tables
+- **AND** a binary whose migration catalog predates that marker opens the database read-only through the existing unknown-migration gate instead of writing while ignoring new native admission fences

@@ -226,6 +226,15 @@ fn open(root: &Path, relative: &Path, write: bool) -> Result<(Dir, File, Vec<Str
     Err(Error::File)
 }
 impl Target {
+    /// Refuse adopting a newly resolved root when a caller already owns a pinned root.
+    pub fn validate_root(&self, root: &Dir) -> Result<(), Error> {
+        let file = root.try_clone().map_err(|_| Error::Io)?.into_std_file();
+        if self.parents.first() != Some(&id(&file)?) {
+            return Err(Error::Changed);
+        }
+        Ok(())
+    }
+
     pub fn capture(root: &Path, relative: &Path) -> Result<Self, Error> {
         let (_, file, parents) = open(root, relative, true)?;
         let m = file.metadata().map_err(|_| Error::Io)?;
@@ -453,6 +462,17 @@ mod tests {
         let target = Target::capture(root.path(), Path::new("target")).unwrap();
         (root, target, private)
     }
+    #[test]
+    fn captured_target_cannot_adopt_a_different_pinned_root() {
+        let (root, target, _) = setup();
+        let original = Dir::open_ambient_dir(root.path(), cap_std::ambient_authority()).unwrap();
+        assert!(target.validate_root(&original).is_ok());
+        let foreign = tempfile::tempdir().unwrap();
+        std::fs::write(foreign.path().join("target"), b"before").unwrap();
+        let replacement = Target::capture(foreign.path(), Path::new("target")).unwrap();
+        assert!(replacement.validate_root(&original).is_err());
+    }
+
     #[test]
     fn exchange_installs_exact_new_inode_preserves_displaced_bytes_and_metadata() {
         let (root, target, private) = setup();

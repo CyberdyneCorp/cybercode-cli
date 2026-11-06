@@ -2,7 +2,9 @@
 use super::storage::{self, Result, fail};
 use super::{ENTRY_LIMIT, Entry, RECORD_LIMIT, Store, Tree, now};
 use cap_fs_ext::DirExt;
-use cyber_server::runtime::{FileDiff, RestoreError};
+use cyber_server::runtime::{
+    FileDiff, RestoreError, SnapshotBinding, SnapshotOrigin, SnapshotWork,
+};
 use serde::{Deserialize, Serialize};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -17,6 +19,8 @@ struct Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Journal {
+    // Version 2 binds the worker, not historical per-file rollback identity.
+    // Resolution must not substitute Entry hashes for exact native change proof.
     version: u32,
     location: std::path::PathBuf,
     root: String,
@@ -24,32 +28,60 @@ struct Journal {
     completed: bool,
     changes: Vec<Change>,
     applied: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<SnapshotOrigin>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    acknowledged: bool,
 }
 
 impl Store {
     pub(super) fn ensure_recovered(&self) -> Result<()> {
-        if self.recovery()?.iter().any(|r| !r.filesystem_complete) {
-            return Err(
-                "Snapshot restore requires recovery; private journal and preimages retained".into(),
-            );
+        for id in storage::names(&self.journals, ENTRY_LIMIT)? {
+            let (_, record) = self.journal(&id)?;
+            if !record.completed || (record.version == 2 && !record.acknowledged) {
+                return Err(
+                    "Snapshot restore requires recovery; private journal and preimages retained"
+                        .into(),
+                );
+            }
         }
         Ok(())
+    }
+
+    fn journal(&self, id: &str) -> Result<(cap_std::fs::Dir, Journal)> {
+        let dir = self.journals.open_dir_nofollow(id).map_err(fail)?;
+        let record: Journal =
+            serde_json::from_slice(&storage::read(&dir, "intent.json", RECORD_LIMIT)?)
+                .map_err(fail)?;
+        if !matches!(
+            (record.version, record.origin.is_some()),
+            (1, false) | (2, true)
+        ) || record.location != self.root
+            || record.root != self.root_id
+            || record.changes.len() > ENTRY_LIMIT
+            || (record.version == 1 && record.acknowledged)
+        {
+            return Err("Invalid snapshot recovery journal".into());
+        }
+        if let Some(origin) = &record.origin {
+            let binding = &origin.binding;
+            if origin.version != 1
+                || binding.directory != self.root
+                || binding.root_identity != self.root_id
+                || binding.journal_id != id
+                || binding.namespace_identity != storage::dir_identity(&self.journals)?
+                || binding.journal_identity != storage::dir_identity(&dir)?
+            {
+                return Err("Snapshot journal differs from its native origin".into());
+            }
+        }
+        Ok((dir, record))
     }
     pub fn recovery(&self) -> Result<Vec<super::Recovery>> {
         let mut result = vec![];
         let mut response_bytes = 32usize;
         for id in storage::names(&self.journals, ENTRY_LIMIT)? {
-            let dir = self.journals.open_dir_nofollow(&id).map_err(fail)?;
-            let record: Journal =
-                serde_json::from_slice(&storage::read(&dir, "intent.json", RECORD_LIMIT)?)
-                    .map_err(fail)?;
-            if record.version != 1
-                || record.location != self.root
-                || record.root != self.root_id
-                || record.changes.len() > ENTRY_LIMIT
-            {
-                return Err("Invalid snapshot recovery journal".into());
-            }
+            let (_, record) = self.journal(&id)?;
             let view = super::Recovery {
                 id,
                 filesystem_complete: record.completed,
@@ -207,41 +239,46 @@ impl Store {
         paths: Option<&[String]>,
         authorize: &(dyn Fn() -> Result<()> + Send + Sync),
     ) -> std::result::Result<Vec<String>, RestoreError> {
+        self.restore_worker(target, recorded, expected, paths, authorize, None)
+    }
+
+    pub fn restore_worker(
+        &self,
+        target: &str,
+        recorded: &str,
+        expected: &str,
+        paths: Option<&[String]>,
+        authorize: &(dyn Fn() -> Result<()> + Send + Sync),
+        mut worker: Option<&mut SnapshotWork<'_>>,
+    ) -> std::result::Result<Vec<String>, RestoreError> {
         authorize().map_err(RestoreError::Failed)?;
+        if let Some(worker) = worker.as_ref() {
+            worker.authorize().map_err(RestoreError::Failed)?;
+        }
         let (_, changes) = self.plan(target, recorded, expected, paths)?;
         if changes.is_empty() {
             return Ok(vec![]);
         }
-        let record_bytes = serde_json::to_vec(&changes)
-            .map_err(|e| RestoreError::Failed(e.to_string()))?
-            .len() as u64;
-        let reserve = changes
-            .iter()
-            .map(|c| {
-                c.before
-                    .as_ref()
-                    .map_or(0, |e| e.length)
-                    .max(c.after.as_ref().map_or(0, |e| e.length))
-            })
-            .try_fold(
-                record_bytes.saturating_mul(2).saturating_add(4096),
-                |sum, length| sum.checked_add(length).ok_or("Restore size overflow"),
-            )
-            .map_err(|e| RestoreError::Failed(e.into()))?;
-        self.reserve(reserve).map_err(RestoreError::Failed)?;
-        // The directory is unique. A crash before publishing its intent is also
-        // unreadable recovery evidence and fails closed on the next open.
         let id = format!("restore_{}", ulid::Ulid::new());
+        let mut journal = self
+            .prepare_journal(changes, &id, worker.as_deref())
+            .map_err(RestoreError::Failed)?;
+        // An unpublished/incomplete directory also remains recovery evidence.
         let dir = storage::private_child(&self.journals, &id).map_err(RestoreError::Failed)?;
-        let mut journal = Journal {
-            version: 1,
-            location: self.root.clone(),
-            root: self.root_id.clone(),
-            created: now(),
-            completed: false,
-            changes,
-            applied: vec![],
-        };
+        let origin = worker
+            .as_mut()
+            .map(|worker| {
+                worker.begin(SnapshotBinding {
+                    directory: self.root.clone(),
+                    root_identity: self.root_id.clone(),
+                    namespace_identity: storage::dir_identity(&self.journals)?,
+                    journal_id: id.clone(),
+                    journal_identity: storage::dir_identity(&dir)?,
+                })
+            })
+            .transpose()
+            .map_err(RestoreError::Failed)?;
+        journal.origin = origin;
 
         Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
         for (i, change) in journal.changes.iter().enumerate() {
@@ -258,8 +295,22 @@ impl Store {
         storage::sync(&dir).map_err(RestoreError::Failed)?;
         for i in 0..journal.changes.len() {
             authorize().map_err(RestoreError::Failed)?;
-            self.install(&dir, i, &journal.changes[i])
-                .map_err(RestoreError::Failed)?;
+            if let Some(worker) = worker.as_ref() {
+                worker
+                    .effect(|| {
+                        self.verify_worker_namespace(
+                            journal
+                                .origin
+                                .as_ref()
+                                .ok_or("Missing snapshot worker origin")?,
+                        )?;
+                        self.install(&dir, i, &journal.changes[i])
+                    })
+                    .map_err(RestoreError::Failed)?;
+            } else {
+                self.install(&dir, i, &journal.changes[i])
+                    .map_err(RestoreError::Failed)?;
+            }
             journal.applied.push(journal.changes[i].path.clone());
             Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
         }
@@ -267,6 +318,110 @@ impl Store {
         journal.completed = true;
         Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
         Ok(journal.applied)
+    }
+
+    fn prepare_journal(
+        &self,
+        changes: Vec<Change>,
+        id: &str,
+        worker: Option<&SnapshotWork<'_>>,
+    ) -> Result<Journal> {
+        let origin = worker
+            .map(|worker| {
+                worker.authorize()?;
+                Ok::<_, String>(worker.preview_origin(SnapshotBinding {
+                    directory: self.root.clone(),
+                    root_identity: self.root_id.clone(),
+                    namespace_identity: storage::dir_identity(&self.journals)?,
+                    journal_id: id.to_owned(),
+                    journal_identity: "0".repeat(storage::IDENTITY_MAX_BYTES),
+                }))
+            })
+            .transpose()?;
+        let mut journal = Journal {
+            version: if origin.is_some() { 2 } else { 1 },
+            location: self.root.clone(),
+            root: self.root_id.clone(),
+            created: now(),
+            // Budget the largest progress/acknowledgement record, including JSON
+            // escaping, plus its atomic replacement copy, before creating an intent.
+            completed: false,
+            applied: changes.iter().map(|change| change.path.clone()).collect(),
+            changes,
+            origin,
+            acknowledged: worker.is_some(),
+        };
+        let bytes = serde_json::to_vec(&journal).map_err(fail)?.len() as u64;
+        if bytes > RECORD_LIMIT {
+            return Err("Restore journal exceeds limit".into());
+        }
+        let reserve = journal
+            .changes
+            .iter()
+            .map(|change| {
+                change
+                    .before
+                    .as_ref()
+                    .map_or(0, |entry| entry.length)
+                    .max(change.after.as_ref().map_or(0, |entry| entry.length))
+            })
+            .try_fold(
+                bytes.checked_mul(2).ok_or("Restore size overflow")?,
+                |sum, length| sum.checked_add(length).ok_or("Restore size overflow"),
+            )?;
+        self.reserve(reserve)?;
+        journal.applied.clear();
+        journal.origin = None;
+        journal.acknowledged = false;
+        Ok(journal)
+    }
+
+    pub(super) fn verify_worker_origin(&self, origin: Option<&SnapshotOrigin>) -> Result<()> {
+        self.verify_root()?;
+        let Some(origin) = origin else { return Ok(()) };
+        self.verify_worker_namespace(origin)?;
+        let (_, record) = self.journal(&origin.binding.journal_id)?;
+        if record.origin.as_ref() != Some(origin) || !record.completed {
+            return Err("Snapshot worker completion differs from its retained intent".into());
+        }
+        Ok(())
+    }
+
+    fn verify_worker_namespace(&self, origin: &SnapshotOrigin) -> Result<()> {
+        self.verify_root()?;
+        let binding = &origin.binding;
+        if binding.directory != self.root
+            || binding.root_identity != self.root_id
+            || binding.namespace_identity != storage::dir_identity(&self.journals)?
+        {
+            return Err("Snapshot worker namespace changed".into());
+        }
+        let fresh = Self::existing(
+            &self.data_path,
+            &self.root.to_string_lossy(),
+            self.options.clone(),
+        )?
+        .ok_or("Snapshot worker namespace is missing")?;
+        if storage::dir_identity(&fresh.journals)? != binding.namespace_identity {
+            return Err("Snapshot worker namespace route changed".into());
+        }
+        let dir = self
+            .journals
+            .open_dir_nofollow(&binding.journal_id)
+            .map_err(fail)?;
+        if storage::dir_identity(&dir)? != binding.journal_identity {
+            return Err("Snapshot worker journal identity changed".into());
+        }
+        Ok(())
+    }
+    pub(super) fn acknowledge_worker(&self, origin: Option<&SnapshotOrigin>) -> Result<()> {
+        let Some(origin) = origin else { return Ok(()) };
+        let (dir, mut journal) = self.journal(&origin.binding.journal_id)?;
+        if journal.origin.as_ref() != Some(origin) || !journal.completed {
+            return Err("Snapshot acknowledgement differs from its completed worker".into());
+        }
+        journal.acknowledged = true;
+        Self::record(&dir, &journal)
     }
     fn stage_metadata(file: &std::fs::File, entry: &Entry) -> Result<()> {
         rustix::fs::fchown(
@@ -287,6 +442,7 @@ impl Store {
         storage::atomic(dir, "intent.json", &bytes)
     }
     fn install(&self, dir: &cap_std::fs::Dir, index: usize, change: &Change) -> Result<()> {
+        self.verify_root()?;
         if self.current(&change.path)? != change.before {
             return Err(format!(
                 "Restore source changed; journal retained: {}",
@@ -306,6 +462,7 @@ impl Store {
                     Path::new(&change.path),
                 )
                 .map_err(fail)?;
+                target.validate_root(&self.work).map_err(fail)?;
                 if target.length.0 != before.length
                     || target.metadata.mode != before.mode
                     || target.metadata.uid != before.uid
@@ -355,5 +512,121 @@ impl Store {
             return Err("Restore result changed; recovery required".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quota_includes_escaped_progress_and_atomic_record_replacement() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("work");
+        std::fs::create_dir(&root).unwrap();
+        let mut store = Store::open(
+            &temp.path().join("data"),
+            &root.to_string_lossy(),
+            super::super::Options {
+                max_file: 65536,
+                max_total: 10000,
+                ignore: vec![],
+                private_roots: vec![],
+            },
+        )
+        .unwrap();
+        let path = vec!["\"".repeat(50); 24].join("/") + "/file";
+        let changes = vec![Change {
+            path,
+            before: None,
+            after: Some(Entry {
+                object: blake3::hash(b"").to_hex().to_string(),
+                length: 0,
+                mode: 0o644,
+                uid: 0,
+                gid: 0,
+            }),
+        }];
+        // The former changes-only estimate admitted this escaped-path fixture.
+        let old_estimate = serde_json::to_vec(&changes).unwrap().len() * 2 + 4096;
+        assert!(old_estimate < 10000);
+        assert!(
+            store
+                .prepare_journal(changes.clone(), "restore_fixture", None)
+                .is_err()
+        );
+        assert!(
+            storage::names(&store.journals, ENTRY_LIMIT)
+                .unwrap()
+                .is_empty()
+        );
+        store.options.max_total = 20000;
+        let journal = store
+            .prepare_journal(changes, "restore_fixture", None)
+            .unwrap();
+        assert!(journal.applied.is_empty());
+        assert_eq!(journal.changes.len(), 1);
+    }
+
+    #[test]
+    fn filesystem_completion_alone_does_not_admit_a_managed_restore_or_foreign_ack() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("work");
+        std::fs::create_dir(&root).unwrap();
+        let store = Store::open(
+            &temp.path().join("data"),
+            &root.to_string_lossy(),
+            super::super::Options {
+                max_file: 65536,
+                max_total: 4 * 1024 * 1024,
+                ignore: vec![],
+                private_roots: vec![],
+            },
+        )
+        .unwrap();
+        let id = "restore_fixture";
+        let dir = storage::private_child(&store.journals, id).unwrap();
+        // This is a storage-state fixture, not runtime authority to acknowledge a process.
+        let origin = SnapshotOrigin {
+            version: 1,
+            session_id: "ses_fixture".into(),
+            session_created_id: "evt_fixture".into(),
+            activity_id: "op_fixture".into(),
+            worktree_id: None,
+            binding: SnapshotBinding {
+                directory: store.root.clone(),
+                root_identity: store.root_id.clone(),
+                namespace_identity: storage::dir_identity(&store.journals).unwrap(),
+                journal_id: id.into(),
+                journal_identity: storage::dir_identity(&dir).unwrap(),
+            },
+        };
+        Store::record(
+            &dir,
+            &Journal {
+                version: 2,
+                location: store.root.clone(),
+                root: store.root_id.clone(),
+                created: now(),
+                completed: true,
+                changes: vec![],
+                applied: vec![],
+                origin: Some(origin.clone()),
+                acknowledged: false,
+            },
+        )
+        .unwrap();
+        assert!(store.recovery().unwrap()[0].filesystem_complete);
+        let refusal = store.preview("unused", "unused", "unused", None);
+        assert!(
+            matches!(refusal, Err(RestoreError::Failed(message)) if message.contains("requires recovery"))
+        );
+        let mut foreign = origin.clone();
+        foreign.activity_id = "op_foreign".into();
+        assert!(store.acknowledge_worker(Some(&foreign)).is_err());
+        assert!(store.ensure_recovered().is_err());
+        store.acknowledge_worker(Some(&origin)).unwrap();
+        assert!(store.ensure_recovered().is_ok());
+        assert!(store.journal(id).unwrap().1.acknowledged);
     }
 }

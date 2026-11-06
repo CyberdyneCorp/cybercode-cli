@@ -64,6 +64,29 @@ pub(crate) struct Store {
     options: Options,
     usage: std::cell::Cell<Option<u64>>,
 }
+
+pub(crate) struct WorkerGuard {
+    pub store: Store,
+    pub workspace: tokio::sync::OwnedMutexGuard<()>,
+    pub origin: Option<cyber_server::runtime::SnapshotOrigin>,
+}
+
+impl cyber_server::runtime::SnapshotNativeGuard for WorkerGuard {
+    fn verify(&self, origin: Option<&cyber_server::runtime::SnapshotOrigin>) -> Result<()> {
+        let _retained_workspace = &self.workspace;
+        if origin != self.origin.as_ref() {
+            return Err("Snapshot receipt belongs to another worker".into());
+        }
+        self.store.verify_worker_origin(origin)
+    }
+    fn acknowledge(
+        &mut self,
+        origin: Option<&cyber_server::runtime::SnapshotOrigin>,
+    ) -> Result<()> {
+        self.verify(origin)?;
+        self.store.acknowledge_worker(origin)
+    }
+}
 impl Store {
     pub fn open(data: &Path, location: &str, options: Options) -> Result<Self> {
         Self::open_mode(data, location, options, true)
@@ -158,6 +181,13 @@ impl Store {
         })
     }
     fn verify_root(&self) -> Result<()> {
+        if !std::fs::symlink_metadata(&self.root)
+            .map_err(fail)?
+            .file_type()
+            .is_dir()
+        {
+            return Err("Snapshot Location identity changed".into());
+        }
         let fresh =
             Dir::open_ambient_dir(&self.root, cap_std::ambient_authority()).map_err(fail)?;
         if storage::dir_identity(&fresh)? != self.root_id {
