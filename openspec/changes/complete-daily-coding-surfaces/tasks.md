@@ -51,9 +51,11 @@ rewind commit explicitly refuses a recovery receipt. No native fence is cleared 
 backend filesystem completion. Created source directories remain protected for
 acknowledged, ownership-checked cleanup.
 
-Before enabling M5, cover late original-scope disposal after native store-lock
-release: an `Expected::Any` Drop append must not resurrect an acknowledged activity
-or overwrite its durable receipt. Preserve opaque/generic Location uncertainty;
+Late original-scope disposal now checks durable identity and status within the
+writer transaction after native store-lock release. It preserves an already
+acknowledged activity and its complete receipt; changed ownership/sequence refuses
+the append. This does not implement recovery acknowledgement. Before enabling M5,
+preserve opaque/generic Location uncertainty;
 the current shared `location_uncertain` boolean is not proof that every reason
 belongs to the resolved snapshot. Reconciliation must distinguish a durable writer
 acknowledgement with missing journal acknowledgement from an uncommitted filesystem

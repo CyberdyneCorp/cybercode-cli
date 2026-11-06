@@ -1,6 +1,7 @@
 //! Durable idle-operation ownership; disposal is not native acknowledgement.
 use super::{AdmissionAuthority, Handle, Inner, Runtime, RuntimeError};
 use cyber_store::{Expected, NewEvent, Store};
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, PoisonError, Weak, atomic::Ordering};
 use tokio_util::sync::CancellationToken;
@@ -227,32 +228,70 @@ impl Scope {
             )
             .await
     }
+    fn dispose(&self, record: Record) -> Result<bool, cyber_store::StoreError> {
+        let id = self.id.clone();
+        let original = self.record.clone();
+        let sequence = if self.launched { 1 } else { 0 };
+        let (_, uncertain) = self.store.append_checked(&self.id, Expected::Any, move |tx| {
+            let latest = tx.query_row(
+                "SELECT seq,type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+                [&id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+            ).optional()?;
+            let Some((seq, kind, data)) = latest else {
+                return Err(cyber_store::StoreError::InvalidAppend("Native activity disappeared before disposal".into()));
+            };
+            let current: Record = serde_json::from_str(&data).map_err(|error|
+                cyber_store::StoreError::CorruptEvent { id: id.clone(), reason: error.to_string() })?;
+            // An unsuccessful launch may have set the in-memory origin without
+            // publishing it. Its durable reservation must still have no origin.
+            let origin = if sequence == 1 { original.snapshot_origin.as_ref() } else { None };
+            if kind != CHANGED || current.session_id != original.session_id
+                || current.binary_document != original.binary_document
+                || current.snapshot_worker != original.snapshot_worker
+                || current.snapshot_origin.as_ref() != origin
+            {
+                return Err(cyber_store::StoreError::InvalidAppend("Native activity ownership changed before disposal".into()));
+            }
+            // Recovery may have committed after the native lock was released but
+            // before this scope unwound. Preserve the complete durable receipt.
+            if current.status == "settled" {
+                return Ok((vec![], false));
+            }
+            if seq != sequence {
+                return Err(cyber_store::StoreError::Concurrency { aggregate: id, expected: sequence, actual: seq });
+            }
+            let uncertain = record.status == "unknown";
+            Ok((vec![change(&record)], uncertain))
+        })?;
+        Ok(uncertain)
+    }
 }
 impl Drop for Scope {
     fn drop(&mut self) {
         self.control.stop.cancel();
         if !self.settled {
             let filesystem_only = self.record.binary_document.is_some();
-            if self.launched && !filesystem_only {
-                self.handle.location_uncertain.store(true, Ordering::SeqCst);
-            }
             // This trusted scope owns only synchronous filesystem calls. Once
             // its actual worker unwinds, it has no escaped task/process to settle;
             // possible file effects remain in the separate document intent.
-            self.record.status = if self.launched && !filesystem_only {
+            let mut disposed = self.record.clone();
+            disposed.snapshot_origin = self.snapshot_origin().cloned();
+            disposed.status = if self.launched && !filesystem_only {
                 "unknown"
             } else {
                 "settled"
             }
             .into();
             if filesystem_only {
-                self.record.phase = "filesystem_worker_disposed_query_document".into();
+                disposed.phase = "filesystem_worker_disposed_query_document".into();
             }
-            self.record.admission_bindings = None;
-            if let Err(error) =
-                self.store
-                    .append(&self.id, Expected::Any, vec![change(&self.record)])
-            {
+            disposed.admission_bindings = None;
+            let result = self.dispose(disposed);
+            if self.launched && !filesystem_only && result.as_ref().copied().unwrap_or(true) {
+                self.handle.location_uncertain.store(true, Ordering::SeqCst);
+            }
+            if let Err(error) = result {
                 cyber_core::log::error(
                     "activity",
                     &error.to_string(),

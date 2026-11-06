@@ -61,6 +61,104 @@ fn restart(runtime: &Runtime, root: &std::path::Path) -> Runtime {
 }
 
 #[tokio::test]
+async fn late_snapshot_disposal_preserves_durable_acknowledgement_and_unrelated_uncertainty() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    for unrelated_uncertainty in [false, true] {
+        let owner = worker(&runtime, &session).await;
+        let native_binding = binding(temp.path().canonicalize().unwrap());
+        let completed = owner
+            .run(move |work| {
+                let origin = work.begin(native_binding).unwrap();
+                Ok(SnapshotNativeResult::new(
+                    vec![],
+                    Box::new(Guard {
+                        origin: Some(origin),
+                        acknowledgements: Arc::new(AtomicUsize::new(0)),
+                    }),
+                ))
+            })
+            .await
+            .unwrap();
+        let id = completed.worker.scope.id().to_owned();
+        let mut receipt = latest(&runtime, &session);
+        receipt["status"] = "settled".into();
+        receipt["phase"] = "snapshot_recovery_committed".into();
+        receipt["resolution_receipt"] = serde_json::json!({"request_id":"retained_request"});
+        runtime
+            .inner
+            .store
+            .append(
+                &id,
+                cyber_store::Expected::Seq(1),
+                vec![NewEvent::new(activity::CHANGED, receipt.clone())],
+            )
+            .unwrap();
+        let sequence = runtime.inner.store.aggregate_seq(&id).unwrap();
+        let notifications = runtime.inner.store.subscribe();
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        handle
+            .location_uncertain
+            .store(unrelated_uncertainty, Ordering::SeqCst);
+        drop(completed);
+        assert!(notifications.try_recv().is_err());
+        assert_eq!(runtime.inner.store.aggregate_seq(&id).unwrap(), sequence);
+        assert_eq!(latest(&runtime, &session), receipt);
+        assert_eq!(
+            handle.location_uncertain.load(Ordering::SeqCst),
+            unrelated_uncertainty
+        );
+    }
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn late_snapshot_disposal_refuses_changed_native_ownership() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let owner = worker(&runtime, &session).await;
+    let native_binding = binding(temp.path().canonicalize().unwrap());
+    let completed = owner
+        .run(move |work| {
+            let origin = work.begin(native_binding).unwrap();
+            Ok(SnapshotNativeResult::new(
+                vec![],
+                Box::new(Guard {
+                    origin: Some(origin),
+                    acknowledgements: Arc::new(AtomicUsize::new(0)),
+                }),
+            ))
+        })
+        .await
+        .unwrap();
+    let id = completed.worker.scope.id().to_owned();
+    let mut foreign = latest(&runtime, &session);
+    foreign["snapshot_origin"]["binding"]["journal_id"] = "restore_foreign".into();
+    runtime
+        .inner
+        .store
+        .append(
+            &id,
+            cyber_store::Expected::Seq(1),
+            vec![NewEvent::new(activity::CHANGED, foreign.clone())],
+        )
+        .unwrap();
+    let notifications = runtime.inner.store.subscribe();
+    drop(completed);
+    assert!(notifications.try_recv().is_err());
+    assert_eq!(runtime.inner.store.aggregate_seq(&id).unwrap(), Some(2));
+    assert_eq!(latest(&runtime, &session), foreign);
+    assert!(
+        runtime
+            .inner
+            .handle(&session)
+            .await
+            .unwrap()
+            .location_uncertain
+            .load(Ordering::SeqCst)
+    );
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn ordinary_restore_commit_cannot_consume_a_recovery_receipt_or_acknowledge_it() {
     let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
     let owner = worker(&runtime, &session).await;
@@ -153,6 +251,7 @@ async fn rejected_origin_append_cannot_authorize_source_effects_even_if_the_adap
     assert!(result.is_err());
     runtime.inner.store.set_append_fault(None);
     assert_eq!(latest(&runtime, &session)["status"], "settled");
+    assert!(latest(&runtime, &session)["snapshot_origin"].is_null());
     runtime.shutdown().await;
 }
 

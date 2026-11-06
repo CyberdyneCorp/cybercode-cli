@@ -607,3 +607,41 @@ these missing resolution/runtime cuts. Late-scope disposal and uncertainty-reaso
 requirements are recorded in tasks.md before enabling acknowledgement. The remote
 refresh still reports main `db9e171e` and no open PRs. M2–M8 remain open; the full
 #93/#92 goal remains active and neither issue is complete.
+
+### Late native-scope disposal safeguard
+
+Scope disposal now reads the latest activity in the same Store writer transaction
+as its conditional append. It checks Session, worker kind, document/origin and
+expected reservation/launch sequence. An already-settled exact owner is a no-op:
+its complete receipt, event sequence and notification stream are preserved. A
+changed owner or sequence refuses the append and retains conservative uncertainty.
+Rejected origin publication also no longer leaks the attempted in-memory origin
+into the reservation's disposal event.
+
+Two new instrumented runtime regressions cover late disposal after an independently
+committed acknowledgement (with and without an unrelated uncertainty flag), and
+changed journal ownership. They check unchanged durable payload/sequence and no
+notification from either the no-op or rejected transaction. The existing rejected
+origin regression now verifies that no origin was manufactured by disposal. These
+use the real Store and worker lifetime but inject the acknowledgement event; they
+do not prove the still-unimplemented consuming recovery commit or a native crash.
+
+Final local macOS server unit tests passed 396 cases, with one ignored subprocess
+fixture (`database_lock_probe`, invoked explicitly by its parent regressions).
+Server all-target Clippy with warnings denied passed. Strict OpenSpec validation
+passed all 117 items. Formatting and diff checks passed.
+
+The shared idle-cancellation and Location integration binaries also passed (four
+and thirteen tests respectively), exercising acknowledged versus unknown disposal,
+shutdown, cancellation timeouts, worker panic and retained resource ownership.
+
+The code-review skill was applied to the changed disposal path and tests, including
+writer serialization, exact ownership, corrupt/missing evidence refusal, no-op
+notifications and shared binary/generic-worker behavior. Review caught and fixed
+the rejected-origin serialization issue. No new public operation or acknowledgement
+authority is added. Opaque Location uncertainty is never cleared here. The wider M5
+work must still distinguish snapshot uncertainty from other reasons and coordinate
+its in-memory state with recovery acknowledgement, including acknowledgement that
+follows a successful unknown-disposal append. Git, runtime request ownership,
+reconciliation, cleanup and native/client acceptance remain open. No Linux/Windows,
+full-workspace or real recovery operator acceptance was run for this safeguard.
