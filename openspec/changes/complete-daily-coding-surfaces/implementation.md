@@ -468,3 +468,68 @@ HTTP model. M2–M8 and parent recovery tasks remain open; neither issue is comp
 Crash reconciliation must include reservation-before-origin and
 origin-before-intent cuts; this checkpoint conservatively retains their fences
 and does not provide their owner recovery operation yet.
+
+## Prepared file-copy ownership and native cut evidence
+
+Refreshed external state: origin/main remains `db9e171e`, issues #93/#92 are open,
+and the repository has no open PRs. This continuation adds the per-file evidence
+needed by M3/M4 without claiming the managed resolution operations exist.
+
+New non-Git file-copy restores write version-3 intents, including the legacy direct
+adapter path (which still has no runtime origin). Before a source namespace change,
+the intent records native device/inode/birth identities for original and staged
+files and every parent route. Missing parents are staged privately; their actual
+native identities and ordinary metadata are durable before no-replace publication.
+Original inodes, stages and staged parents are flushed before ownership publication.
+The full journal quota includes this evidence and a maximum of 4096 distinct
+parents. No missing progress entry becomes evidence that a rename did not happen.
+
+Internal read-only inspection compares both live and private slots against native
+identities and expected content/ordinary metadata. It does not populate content
+objects, sync owner files, create parents, acknowledge native activity or change
+the transcript. Same-byte foreign source/preimage/stage files, aliases, replaced
+parents, populated/foreign parent stages and changed created-parent metadata refuse.
+Existing owner-directory mode changes are preserved. Source effects recheck current
+authority and parent routing before each parent publication and file operation.
+Whole-plan recovery review, fingerprints and resolution intents remain to implement.
+
+Version-1/2 journals stay readable without gaining historical per-file evidence;
+unprepared version-3 intents retain their fence without claiming file proof.
+Validation rejects malformed/duplicate native inventories and contradictory
+progress/completion. No cleanup or legacy native-fence clearing was added.
+
+The code-review skill pass found that macOS native metadata copying changed the
+stage birth timestamp after its identity was recorded. Snapshot files support only
+plain ownership/mode, so all supported stage metadata is now prepared before
+recording identity and is not recopied during installation. Shared binary file
+metadata checks retain their original behavior; a common fingerprint helper also
+supports ordinary snapshot-created directories. The pass added original-inode
+durability, per-parent revocation checks, same-filesystem preflight, metadata
+conflicts and read-only object-inventory controls. Test helpers now pause based on
+observed file effects rather than authorization callback counts. Clippy's test
+complexity and nested-if findings were corrected without allowances.
+
+Final local macOS verification: snapshot tests passed 54 cases (19 unit, 18
+file-copy and 17 Git). One unit drives five real child-process kill cuts after
+preparation, parent publication and each replace/delete/create, without writing
+progress. Parent assertions observe the actual namespace before killing the child;
+fresh Store owners then prove the retained native slots without replay. The child
+helper's ordinary test invocation performs no cut; its five explicit child
+invocations supply that evidence. The unsupported-platform binary selected zero.
+Five Core native tests passed, including file/metadata exchange and ACL preservation.
+All 12 real CLI branch/recovery tests passed on the final source, preceded by three
+focused non-Git cases. Core/snapshot/CLI all-target Clippy with warnings denied,
+formatting and diff checks passed. Strict OpenSpec passed 117 items, lint reported
+zero errors/25 warnings, and inventory remained 53 capabilities/1030 requirements
+without a ROADMAP diff. Native macOS sandbox deprecation and Darwin linker warnings
+were observed; their origin was not assigned against main. No external provider
+was used; CLI inference fixtures use scripted HTTP responses.
+
+These process kills prove storage ownership, not typed runtime activity settlement
+or keep/rollback acceptance. Git-native equivalence, managed runtime crash cuts,
+reservation/origin/intent gaps, resolution/retry/acknowledgement reconciliation,
+safe reclamation and owner API/SDK/CLI/TUI recovery remain open. Linux/Windows,
+cross-filesystem native runs, the full workspace tests/Clippy, the runtime binary
+document suite and SDK TypeScript checks were not rerun in this checkpoint. No
+network DTO changed or SDK generation was required. M2–M8 and parent tasks remain
+open; neither issue is complete.

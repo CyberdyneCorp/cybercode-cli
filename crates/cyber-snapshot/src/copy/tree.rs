@@ -134,6 +134,12 @@ impl Store {
         Ok(())
     }
     pub(super) fn read_entry(&self, dir: &Dir, name: &std::ffi::OsStr) -> Result<Entry> {
+        self.entry(dir, name, true)
+    }
+    pub(super) fn inspect_entry(&self, dir: &Dir, name: &std::ffi::OsStr) -> Result<Entry> {
+        self.entry(dir, name, false)
+    }
+    fn entry(&self, dir: &Dir, name: &std::ffi::OsStr, save: bool) -> Result<Entry> {
         let mut file = storage::open(dir, Path::new(name))?;
         let before = file.metadata().map_err(fail)?;
         let metadata = cyber_core::binary::native::plain_snapshot_metadata(&file)
@@ -161,15 +167,37 @@ impl Store {
         {
             return Err("Snapshot source changed while hashing".into());
         }
-        let mut entry = self.object(&bytes)?;
+        let mut entry = if save {
+            self.object(&bytes)?
+        } else {
+            Entry {
+                object: storage::digest(&bytes),
+                length: bytes.len() as u64,
+                mode: 0,
+                uid: 0,
+                gid: 0,
+            }
+        };
         entry.mode = metadata.mode;
         entry.uid = metadata.uid;
         entry.gid = metadata.gid;
         Ok(entry)
     }
-    pub(super) fn parent(&self, path: &str, create: bool) -> Result<Dir> {
-        safe_path(path)?;
+    pub(super) fn parent(&self, path: &str) -> Result<Dir> {
+        self.check_source_path(path)?;
         let parent = Path::new(path).parent().ok_or("Invalid snapshot parent")?;
+        self.verify_root()?;
+        let mut dir = self.work.try_clone().map_err(fail)?;
+        for component in parent.components() {
+            let Component::Normal(name) = component else {
+                return Err("Invalid snapshot parent".into());
+            };
+            dir = dir.open_dir_nofollow(name).map_err(fail)?;
+        }
+        Ok(dir)
+    }
+    pub(super) fn check_source_path(&self, path: &str) -> Result<()> {
+        safe_path(path)?;
         if protected(Path::new(path))
             || self.root.join(path).starts_with(&self.data_path)
             || self
@@ -180,30 +208,10 @@ impl Store {
         {
             return Err("Protected snapshot path".into());
         }
-        self.verify_root()?;
-        let mut dir = self.work.try_clone().map_err(fail)?;
-        for component in parent.components() {
-            let Component::Normal(name) = component else {
-                return Err("Invalid snapshot parent".into());
-            };
-            if create && dir.symlink_metadata(name).is_err() {
-                use cap_std::fs::{DirBuilder, DirBuilderExt};
-                let mut builder = DirBuilder::new();
-                builder.mode(0o700);
-                dir.create_dir_with(name, &builder).map_err(fail)?;
-                storage::sync(&dir)?;
-                #[cfg(target_os = "macos")]
-                cyber_core::binary::native::validate_private_directory_acl(
-                    &dir.open_dir_nofollow(name).map_err(fail)?.into_std_file(),
-                )
-                .map_err(fail)?;
-            }
-            dir = dir.open_dir_nofollow(name).map_err(fail)?;
-        }
-        Ok(dir)
+        Ok(())
     }
     pub(super) fn current(&self, path: &str) -> Result<Option<Entry>> {
-        let parent = match self.parent(path, false) {
+        let parent = match self.parent(path) {
             Ok(parent) => parent,
             Err(error) => {
                 // Only a genuinely absent ancestor is absence; aliases and errors refuse.

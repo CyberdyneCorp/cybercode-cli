@@ -243,7 +243,6 @@ async fn storage_cap_and_foreign_location_do_not_authorize_restore() {
 }
 #[tokio::test]
 async fn admission_loss_after_a_replacement_retains_journal_and_blocks_replay() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     let p = Project::new();
     p.write("a.txt", "old a");
     p.write("b.txt", "old b");
@@ -251,8 +250,7 @@ async fn admission_loss_after_a_replacement_retains_journal_and_blocks_replay() 
     p.write("a.txt", "new a");
     p.write("b.txt", "new b");
     let after = p.track().await;
-    let calls = Arc::new(AtomicUsize::new(0));
-    let count = calls.clone();
+    let first = p.root.join("a.txt");
     let result = p
         .snapshots
         .restore_reviewed(
@@ -261,7 +259,7 @@ async fn admission_loss_after_a_replacement_retains_journal_and_blocks_replay() 
             &after.tree,
             &after.tree,
             Arc::new(move || {
-                if count.fetch_add(1, Ordering::SeqCst) >= 2 {
+                if std::fs::read(&first).ok().as_deref() == Some(b"old a") {
                     Err("admission revoked".into())
                 } else {
                     Ok(())
@@ -395,7 +393,7 @@ fn killed_restore_worker() {
         let ids: Value =
             serde_json::from_slice(&std::fs::read(base.join("ids.json")).unwrap()).unwrap();
         let marker = base.join("restore-paused");
-        let count = std::sync::atomic::AtomicUsize::new(0);
+        let first = base.join("work/a.txt");
         let _ = snapshots
             .restore_reviewed(
                 &directory,
@@ -403,7 +401,7 @@ fn killed_restore_worker() {
                 ids[1].as_str().unwrap(),
                 ids[1].as_str().unwrap(),
                 Arc::new(move || {
-                    if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 2 {
+                    if std::fs::read(&first).ok().as_deref() == Some(b"before a") {
                         std::fs::write(&marker, b"first native replacement acknowledged").unwrap();
                         loop {
                             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -561,7 +559,7 @@ async fn macos_acl_grants_cannot_make_private_snapshot_storage_readable() {
 
 #[tokio::test]
 async fn recovery_inspection_does_not_wait_for_a_paused_native_writer() {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     struct Release(Arc<AtomicBool>);
     impl Drop for Release {
         fn drop(&mut self) {
@@ -582,8 +580,9 @@ async fn recovery_inspection_does_not_wait_for_a_paused_native_writer() {
     let snapshots = p.snapshots.clone();
     let directory = p.dir();
     let resume = released.clone();
+    let first = p.root.join("a.txt");
     let task = tokio::spawn(async move {
-        let count = AtomicUsize::new(0);
+        let signaled = AtomicBool::new(false);
         snapshots
             .restore_reviewed(
                 &directory,
@@ -591,7 +590,9 @@ async fn recovery_inspection_does_not_wait_for_a_paused_native_writer() {
                 &after.tree,
                 &after.tree,
                 Arc::new(move || {
-                    if count.fetch_add(1, Ordering::SeqCst) == 2 {
+                    if std::fs::read(&first).ok().as_deref() == Some(b"old a")
+                        && !signaled.swap(true, Ordering::SeqCst)
+                    {
                         signal.notify_one();
                         while !resume.load(Ordering::SeqCst) {
                             std::thread::sleep(std::time::Duration::from_millis(10));

@@ -198,6 +198,16 @@ remain readable without acquiring new authority to acknowledge native effects.
 The snapshot-worker compatibility migration makes older binaries open this
 database read-only; they cannot safely enforce the new admission fences.
 
+New version-3 file-copy journals record original/staged file identities and parent
+identities before source changes. Missing parents are prepared privately and their
+identities recorded before publication. This evidence distinguishes a completed
+rename from a later same-byte owner replacement even when progress was not saved.
+The journal bound includes this metadata; at most 4096 distinct parent paths are
+prepared for one restore. Older intents do not gain historical file ownership
+evidence from matching content. Read-only native inspection never captures new
+objects or changes owner files. Created-parent permissions and other metadata are
+checked against preparation; existing owner-directory modes are preserved.
+
 Managed keep/rollback resolution, lost-reply acknowledgement reconciliation and
 reclamation of retained journals are not implemented yet. Do not edit records or
 remove evidence to force a retry. Complete operator recovery and broader native

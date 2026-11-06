@@ -824,7 +824,12 @@ fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(intent["version"], 2);
+    assert_eq!(intent["version"], 3);
+    assert_eq!(intent["ownership"]["version"], 1);
+    assert_eq!(
+        intent["ownership"]["files"].as_array().unwrap().len(),
+        intent["changes"].as_array().unwrap().len()
+    );
     assert_eq!(intent["completed"], true);
     assert_eq!(intent["acknowledged"], true);
     let origin = &intent["origin"];

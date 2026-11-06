@@ -1,4 +1,5 @@
 //! A durable intent precedes every namespace mutation; incomplete intents fence reuse.
+use super::ownership::{Effect, Ownership};
 use super::storage::{self, Result, fail};
 use super::{ENTRY_LIMIT, Entry, RECORD_LIMIT, Store, Tree, now};
 use cap_fs_ext::DirExt;
@@ -11,16 +12,16 @@ use std::path::Path;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Change {
-    path: String,
-    before: Option<Entry>,
-    after: Option<Entry>,
+pub(super) struct Change {
+    pub(super) path: String,
+    pub(super) before: Option<Entry>,
+    pub(super) after: Option<Entry>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Journal {
-    // Version 2 binds the worker, not historical per-file rollback identity.
-    // Resolution must not substitute Entry hashes for exact native change proof.
+    // Version 3 adds prepared native file/parent ownership. Version 2 binds
+    // only the worker and cannot acquire that historical proof retroactively.
     version: u32,
     location: std::path::PathBuf,
     root: String,
@@ -32,13 +33,15 @@ struct Journal {
     origin: Option<SnapshotOrigin>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     acknowledged: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ownership: Option<Ownership>,
 }
 
 impl Store {
     pub(super) fn ensure_recovered(&self) -> Result<()> {
         for id in storage::names(&self.journals, ENTRY_LIMIT)? {
             let (_, record) = self.journal(&id)?;
-            if !record.completed || (record.version == 2 && !record.acknowledged) {
+            if !record.completed || (record.origin.is_some() && !record.acknowledged) {
                 return Err(
                     "Snapshot restore requires recovery; private journal and preimages retained"
                         .into(),
@@ -55,13 +58,27 @@ impl Store {
                 .map_err(fail)?;
         if !matches!(
             (record.version, record.origin.is_some()),
-            (1, false) | (2, true)
+            (1, false) | (2, true) | (3, _)
         ) || record.location != self.root
             || record.root != self.root_id
             || record.changes.len() > ENTRY_LIMIT
-            || (record.version == 1 && record.acknowledged)
+            || record.applied.len() > record.changes.len()
+            || !record
+                .applied
+                .iter()
+                .zip(&record.changes)
+                .all(|(path, change)| path == &change.path)
+            || (record.completed && record.applied.len() != record.changes.len())
+            || (record.origin.is_none() && record.acknowledged)
+            || (record.version < 3 && record.ownership.is_some())
+            || (record.version == 3
+                && record.ownership.is_none()
+                && (record.completed || !record.applied.is_empty()))
         {
             return Err("Invalid snapshot recovery journal".into());
+        }
+        if let Some(ownership) = &record.ownership {
+            ownership.validate(&record.changes)?;
         }
         if let Some(origin) = &record.origin {
             let binding = &origin.binding;
@@ -293,6 +310,9 @@ impl Store {
             }
         }
         storage::sync(&dir).map_err(RestoreError::Failed)?;
+        journal.ownership =
+            Some(Ownership::prepare(self, &dir, &journal.changes).map_err(RestoreError::Failed)?);
+        Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
         for i in 0..journal.changes.len() {
             authorize().map_err(RestoreError::Failed)?;
             if let Some(worker) = worker.as_ref() {
@@ -304,17 +324,37 @@ impl Store {
                                 .as_ref()
                                 .ok_or("Missing snapshot worker origin")?,
                         )?;
-                        self.install(&dir, i, &journal.changes[i])
+                        self.install(
+                            &dir,
+                            i,
+                            &journal.changes[i],
+                            journal
+                                .ownership
+                                .as_ref()
+                                .ok_or("Missing restore ownership")?,
+                            &|| worker.authorize(),
+                        )
                     })
                     .map_err(RestoreError::Failed)?;
             } else {
-                self.install(&dir, i, &journal.changes[i])
-                    .map_err(RestoreError::Failed)?;
+                self.install(
+                    &dir,
+                    i,
+                    &journal.changes[i],
+                    journal
+                        .ownership
+                        .as_ref()
+                        .ok_or_else(|| RestoreError::Failed("Missing restore ownership".into()))?,
+                    authorize,
+                )
+                .map_err(RestoreError::Failed)?;
             }
             journal.applied.push(journal.changes[i].path.clone());
             Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
         }
         self.verify_root().map_err(RestoreError::Failed)?;
+        self.verify_applied(&dir, &journal)
+            .map_err(RestoreError::Failed)?;
         journal.completed = true;
         Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
         Ok(journal.applied)
@@ -338,8 +378,9 @@ impl Store {
                 }))
             })
             .transpose()?;
+        let ownership = Some(Ownership::budget(&changes)?);
         let mut journal = Journal {
-            version: if origin.is_some() { 2 } else { 1 },
+            version: 3,
             location: self.root.clone(),
             root: self.root_id.clone(),
             created: now(),
@@ -350,6 +391,7 @@ impl Store {
             changes,
             origin,
             acknowledged: worker.is_some(),
+            ownership,
         };
         let bytes = serde_json::to_vec(&journal).map_err(fail)?.len() as u64;
         if bytes > RECORD_LIMIT {
@@ -373,6 +415,7 @@ impl Store {
         journal.applied.clear();
         journal.origin = None;
         journal.acknowledged = false;
+        journal.ownership = None;
         Ok(journal)
     }
 
@@ -380,9 +423,25 @@ impl Store {
         self.verify_root()?;
         let Some(origin) = origin else { return Ok(()) };
         self.verify_worker_namespace(origin)?;
-        let (_, record) = self.journal(&origin.binding.journal_id)?;
+        let (dir, record) = self.journal(&origin.binding.journal_id)?;
         if record.origin.as_ref() != Some(origin) || !record.completed {
             return Err("Snapshot worker completion differs from its retained intent".into());
+        }
+        self.verify_applied(&dir, &record)?;
+        Ok(())
+    }
+
+    fn verify_applied(&self, dir: &cap_std::fs::Dir, record: &Journal) -> Result<()> {
+        let ownership = record
+            .ownership
+            .as_ref()
+            .ok_or("Restore has no prepared native ownership")?;
+        if ownership
+            .inspect(self, dir, &record.changes)?
+            .iter()
+            .any(|effect| *effect != Effect::Applied)
+        {
+            return Err("Restore filesystem completion differs from native ownership".into());
         }
         Ok(())
     }
@@ -432,7 +491,7 @@ impl Store {
         .map_err(fail)?;
         file.set_permissions(std::fs::Permissions::from_mode(entry.mode))
             .map_err(fail)?;
-        file.sync_all().map_err(fail)
+        storage::sync_file(file)
     }
     fn record(dir: &cap_std::fs::Dir, journal: &Journal) -> Result<()> {
         let bytes = serde_json::to_vec(journal).map_err(fail)?;
@@ -441,22 +500,29 @@ impl Store {
         }
         storage::atomic(dir, "intent.json", &bytes)
     }
-    fn install(&self, dir: &cap_std::fs::Dir, index: usize, change: &Change) -> Result<()> {
+    fn install(
+        &self,
+        dir: &cap_std::fs::Dir,
+        index: usize,
+        change: &Change,
+        ownership: &Ownership,
+        authorize: &dyn Fn() -> Result<()>,
+    ) -> Result<()> {
         self.verify_root()?;
-        if self.current(&change.path)? != change.before {
+        if ownership.inspect_change(self, dir, index, change)? != Effect::Unapplied {
             return Err(format!(
                 "Restore source changed; journal retained: {}",
                 change.path
             ));
         }
-        let parent = self.parent(&change.path, true)?;
+        let parent = ownership.create_parents(self, dir, &change.path, authorize)?;
         let parent_id = storage::dir_identity(&parent)?;
         let leaf = Path::new(&change.path)
             .file_name()
             .ok_or("Invalid restore leaf")?;
         let stage = format!("stage_{index}");
         match (&change.before, &change.after) {
-            (Some(before), Some(after)) => {
+            (Some(before), Some(_)) => {
                 let target = cyber_core::binary::native::Target::capture(
                     &self.root,
                     Path::new(&change.path),
@@ -471,15 +537,21 @@ impl Store {
                     return Err("Restore source metadata changed; journal retained".into());
                 }
                 let (_, original) = target.validate().map_err(fail)?;
-                let stage_file = storage::open(dir, Path::new(&stage))?;
-                cyber_core::binary::native::copy_metadata(&original, &stage_file).map_err(fail)?;
-                Self::stage_metadata(&stage_file, after)?;
+                ownership.verify_original(index, &original)?;
+                // Snapshot entries admit only plain ownership/mode. Those fields
+                // are already durable on the stage before its identity is logged.
+                // Copying native timestamps here would change macOS birth identity.
+                if ownership.inspect_change(self, dir, index, change)? != Effect::Unapplied {
+                    return Err("Restore source changed before exchange".into());
+                }
+                self.authorize_restore_effect(dir, ownership, &change.path, &parent_id, authorize)?;
                 cyber_core::binary::native::exchange(dir, &stage, &target).map_err(fail)?;
-                if self.read_entry(dir, std::ffi::OsStr::new(&stage))? != *before {
+                if self.inspect_entry(dir, std::ffi::OsStr::new(&stage))? != *before {
                     return Err("Displaced restore preimage changed; recovery required".into());
                 }
             }
             (Some(before), None) => {
+                self.authorize_restore_effect(dir, ownership, &change.path, &parent_id, authorize)?;
                 rustix::fs::renameat_with(
                     &parent,
                     leaf,
@@ -488,32 +560,62 @@ impl Store {
                     rustix::fs::RenameFlags::NOREPLACE,
                 )
                 .map_err(fail)?;
-                if self.read_entry(dir, std::ffi::OsStr::new(&stage))? != *before {
+                if self.inspect_entry(dir, std::ffi::OsStr::new(&stage))? != *before {
                     return Err("Displaced deletion preimage changed; recovery required".into());
                 }
             }
-            (None, Some(_)) => rustix::fs::renameat_with(
-                dir,
-                &stage,
-                &parent,
-                leaf,
-                rustix::fs::RenameFlags::NOREPLACE,
-            )
-            .map_err(fail)?,
+            (None, Some(_)) => {
+                self.authorize_restore_effect(dir, ownership, &change.path, &parent_id, authorize)?;
+                rustix::fs::renameat_with(
+                    dir,
+                    &stage,
+                    &parent,
+                    leaf,
+                    rustix::fs::RenameFlags::NOREPLACE,
+                )
+                .map_err(fail)?;
+            }
             (None, None) => {}
         }
         storage::sync(&parent)?;
         storage::sync(dir)?;
         self.verify_root()?;
-        if storage::dir_identity(&self.parent(&change.path, false)?)? != parent_id {
+        if storage::dir_identity(
+            &ownership
+                .parent(self, dir, &change.path)?
+                .ok_or("Missing restore parent")?,
+        )? != parent_id
+        {
             return Err("Restore parent identity changed; journal retained".into());
         }
-        if self.current(&change.path)? != change.after {
+        if ownership.inspect_change(self, dir, index, change)? != Effect::Applied {
             return Err("Restore result changed; recovery required".into());
         }
         Ok(())
     }
+
+    fn authorize_restore_effect(
+        &self,
+        dir: &cap_std::fs::Dir,
+        ownership: &Ownership,
+        path: &str,
+        parent_id: &str,
+        authorize: &dyn Fn() -> Result<()>,
+    ) -> Result<()> {
+        authorize()?;
+        let fresh = ownership
+            .parent(self, dir, path)?
+            .ok_or("Restore parent disappeared")?;
+        if storage::dir_identity(&fresh)? != parent_id {
+            return Err("Restore parent route changed".into());
+        }
+        Ok(())
+    }
 }
+
+#[cfg(test)]
+#[path = "ownership_tests.rs"]
+mod ownership_tests;
 
 #[cfg(test)]
 mod tests {
@@ -560,7 +662,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        store.options.max_total = 20000;
+        store.options.max_total = 100000;
         let journal = store
             .prepare_journal(changes, "restore_fixture", None)
             .unwrap();
@@ -613,6 +715,7 @@ mod tests {
                 applied: vec![],
                 origin: Some(origin.clone()),
                 acknowledged: false,
+                ownership: None,
             },
         )
         .unwrap();

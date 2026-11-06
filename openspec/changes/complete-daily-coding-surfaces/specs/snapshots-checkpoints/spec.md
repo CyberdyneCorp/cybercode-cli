@@ -114,6 +114,12 @@
 - **THEN** the bound includes worker metadata, escaped paths, complete progress and acknowledgement fields, atomic record replacement and retained stage/preimage payloads
 - **AND** exceeding the bound refuses before creating the intent or mutating source files
 
+#### Scenario: Native ownership survives missing progress
+- **WHEN** a file-copy restore stops after a namespace operation but before progress is recorded
+- **THEN** its durable prepared section identifies original/staged files and all parents, including privately staged missing parents, so inspection can distinguish an applied effect without replay
+- **AND** an equal-byte replacement with a foreign native identity, a changed parent or alias refuses ownership proof; older journals without prepared evidence remain readable without gaining rollback authority
+- **AND** original preimages and private preparations are flushed before prepared evidence is published, created-parent metadata changes refuse, and authority is rechecked before each parent publication and file operation
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

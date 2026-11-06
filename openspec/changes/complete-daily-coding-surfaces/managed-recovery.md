@@ -57,6 +57,23 @@ identities are rechecked before every filesystem effect and the final commit.
 
 ## Rollback and commit ordering
 
+New file-copy records retain a prepared native ownership section before source
+effects: each original/staged file's device, inode and creation identity, every
+parent route's native identity, and private staged identities for missing parents.
+Missing parents are prepared privately and published with no-replace only after
+this section is durable. Inspection compares both source and private slots to the
+prepared identities and expected bytes/metadata; progress alone never decides
+whether a rename occurred. Same-byte foreign replacements, aliases and changed
+parents refuse. Older records without this evidence remain readable but do not
+gain rollback authority. A crash during private preparation retains an unprepared
+intent; it does not authorize inferring any source replacement.
+Original inodes, prepared stages and new parents are flushed before prepared
+ownership is published. New-parent ownership includes its ordinary metadata;
+changed mode/ownership, ACLs, attributes or flags refuse rather than licensing
+directory removal. Existing owner-directory modes are preserved. Authority is
+rechecked before each parent publication and file namespace operation, including
+when cancellation occurs between parent creation and file publication.
+
 1. Validate original intent/stage objects and complete all conflict checks under the
    owned locks. Freeze a bounded reviewed plan and digest with current file and
    parent identities. A changed fingerprint requires a fresh owner review.

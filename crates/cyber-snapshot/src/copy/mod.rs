@@ -1,4 +1,5 @@
 //! Private BLAKE3 snapshots for exact non-Git Locations; no user repository required.
+mod ownership;
 mod restore;
 mod storage;
 mod tree;
@@ -216,6 +217,13 @@ impl Store {
         for name in storage::names(&self.journals, ENTRY_LIMIT)? {
             let journal = self.journals.open_dir_nofollow(&name).map_err(fail)?;
             for file in storage::names(&journal, ENTRY_LIMIT * 3)? {
+                if journal.symlink_metadata(&file).map_err(fail)?.is_dir() {
+                    let parent = journal.open_dir_nofollow(&file).map_err(fail)?;
+                    if !file.starts_with("parent_") || !storage::names(&parent, 1)?.is_empty() {
+                        return Err("Unexpected snapshot journal directory".into());
+                    }
+                    continue;
+                }
                 size = size
                     .checked_add(
                         storage::open(&journal, Path::new(&file))?

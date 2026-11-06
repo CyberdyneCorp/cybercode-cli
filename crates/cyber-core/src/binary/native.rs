@@ -108,6 +108,20 @@ pub fn validate_private_directory_acl(file: &File) -> Result<(), Error> {
 /// ACLs, extended attributes and platform flags require separate retained metadata.
 pub fn plain_snapshot_metadata(file: &File) -> Result<Metadata, Error> {
     let value = metadata(file)?;
+    plain_snapshot(file, value)
+}
+
+/// Ordinary metadata for privately prepared snapshot parent directories. Existing
+/// owner directories need only routing identity and are never recreated from this.
+pub fn plain_snapshot_directory(file: &File) -> Result<Metadata, Error> {
+    let m = file.metadata().map_err(|_| Error::Io)?;
+    if !m.is_dir() || m.mode() & 0o7000 != 0 || m.permissions().readonly() {
+        return Err(Error::File);
+    }
+    plain_snapshot(file, metadata_fields(file, &m)?)
+}
+
+fn plain_snapshot(file: &File, value: Metadata) -> Result<Metadata, Error> {
     if !attributes(file)?.is_empty() {
         return Err(Error::File);
     }
@@ -126,6 +140,10 @@ pub fn metadata(file: &File) -> Result<Metadata, Error> {
     if !m.is_file() || m.nlink() != 1 || m.mode() & 0o7000 != 0 || m.permissions().readonly() {
         return Err(Error::File);
     }
+    metadata_fields(file, &m)
+}
+
+fn metadata_fields(file: &File, m: &std::fs::Metadata) -> Result<Metadata, Error> {
     let mut hash = Sha256::new();
     hash.update(m.mode().to_le_bytes());
     hash.update(m.uid().to_le_bytes());

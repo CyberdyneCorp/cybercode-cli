@@ -141,3 +141,10 @@ for the required design review; that protocol is not implemented or approved by
 publication alone. Issue #93 was automatically closed by #110 despite remaining
 scope and has been reopened. The owner's closed #94 is unchanged. Keep the existing
 one-PR delivery constraint and separate Plugins/hooks policy gates.
+
+On 2026-11-06 the user approved the concrete managed-recovery protocol and requested
+implementation. Its worker and file-copy journal prerequisites are in progress;
+keep/rollback, reconciliation, Git journaling, reclamation and full native/client
+acceptance remain required. Approval and current evidence are recorded in the daily
+coding change's tasks.md and implementation.md; publishing a prerequisite does not
+complete recovery or either issue.

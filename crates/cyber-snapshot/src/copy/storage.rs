@@ -16,7 +16,7 @@ pub fn identity(file: &File) -> Result<String> {
     let m = file.metadata().map_err(fail)?;
     let birth = m
         .created()
-        .map_err(|_| "Filesystem does not expose stable directory creation identity")?;
+        .map_err(|_| "Filesystem does not expose stable native creation identity")?;
     let birth = birth.duration_since(std::time::UNIX_EPOCH).map_err(fail)?;
     let value = format!(
         "{}:{}:{}:{}",
@@ -33,7 +33,19 @@ pub fn identity(file: &File) -> Result<String> {
 pub fn dir_identity(dir: &Dir) -> Result<String> {
     identity(&dir.try_clone().map_err(fail)?.into_std_file())
 }
+pub fn sync_file(file: &File) -> Result<()> {
+    file.sync_all().map_err(fail)?;
+    #[cfg(target_os = "macos")]
+    rustix::fs::fcntl_fullfsync(file).map_err(fail)?;
+    Ok(())
+}
 pub fn sync(dir: &Dir) -> Result<()> {
+    readable_directory(dir)?.sync_all().map_err(fail)
+}
+pub fn parent_metadata(dir: &Dir) -> Result<cyber_core::binary::native::Metadata> {
+    cyber_core::binary::native::plain_snapshot_directory(&readable_directory(dir)?).map_err(fail)
+}
+fn readable_directory(dir: &Dir) -> Result<File> {
     // cap-std can hold O_PATH directories on Linux, which fsync rejects.
     // Reopen the pinned directory itself for I/O, without resolving an ambient path.
     let fd = rustix::fs::openat(
@@ -46,7 +58,7 @@ pub fn sync(dir: &Dir) -> Result<()> {
         rustix::fs::Mode::empty(),
     )
     .map_err(fail)?;
-    File::from(fd).sync_all().map_err(fail)
+    Ok(File::from(fd))
 }
 pub fn private_child(parent: &Dir, name: &str) -> Result<Dir> {
     child(parent, name, 0o077)
@@ -134,9 +146,7 @@ pub fn create(dir: &Dir, name: &str, bytes: &[u8]) -> Result<File> {
         .follow(FollowSymlinks::No);
     let mut file = dir.open_with(name, &options).map_err(fail)?.into_std();
     file.write_all(bytes).map_err(fail)?;
-    file.sync_all().map_err(fail)?;
-    #[cfg(target_os = "macos")]
-    rustix::fs::fcntl_fullfsync(&file).map_err(fail)?;
+    sync_file(&file)?;
     Ok(file)
 }
 pub fn atomic(dir: &Dir, name: &str, bytes: &[u8]) -> Result<()> {
