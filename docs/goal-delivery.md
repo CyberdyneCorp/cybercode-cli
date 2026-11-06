@@ -117,7 +117,10 @@ Native confinement foundations and regressions exist, but
 production enforcement and the remaining plugin/hook scope are incomplete. The
 Linux UNIX-socket diagnostic found a real host-reachability gap. Its experimental
 filter and runtime checks remain experimental. The broker direction is approved;
-complete support acceptance and host activation remain pending. Daily coding implementation has not started. Binary editor implementation began
+complete support acceptance and host activation remain pending. Daily coding now includes reviewed CLI/TUI rewind and the initial private non-Git
+snapshot backend (PRs #107–#110). Managed recovery resolution, native
+acknowledgement/reclamation, path rules/context, root structured output and
+streaming JSONL remain unfinished. Binary editor implementation began
 on 2026-11-01 under the scheduling override above and remains partial. The linked task lists remain authoritative for completion.
 
 The [Linux peer-identity diagnostic](../openspec/changes/complete-plugin-hook-runtime/linux-private-peer-identity.md)
@@ -127,3 +130,14 @@ listener, despite successful data exchange. The
 is a concrete proposal awaiting review. It does not reduce IPC requirements or
 authorize a new production support floor. Preserve this review gate before
 production activation or protocol-feature integration.
+
+
+The current user request prioritizes finishing Recovery/snapshots and Daily coding
+as listed in the roadmap. Continue with exact-worker managed recovery, safe cleanup
+and native acceptance, then the already approved rules/context, structured-output
+and JSONL scope. PR #114 implements immutable Git exclusion history and proposes the
+[concrete recovery protocol](../openspec/changes/complete-daily-coding-surfaces/managed-recovery.md)
+for the required design review; that protocol is not implemented or approved by
+publication alone. Issue #93 was automatically closed by #110 despite remaining
+scope and has been reopened. The owner's closed #94 is unchanged. Keep the existing
+one-PR delivery constraint and separate Plugins/hooks policy gates.
