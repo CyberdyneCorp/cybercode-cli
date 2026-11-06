@@ -1,9 +1,12 @@
 # Managed snapshot recovery: ownership and resolution design
 
-Status: proposed implementation detail for review. The user approved implementing
-managed keep/rollback, native acknowledgement and cleanup on 2026-11-05. The original
-plan and #110 deliberately did not select the ownership/migration protocol below.
-This document makes that protocol reviewable before changing recovery admission.
+Status: approved for implementation on 2026-11-06. The user reviewed the concrete
+protocol below and replied, "Approve this protocol and implement." This includes
+fingerprint-confirmed keep/rollback, exact worker-bound acknowledgement, retry
+lookup without replay, legacy unknown fences and cleanup after durable
+acknowledgement/reference checks. The earlier 2026-11-05 feature request alone
+did not select this protocol. Approval does not establish implementation or
+acceptance; the native/platform and complete recovery tests remain required.
 
 ## Owner-visible contract
 
@@ -69,6 +72,24 @@ identities are rechecked before every filesystem effect and the final commit.
    retained request/origin lookup reconciles that original receipt under the same
    proof. If journal acknowledgement fails, preserve payloads and permit only
    acknowledgement reconciliation, not another rollback.
+
+## Store transaction prerequisite
+
+The native activity and owner resolution receipt are two separate durable
+aggregates. The Store's paired checked append accepts exactly two distinct owner
+IDs (1–256 bytes), each with an exact expected sequence (`-1` for creation),
+and at most 64 events/16 MiB of encoded events across the pair. The writer runs
+the decision, both event batches and all projectors in one IMMEDIATE transaction.
+Any decision, validation, CAS, projection or rejected-commit error rolls back
+both owners and decision writes. Each changed owner is notified only after
+observed COMMIT success. Encoded-size validation counts into a bounded sink rather
+than allocating a serialized copy. The callback cannot perform filesystem or
+other external effects.
+
+An error after SQLite committed must fence new writes and withhold notifications;
+the owner reconciles the original durable request/receipt after recovery instead
+of repeating filesystem changes. This Store primitive alone does not establish
+native proof, admit a recovery operation or implement a resolution receipt.
 
 ## Safe reclamation
 

@@ -337,3 +337,69 @@ identity checks and implicit omission authority. New Git refs intentionally reta
 objects until a safe reclamation protocol is implemented. The managed recovery
 design is awaiting owner review and the remaining rules/context, structured output
 and JSONL are not claimed complete by this increment.
+
+## Managed recovery continuation baseline, 2026-11-06
+
+Fast-forwarded the clean primary checkout from `b41f11f1` to current main
+`db9e171e`. No open repository PRs were returned by the live PR inventory.
+Other worktrees were inventoried and left untouched. The recovery execution
+breakdown M1–M8 in tasks.md maps the existing protocol to actual worker, snapshot
+and Store interfaces without implementing or approving it. At that point task 3.0
+remained open and the protocol was submitted for user review; the subsequent
+decision and implementation are recorded below.
+
+On unchanged Rust sources at `db9e171e`, `cargo test --locked -p cyber-snapshot`
+passed two storage unit tests, 17 file-copy cases and 17 Git snapshot cases on
+macOS. The platform-specific integration binary and doc tests each selected zero
+tests; they are not native Linux/Windows evidence. No external provider was used.
+Strict OpenSpec 1.13.2 validation passed all 117 items, spec lint reported zero
+errors and 25 warnings, and inventory reported 53 capabilities/1030 requirements
+with no ROADMAP diff. Diff whitespace checks passed. The global `openspec`
+command was unavailable; validation used `npx --yes @fission-ai/openspec@1.13.2`.
+These initial baseline checks excluded workspace-wide Clippy, the SDK suite,
+real-client acceptance and new platform CI. Managed recovery and the remaining
+daily-coding/plugin scope are still incomplete.
+
+## Approved recovery protocol and atomic Store prerequisite
+
+The user approved the concrete protocol on 2026-11-06: "Approve this protocol
+and implement." Tasks 3.0/M1 and managed-recovery.md now record that decision.
+The independent Linux plugin support, Setup and DirectoryAdded gates remain
+unchanged. The existing recovery protocol is the implementation scope.
+
+The first implementation prerequisite adds `Store::append_pair_checked` for the
+native activity and resolution receipt owners. It requires two distinct bounded
+IDs and exact sequences; decisions, events, sequence updates and projectors share
+one writer transaction. A rejected second owner or COMMIT rolls back all changes.
+Each changed owner is notified only after acknowledged commit. An actual WAL-hook
+error after COMMIT proves both owners remain durable while notifications stay
+silent and the writer is fenced; reopening permits inspecting the original records
+and refuses the stale repeated append. This is Store evidence, not native worker
+acknowledgement or a complete recovery retry implementation.
+
+The unchanged-main Store baseline passed 49 tests. The updated Store suite passed
+57 tests (12 unit, one process-kill, three MCP, 15 reservation and 26 Store cases),
+including eight new paired-transaction cases. Coverage includes late sequence,
+validation and projector failures, rolled-back decision SQL, deferred COMMIT
+rejection, concurrency, restart, invalid owners, empty retries and cumulative
+encoded-byte/event limits. Package all-target Clippy with warnings denied passed.
+Workspace all-target Clippy with warnings denied also passed. Strict OpenSpec
+validation passed all 117 items after the storage-events delta; spec lint retained
+zero errors/25 warnings, inventory left ROADMAP unchanged, and formatting/diff
+checks passed. No SDK/client generation is needed for this internal Store API.
+All results here are local macOS results; Linux/Windows CI is not yet run. The
+Windows selection explicitly includes the new Store lost-COMMIT unit regression;
+its Store integration binary was already selected.
+
+The code-review skill pass identified that size validation should not allocate an
+unbounded serialized event copy; it now counts exact JSON encoding into a limited
+sink. The pass also added cumulative cross-owner and empty-retry coverage and
+explicit Windows selection. Clippy initially rejected one test's complexity
+(16/15); extracting the shared scenario assertion resolved it without weakening
+its assertions. The cognitive-complexity skill does not support Rust; the
+repository's Clippy check supplies the applicable Rust gate.
+
+No HTTP/SDK/CLI contract or database schema is changed yet. Exact snapshot-worker
+origin, worker lock retention, new journals, owner recovery operations and safe
+reclamation remain required before M2–M8 or the parent recovery tasks can close.
+No recovery success or native acknowledgement is inferred from this prerequisite.
