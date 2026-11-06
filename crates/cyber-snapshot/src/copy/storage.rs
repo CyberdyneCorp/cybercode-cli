@@ -164,12 +164,20 @@ pub fn lock(dir: &Dir, create: bool) -> Result<File> {
         .mode(0o600)
         .follow(FollowSymlinks::No);
     let file = dir.open_with("lock", &options).map_err(fail)?.into_std();
+    validate_lock(&file)?;
+    acquire_lock(&file)?;
+    if create {
+        sync_file(&file)?;
+        sync(dir)?;
+    }
+    Ok(file)
+}
+pub fn validate_lock(file: &File) -> Result<()> {
     let m = file.metadata().map_err(fail)?;
     if !m.is_file() || m.nlink() != 1 || m.mode() & 0o077 != 0 {
         return Err("Unsafe snapshot lock".into());
     }
-    acquire_lock(&file)?;
-    Ok(file)
+    Ok(())
 }
 fn acquire_lock(file: &File) -> Result<()> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);

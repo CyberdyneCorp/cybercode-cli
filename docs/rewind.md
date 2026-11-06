@@ -208,7 +208,31 @@ evidence from matching content. Read-only native inspection never captures new
 objects or changes owner files. Created-parent permissions and other metadata are
 checked against preparation; existing owner-directory modes are preserved.
 
-Managed keep/rollback resolution, lost-reply acknowledgement reconciliation and
-reclamation of retained journals are not implemented yet. Do not edit records or
-remove evidence to force a retry. Complete operator recovery and broader native
-crash/platform acceptance remain unfinished.
+Read-only recovery review is available through the owner API:
+
+```sh
+cyber api POST /sessions/<session-id>/rewind/recovery/review \
+  -d '{"journal_id":"restore_...","action":"rollback"}'
+```
+
+Use `"keep"` to review preserving the current files. SDK callers can use
+`client.session.snapshotRecoveryReview(sessionID, { journal_id, action })`.
+Review reports recorded before/after images, current and retained private images,
+proposed changes, recorded created parents and retained exclusions. Missing
+exclusion history is explicit. A foreign replacement cannot become a rollback
+target merely because its bytes match. Live or already acknowledged activities,
+foreign Sessions and unavailable native proof prohibit confirmation. Review does
+not start inference, restore files, move the conversation or acknowledge activity.
+The bounded review is limited to 16 MiB; the simpler journal catalog remains 4 MiB.
+
+New origins bind the exact private lock inode. A replacement lock file cannot
+prove an old worker has exited; older origins without this proof stay inspectable
+and fenced. Retained file-copy evidence remains inspectable when capture is
+disabled or capture limits are lowered. Resolution writes still obey the cap.
+
+The native keep/rollback backend is implemented, but operator confirmation is not
+yet exposed: dedicated runtime admission, durable native acknowledgement and
+lost-reply reconciliation remain required. Created source directories and private
+payloads remain protected for acknowledged safe cleanup. Do not edit records or
+remove evidence to force a retry. Complete operator recovery, Git journaling,
+reclamation and broader native crash/platform acceptance remain unfinished.

@@ -1,4 +1,6 @@
 //! Real file/parent namespace operations; no runtime acknowledgement is asserted.
+#[path = "resolution_tests.rs"]
+mod resolution_tests;
 use super::*;
 use cap_std::fs::Dir;
 use std::path::PathBuf;
@@ -51,7 +53,7 @@ impl Prepared {
             },
         ];
         let mut record = store
-            .prepare_journal(changes, "restore_fixture", None)
+            .prepare_journal(changes, "restore_fixture", None, None, None)
             .unwrap();
         let dir = storage::private_child(&store.journals, "restore_fixture").unwrap();
         Store::record(&dir, &record).unwrap();

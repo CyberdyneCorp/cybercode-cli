@@ -1106,6 +1106,10 @@ export type Data_SideAnswer = {
   data: SideAnswer;
 };
 
+export type Data_SnapshotRecoveryReview = {
+  data: SnapshotRecoveryReview;
+};
+
 export type Data_SubtreeReopenReport = {
   data: SubtreeReopenReport;
 };
@@ -4685,6 +4689,25 @@ export type SkillInfo = {
 /** The scope a skill was discovered in. */
 export type SkillOrigin = "builtin" | "user" | "project" | "config" | "plugin";
 
+export type SnapshotBinding = {
+  directory: string;
+  root_identity: string;
+  namespace_identity: string;
+  journal_id: string;
+  journal_identity: string;
+  /** Exact private lock inode. Legacy origins do not acquire this proof retroactively. */
+  lock_identity?: string | null;
+};
+
+export type SnapshotOrigin = {
+  version: number;
+  session_id: string;
+  session_created_id: string;
+  activity_id: string;
+  worktree_id?: string | null;
+  binding: SnapshotBinding;
+};
+
 /** Retained filesystem evidence; completion does not acknowledge a Session/native receipt. */
 export type SnapshotRecovery = {
   id: string;
@@ -4693,6 +4716,52 @@ export type SnapshotRecovery = {
   paths: string[];
   /** Durably observed file checkpoints; absence does not prove that no effect occurred. */
   applied: string[];
+};
+
+export type SnapshotRecoveryAction = "keep" | "rollback";
+
+export type SnapshotRecoveryImage = {
+  hash: string;
+  bytes: number;
+  mode: number;
+  uid: number;
+  gid: number;
+  /** Expected images and proposed copies need not identify a live inode. */
+  native_identity?: string | null;
+};
+
+export type SnapshotRecoveryPath = {
+  path: string;
+  /** `applied`, `unapplied`, or `foreign`; foreign files are never rollback targets. */
+  state: string;
+  current?: SnapshotRecoveryImage | null;
+  recorded_before?: SnapshotRecoveryImage | null;
+  recorded_after?: SnapshotRecoveryImage | null;
+  /** Current private slot: staged target or displaced preimage, without inventing ownership. */
+  retained?: SnapshotRecoveryImage | null;
+  proposed?: SnapshotRecoveryImage | null;
+  changes: boolean;
+};
+
+export type SnapshotRecoveryReview = {
+  journal_id: string;
+  action: SnapshotRecoveryAction;
+  origin?: SnapshotOrigin | null;
+  filesystem_complete: boolean;
+  acknowledged: boolean;
+  /** Absent when conflicts or unavailable historical evidence prohibit confirmation. */
+  confirmation?: string | null;
+  paths: SnapshotRecoveryPath[];
+  /** None means historical exclusions were not retained; not an empty exclusion set. */
+  exclusions?: string[] | null;
+  /** Recorded created parents remain protected until acknowledged safe cleanup. */
+  recorded_created_parents?: string[] | null;
+  conflicts: string[];
+};
+
+export type SnapshotRecoverySelection = {
+  journal_id: string;
+  action: SnapshotRecoveryAction;
 };
 
 export type SolveCandidateEvidence = {

@@ -120,6 +120,21 @@
 - **AND** an equal-byte replacement with a foreign native identity, a changed parent or alias refuses ownership proof; older journals without prepared evidence remain readable without gaining rollback authority
 - **AND** original preimages and private preparations are flushed before prepared evidence is published, created-parent metadata changes refuse, and authority is rechecked before each parent publication and file operation
 
+#### Scenario: Owner reviews keep and rollback
+- **WHEN** the authenticated owner reviews a retained restore
+- **THEN** review reports exact native origin, current/proposed images, conflicts and retained exclusions or explicit unavailable exclusion history, without restoring, acknowledging activity or starting inference
+- **AND** keep preserves a reviewed later ordinary owner replacement without claiming it belongs to the restore, while rollback refuses a foreign replacement or missing native proof
+
+#### Scenario: Replacing the private lock cannot manufacture worker exit
+- **WHEN** the private lock file is replaced while an old worker retains its original descriptor
+- **THEN** recovery refuses the changed lock identity even if a different lock inode can be acquired
+- **AND** origins without an exact native lock binding remain inspectable and fenced rather than receiving retrospective acknowledgement authority
+
+#### Scenario: Recovery request never replays filesystem resolution
+- **WHEN** a fingerprint-confirmed resolution has published a distinct durable request intent
+- **THEN** later requests with its ID look up that original result or incomplete outcome and never dispatch source changes again
+- **AND** changed request content refuses, preimages and directory ownership evidence remain retained, and filesystem completion alone does not settle original/native fences
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

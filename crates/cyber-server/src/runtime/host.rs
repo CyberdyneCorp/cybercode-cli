@@ -1429,6 +1429,22 @@ pub struct SnapshotRecovery {
 
 /// Working-tree snapshots for a Location.
 pub trait Snapshots: Send + Sync {
+    fn recovery_review(
+        &self,
+        _directory: &str,
+        _journal: &str,
+        _action: super::SnapshotRecoveryAction,
+    ) -> BoxFuture<'_, Result<super::SnapshotRecoveryReview, String>> {
+        Box::pin(async { Err("Snapshot recovery review is unavailable".into()) })
+    }
+    fn resolve_recovery(
+        &self,
+        _directory: String,
+        _request: super::SnapshotRecoveryConfirmation,
+        _worker: super::SnapshotWorker,
+    ) -> BoxFuture<'_, Result<super::SnapshotCompletion, RestoreError>> {
+        Box::pin(async { Err(RestoreError::Failed("Owned recovery is unavailable".into())) })
+    }
     /// Only synchronous filesystem hosts retaining runtime-issued worker ownership.
     fn owned_restore_available(&self, _directory: &str) -> bool {
         false

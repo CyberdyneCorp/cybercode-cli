@@ -734,6 +734,58 @@ fn interrupt_and_wait_idle(env: &Env, id: &str) {
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+fn recovery_review_binds_the_session_discloses_acknowledgement_and_starts_no_inference() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let id = env.exec(None, "WRITE-A");
+    let first = env.user_ids(&id)[0].clone();
+    reviewed_apply(
+        &env,
+        &id,
+        &reviewed_selection(&env, &first, "code", "commit"),
+    );
+    let catalog = json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/recovery")]));
+    let journal = catalog["data"][0]["id"].as_str().unwrap();
+    let created = json(&env.cyber(&["api", "POST", "/sessions", "-d", "{\"title\":\"foreign\"}"]));
+    let other = created["data"]["id"].as_str().unwrap().to_owned();
+    let requests = model.requests().len();
+    let original_messages = env.messages(&id);
+    for action in ["keep", "rollback"] {
+        let body = json!({"journal_id":journal,"action":action}).to_string();
+        let response = json(&env.cyber(&[
+            "api",
+            "POST",
+            &format!("/sessions/{id}/rewind/recovery/review"),
+            "-d",
+            &body,
+        ]));
+        let review = &response["data"];
+        assert_eq!(review["origin"]["session_id"], id);
+        assert_eq!(review["acknowledged"], true);
+        assert!(review["confirmation"].is_null());
+        assert!(!review["conflicts"].as_array().unwrap().is_empty());
+        assert!(review["exclusions"].is_array());
+        let foreign = env.cyber(&[
+            "api",
+            "POST",
+            &format!("/sessions/{other}/rewind/recovery/review"),
+            "-d",
+            &body,
+        ]);
+        assert!(!foreign.status.success());
+        assert!(
+            String::from_utf8_lossy(&foreign.stdout).contains("different Session")
+                || String::from_utf8_lossy(&foreign.stderr).contains("different Session")
+        );
+    }
+    assert_eq!(env.file("a.txt"), None);
+    assert_eq!(env.messages(&id), original_messages);
+    assert_eq!(model.requests().len(), requests);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn reviewed_non_git_stage_and_clear_keep_exact_acknowledged_worker_receipts() {
     let model = scripted_model::ScriptedModel::start(reply);
     let env = Env::new(&model);

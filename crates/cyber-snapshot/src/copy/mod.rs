@@ -1,5 +1,6 @@
 //! Private BLAKE3 snapshots for exact non-Git Locations; no user repository required.
 mod ownership;
+mod resolution;
 mod restore;
 mod storage;
 mod tree;
@@ -57,6 +58,7 @@ pub(crate) struct Store {
     root_id: String,
     data_path: PathBuf,
     work: Dir,
+    namespace: Dir,
 
     objects: Dir,
     manifests: Dir,
@@ -90,9 +92,21 @@ impl cyber_server::runtime::SnapshotNativeGuard for WorkerGuard {
 }
 impl Store {
     pub fn open(data: &Path, location: &str, options: Options) -> Result<Self> {
-        Self::open_mode(data, location, options, true)
+        Self::open_mode(data, location, options, true, true)
     }
     pub fn existing(data: &Path, location: &str, options: Options) -> Result<Option<Self>> {
+        Self::existing_mode(data, location, options, false)
+    }
+    pub fn recover_existing(data: &Path, location: &str, options: Options) -> Result<Self> {
+        Self::existing_mode(data, location, options, true)?
+            .ok_or("No retained file-copy namespace for this Location".into())
+    }
+    fn existing_mode(
+        data: &Path,
+        location: &str,
+        options: Options,
+        own: bool,
+    ) -> Result<Option<Self>> {
         if !data.exists() {
             return Ok(None);
         }
@@ -112,9 +126,15 @@ impl Store {
         if global.symlink_metadata(&key).is_err() {
             return Ok(None);
         }
-        Self::open_mode(data, location, options, false).map(Some)
+        Self::open_mode(data, location, options, false, own).map(Some)
     }
-    fn open_mode(data: &Path, location: &str, mut options: Options, create: bool) -> Result<Self> {
+    fn open_mode(
+        data: &Path,
+        location: &str,
+        mut options: Options,
+        create: bool,
+        own: bool,
+    ) -> Result<Self> {
         options.private_roots = options
             .private_roots
             .into_iter()
@@ -160,8 +180,8 @@ impl Store {
         let copy = child(&snapshot, "global", true)?;
         let key = storage::digest(format!("{}\0{}", root.display(), root_id).as_bytes());
         let dir = child(&copy, &key, true)?;
-        let lock = if create {
-            Some(storage::lock(&dir, true)?)
+        let lock = if own {
+            Some(storage::lock(&dir, create)?)
         } else {
             None
         };
@@ -173,6 +193,7 @@ impl Store {
             root_id,
             data_path,
             work,
+            namespace: dir,
             objects,
             manifests,
             journals,
@@ -193,6 +214,26 @@ impl Store {
             Dir::open_ambient_dir(&self.root, cap_std::ambient_authority()).map_err(fail)?;
         if storage::dir_identity(&fresh)? != self.root_id {
             return Err("Snapshot Location identity changed".into());
+        }
+        Ok(())
+    }
+    pub(super) fn lock_identity(&self) -> Result<String> {
+        storage::identity(
+            self._lock
+                .as_ref()
+                .ok_or("Snapshot mutation lock is not held")?,
+        )
+    }
+    pub(super) fn verify_lock_route(&self, expected: &str) -> Result<()> {
+        let current = storage::open(&self.namespace, Path::new("lock"))?;
+        storage::validate_lock(&current)?;
+        if storage::identity(&current)? != expected
+            || self
+                ._lock
+                .as_ref()
+                .is_some_and(|held| storage::identity(held).as_deref() != Ok(expected))
+        {
+            return Err("Snapshot private lock identity changed".into());
         }
         Ok(())
     }

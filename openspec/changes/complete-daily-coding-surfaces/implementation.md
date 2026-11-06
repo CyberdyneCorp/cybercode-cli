@@ -533,3 +533,77 @@ cross-filesystem native runs, the full workspace tests/Clippy, the runtime binar
 document suite and SDK TypeScript checks were not rerun in this checkpoint. No
 network DTO changed or SDK generation was required. M2–M8 and parent tasks remain
 open; neither issue is complete.
+
+## Recovery review and independent native resolution backend
+
+The previous goal turn made verified progress in `52147d8d`. This continuation
+adds owner review at `POST /sessions/{id}/rewind/recovery/review` and generated SDK
+`session.snapshotRecoveryReview`. Selection binds the journal/action, selected
+Session creation, current canonical Location/checkout and exact native activity.
+Live, missing, foreign, generic or already acknowledged activity cannot acquire a
+confirmation from that review. It starts no inference and changes no transcript,
+source file or native acknowledgement. Review includes current, recorded
+before/after, retained private and proposed image metadata; recorded created
+parents; retained exclusions or explicit unavailable history; and conflicts. Its
+response is bounded at 16 MiB. The simpler catalog retains its 4 MiB limit.
+
+New intents retain the original snapshot selectors and bounded exclusion history.
+The native backend fingerprints exact file identities/generations, parent
+observations, immutable intent and action. Keep preserves reviewed ordinary owner
+replacements without assigning them to the restore. Rollback requires strict
+native ownership and stages from actual retained preimages, independently of
+capture objects. Both publish a separate version-3 resolution intent and retain
+actual displaced live inodes. A prior request ID is lookup-only, including an
+incomplete outcome; different ownership/content refuses. A generation change after
+preparation is not adopted as new source ownership. Whole-plan validation precedes
+source effects and each file operation rechecks its reviewed source. Created
+source directories remain protected for acknowledged safe cleanup.
+
+The new snapshot port returns an explicit filesystem recovery receipt. Ordinary
+rewind consuming commit refuses that receipt rather than acknowledging only the
+new worker and pretending the original activity was resolved. Dedicated recovery
+admission, global durable request ownership, exact original/resolution writer
+commit, acknowledgement reconciliation and operator apply routes/CLI/TUI are not
+implemented by this backend. Neither native fence is cleared by file completion.
+
+Substantive code/security review found a replaceable-lock proof gap. New origins
+bind the exact private lock inode and birth identity; new lock creation is flushed
+before origin publication. Recovery opens an existing namespace and its existing
+exclusive lock without creating missing evidence. The regression actually replaces
+a live owner's lock and acquires the different inode, then proves native recovery
+refuses that false exit proof. Origins without the binding remain inspectable and
+fenced. Inspection ignores capture disable/lowered capture size while retaining a
+64 MiB native file bound; resolution writes retain the configured total cap.
+Retained file-copy journals are selected by provenance rather than current capture
+enablement or later Git discovery. Git-native journals remain unimplemented.
+
+Review also corrected capture-object dependence, a private-preparation adoption
+window, missing visible retained images, and stale native generations. Tests cover
+whole-plan conflict refusal, keep after owner edits, partial resolution evidence,
+duplicate request refusal without even calling authorization, quota failure and
+retry after capacity is raised. Runtime metadata tests distinguish live/unknown/
+settled origins and refuse generic or mismatched activities. They are instrumented
+attestation tests, not native consuming-transaction proof.
+
+Final local macOS snapshot tests passed 67 cases (32 unit, 18 file-copy, 17 Git);
+the unsupported-platform binary selected zero. All 11 focused runtime snapshot
+tests passed. All 13 real CLI branch/recovery cases passed; the final review case
+was rerun after the last canonical-Location validation and passed. It verifies
+Session ownership, acknowledgement limits, retained exclusion history, unchanged
+files/messages and no additional scripted-provider inference. Affected server,
+snapshot and CLI all-target Clippy with warnings denied passed. OpenAPI consistency
+and SDK generation checks passed. SDK typecheck passed; SDK tests passed 129 cases
+with ten configured process end-to-end cases skipped because `CYBER_BIN` was unset.
+The new SDK review transport contract ran. Strict OpenSpec passed 117 items; lint
+reported zero errors/25 warnings, inventory remained 53 capabilities/1030
+requirements, and formatting/diff checks passed. Native sandbox deprecation and
+Darwin linker warnings were observed without attributing their origin to main.
+
+No external model provider was used. Linux/Windows, full workspace tests/Clippy,
+TUI/App recovery acceptance, real SDK process acceptance, native resolution
+process-kill cuts and paired runtime lost-reply/reconciliation were not run in this
+checkpoint. The earlier storage kill tests still run but do not substitute for
+these missing resolution/runtime cuts. Late-scope disposal and uncertainty-reason
+requirements are recorded in tasks.md before enabling acknowledgement. The remote
+refresh still reports main `db9e171e` and no open PRs. M2–M8 remain open; the full
+#93/#92 goal remains active and neither issue is complete.

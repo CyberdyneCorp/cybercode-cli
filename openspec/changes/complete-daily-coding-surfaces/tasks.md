@@ -42,6 +42,25 @@ regressions. Native origin validation and resolution request ownership are not
 implemented by that primitive; M5 remains open until the runtime uses it with
 exact native proof and actual restart/retry acceptance.
 
+M4/M7 continuation: the read-only recovery review API and native file-copy
+resolution backend now exist. The backend writes a separate intent and retains
+actual displaced live inodes; existing request IDs are lookup-only. This is not
+operator apply acceptance. Dedicated recovery admission, global durable request
+ownership and the exact original/resolution writer pair remain required. Ordinary
+rewind commit explicitly refuses a recovery receipt. No native fence is cleared by
+backend filesystem completion. Created source directories remain protected for
+acknowledged, ownership-checked cleanup.
+
+Before enabling M5, cover late original-scope disposal after native store-lock
+release: an `Expected::Any` Drop append must not resurrect an acknowledged activity
+or overwrite its durable receipt. Preserve opaque/generic Location uncertainty;
+the current shared `location_uncertain` boolean is not proof that every reason
+belongs to the resolved snapshot. Reconciliation must distinguish a durable writer
+acknowledgement with missing journal acknowledgement from an uncommitted filesystem
+outcome, and must not revalidate or replay later owner edits as the old request.
+Unprepared reservation/origin/intent cuts still require exact resource ownership
+proof; missing records alone do not license acknowledgement.
+
 - [ ] M6 Publish journal acknowledgement only after observed durable Store settlement. Add reference/reader/lease-aware eligibility and durable two-phase reclamation with retained retry receipts. Test cap pressure, disabled/zero retention, incomplete reference views and crashes at writer/journal/reclaim boundaries without deleting unresolved evidence.
 - [ ] M7 Add owner recovery review/confirm/lookup HTTP routes, typed CLI and SDK operations, and TUI recovery entry from rewind unavailability. Regenerate OpenAPI/SDK/command artifacts; exercise the real clients with no inference or transcript movement and with stale/foreign request refusal.
 - [ ] M8 Run process-kill cuts before/after intent, stage preparation, every exchange, progress, filesystem completion, writer commit, journal acknowledgement and reclaim. Obtain Linux x64/ARM and macOS Intel/ARM positives/denials, explicit Windows results/limits and shared Git/binary regressions; update evidence and perform substantive code/security review before accepting parent tasks.
@@ -70,6 +89,7 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 - `cyber-server/src/runtime/activity.rs` owns native activity records; `binary_documents.rs` retains a real synchronous worker's resources and `binary_recovery.rs` demonstrates document-specific recovery proof. Snapshot workers require their own origin/proof rather than calling binary recovery.
 - `cyber-server/src/runtime/host.rs::Snapshots` currently exposes restore and read-only recovery inspection; `rewind_preview.rs` owns reviewed confirmation. A dedicated owner recovery admission must work while ordinary admission remains fenced.
 - `cyber-snapshot/src/copy/restore.rs` reads legacy version-1/2 intents and writes version-3 native ownership records. `copy/ownership.rs` prepares file/parent evidence and inspects actual slots; `copy/storage.rs` owns private descriptor-relative I/O. `restore.rs` and `git_history.rs` cover Git restore and historical exclusions. Keep historical evidence readable as the new protocol is added.
+- `cyber-snapshot/src/copy/resolution.rs` freezes native observations, reads actual retained preimages, publishes independent keep/rollback intents and rejects request replay. Runtime `snapshot_recovery.rs` attests the selected Session/activity for read-only review; its consuming admission/commit is still required. Origins now bind the exact private lock inode; older origins without that proof remain inspectable and fenced.
 - `cyber-store/src/store.rs::append_checked` currently appends one aggregate. Separate independent appends cannot establish atomic acknowledgement plus resolution ownership.
 
 ## 4. Rules and context inspection

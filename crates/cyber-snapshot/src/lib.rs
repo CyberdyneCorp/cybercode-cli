@@ -153,6 +153,43 @@ impl GitSnapshots {
     fn options(&self, location: &Path) -> (Vec<String>, u64) {
         Self::options_value(&(self.config)(location))
     }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn copy_options(&self, directory: &str) -> copy::Options {
+        let config = (self.config)(Path::new(directory));
+        let (ignore, max_file) = Self::options_value(&config);
+        let max_total = config
+            .pointer("/snapshots/fallback_max_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or(200 * 1024 * 1024);
+        copy::Options {
+            ignore,
+            max_file: max_file.min(max_total).min(64 * 1024 * 1024),
+            max_total,
+            private_roots: self.private_roots.clone(),
+        }
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn recovery_options(&self, directory: &str) -> copy::Options {
+        let mut options = self.copy_options(directory);
+        // Retained files remain inspectable after capture limits are lowered or
+        // snapshots are disabled. Resolution writes still obey the current cap.
+        options.max_file = 64 * 1024 * 1024;
+        options
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn recovery_location(&self, directory: &str) -> Result<(), String> {
+        let directory = Path::new(directory)
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if self
+            .private_roots
+            .iter()
+            .any(|root| directory.starts_with(root.canonicalize().unwrap_or_else(|_| root.clone())))
+        {
+            return Err("Recovery Location is a protected private root".into());
+        }
+        Ok(())
+    }
     fn options_value(config: &Value) -> (Vec<String>, u64) {
         let ignore = config
             .pointer("/snapshots/ignore")
@@ -200,6 +237,79 @@ impl GitSnapshots {
 }
 
 impl Snapshots for GitSnapshots {
+    fn recovery_review(
+        &self,
+        directory: &str,
+        journal: &str,
+        action: cyber_server::runtime::SnapshotRecoveryAction,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::SnapshotRecoveryReview, String>> {
+        let directory = directory.to_owned();
+        let journal = journal.to_owned();
+        Box::pin(async move {
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                let _ = (directory, journal, action);
+                Err("Native recovery review is unavailable on this host".into())
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                self.recovery_location(&directory)?;
+                let data = self.data_dir.clone();
+                let options = self.recovery_options(&directory);
+                tokio::task::spawn_blocking(move || {
+                    let store = copy::Store::existing(&data, &directory, options)?
+                        .ok_or("No retained file-copy namespace")?;
+                    store.recovery_review(&journal, action)
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            }
+        })
+    }
+    fn resolve_recovery(
+        &self,
+        directory: String,
+        request: cyber_server::runtime::SnapshotRecoveryConfirmation,
+        worker: cyber_server::runtime::SnapshotWorker,
+    ) -> BoxFuture<'_, Result<cyber_server::runtime::SnapshotCompletion, RestoreError>> {
+        Box::pin(async move {
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                let _ = (directory, request, worker);
+                Err(RestoreError::Failed(
+                    "Native recovery is unavailable on this host".into(),
+                ))
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                self.recovery_location(&directory)
+                    .map_err(RestoreError::Failed)?;
+                let options = self.recovery_options(&directory);
+                let data = self.data_dir.clone();
+                let lock = cyber_server::workspace::mutation_lock(Path::new(&directory))
+                    .map_err(|error| RestoreError::Failed(error.to_string()))?;
+                let workspace = lock.lock_owned().await;
+                worker
+                    .run(move |work| {
+                        let store = copy::Store::recover_existing(&data, &directory, options)
+                            .map_err(RestoreError::Failed)?;
+                        let receipt = store.resolve_recovery(&request, &|| Ok(()), Some(work))?;
+                        let origin = work.origin().cloned();
+                        let mut native = cyber_server::runtime::SnapshotNativeResult::new(
+                            vec![],
+                            Box::new(copy::WorkerGuard {
+                                store,
+                                workspace,
+                                origin,
+                            }),
+                        );
+                        native.recovery = Some(receipt);
+                        Ok(native)
+                    })
+                    .await
+            }
+        })
+    }
     fn owned_restore_available(&self, directory: &str) -> bool {
         cfg!(any(target_os = "macos", target_os = "linux")) && self.non_git(directory)
     }

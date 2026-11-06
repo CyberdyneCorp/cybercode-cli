@@ -760,6 +760,9 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<RevertState>>(g),
         op("get", "/sessions/{sessionID}/rewind/recovery", "v1.session.snapshotRecovery", "Inspect retained filesystem restore journals without acknowledging or replaying native effects")
             .ok::<Data<Vec<crate::runtime::SnapshotRecovery>>>(g),
+        op("post", "/sessions/{sessionID}/rewind/recovery/review", "v1.session.snapshotRecoveryReview", "Review retained snapshot effects without restoring, acknowledging native activity or starting inference")
+            .body::<crate::runtime::SnapshotRecoverySelection>(g)
+            .ok::<Data<crate::runtime::SnapshotRecoveryReview>>(g),
         op("post", "/sessions/{sessionID}/rewind/preview", "v1.session.rewindPreview", "Review a rewind without changing files or the active conversation")
             .body::<crate::runtime::RewindSelection>(g)
             .ok::<Data<crate::runtime::RewindPreview>>(g),

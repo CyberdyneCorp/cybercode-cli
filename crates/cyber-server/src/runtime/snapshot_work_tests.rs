@@ -28,6 +28,7 @@ fn binding(directory: PathBuf) -> SnapshotBinding {
         namespace_identity: "instrumented_namespace".into(),
         journal_id: "restore_test".into(),
         journal_identity: "instrumented_journal".into(),
+        lock_identity: Some("instrumented_lock".into()),
     }
 }
 async fn worker(runtime: &Runtime, session: &str) -> SnapshotWorker {
@@ -57,6 +58,47 @@ fn restart(runtime: &Runtime, root: &std::path::Path) -> Runtime {
         interactive: false,
         snapshots: Arc::new(super::super::NoSnapshots),
     })
+}
+
+#[tokio::test]
+async fn ordinary_restore_commit_cannot_consume_a_recovery_receipt_or_acknowledge_it() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let owner = worker(&runtime, &session).await;
+    let acknowledgements = Arc::new(AtomicUsize::new(0));
+    let count = acknowledgements.clone();
+    let native_binding = binding(temp.path().canonicalize().unwrap());
+    let completed = owner
+        .run(move |work| {
+            let origin = work.begin(native_binding).unwrap();
+            let mut result = SnapshotNativeResult::new(
+                vec![],
+                Box::new(Guard {
+                    origin: Some(origin.clone()),
+                    acknowledgements: count,
+                }),
+            );
+            result.recovery = Some(super::super::SnapshotRecoveryReceipt {
+                journal_id: "restore_original".into(),
+                resolution_id: "restore_resolution".into(),
+                request_id: "request".into(),
+                action: super::super::SnapshotRecoveryAction::Keep,
+                confirmation: "a".repeat(64),
+                original: origin,
+                filesystem_complete: true,
+            });
+            Ok(result)
+        })
+        .await
+        .unwrap();
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let mut state = handle.state.lock().await;
+    let sequence = state.last_seq;
+    assert!(completed.commit(&mut state, vec![]).is_err());
+    assert_eq!(state.last_seq, sequence);
+    assert_eq!(acknowledgements.load(Ordering::SeqCst), 0);
+    assert_eq!(latest(&runtime, &session)["status"], "unknown");
+    drop(state);
+    runtime.shutdown().await;
 }
 
 #[tokio::test]

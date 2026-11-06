@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::sync::OwnedRwLockReadGuard;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotBinding {
     pub directory: PathBuf,
@@ -17,9 +17,12 @@ pub struct SnapshotBinding {
     pub namespace_identity: String,
     pub journal_id: String,
     pub journal_identity: String,
+    /// Exact private lock inode. Legacy origins do not acquire this proof retroactively.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_identity: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotOrigin {
     pub version: u32,
@@ -47,12 +50,17 @@ pub trait SnapshotNativeGuard: Send {
 
 pub struct SnapshotNativeResult {
     pub paths: Vec<String>,
+    pub recovery: Option<super::SnapshotRecoveryReceipt>,
     guard: Box<dyn SnapshotNativeGuard>,
 }
 
 impl SnapshotNativeResult {
     pub fn new(paths: Vec<String>, guard: Box<dyn SnapshotNativeGuard>) -> Self {
-        Self { paths, guard }
+        Self {
+            paths,
+            guard,
+            recovery: None,
+        }
     }
 }
 
@@ -149,6 +157,10 @@ impl SnapshotWork<'_> {
             return Err("Snapshot Location path cannot be represented as UTF-8".into());
         }
         if binding.directory != self.owner.directory
+            || binding
+                .lock_identity
+                .as_ref()
+                .is_some_and(|id| id.is_empty() || id.len() > 256)
             || [
                 &binding.root_identity,
                 &binding.namespace_identity,
@@ -204,11 +216,19 @@ impl SnapshotWorker {
 }
 
 impl SnapshotCompletion {
+    pub fn recovery_receipt(&self) -> Option<&super::SnapshotRecoveryReceipt> {
+        self.native.recovery.as_ref()
+    }
     pub(crate) fn commit(
         mut self,
         state: &mut SessionState,
         events: Vec<NewEvent>,
     ) -> Result<(), RuntimeError> {
+        if self.native.recovery.is_some() {
+            return Err(RuntimeError::Conflict(
+                "Recovery requires its exact native consuming commit".into(),
+            ));
+        }
         self.native
             .guard
             .verify(self.worker.scope.snapshot_origin())

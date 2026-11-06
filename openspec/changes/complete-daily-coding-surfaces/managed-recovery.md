@@ -27,6 +27,17 @@ replays the original restore or treats a missing `applied` entry as no effect.
 Unsupported metadata, aliases, cross-filesystem staging, ambiguous/malformed records
 or changed Location identity refuse rather than weakening the native contract.
 
+Keep may review a later ordinary owner replacement as the current image; preserving
+it does not assign that inode to the failed restore. Rollback still requires the
+original source/private ownership pairing. Both actions bind exact current images
+and parent observations into the review and refuse stale confirmation. A resolution
+uses a distinct native intent, retaining its displaced live inodes and a reference
+to the original immutable intent. Retry of an existing request is lookup-only even
+when its outcome is partial. Original and resolution evidence remain fenced until
+the consuming runtime transaction acknowledges the exact workers. Empty created
+source directories remain protected until acknowledged, ownership-checked cleanup;
+file rollback does not recursively remove owner directories.
+
 ## Bind evidence to a worker, not merely a Session
 
 New managed restore intents record an immutable origin: Session creation identity,
@@ -34,6 +45,10 @@ canonical/native Location identity, native activity ID, checkout binding, journa
 namespace identity and version. The runtime marks the activity as a snapshot
 filesystem-only worker before it can launch. Snapshot callbacks cannot label a
 generic shell/process activity as filesystem-only.
+New origins also bind the exact private lock inode, including its creation
+identity. Acquiring a replacement lock file cannot prove that an old worker has
+released its original descriptor. Older origins without this binding stay
+inspectable and fenced; no retrospective lock proof is invented.
 
 The snapshot-worker compatibility migration records the new event semantics even
 without new tables. Older migration catalogs must refuse mutation rather than

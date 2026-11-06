@@ -8,6 +8,157 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Component, Path};
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ImageObservation {
+    pub identity: String,
+    pub entry: Entry,
+    pub generation: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Slots {
+    pub source: Option<ImageObservation>,
+    pub stage: Option<ImageObservation>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Observations {
+    pub files: Vec<Slots>,
+    parents: Vec<ParentObservation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ParentObservation {
+    path: String,
+    source: Option<DirectoryObservation>,
+    stage: Option<DirectoryObservation>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectoryObservation {
+    identity: String,
+    generation: String,
+}
+
+impl Observations {
+    pub fn validate(&self) -> Result<()> {
+        if self.files.len() > ENTRY_LIMIT || self.parents.len() > ENTRY_LIMIT + 1 {
+            return Err("Recovery observation limit exceeded".into());
+        }
+        for slots in &self.files {
+            for image in [&slots.source, &slots.stage].into_iter().flatten() {
+                if !valid_identity(&image.identity)
+                    || !valid_entry(&image.entry)
+                    || !storage::valid_digest(&image.generation)
+                {
+                    return Err("Invalid recovery file observation".into());
+                }
+            }
+        }
+        for parent in &self.parents {
+            if !parent.path.is_empty() {
+                super::tree::safe_path(&parent.path)?;
+            }
+            for directory in [&parent.source, &parent.stage].into_iter().flatten() {
+                if !valid_identity(&directory.identity)
+                    || !storage::valid_digest(&directory.generation)
+                {
+                    return Err("Invalid recovery parent observation".into());
+                }
+            }
+        }
+        Ok(())
+    }
+    pub fn budget(&self) -> Self {
+        let mut value = self.clone();
+        let image = ImageObservation {
+            identity: "0".repeat(storage::IDENTITY_MAX_BYTES),
+            generation: "0".repeat(64),
+            entry: Entry {
+                object: "0".repeat(64),
+                length: u64::MAX,
+                mode: u32::MAX,
+                uid: u32::MAX,
+                gid: u32::MAX,
+            },
+        };
+        for slots in &mut value.files {
+            slots.source = Some(image.clone());
+            slots.stage = Some(image.clone());
+        }
+        for parent in &mut value.parents {
+            let bound = DirectoryObservation {
+                identity: "0".repeat(storage::IDENTITY_MAX_BYTES),
+                generation: "0".repeat(64),
+            };
+            parent.source = Some(bound.clone());
+            parent.stage = Some(bound);
+        }
+        value
+    }
+}
+
+fn generation(file: &std::fs::File) -> Result<String> {
+    use std::os::unix::fs::MetadataExt;
+    let m = file.metadata().map_err(fail)?;
+    let value = (
+        m.dev(),
+        m.ino(),
+        m.mode(),
+        m.uid(),
+        m.gid(),
+        m.nlink(),
+        m.len(),
+        m.mtime(),
+        m.mtime_nsec(),
+        m.ctime(),
+        m.ctime_nsec(),
+    );
+    Ok(storage::digest(&serde_json::to_vec(&value).map_err(fail)?))
+}
+
+pub(super) fn observe_image(
+    store: &Store,
+    parent: Option<&Dir>,
+    name: &std::ffi::OsStr,
+) -> Result<Option<ImageObservation>> {
+    let Some(parent) = parent else {
+        return Ok(None);
+    };
+    match parent.symlink_metadata(name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(fail(error)),
+        Ok(_) => {}
+    }
+    let pin = storage::open(parent, Path::new(name))?;
+    let before = generation(&pin)?;
+    let (identity, entry) =
+        observed(store, Some(parent), name)?.ok_or("Recovery image disappeared")?;
+    let current = storage::open(parent, Path::new(name))?;
+    if storage::identity(&pin)? != identity
+        || storage::identity(&current)? != identity
+        || generation(&pin)? != before
+        || generation(&current)? != before
+    {
+        return Err("Recovery image changed while reviewing".into());
+    }
+    Ok(Some(ImageObservation {
+        identity,
+        entry,
+        generation: before,
+    }))
+}
+
+fn observe_directory(dir: &Dir) -> Result<DirectoryObservation> {
+    let file = dir.try_clone().map_err(fail)?.into_std_file();
+    Ok(DirectoryObservation {
+        identity: storage::identity(&file)?,
+        generation: generation(&file)?,
+    })
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Ownership {
@@ -211,6 +362,101 @@ impl File {
 }
 
 impl Ownership {
+    pub(super) fn created_parents(&self) -> Vec<String> {
+        self.parents
+            .iter()
+            .filter(|parent| parent.stage.is_some())
+            .map(|parent| parent.path.clone())
+            .collect()
+    }
+    /// Capture ordinary current files without assigning foreign files to this restore.
+    /// Keep can preserve these images; rollback still requires strict `inspect` proof.
+    pub(super) fn observe(
+        &self,
+        store: &Store,
+        journal: &Dir,
+        changes: &[Change],
+    ) -> Result<Observations> {
+        self.validate(changes)?;
+        self.observe_current(store, journal, changes)
+    }
+    pub(super) fn observe_unprepared(
+        store: &Store,
+        journal: &Dir,
+        changes: &[Change],
+    ) -> Result<Observations> {
+        Self::budget(changes)?.observe_current(store, journal, changes)
+    }
+    fn observe_current(
+        &self,
+        store: &Store,
+        journal: &Dir,
+        changes: &[Change],
+    ) -> Result<Observations> {
+        store.verify_root()?;
+        let mut parents = vec![ParentObservation {
+            path: String::new(),
+            source: Some(observe_directory(&store.work)?),
+            stage: None,
+        }];
+        for parent in &self.parents {
+            let live = existing_parent(store, &parent.path)?
+                .as_ref()
+                .map(observe_directory)
+                .transpose()?;
+            let stage = parent
+                .stage
+                .as_ref()
+                .map(|stage| match journal.symlink_metadata(stage) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                    Err(error) => Err(fail(error)),
+                    Ok(_) => observe_directory(&journal.open_dir_nofollow(stage).map_err(fail)?)
+                        .map(Some),
+                })
+                .transpose()?
+                .flatten();
+            parents.push(ParentObservation {
+                path: parent.path.clone(),
+                source: live,
+                stage,
+            });
+        }
+        let mut files = vec![];
+        for (index, change) in changes.iter().enumerate() {
+            store.check_source_path(&change.path)?;
+            let parent_path = Path::new(&change.path)
+                .parent()
+                .ok_or("Invalid recovery parent")?;
+            let parent = existing_parent(
+                store,
+                parent_path.to_str().ok_or("Invalid recovery parent")?,
+            )?;
+            let leaf = Path::new(&change.path)
+                .file_name()
+                .ok_or("Invalid recovery path")?;
+            files.push(Slots {
+                source: observe_image(store, parent.as_ref(), leaf)?,
+                stage: observe_image(
+                    store,
+                    Some(journal),
+                    std::ffi::OsStr::new(&format!("stage_{index}")),
+                )?,
+            });
+        }
+        // Detect route changes during the bounded scan, including parent edits
+        // that do not replace any of the tracked leaf files.
+        for parent in &parents {
+            let now = existing_parent(store, &parent.path)?
+                .as_ref()
+                .map(observe_directory)
+                .transpose()?;
+            if now != parent.source {
+                return Err("Recovery parent changed while reviewing".into());
+            }
+        }
+        store.verify_root()?;
+        Ok(Observations { files, parents })
+    }
     pub(super) fn verify_original(&self, index: usize, file: &std::fs::File) -> Result<()> {
         if self.files.get(index).and_then(|file| file.source.as_ref())
             != Some(&storage::identity(file)?)

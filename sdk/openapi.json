@@ -7061,6 +7061,298 @@
         ],
         "description": "Retained filesystem evidence; completion does not acknowledge a Session/native receipt."
       },
+      "SnapshotRecoverySelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "journal_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/SnapshotRecoveryAction"
+          }
+        },
+        "required": [
+          "journal_id",
+          "action"
+        ]
+      },
+      "SnapshotRecoveryAction": {
+        "type": "string",
+        "enum": [
+          "keep",
+          "rollback"
+        ]
+      },
+      "Data_SnapshotRecoveryReview": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotRecoveryReview"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotRecoveryReview": {
+        "type": "object",
+        "properties": {
+          "journal_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/SnapshotRecoveryAction"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filesystem_complete": {
+            "type": "boolean"
+          },
+          "acknowledged": {
+            "type": "boolean"
+          },
+          "confirmation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent when conflicts or unavailable historical evidence prohibit confirmation."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotRecoveryPath"
+            }
+          },
+          "exclusions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "None means historical exclusions were not retained; not an empty exclusion set."
+          },
+          "recorded_created_parents": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Recorded created parents remain protected until acknowledged safe cleanup."
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "journal_id",
+          "action",
+          "filesystem_complete",
+          "acknowledged",
+          "paths",
+          "conflicts"
+        ]
+      },
+      "SnapshotOrigin": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "session_created_id": {
+            "type": "string"
+          },
+          "activity_id": {
+            "type": "string"
+          },
+          "worktree_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "binding": {
+            "$ref": "#/components/schemas/SnapshotBinding"
+          }
+        },
+        "required": [
+          "version",
+          "session_id",
+          "session_created_id",
+          "activity_id",
+          "binding"
+        ]
+      },
+      "SnapshotBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "directory": {
+            "type": "string"
+          },
+          "root_identity": {
+            "type": "string"
+          },
+          "namespace_identity": {
+            "type": "string"
+          },
+          "journal_id": {
+            "type": "string"
+          },
+          "journal_identity": {
+            "type": "string"
+          },
+          "lock_identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Exact private lock inode. Legacy origins do not acquire this proof retroactively."
+          }
+        },
+        "required": [
+          "directory",
+          "root_identity",
+          "namespace_identity",
+          "journal_id",
+          "journal_identity"
+        ]
+      },
+      "SnapshotRecoveryPath": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`applied`, `unapplied`, or `foreign`; foreign files are never rollback targets."
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recorded_before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recorded_after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retained": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current private slot: staged target or displaced preimage, without inventing ownership."
+          },
+          "proposed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changes": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "state",
+          "changes"
+        ]
+      },
+      "SnapshotRecoveryImage": {
+        "type": "object",
+        "properties": {
+          "hash": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "uid": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "gid": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "native_identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Expected images and proposed copies need not identify a live inode."
+          }
+        },
+        "required": [
+          "hash",
+          "bytes",
+          "mode",
+          "uid",
+          "gid"
+        ]
+      },
       "RewindSelection": {
         "type": "object",
         "additionalProperties": false,
@@ -23915,6 +24207,65 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/review": {
+      "post": {
+        "operationId": "v1.session.snapshotRecoveryReview",
+        "summary": "Review retained snapshot effects without restoring, acknowledging native activity or starting inference",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRecoveryReview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotRecoverySelection"
               }
             }
           }

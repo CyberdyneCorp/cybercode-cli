@@ -1559,6 +1559,12 @@ export interface Operations {
     body: undefined;
     response: S.SnapshotRecovery[];
   };
+  "v1.session.snapshotRecoveryReview": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.SnapshotRecoverySelection;
+    response: S.SnapshotRecoveryReview;
+  };
   "v1.session.startDelegation": {
     path: { sessionID: string; requestID: string };
     query: Record<string, never>;
@@ -4644,6 +4650,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.snapshotRecoveryReview": {
+    tag: "session",
+    name: "snapshotRecoveryReview",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery/review",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.startDelegation": {
     tag: "session",
     name: "startDelegation",
@@ -6037,6 +6055,9 @@ export function createGroups(caller: Caller) {
       /** Inspect retained filesystem restore journals without acknowledging or replaying native effects (`GET /api/v1/sessions/{sessionID}/rewind/recovery`) */
       snapshotRecovery: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecovery"]["response"]> =>
         caller.call("v1.session.snapshotRecovery", { path: { sessionID } }, options),
+      /** Review retained snapshot effects without restoring, acknowledging native activity or starting inference (`POST /api/v1/sessions/{sessionID}/rewind/recovery/review`) */
+      snapshotRecoveryReview: (sessionID: string, body: Operations["v1.session.snapshotRecoveryReview"]["body"], options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryReview"]["response"]> =>
+        caller.call("v1.session.snapshotRecoveryReview", { path: { sessionID }, body }, options),
       /** Durably reserve a named user delegation request (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
       startDelegation: (sessionID: string, requestID: string, body: Operations["v1.session.startDelegation"]["body"], options?: RequestOptions): Promise<Operations["v1.session.startDelegation"]["response"]> =>
         caller.call("v1.session.startDelegation", { path: { sessionID, requestID }, body }, options),

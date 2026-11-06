@@ -1,5 +1,6 @@
 //! A durable intent precedes every namespace mutation; incomplete intents fence reuse.
 use super::ownership::{Effect, Ownership};
+use super::resolution::Resolution;
 use super::storage::{self, Result, fail};
 use super::{ENTRY_LIMIT, Entry, RECORD_LIMIT, Store, Tree, now};
 use cap_fs_ext::DirExt;
@@ -19,29 +20,45 @@ pub(super) struct Change {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Journal {
+pub(super) struct Journal {
     // Version 3 adds prepared native file/parent ownership. Version 2 binds
     // only the worker and cannot acquire that historical proof retroactively.
-    version: u32,
-    location: std::path::PathBuf,
-    root: String,
-    created: u64,
-    completed: bool,
-    changes: Vec<Change>,
-    applied: Vec<String>,
+    pub version: u32,
+    pub location: std::path::PathBuf,
+    pub root: String,
+    pub created: u64,
+    pub completed: bool,
+    pub changes: Vec<Change>,
+    pub applied: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    origin: Option<SnapshotOrigin>,
+    pub origin: Option<SnapshotOrigin>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    acknowledged: bool,
+    pub acknowledged: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    ownership: Option<Ownership>,
+    pub ownership: Option<Ownership>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<RestoreContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RestoreContext {
+    pub target: String,
+    pub recorded: String,
+    pub expected: String,
+    pub exclusions: Vec<String>,
 }
 
 impl Store {
     pub(super) fn ensure_recovered(&self) -> Result<()> {
         for id in storage::names(&self.journals, ENTRY_LIMIT)? {
             let (_, record) = self.journal(&id)?;
-            if !record.completed || (record.origin.is_some() && !record.acknowledged) {
+            if !record.completed
+                || ((record.origin.is_some() || record.resolution.is_some())
+                    && !record.acknowledged)
+            {
                 return Err(
                     "Snapshot restore requires recovery; private journal and preimages retained"
                         .into(),
@@ -51,7 +68,7 @@ impl Store {
         Ok(())
     }
 
-    fn journal(&self, id: &str) -> Result<(cap_std::fs::Dir, Journal)> {
+    pub(super) fn journal(&self, id: &str) -> Result<(cap_std::fs::Dir, Journal)> {
         let dir = self.journals.open_dir_nofollow(id).map_err(fail)?;
         let record: Journal =
             serde_json::from_slice(&storage::read(&dir, "intent.json", RECORD_LIMIT)?)
@@ -79,6 +96,19 @@ impl Store {
         }
         if let Some(ownership) = &record.ownership {
             ownership.validate(&record.changes)?;
+        }
+        if let Some(resolution) = &record.resolution {
+            resolution.validate(id, &record)?;
+        }
+        if let Some(context) = &record.context {
+            for id in [&context.target, &context.recorded, &context.expected] {
+                if !id.strip_prefix("copy:").is_some_and(storage::valid_digest) {
+                    return Err("Invalid recovery snapshot context".into());
+                }
+            }
+            if context.exclusions.len() > ENTRY_LIMIT * 3 {
+                return Err("Recovery exclusion inventory exceeds limit".into());
+            }
         }
         if let Some(origin) = &record.origin {
             let binding = &origin.binding;
@@ -121,7 +151,13 @@ impl Store {
         recorded: &str,
         expected: &str,
         paths: Option<&[String]>,
-    ) -> std::result::Result<(Tree, Vec<Change>), RestoreError> {
+    ) -> std::result::Result<(Tree, Vec<Change>, RestoreContext), RestoreError> {
+        let mut context = RestoreContext {
+            target: target.into(),
+            recorded: recorded.into(),
+            expected: expected.into(),
+            exclusions: vec![],
+        };
         self.ensure_recovered().map_err(RestoreError::Failed)?;
         let before = self.capture().map_err(RestoreError::Failed)?;
         if self
@@ -134,6 +170,15 @@ impl Store {
         }
         let target = self.load(target).map_err(RestoreError::Failed)?;
         let recorded = self.load(recorded).map_err(RestoreError::Failed)?;
+        let mut exclusions = std::collections::BTreeSet::new();
+        for (label, tree) in [
+            ("current", &before),
+            ("target", &target),
+            ("recorded", &recorded),
+        ] {
+            exclusions.extend(tree.skipped.iter().map(|path| format!("{label}: {path}")));
+        }
+        context.exclusions = exclusions.into_iter().collect();
         let mut changes = vec![];
         let mut conflicts = vec![];
         for path in super::changes(&recorded, &target) {
@@ -198,7 +243,7 @@ impl Store {
         if !conflicts.is_empty() {
             return Err(RestoreError::Conflict(conflicts));
         }
-        Ok((before, changes))
+        Ok((before, changes, context))
     }
     fn merged(
         &self,
@@ -239,7 +284,7 @@ impl Store {
         expected: &str,
         paths: Option<&[String]>,
     ) -> std::result::Result<Vec<FileDiff>, RestoreError> {
-        let (_, changes) = self.plan(target, recorded, expected, paths)?;
+        let (_, changes, _) = self.plan(target, recorded, expected, paths)?;
         changes
             .iter()
             .map(|c| {
@@ -266,22 +311,32 @@ impl Store {
         expected: &str,
         paths: Option<&[String]>,
         authorize: &(dyn Fn() -> Result<()> + Send + Sync),
-        mut worker: Option<&mut SnapshotWork<'_>>,
+        worker: Option<&mut SnapshotWork<'_>>,
     ) -> std::result::Result<Vec<String>, RestoreError> {
         authorize().map_err(RestoreError::Failed)?;
         if let Some(worker) = worker.as_ref() {
             worker.authorize().map_err(RestoreError::Failed)?;
         }
-        let (_, changes) = self.plan(target, recorded, expected, paths)?;
+        let (_, changes, context) = self.plan(target, recorded, expected, paths)?;
         if changes.is_empty() {
             return Ok(vec![]);
         }
         let id = format!("restore_{}", ulid::Ulid::new());
         let mut journal = self
-            .prepare_journal(changes, &id, worker.as_deref())
+            .prepare_journal(changes, &id, worker.as_deref(), Some(context), None)
             .map_err(RestoreError::Failed)?;
+        self.execute_journal(&id, &mut journal, authorize, worker)
+    }
+
+    pub(super) fn execute_journal(
+        &self,
+        id: &str,
+        journal: &mut Journal,
+        authorize: &(dyn Fn() -> Result<()> + Send + Sync),
+        mut worker: Option<&mut SnapshotWork<'_>>,
+    ) -> std::result::Result<Vec<String>, RestoreError> {
         // An unpublished/incomplete directory also remains recovery evidence.
-        let dir = storage::private_child(&self.journals, &id).map_err(RestoreError::Failed)?;
+        let dir = storage::private_child(&self.journals, id).map_err(RestoreError::Failed)?;
         let origin = worker
             .as_mut()
             .map(|worker| {
@@ -289,32 +344,62 @@ impl Store {
                     directory: self.root.clone(),
                     root_identity: self.root_id.clone(),
                     namespace_identity: storage::dir_identity(&self.journals)?,
-                    journal_id: id.clone(),
+                    journal_id: id.to_owned(),
                     journal_identity: storage::dir_identity(&dir)?,
+                    lock_identity: Some(self.lock_identity()?),
                 })
             })
             .transpose()
             .map_err(RestoreError::Failed)?;
         journal.origin = origin;
 
-        Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
+        Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+        let preimages = self
+            .resolution_preimages(journal.resolution.as_ref())
+            .map_err(RestoreError::Failed)?;
         for (i, change) in journal.changes.iter().enumerate() {
             if let Some(after) = &change.after {
-                let file = storage::create(
-                    &dir,
-                    &format!("stage_{i}"),
-                    &self.bytes(after).map_err(RestoreError::Failed)?,
-                )
+                let bytes = match &preimages {
+                    Some(preimages) => preimages.bytes(self, &change.path, after),
+                    None => self.bytes(after),
+                }
                 .map_err(RestoreError::Failed)?;
+                let file = storage::create(&dir, &format!("stage_{i}"), &bytes)
+                    .map_err(RestoreError::Failed)?;
                 Self::stage_metadata(&file, after).map_err(RestoreError::Failed)?;
             }
         }
         storage::sync(&dir).map_err(RestoreError::Failed)?;
         journal.ownership =
             Some(Ownership::prepare(self, &dir, &journal.changes).map_err(RestoreError::Failed)?);
-        Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
+        Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+        if let Some(preimages) = &preimages {
+            preimages
+                .verify_review(self)
+                .map_err(RestoreError::Failed)?;
+        }
         for i in 0..journal.changes.len() {
             authorize().map_err(RestoreError::Failed)?;
+            let apply = |authorize: &dyn Fn() -> Result<()>| {
+                let verify = || {
+                    authorize()?;
+                    if let Some(preimages) = &preimages {
+                        preimages.check_source(self, &journal.changes[i].path)?;
+                    }
+                    Ok(())
+                };
+                verify()?;
+                self.install(
+                    &dir,
+                    i,
+                    &journal.changes[i],
+                    journal
+                        .ownership
+                        .as_ref()
+                        .ok_or("Missing restore ownership")?,
+                    &verify,
+                )
+            };
             if let Some(worker) = worker.as_ref() {
                 worker
                     .effect(|| {
@@ -324,47 +409,31 @@ impl Store {
                                 .as_ref()
                                 .ok_or("Missing snapshot worker origin")?,
                         )?;
-                        self.install(
-                            &dir,
-                            i,
-                            &journal.changes[i],
-                            journal
-                                .ownership
-                                .as_ref()
-                                .ok_or("Missing restore ownership")?,
-                            &|| worker.authorize(),
-                        )
+                        apply(&|| worker.authorize())
                     })
                     .map_err(RestoreError::Failed)?;
             } else {
-                self.install(
-                    &dir,
-                    i,
-                    &journal.changes[i],
-                    journal
-                        .ownership
-                        .as_ref()
-                        .ok_or_else(|| RestoreError::Failed("Missing restore ownership".into()))?,
-                    authorize,
-                )
-                .map_err(RestoreError::Failed)?;
+                apply(authorize).map_err(RestoreError::Failed)?;
             }
             journal.applied.push(journal.changes[i].path.clone());
-            Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
+            Self::record(&dir, journal).map_err(RestoreError::Failed)?;
         }
+        drop(preimages);
         self.verify_root().map_err(RestoreError::Failed)?;
-        self.verify_applied(&dir, &journal)
+        self.verify_applied(&dir, journal)
             .map_err(RestoreError::Failed)?;
         journal.completed = true;
-        Self::record(&dir, &journal).map_err(RestoreError::Failed)?;
-        Ok(journal.applied)
+        Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+        Ok(journal.applied.clone())
     }
 
-    fn prepare_journal(
+    pub(super) fn prepare_journal(
         &self,
         changes: Vec<Change>,
         id: &str,
         worker: Option<&SnapshotWork<'_>>,
+        context: Option<RestoreContext>,
+        mut resolution: Option<Resolution>,
     ) -> Result<Journal> {
         let origin = worker
             .map(|worker| {
@@ -375,10 +444,14 @@ impl Store {
                     namespace_identity: storage::dir_identity(&self.journals)?,
                     journal_id: id.to_owned(),
                     journal_identity: "0".repeat(storage::IDENTITY_MAX_BYTES),
+                    lock_identity: Some("0".repeat(storage::IDENTITY_MAX_BYTES)),
                 }))
             })
             .transpose()?;
         let ownership = Some(Ownership::budget(&changes)?);
+        if let Some(resolution) = &mut resolution {
+            resolution.outcome = Some(resolution.review.budget());
+        }
         let mut journal = Journal {
             version: 3,
             location: self.root.clone(),
@@ -392,6 +465,8 @@ impl Store {
             origin,
             acknowledged: worker.is_some(),
             ownership,
+            context,
+            resolution,
         };
         let bytes = serde_json::to_vec(&journal).map_err(fail)?.len() as u64;
         if bytes > RECORD_LIMIT {
@@ -416,6 +491,9 @@ impl Store {
         journal.origin = None;
         journal.acknowledged = false;
         journal.ownership = None;
+        if let Some(resolution) = &mut journal.resolution {
+            resolution.outcome = None;
+        }
         Ok(journal)
     }
 
@@ -428,6 +506,7 @@ impl Store {
             return Err("Snapshot worker completion differs from its retained intent".into());
         }
         self.verify_applied(&dir, &record)?;
+        self.verify_resolution(&dir, &record)?;
         Ok(())
     }
 
@@ -446,9 +525,15 @@ impl Store {
         Ok(())
     }
 
-    fn verify_worker_namespace(&self, origin: &SnapshotOrigin) -> Result<()> {
+    pub(super) fn verify_worker_namespace(&self, origin: &SnapshotOrigin) -> Result<()> {
         self.verify_root()?;
         let binding = &origin.binding;
+        self.verify_lock_route(
+            binding
+                .lock_identity
+                .as_deref()
+                .ok_or("Legacy snapshot origin has no exact lock identity")?,
+        )?;
         if binding.directory != self.root
             || binding.root_identity != self.root_id
             || binding.namespace_identity != storage::dir_identity(&self.journals)?
@@ -493,7 +578,7 @@ impl Store {
             .map_err(fail)?;
         storage::sync_file(file)
     }
-    fn record(dir: &cap_std::fs::Dir, journal: &Journal) -> Result<()> {
+    pub(super) fn record(dir: &cap_std::fs::Dir, journal: &Journal) -> Result<()> {
         let bytes = serde_json::to_vec(journal).map_err(fail)?;
         if bytes.len() as u64 > RECORD_LIMIT {
             return Err("Restore journal exceeds limit".into());
@@ -654,7 +739,7 @@ mod tests {
         assert!(old_estimate < 10000);
         assert!(
             store
-                .prepare_journal(changes.clone(), "restore_fixture", None)
+                .prepare_journal(changes.clone(), "restore_fixture", None, None, None)
                 .is_err()
         );
         assert!(
@@ -664,7 +749,7 @@ mod tests {
         );
         store.options.max_total = 100000;
         let journal = store
-            .prepare_journal(changes, "restore_fixture", None)
+            .prepare_journal(changes, "restore_fixture", None, None, None)
             .unwrap();
         assert!(journal.applied.is_empty());
         assert_eq!(journal.changes.len(), 1);
@@ -701,6 +786,7 @@ mod tests {
                 namespace_identity: storage::dir_identity(&store.journals).unwrap(),
                 journal_id: id.into(),
                 journal_identity: storage::dir_identity(&dir).unwrap(),
+                lock_identity: Some(store.lock_identity().unwrap()),
             },
         };
         Store::record(
@@ -716,6 +802,8 @@ mod tests {
                 origin: Some(origin.clone()),
                 acknowledged: false,
                 ownership: None,
+                context: None,
+                resolution: None,
             },
         )
         .unwrap();

@@ -122,10 +122,17 @@ mod model;
 mod requests;
 mod rewind;
 mod rewind_preview;
+mod snapshot_recovery;
+mod snapshot_recovery_types;
 mod snapshot_work;
 pub use rewind_preview::{
     RewindAction, RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview,
     RewindSelection,
+};
+pub use snapshot_recovery_types::{
+    SnapshotRecoveryAction, SnapshotRecoveryConfirmation, SnapshotRecoveryImage,
+    SnapshotRecoveryPath, SnapshotRecoveryReceipt, SnapshotRecoveryReview,
+    SnapshotRecoverySelection,
 };
 pub use snapshot_work::{
     SnapshotBinding, SnapshotCompletion, SnapshotNativeGuard, SnapshotNativeResult, SnapshotOrigin,
