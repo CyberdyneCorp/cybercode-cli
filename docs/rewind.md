@@ -38,9 +38,13 @@ the same filesystem. Unsupported cases refuse code restore visibly. Windows
 currently supports Git snapshots and conversation-only rewind outside Git.
 Disabled snapshots also retain conversation-only rewind.
 
-Current exclusions are listed; file-copy previews also disclose exclusions from
-the target and recorded manifests. Complete historical Git exclusion reporting
-remains unfinished. Legacy stages keep their original owner-route behavior. A
+Current exclusions are listed, and previews disclose target/recorded exclusion
+history. New Git snapshots bind their exclusion inventory and exact Location into
+an immutable annotated-tree record; equal file trees with different omissions have
+different snapshot identities. Legacy bare trees remain readable and explicitly
+report unavailable exclusion history. Recorded/current omissions never authorize
+a deletion or restore. New Git tree/record references are retained together until
+reference-aware reclamation is available. Legacy stages keep their original owner-route behavior. A
 reviewed file stage cannot be replaced or cleared through legacy stage/clear
 routes, or discarded by branch checkout; use a reviewed clear or explicitly
 commit it.
@@ -110,7 +114,7 @@ Git snapshots and preview rendering; it does not confirm the rewind.
 
 This implements the CLI and TUI rewind surfaces and the initial file-copy backend
 of [#93](https://github.com/CyberdyneCorp/cybercode-cli/issues/93). Managed recovery
-resolution, journal reclamation, complete historical Git exclusions and broader
+resolution, journal reclamation, legacy historical-exclusion limits and broader
 native acceptance remain open. Path rules/context, root structured output and
 JSONL input are also outstanding.
 

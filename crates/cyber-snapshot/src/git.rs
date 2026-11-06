@@ -5,6 +5,8 @@ use std::process::Stdio;
 
 use cyber_server::runtime::{FileDiff, Snapshot};
 use sha1::{Digest, Sha1};
+#[path = "git_history.rs"]
+pub(crate) mod history;
 
 /// A shadow git directory bound to one worktree and scoped to one Location.
 #[derive(Debug, Clone)]
@@ -145,13 +147,25 @@ impl Shadow {
         self.ensure_init().await?;
         let skipped = self.large_untracked(max_bytes).await;
         self.write_excludes(ignore, &skipped)?;
-        // `--ignore-errors` keeps unreadable files from failing the whole snapshot.
-        let _ = self
-            .run(&["add", "--all", "--ignore-errors", "--", &self.pathspec])
-            .await;
+        let excluded = self.omitted().await?;
+        let cached_paths: Vec<_> = excluded
+            .iter()
+            .filter(|p| !p.ends_with('/'))
+            .cloned()
+            .collect();
+        if !cached_paths.is_empty() {
+            let mut names = cached_paths.join("\0").into_bytes();
+            names.push(0);
+            self.input(&["update-index", "--force-remove", "-z", "--stdin"], &names)
+                .await?;
+        }
+        // An unreadable/failed capture cannot silently become restore authority.
+        self.run(&["add", "--all", "--", &self.pathspec]).await?;
         let tree = String::from_utf8_lossy(&self.run(&["write-tree"]).await?)
             .trim()
             .to_string();
+        let skipped = excluded.clone();
+        let tree = self.record_snapshot(&tree, excluded).await?;
         Ok(Snapshot { tree, skipped })
     }
 
@@ -203,6 +217,7 @@ impl Shadow {
     }
 
     pub async fn changed(&self, from: &str, to: &str) -> Result<Vec<String>, String> {
+        let excluded = self.excluded_between(from, to).await?;
         let out = self
             .run(&[
                 "diff",
@@ -215,10 +230,14 @@ impl Shadow {
                 &self.pathspec,
             ])
             .await?;
-        Ok(split_z(&out))
+        Ok(split_z(&out)
+            .into_iter()
+            .filter(|p| !history::excludes(&excluded, p))
+            .collect())
     }
 
     pub async fn diff(&self, from: &str, to: &str) -> Result<Vec<FileDiff>, String> {
+        let excluded = self.excluded_between(from, to).await?;
         let status = split_z(
             &self
                 .run(&[
@@ -262,6 +281,9 @@ impl Shadow {
         let mut out = Vec::new();
         for (i, pair) in status.chunks(2).enumerate() {
             let [code, file] = pair else { continue };
+            if history::excludes(&excluded, file) {
+                continue;
+            }
             let patch = self
                 .run(&[
                     "diff",
@@ -300,6 +322,7 @@ impl Shadow {
         changes: Vec<TreeChange>,
     ) -> Result<String, String> {
         use tokio::io::AsyncWriteExt;
+        self.recorded_exclusions(current).await?;
         let index = PreviewIndex(
             self.git_dir
                 .join(format!("preview-{}.index", ulid::Ulid::new())),
@@ -375,6 +398,7 @@ impl Shadow {
 
     /// `(mode, contents)` of a path in a tree, or `None` when absent.
     pub async fn blob(&self, tree: &str, path: &str) -> Result<Option<(String, Vec<u8>)>, String> {
+        self.recorded_exclusions(tree).await?;
         let listing = self.run(&["ls-tree", "-z", tree, "--", path]).await?;
         let entry = String::from_utf8_lossy(&listing).to_string();
         let Some(meta) = entry.split('\t').next().filter(|m| !m.is_empty()) else {

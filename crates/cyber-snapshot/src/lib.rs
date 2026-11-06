@@ -320,7 +320,9 @@ impl Snapshots for GitSnapshots {
                     .file_copy(directory, move |store| store.exclusions(&trees))
                     .await;
             }
-            let _ = (&directory, &trees);
+            if let Some(shadow) = self.shadow(&directory) {
+                return shadow.historical_exclusions(&trees).await;
+            }
             Ok(vec![])
         })
     }

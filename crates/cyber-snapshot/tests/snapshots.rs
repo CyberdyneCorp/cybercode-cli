@@ -360,3 +360,135 @@ async fn reviewed_restore_rechecks_admission_before_each_file_and_keeps_backups(
     assert_eq!(saved.as_deref(), Some("recorded a\n"));
     assert_eq!(calls.load(Ordering::SeqCst), 4);
 }
+
+#[tokio::test]
+async fn exclusion_history_changes_identity_even_when_git_bytes_are_identical() {
+    let r = Repo::new();
+    r.write(".gitignore", "*.secret\n");
+    let first = r.track().await;
+    r.write("private.secret", "never captured");
+    let second = r.track().await;
+    assert_ne!(
+        first, second,
+        "identical Git trees can have different exclusions"
+    );
+    assert!(
+        r.snaps
+            .changed(&r.dir(), &first, &second)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        r.snaps
+            .diff(&r.dir(), &first, &second)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::remove_file(r.root.join("private.secret")).unwrap();
+    let reopened = GitSnapshots::new(r.data.clone(), Arc::new(|_| json!({})));
+    assert!(
+        reopened
+            .exclusions(&r.dir(), vec![first])
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let evidence = reopened.exclusions(&r.dir(), vec![second]).await.unwrap();
+    assert!(
+        evidence.iter().any(|p| p.ends_with(": private.secret")),
+        "{evidence:?}"
+    );
+}
+
+#[tokio::test]
+async fn newly_excluded_git_file_never_becomes_a_deletion_or_restore_target() {
+    let r = Repo::new();
+    let before = r.track().await;
+    r.write("a.txt", "agent edit\n");
+    let after = r.track().await;
+    *r.config.lock().unwrap() = json!({"snapshots":{"ignore":["a.txt"]}});
+    let current = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    assert!(current.skipped.iter().any(|p| p == "a.txt"));
+    assert!(
+        r.snaps
+            .diff(&r.dir(), &after, &current.tree)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        r.snaps
+            .preview_restore(&r.dir(), &before, &after, &current.tree)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    r.snaps
+        .restore_reviewed(
+            &r.dir(),
+            &before,
+            &after,
+            &current.tree,
+            Arc::new(|| Ok(())),
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.read("a.txt").as_deref(), Some("agent edit\n"));
+}
+
+#[tokio::test]
+async fn legacy_git_trees_remain_readable_with_explicit_unknown_exclusions() {
+    let r = Repo::new();
+    let legacy = git(&r.root, &["rev-parse", "HEAD^{tree}"])
+        .trim()
+        .to_owned();
+    let current = r.track().await;
+    assert!(
+        r.snaps
+            .diff(&r.dir(), &legacy, &current)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let evidence = r.snaps.exclusions(&r.dir(), vec![legacy]).await.unwrap();
+    assert!(evidence[0].contains("legacy snapshot"));
+}
+
+#[tokio::test]
+async fn exclusion_records_are_bound_to_the_exact_git_location() {
+    let r = Repo::new();
+    r.write("sub/x.txt", "local file\n");
+    let root = r.track().await;
+    let sub = r.root.join("sub").display().to_string();
+    let local = r.snaps.track(&sub).await.unwrap().unwrap();
+    assert!(
+        r.snaps
+            .diff(&sub, &local.tree, &local.tree)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(r.snaps.diff(&sub, &root, &local.tree).await.is_err());
+    assert!(r.snaps.exclusions(&sub, vec![root]).await.is_err());
+    assert_eq!(r.read("sub/x.txt").as_deref(), Some("local file\n"));
+}
+
+#[tokio::test]
+async fn ignored_build_directories_use_one_bounded_exclusion_prefix() {
+    let r = Repo::new();
+    std::fs::create_dir(r.root.join("target")).unwrap();
+    for index in 0..4100 {
+        std::fs::write(r.root.join(format!("target/artifact-{index}")), b"").unwrap();
+    }
+    let snapshot = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    assert_eq!(snapshot.skipped, ["target/"]);
+    let evidence = r
+        .snaps
+        .exclusions(&r.dir(), vec![snapshot.tree])
+        .await
+        .unwrap();
+    assert_eq!(evidence.len(), 1);
+    assert!(evidence[0].ends_with(": target/"));
+}
