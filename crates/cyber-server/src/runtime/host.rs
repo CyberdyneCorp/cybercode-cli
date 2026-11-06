@@ -1386,7 +1386,7 @@ impl ToolHost for NoTools {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Snapshot {
     pub tree: String,
-    /// Untracked files left out for size, relative to the worktree.
+    /// Paths omitted by capture, relative to the worktree (or classified by the host).
     #[serde(default)]
     pub skipped: Vec<String>,
 }

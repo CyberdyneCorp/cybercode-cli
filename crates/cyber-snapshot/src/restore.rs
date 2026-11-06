@@ -112,7 +112,11 @@ async fn plan(
         .map_err(RestoreError::Failed)?;
     let mut plan = Vec::new();
     let mut conflicts = Vec::new();
+    let excluded = shadow.omitted().await.map_err(RestoreError::Failed)?;
     for path in paths {
+        if super::git::history::excludes(&excluded, &path) {
+            continue;
+        }
         if allowed.is_some_and(|allowed| !allowed.contains(&path)) {
             continue;
         }

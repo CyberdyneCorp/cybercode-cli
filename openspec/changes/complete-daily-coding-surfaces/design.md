@@ -131,3 +131,12 @@ increment does not invent a keep/rollback policy or clear native fences. That
 resolution and journal reclamation, Git restore journaling, full native acceptance
 and complete historical Git exclusions remain open under tasks 2.4/3.2–3.4.
 Snapshot warnings are optional capture diagnostics, not failed conversation results.
+
+
+### Managed recovery ownership protocol (review pending)
+
+[Managed recovery](managed-recovery.md) makes keep/rollback, exact worker/native
+acknowledgement, lost-reply reconciliation and two-phase cleanup concrete. Its
+filesystem-only classification and legacy-journal migration boundary require review
+before changing recovery admission. Historical Git exclusion implementation and the
+already approved rules/context, structured-output and JSONL work are independent.

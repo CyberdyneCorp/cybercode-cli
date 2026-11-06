@@ -285,3 +285,55 @@ inventory checks passed. Strict OpenSpec passed 115 items after #111; lint repor
 zero errors and 25 warnings. Linux O_PATH execution cannot run on this macOS host;
 the corrected head requires fresh Linux x64/ARM and macOS platform proof CI. No
 old-head green checks are used to accept this integrated revision.
+
+
+## Historical Git exclusions and managed-recovery review
+
+The 2026-11-05 implementation request includes managed recovery, native
+acknowledgement, safe cleanup and all remaining daily-coding surfaces. The
+[concrete recovery protocol](managed-recovery.md) is proposed for the required
+security/data-model review before changing recovery admission; it is not
+implemented by the historical-exclusion increment. Rules/context, root structured
+output and JSONL retain their existing approved scope and remain unfinished.
+
+The unchanged `b41f11f1` baseline passed two storage tests, 17 file-copy tests and
+12 Git snapshot tests locally on macOS. Git snapshots now return immutable annotated
+tree records containing exact Location and bounded excluded paths. Git itself peels
+them in existing tree operations. Bare legacy tree identities remain readable with
+explicit unknown exclusion history; history is never reconstructed from today's
+configuration. Dedicated shadow refs retain tree and metadata together, including
+across ordinary Git GC. Reference/lease-aware reclamation remains required before
+these refs may be pruned; this increment does not claim that cleanup policy.
+
+Capture enumerates ignored/size-excluded paths, compacts ignored directories and
+removes newly ignored cached entries only from the shadow index. An unreadable or
+failed capture refuses rather than fabricating a complete snapshot. Paths excluded
+by either historical capture or the current capture are not deletion/restore
+permission. New regressions cover identical Git trees with different exclusions,
+restart/config changes, current-owner exclusions, legacy trees, foreign Locations
+sharing an object store and a build directory with 4100 ignored artifacts. The
+Windows native nextest profile now explicitly selects the Git snapshot integration
+binary, alongside its existing unsupported file-copy case.
+
+GitHub's issue timeline identifies PR #110 as the automatic closer of #93 at merge.
+The PR description contained a negated closing-keyword reference despite unfinished
+work. That text is corrected and #93 is reopened for the current authorized scope.
+The owner's closed binary issue #94 is unchanged.
+
+
+Validation on macOS: final snapshot tests passed (two storage, 17 file-copy and
+17 Git cases). All 11 real CLI branch/recovery cases passed with serialized
+fixtures; 11 focused TUI rewind cases passed. Workspace all-target Clippy with
+warnings denied passed, followed by final snapshot tests and package all-target
+Clippy after tightening validation before Git commands. Formatting/diff checks,
+generated SDK consistency and requirement inventory passed. Strict OpenSpec 1.13.2
+passed 117 items; lint reported zero errors and 25 warnings. No external provider
+was used. Windows/Linux execution and the expanded Windows Git selection require
+PR CI; no macOS result substitutes for their native proof.
+
+The substantive review corrected directory inventory growth (4100 ignored build
+artifacts compact to one prefix), newly ignored shadow-index entries, late object
+identity checks and implicit omission authority. New Git refs intentionally retain
+objects until a safe reclamation protocol is implemented. The managed recovery
+design is awaiting owner review and the remaining rules/context, structured output
+and JSONL are not claimed complete by this increment.

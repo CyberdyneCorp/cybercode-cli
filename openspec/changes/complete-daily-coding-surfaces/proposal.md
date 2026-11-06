@@ -30,3 +30,14 @@ None. This completes existing daily-use requirements.
 Primary areas: runtime revert/branches/inbox/structured output, snapshot storage and GC, instruction discovery and Context Epoch assembly, CLI/TUI commands, authenticated API/OpenAPI and SDKs. Branch/session exports and older event replay must remain compatible. Existing child structured-output contracts remain intact.
 
 This is the second workstream of the requested goal. The original prerequisite to complete Plugins and hooks was superseded on 2026-11-03 when the user prioritized #93 after merging #105. Begin this approved workstream while retaining unresolved Plugins/hooks dependencies and acceptance gates. This does not include IDE clients, Relay, persistent schedules, new model providers, general configuration import, native computer ports or a new plan/agent framework.
+
+
+## Recovery implementation follow-up
+
+The 2026-11-05 user request prioritizes finishing recovery/snapshots and all
+remaining daily-coding surfaces. Historical Git exclusions are an independent
+implementation increment. The concrete [managed keep/rollback and native ownership
+protocol](managed-recovery.md), linked from design.md and task 3.0, is proposed for
+review before changing recovery admission or legacy native-fence authority. It
+retains the original scope and makes the new acknowledgement/reclamation contract
+explicit; publishing this document is not approval or implementation of that protocol.

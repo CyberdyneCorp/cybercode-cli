@@ -69,6 +69,22 @@
 - **THEN** it prepares the recorded ordinary ownership/mode before publishing the file, creates missing parents privately, and refuses unsupported metadata rather than widening access
 - **AND** captures disclose exclusions for ACLs, extended attributes, platform flags or other metadata that cannot be recreated safely
 
+### Requirement: Immutable Git exclusion evidence
+(P1) New Git snapshots SHALL bind their exact Location and bounded excluded-path inventory into immutable snapshot identity. Equal file trees with different exclusions SHALL remain distinguishable. Recorded or currently excluded paths SHALL NOT become deletion or restore authority. Legacy bare trees SHALL remain readable with explicit unavailable historical evidence rather than invented exclusions. New snapshot trees and metadata SHALL remain retained together until safe reference-aware reclamation exists.
+
+#### Scenario: Same Git tree with changed omissions
+- **WHEN** an ignored file appears without changing the captured Git tree
+- **THEN** the new snapshot has a different identity and retains its own exclusions after config changes and runtime restart
+
+#### Scenario: Newly ignored owner file
+- **WHEN** a previously captured Git path becomes ignored before rewind
+- **THEN** review discloses its current omission, no deletion diff is synthesized and restore leaves the live file unchanged
+
+#### Scenario: Legacy and foreign Location snapshots
+- **WHEN** a snapshot predates exclusion records
+- **THEN** its file tree remains readable and inspection reports unavailable exclusion history
+- **AND** a Location-bound record from a different Location is refused even when its objects are available in the same shadow repository
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback
