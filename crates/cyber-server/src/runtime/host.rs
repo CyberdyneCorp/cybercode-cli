@@ -20,6 +20,24 @@ pub trait LocationGuard: Send {
     fn settle_retained(self: Box<Self>) -> Result<Box<dyn Send>, String> {
         Err("Location host does not support retained native settlement".into())
     }
+    fn settle_snapshot_retained(self: Box<Self>) -> Result<Box<dyn SnapshotLocationGuard>, String> {
+        Err("Exact retained snapshot checkout proof is unsupported".into())
+    }
+}
+
+/// Native metadata proof retained by the actual synchronous snapshot worker.
+/// Verification and proof disposal must not reenter the primary runtime/Store,
+/// launch processes or perform source effects; disposal may run in the writer.
+pub trait SnapshotLocationGuard: Send {
+    fn verify(&self) -> Result<(), String>;
+}
+struct UnmanagedSnapshotLocation {
+    _owner: Box<dyn Send>,
+}
+impl SnapshotLocationGuard for UnmanagedSnapshotLocation {
+    fn verify(&self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub struct LocationLease {
@@ -58,6 +76,17 @@ impl LocationLease {
             || Ok(Box::new(()) as Box<dyn Send>),
             |guard| guard.settle_retained(),
         )
+    }
+
+    pub fn settle_snapshot_retained(self) -> Result<Box<dyn SnapshotLocationGuard>, String> {
+        if self.worktree_id.is_none() {
+            return Ok(Box::new(UnmanagedSnapshotLocation {
+                _owner: self.settle_retained()?,
+            }));
+        }
+        self.guard
+            .ok_or("Managed checkout proof is missing")?
+            .settle_snapshot_retained()
     }
 }
 

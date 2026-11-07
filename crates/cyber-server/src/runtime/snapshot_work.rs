@@ -96,7 +96,7 @@ pub struct SnapshotWorker {
     directory: PathBuf,
     created_id: String,
     worktree_id: Option<String>,
-    _location: Box<dyn Send>,
+    _location: Option<Box<dyn super::SnapshotLocationGuard>>,
     _lifecycle: OwnedRwLockReadGuard<()>,
     // Last: releasing this lock proves all earlier worker resources were dropped.
     _lifetime: Option<Box<dyn super::SnapshotLifetime>>,
@@ -159,6 +159,7 @@ impl SnapshotWork<'_> {
         }
     }
     pub fn authorize(&self) -> Result<(), String> {
+        self.owner.location()?.verify()?;
         if let Some(lifetime) = &self.owner._lifetime {
             lifetime.verify()?;
         }
@@ -245,6 +246,11 @@ impl SnapshotWork<'_> {
 }
 
 impl SnapshotWorker {
+    fn location(&self) -> Result<&dyn super::SnapshotLocationGuard, String> {
+        self._location
+            .as_deref()
+            .ok_or_else(|| "Snapshot checkout proof is unavailable".into())
+    }
     /// Trusted adapters must perform only synchronous filesystem work here;
     /// spawning a process or detached task cannot use this acknowledgement proof.
     pub async fn run(
@@ -259,6 +265,10 @@ impl SnapshotWorker {
             native
                 .guard
                 .verify(self.scope.snapshot_origin())
+                .map_err(RestoreError::Failed)?;
+            self.location()
+                .map_err(RestoreError::Failed)?
+                .verify()
                 .map_err(RestoreError::Failed)?;
             Ok(SnapshotCompletion {
                 worker: self,
@@ -291,9 +301,18 @@ impl SnapshotCompletion {
             .guard
             .verify(self.worker.scope.snapshot_origin())
             .map_err(RuntimeError::Conflict)?;
-        self.worker
-            .scope
-            .commit_recovery(state, self.worker.sequence, &receipt)?;
+        let location = self
+            .worker
+            ._location
+            .take()
+            .ok_or_else(|| RuntimeError::Conflict("Missing snapshot checkout proof".into()))?;
+        location.verify().map_err(RuntimeError::Conflict)?;
+        self.worker._location = Some(self.worker.scope.commit_recovery(
+            state,
+            self.worker.sequence,
+            &receipt,
+            location,
+        )?);
         self.native.guard.acknowledge(self.worker.scope.snapshot_origin()).map_err(|error| RuntimeError::Conflict(format!(
             "Recovery runtime acknowledgement committed; native journal acknowledgement requires reconciliation: {error}"
         )))?;
@@ -313,12 +332,19 @@ impl SnapshotCompletion {
             .guard
             .verify(self.worker.scope.snapshot_origin())
             .map_err(RuntimeError::Conflict)?;
-        self.worker.scope.commit_snapshot(
+        let location = self
+            .worker
+            ._location
+            .take()
+            .ok_or_else(|| RuntimeError::Conflict("Missing snapshot checkout proof".into()))?;
+        location.verify().map_err(RuntimeError::Conflict)?;
+        self.worker._location = Some(self.worker.scope.commit_snapshot(
             state,
             self.worker.sequence,
             events,
             self.native.guard.intent_digest(),
-        )?;
+            location,
+        )?);
         self.native
             .guard
             .acknowledge(self.worker.scope.snapshot_origin())
@@ -408,7 +434,11 @@ impl Runtime {
             directory,
             created_id,
             worktree_id: state.info.worktree_id.clone(),
-            _location: lease.settle_retained().map_err(RuntimeError::Invalid)?,
+            _location: Some(
+                lease
+                    .settle_snapshot_retained()
+                    .map_err(RuntimeError::Invalid)?,
+            ),
             _lifecycle: lifecycle,
             _lifetime: lifetime,
         })
@@ -464,7 +494,11 @@ impl Runtime {
             directory,
             created_id,
             worktree_id,
-            _location: lease.settle_retained().map_err(RuntimeError::Invalid)?,
+            _location: Some(
+                lease
+                    .settle_snapshot_retained()
+                    .map_err(RuntimeError::Invalid)?,
+            ),
             _lifecycle: lifecycle,
             _lifetime: lifetime,
             admission,

@@ -301,3 +301,34 @@ Session. Exact persisted checkout file/directory identity and creation/lifetime
 binding, consuming proof through Store settlement, reconciliation and real kill
 cuts across multi-checkout acquisition remain required before the complete resource
 recovery path is accepted. Older Session-owned unknown leases remain independent.
+
+
+### Native proof retained during acquired checkout work
+
+Each new snapshot checkout claim now records a bounded versioned binding for the
+claim file, common/activity directories and managed creation record. The core lease
+pins the actual directories/creation descriptor alongside its locked claim and
+verifies a fresh no-follow route against those identities, exact owner/worktree,
+creation digest and retained record. Unix identity includes device/inode/birth and
+owner/mode; Windows uses full volume/file identity, creation time and attributes,
+with reparse and hard-link refusal. Positional reads use the original locked claim
+handle and do not reopen its locked byte range for reading.
+
+The production adapter retains a dedicated metadata verification port, including
+Location activity. The worker checks it at authorization, completion and immediately
+before consuming settlement. The Store writer verifies that same native proof and
+returns it only after the paired commit/reply, so failure rolls back both owners
+and suppresses journal acknowledgement. Verification cannot call the primary
+runtime/Store or launch Git/processes. Unmanaged ownership keeps its prior retention
+semantics without claiming managed proof.
+
+This is proof of an already acquired claim. It does not yet bind the checkout
+receipt to the immutable snapshot lifetime for interrupted-acquisition recovery,
+reacquire an unknown claim or publish new acknowledgement authority. The cut before complete native binding publication remains open. Persisting the complete
+resource binding before stable publication and consuming it with durable recovery
+receipts are still required. No old Session or operation claim is reclassified.
+
+
+The checkout-proof compatibility migration prevents earlier writer catalogs from
+opening this Store for mutation and bypassing these native verification steps.
+It performs no native evidence repair or deletion.

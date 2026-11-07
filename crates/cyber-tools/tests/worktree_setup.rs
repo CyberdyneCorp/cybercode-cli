@@ -1913,6 +1913,85 @@ async fn process_launch_failure_remains_uncertain_and_cannot_authorize_retry() {
 }
 
 #[tokio::test]
+async fn managed_git_legacy_rewind_preserves_an_independent_native_checkout_proof() {
+    use cyber_server::runtime::{CreateSession, RevertTarget, ToolHost};
+    let (fixture, _, managed) = owned().await;
+    #[cfg(windows)]
+    fixture.set_config(json!({"sandbox":{"policy":"full-access"}}));
+    let config = fixture.config.clone();
+    let snapshots = cyber_snapshot::GitSnapshots::new(
+        fixture.dir.path().join("data"),
+        Arc::new(move |_| config.lock().unwrap().clone()),
+    );
+    let flow = support::flow::Flow::with(
+        fixture,
+        vec![support::flow::text("before"), support::flow::text("after")],
+        false,
+        snapshots,
+    );
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let first = flow.prompt(&info.id, "before external edit").await;
+    flow.settle(&info.id).await;
+    std::fs::write(managed.path.join("tracked.txt"), "after").unwrap();
+    flow.prompt(&info.id, "after external edit").await;
+    flow.settle(&info.id).await;
+    // Git still uses the legacy restore path. Exercise its compatibility while
+    // an independently acquired snapshot checkout proof remains retained.
+    let claim = flow
+        .f
+        .host
+        .claim_snapshot_location(&info, "op_retained", CancellationToken::new())
+        .await
+        .unwrap();
+    let proof = claim.settle_snapshot_retained().unwrap();
+    proof.verify().unwrap();
+    flow.runtime
+        .revert_stage(&info.id, &first, RevertTarget::Code)
+        .await
+        .unwrap();
+    flow.runtime.revert_commit(&info.id).await.unwrap();
+    proof.verify().unwrap();
+    drop(proof);
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("tracked.txt")).unwrap(),
+        "base"
+    );
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let claims = std::fs::read_dir(directory)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("op_")
+                .then_some(path)
+        })
+        .collect::<Vec<_>>();
+    assert!(!claims.is_empty());
+    for path in claims {
+        let record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(record["snapshot_binding"]["worktree_id"], managed.id);
+        assert_eq!(record["snapshot_binding"]["owner_id"], record["owner_id"]);
+        assert_eq!(record["settled"], true);
+    }
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn snapshot_location_claim_is_independent_of_a_live_session_and_retained_until_disposal() {
     use cyber_core::worktrees::CheckoutActivity;
     use cyber_server::runtime::{CreateSession, NoSnapshots, ToolHost};
@@ -1944,7 +2023,20 @@ async fn snapshot_location_claim_is_independent_of_a_live_session_and_retained_u
         .unwrap();
     assert_eq!(worker.worktree_id.as_deref(), Some(managed.id.as_str()));
     actor.settle().unwrap();
-    let proof = worker.settle_retained().unwrap();
+    let proof = worker.settle_snapshot_retained().unwrap();
+    proof.verify().unwrap();
+    #[cfg(unix)]
+    {
+        let directory = managed
+            .common_dir
+            .join("cyber-worktree-activity")
+            .join(&managed.id);
+        let alias = directory.join("snapshot-alias");
+        std::fs::hard_link(directory.join("op_snapshot.lock"), &alias).unwrap();
+        assert!(proof.verify().is_err());
+        std::fs::remove_file(alias).unwrap();
+        proof.verify().unwrap();
+    }
     let error = repository
         .remove(&Git, &CheckoutActivity, &managed, false)
         .await

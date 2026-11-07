@@ -341,7 +341,8 @@ impl Scope {
         sequence: i64,
         events: Vec<NewEvent>,
         intent_digest: Option<&str>,
-    ) -> Result<(), RuntimeError> {
+        location: Box<dyn super::SnapshotLocationGuard>,
+    ) -> Result<Box<dyn super::SnapshotLocationGuard>, RuntimeError> {
         let runtime = Runtime {
             inner: self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?,
         };
@@ -376,21 +377,33 @@ impl Scope {
             (state.info.id.clone(), state.last_seq),
             (self.id.clone(), self.sequence()),
         ];
-        let (stored, ()) = self.store.append_pair_checked(owners, move |tx| {
-            if !super::admission_authority::bindings_current(tx, &bindings)? {
-                return Err(cyber_store::StoreError::InvalidAppend(
-                    super::admission_authority::STALE.into(),
-                ));
-            }
-            Ok(([events, vec![acknowledgement]], ()))
-        })?;
+        let stop = self.control.stop.clone();
+        let (stored, location) = self
+            .store
+            .append_pair_checked(owners, move |tx| {
+                location
+                    .verify()
+                    .map_err(cyber_store::StoreError::InvalidAppend)?;
+                if stop.is_cancelled() {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        "Snapshot consuming acknowledgement was cancelled".into(),
+                    ));
+                }
+                if !super::admission_authority::bindings_current(tx, &bindings)? {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        super::admission_authority::STALE.into(),
+                    ));
+                }
+                Ok(([events, vec![acknowledgement]], location))
+            })
+            .map_err(consuming_error)?;
         self.record = settled;
         self.settled = true;
         for event in &stored[0] {
             state.apply(event).map_err(RuntimeError::Corrupt)?;
         }
         runtime.inner.publish(&stored[0]);
-        Ok(())
+        Ok(location)
     }
     pub fn settle(&mut self) -> Result<(), RuntimeError> {
         if matches!(self.authority, Authority::Recovery(_)) {
@@ -412,7 +425,8 @@ impl Scope {
         state: &super::SessionState,
         sequence: i64,
         receipt: &super::SnapshotRecoveryReceipt,
-    ) -> Result<(), RuntimeError> {
+        location: Box<dyn super::SnapshotLocationGuard>,
+    ) -> Result<Box<dyn super::SnapshotLocationGuard>, RuntimeError> {
         self.verify_authority()?;
         let Authority::Recovery(authority) = &self.authority else {
             return Err(RuntimeError::Conflict(
@@ -468,42 +482,52 @@ impl Scope {
             (original.activity_id.clone(), original_sequence),
             (self.id.clone(), self.sequence()),
         ];
-        self.store.append_pair_checked(owners, move |tx| {
-            let (_, mut original_record) = super::snapshot_recovery_record::attest(tx, &original)?;
-            let (_, resolution_record) = super::snapshot_recovery_record::attest(tx, &origin)?;
-            let current: i64 = tx.query_row(
-                "SELECT COALESCE(MAX(seq),-1) FROM event WHERE aggregate_id=?1",
-                [&original.session_id],
-                |row| row.get(0),
-            )?;
-            let created: String = tx.query_row(
-                "SELECT id FROM event WHERE aggregate_id=?1 ORDER BY seq LIMIT 1",
-                [&original.session_id],
-                |row| row.get(0),
-            )?;
-            if stop.is_cancelled()
-                || !authority.current(tx)?
-                || current != sequence
-                || created != original.session_created_id
-                || original_record.status == "settled"
-                || resolution_record.status != "pending"
-                || resolution_record.snapshot_request.as_ref() != Some(&expected_request)
-            {
-                return Err(cyber_store::StoreError::InvalidAppend(
-                    "Recovery consuming acknowledgement authority changed".into(),
-                ));
-            }
-            original_record.status = "settled".into();
-            original_record.phase = "snapshot_recovery_committed".into();
-            original_record.admission_bindings = None;
-            original_record.snapshot_receipt = Some(receipt);
-            Ok(([vec![change(&original_record)], vec![resolution_event]], ()))
-        })?;
+        let (_, location) = self
+            .store
+            .append_pair_checked(owners, move |tx| {
+                location
+                    .verify()
+                    .map_err(cyber_store::StoreError::InvalidAppend)?;
+                let (_, mut original_record) =
+                    super::snapshot_recovery_record::attest(tx, &original)?;
+                let (_, resolution_record) = super::snapshot_recovery_record::attest(tx, &origin)?;
+                let current: i64 = tx.query_row(
+                    "SELECT COALESCE(MAX(seq),-1) FROM event WHERE aggregate_id=?1",
+                    [&original.session_id],
+                    |row| row.get(0),
+                )?;
+                let created: String = tx.query_row(
+                    "SELECT id FROM event WHERE aggregate_id=?1 ORDER BY seq LIMIT 1",
+                    [&original.session_id],
+                    |row| row.get(0),
+                )?;
+                if stop.is_cancelled()
+                    || !authority.current(tx)?
+                    || current != sequence
+                    || created != original.session_created_id
+                    || original_record.status == "settled"
+                    || resolution_record.status != "pending"
+                    || resolution_record.snapshot_request.as_ref() != Some(&expected_request)
+                {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        "Recovery consuming acknowledgement authority changed".into(),
+                    ));
+                }
+                original_record.status = "settled".into();
+                original_record.phase = "snapshot_recovery_committed".into();
+                original_record.admission_bindings = None;
+                original_record.snapshot_receipt = Some(receipt);
+                Ok((
+                    [vec![change(&original_record)], vec![resolution_event]],
+                    location,
+                ))
+            })
+            .map_err(consuming_error)?;
         self.handle
             .acknowledge_snapshot_uncertainty(&request.original.activity_id);
         self.record = settled;
         self.settled = true;
-        Ok(())
+        Ok(location)
     }
     pub async fn run<T>(&self, future: impl std::future::Future<Output = T>) -> T {
         let Authority::Ordinary(authority) = &self.authority else {
@@ -620,6 +644,13 @@ impl Drop for Scope {
         self.control.done.cancel();
     }
 }
+fn consuming_error(error: cyber_store::StoreError) -> RuntimeError {
+    match error {
+        cyber_store::StoreError::InvalidAppend(reason) => RuntimeError::Conflict(reason),
+        error => error.into(),
+    }
+}
+
 fn change(record: &Record) -> NewEvent {
     NewEvent::new(
         CHANGED,

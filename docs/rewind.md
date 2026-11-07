@@ -296,3 +296,10 @@ explicit support refuse managed snapshot admission. A crash while acquiring a cl
 can still leave unknown checkout evidence: preparation cancellation does not clear
 that evidence or authorize checkout removal. Exact native claim reconciliation is
 still required for that acquisition cut; retain the evidence for recovery.
+
+
+While a managed snapshot is running, the worker verifies its pinned checkout claim
+and worktree creation metadata before source changes and consuming commits. Aliased
+or replaced claim files, changed creation contents and replaced activity directories
+refuse. These checks preserve evidence; they do not grant permission to clear an
+unknown checkout claim after interrupted acquisition.

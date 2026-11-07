@@ -190,6 +190,189 @@ async fn default_host_refuses_managed_snapshot_claim_without_explicit_support() 
 }
 
 struct Acknowledgements(Arc<AtomicUsize>);
+struct CheckoutProof {
+    calls: Arc<AtomicUsize>,
+    fail_at: Arc<AtomicUsize>,
+}
+
+struct StopCheckoutProof {
+    calls: Arc<AtomicUsize>,
+    stop_at: Arc<AtomicUsize>,
+    stop: tokio_util::sync::CancellationToken,
+}
+impl super::super::SnapshotLocationGuard for StopCheckoutProof {
+    fn verify(&self) -> Result<(), String> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == self.stop_at.load(Ordering::SeqCst) {
+            self.stop.cancel(); // Model Stop arriving during the writer's final native check.
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn stop_during_writer_checkout_verification_refuses_consuming_acknowledgement() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let mut owner = worker(&runtime, &session).await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let stop_at = Arc::new(AtomicUsize::new(usize::MAX));
+    owner._location = Some(Box::new(StopCheckoutProof {
+        calls: calls.clone(),
+        stop_at: stop_at.clone(),
+        stop: owner.scope.control.stop.clone(),
+    }));
+    let binding = binding(temp.path().canonicalize().unwrap());
+    let acknowledgements = Arc::new(AtomicUsize::new(0));
+    let acknowledged = acknowledgements.clone();
+    let completed = owner
+        .run(move |work| {
+            let origin = work.begin(binding).unwrap();
+            Ok(SnapshotNativeResult::new(
+                vec![],
+                Box::new(Guard {
+                    origin: Some(origin),
+                    acknowledgements: acknowledged,
+                }),
+            ))
+        })
+        .await
+        .unwrap();
+    stop_at.store(calls.load(Ordering::SeqCst) + 2, Ordering::SeqCst);
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let mut state = handle.state.lock().await;
+    let before = state.last_seq;
+    let result = completed.commit(
+        &mut state,
+        vec![events::event(
+            events::TITLE_GENERATED,
+            &events::Titled {
+                title: "must not commit after Stop".into(),
+                usage: None,
+                cost: None,
+                model: None,
+            },
+        )],
+    );
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(ref reason)) if reason.contains("cancelled"))
+    );
+    assert_eq!(state.last_seq, before);
+    assert_eq!(acknowledgements.load(Ordering::SeqCst), 0);
+    drop(state);
+    assert_eq!(latest(&runtime, &session)["status"], "unknown");
+    runtime.shutdown().await;
+}
+impl super::super::SnapshotLocationGuard for CheckoutProof {
+    fn verify(&self) -> Result<(), String> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if call >= self.fail_at.load(Ordering::SeqCst) {
+            return Err("checkout native route changed".into());
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn changed_checkout_proof_refuses_the_source_callback() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let fail_at = Arc::new(AtomicUsize::new(usize::MAX));
+    let mut owner = worker(&runtime, &session).await;
+    owner._location = Some(Box::new(CheckoutProof {
+        calls: calls.clone(),
+        fail_at: fail_at.clone(),
+    }));
+    let source_calls = Arc::new(AtomicUsize::new(0));
+    let source = source_calls.clone();
+    let binding = binding(temp.path().canonicalize().unwrap());
+    assert!(
+        owner
+            .run(move |work| {
+                work.begin(binding).unwrap();
+                fail_at.store(calls.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+                assert!(
+                    work.effect(|| {
+                        source.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                    .is_err()
+                );
+                Err(RestoreError::Failed(
+                    "changed checkout before source effect".into(),
+                ))
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(latest(&runtime, &session)["status"], "unknown");
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn consuming_writer_verifies_retained_checkout_proof_and_rolls_back_both_owners_on_change() {
+    for changed in [false, true] {
+        let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fail_at = Arc::new(AtomicUsize::new(usize::MAX));
+        let mut owner = worker(&runtime, &session).await;
+        owner._location = Some(Box::new(CheckoutProof {
+            calls: calls.clone(),
+            fail_at: fail_at.clone(),
+        }));
+        let binding = binding(temp.path().canonicalize().unwrap());
+        let acknowledgements = Arc::new(AtomicUsize::new(0));
+        let acknowledged = acknowledgements.clone();
+        let completed = owner
+            .run(move |work| {
+                let origin = work.begin(binding).unwrap();
+                Ok(SnapshotNativeResult::new(
+                    vec![],
+                    Box::new(Guard {
+                        origin: Some(origin),
+                        acknowledgements: acknowledged,
+                    }),
+                ))
+            })
+            .await
+            .unwrap();
+        let before_checks = calls.load(Ordering::SeqCst);
+        if changed {
+            fail_at.store(before_checks + 2, Ordering::SeqCst);
+        }
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let mut state = handle.state.lock().await;
+        let before = state.last_seq;
+        let result = completed.commit(
+            &mut state,
+            vec![events::event(
+                events::TITLE_GENERATED,
+                &events::Titled {
+                    title: "checkout consuming batch".into(),
+                    usage: None,
+                    cost: None,
+                    model: None,
+                },
+            )],
+        );
+        assert_eq!(result.is_err(), changed);
+        if changed {
+            assert!(matches!(result, Err(RuntimeError::Conflict(_))));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), before_checks + 2);
+        assert_eq!(state.last_seq, before + i64::from(!changed));
+        assert_eq!(
+            acknowledgements.load(Ordering::SeqCst),
+            usize::from(!changed)
+        );
+        drop(state);
+        assert_eq!(
+            latest(&runtime, &session)["status"],
+            if changed { "unknown" } else { "settled" }
+        );
+        runtime.shutdown().await;
+    }
+}
+
 struct Lifetimes {
     inner: Acknowledgements,
     permits: Arc<tokio::sync::Semaphore>,

@@ -181,6 +181,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261106010000_snapshot_source_admission",
         sql: include_str!("../migrations/20261106010000_snapshot_source_admission.sql"),
     },
+    Migration {
+        id: "20261106020000_snapshot_checkout_proof",
+        sql: include_str!("../migrations/20261106020000_snapshot_checkout_proof.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -352,13 +356,50 @@ mod tests {
         let Outcome::TooNew(unknown) = migrate(&mut reopened, legacy).unwrap() else {
             panic!("previous worker catalog admitted source-admission storage");
         };
-        assert_eq!(unknown, ["20261106010000_snapshot_source_admission"]);
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
         let retained: String = reopened
             .query_row("SELECT data FROM event WHERE id='evt_source'", [], |row| {
                 row.get(0)
             })
             .unwrap();
         assert_eq!(retained, evidence);
+    }
+
+    #[test]
+    fn checkout_proof_marker_rejects_previous_writers_without_changing_native_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("checkout.db");
+        let claim = directory.path().join("op_worker.lock");
+        let evidence =
+            br#"{"owner_id":"op_worker","settled":false,"snapshot_binding":{"version":1}}"#;
+        std::fs::write(&claim, evidence).unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261106020000_snapshot_checkout_proof")
+            .unwrap();
+        let previous = &MIGRATIONS[..at];
+        let mut db = Connection::open(&database).unwrap();
+        assert!(matches!(
+            migrate(&mut db, previous).unwrap(),
+            Outcome::Current
+        ));
+        assert!(matches!(
+            migrate(&mut db, MIGRATIONS).unwrap(),
+            Outcome::Current
+        ));
+        drop(db);
+        let mut db = Connection::open(database).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, previous).unwrap() else {
+            panic!("previous writers bypassed checkout proof admission");
+        };
+        assert_eq!(unknown, ["20261106020000_snapshot_checkout_proof"]);
+        assert_eq!(std::fs::read(claim).unwrap(), evidence);
     }
 
     #[test]

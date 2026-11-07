@@ -99,6 +99,13 @@
 - **AND** settling that snapshot claim SHALL NOT acknowledge unrelated Session activity; an interrupted acquisition SHALL retain unknown evidence without a generic clearing path
 - **AND** a managed host without explicit snapshot ownership support SHALL refuse instead of reusing a Session claim
 
+#### Scenario: Retained native checkout routes change
+- **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
+- **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents
+- **AND** aliases, replaced native objects and contradictory records SHALL refuse without acknowledging foreign resources
+- **AND** the consuming Store writer SHALL verify and retain the exact checkout proof through its actual commit and observed reply
+- **AND** previous writer catalogs lacking this proof contract SHALL refuse Store mutation while preserving native evidence
+
 #### Scenario: Lifetime proof precedes reservation
 - **WHEN** a new file-copy worker reserves runtime ownership before publishing its restore origin
 - **THEN** an immutable worker-specific native lifetime lock already binds its activity, Session creation, checkout, Location and private namespace, and remains retained through actual resource teardown

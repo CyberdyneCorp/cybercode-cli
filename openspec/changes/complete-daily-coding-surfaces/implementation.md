@@ -1227,3 +1227,88 @@ ports and refusal paths. No critical/major findings remain for independent acqui
 immutable interrupted-claim proof and full managed recovery acceptance remain open.
 This continuation remains local and does not authorize unknown claim settlement,
 complete M2–M8 or make the full recovery increment merge-ready.
+
+
+### Exact proof for acquired native checkout claims (2026-11-06, local)
+
+New snapshot checkout leases retain native common/activity/creation directory pins,
+the creation descriptor and the locked claim. A bounded versioned native binding
+records exact identities, owner/worktree, creation digest and Unix owner/mode (or
+Windows full file/volume/creation identity and attributes). Verification opens fresh
+no-follow child routes, refuses aliases/replacements, compares creation bytes and
+reads the exact claim using positional reads on its original locked descriptor.
+Unknown record fields refuse verification. Snapshot activity claims use exclusive
+creation and are never reset, including after settlement; generic Session behavior
+is unchanged. Legacy/unbound claims do not acquire new proof.
+
+The host retains a dedicated `SnapshotLocationGuard`; managed guards must implement
+it explicitly. Normal workers verify it before authorization, after native completion
+and at consuming commit. The same proof moves into the Store writer, is verified
+there, and is returned only after the observed paired commit. It therefore remains
+held through actual writer completion/reply. A failed native verification rolls back
+both aggregates and prevents journal acknowledgement. The callback performs bounded
+native metadata work and cannot call the primary runtime/Store or launch processes.
+Unmanaged owners retain their existing behavior without inventing managed proof.
+
+Native regressions exercise claim mode/unknown-field changes, hard links, identical
+file replacement, altered/replaced creation records and replaced activity namespaces.
+Runtime regression counters verify that changed proof prevents the source callback
+and that writer-local rejection rolls back both owners, alongside a successful
+consuming commit. Production host coverage uses the exact native guard and refuses
+an introduced hard link without releasing retained ownership.
+
+An initial new integration assertion expected legacy Git rewind to issue an owned
+snapshot claim. It found no such claim: Git still uses the existing restore path.
+The corrected test verifies that legacy Git restoration preserves an explicitly
+retained independent native checkout proof, rather than claiming owned Git recovery.
+Git journaling/owned restoration remains required and is not accepted by that test.
+
+This continuation verifies acquired resources; it does not yet publish the complete
+checkout binding through the immutable snapshot lifetime before stable acquisition,
+reacquire interrupted unknown claims, or consume native checkout acknowledgements
+from recovery receipts. The incomplete binding-publication cut retains evidence and
+cannot be force-cleared. Full M2–M8, native platform/cut coverage, reclamation and
+client acceptance remain open. No parent task or issue is complete.
+
+
+Local verification: 420 server unit tests passed with one ignored subprocess fixture,
+plus 22 affected integrations (4 idle cancellation, 13 Location activity and 5 rewind
+preview). The reviewed core worktree repository suite passed all 70 cases with its
+subprocess child listed ignored; all five selected activity unit regressions passed.
+All 39 production worktree host cases passed after correcting the Git compatibility
+assertion described above. All 16 real CLI branch/recovery cases passed, including
+real early/partial kills and request reconciliation. These broad checks were followed
+by focused core/host verification and all-target Clippy after the final core review
+changes. Store tests passed all 60 cases after adding the checkout-proof compatibility
+marker; the previous catalog refuses mutation and native bytes remain unchanged.
+All-target core/server/tools/App/CLI Clippy passed with warnings denied. Formatting,
+diff, generated SDK consistency and strict pinned OpenSpec (117 items) passed; spec
+lint reports 0 errors/25 warnings. No HTTP payload changed, and SDK execution tests
+were not rerun for these Rust/native-only changes. Full-workspace tests, native
+Linux/Windows execution and live TUI/App recovery acceptance were not run. Native
+sandbox deprecation/Darwin linker warnings were observed without attributing an
+origin to main. Remote main remains `db9e171e`.
+
+The code-review skill was applied to all changed core/native, runtime/writer, host,
+Store migration, test and documentation files. The metadata port keeps the existing
+runtime/native-adapter direction. Review checks descriptor and namespace retention,
+creation/record bounds, exact IDs and metadata, no-follow/alias handling, positional
+reads under Windows locks, one-shot exclusive publication, writer-local proof
+failure rollback, returned proof lifetime, and old-writer compatibility. Verification
+and proof disposal may occur in the writer and must not reenter the primary Store;
+the provided native adapters only query/release native resources there. Review added
+exclusive claim creation, strict unknown-field comparison and the compatibility gate.
+No critical/major findings remain for acquired-claim verification. Unknown acquisition
+recovery, complete immutable lifetime binding and owned Git journaling remain explicit
+acceptance gaps; this local increment does not complete either issue or the full
+recovery delivery.
+
+
+Final review also adds a writer-local Stop check after native checkout verification;
+a cancelled ordinary restore cannot consume its acknowledgement merely because its
+caller-side check ran before queueing. The targeted regression injects Stop during
+the final native check and verifies unchanged Session state, unknown native origin
+and no journal acknowledgement. Checked owner refusals return `Conflict` while
+schema, corruption and storage failures retain their distinct error paths. The
+final snapshot-worker suite (34 tests) and server Clippy passed after this change.
+The checkout-proof migration has a separate passing Store all-target Clippy check.

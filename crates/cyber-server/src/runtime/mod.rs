@@ -246,9 +246,9 @@ pub use host::{
     FileDiff, FileReadError, GoalWorktree, HookEffects, Invocation, LifecycleHook,
     LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots, NoTools,
     Provenance, Reconciliation, ResolvedModel, RestoreError, RuleEffect, RunWorktree,
-    SessionEnvelope, SkillSuggestion, Snapshot, SnapshotRecovery, Snapshots, TeamWorktree, ToolDef,
-    ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput,
-    WorkflowAgentRequest, WorkflowToolRequest,
+    SessionEnvelope, SkillSuggestion, Snapshot, SnapshotLocationGuard, SnapshotRecovery, Snapshots,
+    TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree,
+    WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,

@@ -1,6 +1,108 @@
 use super::*;
 use cyber_core::worktrees::CheckoutActivity;
 
+#[cfg(unix)]
+#[test]
+fn snapshot_native_checkout_proof_refuses_aliases_and_an_identical_replacement_record() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("snapshot-proof").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let worker =
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).unwrap();
+    worker.verify_snapshot().unwrap();
+    let binding = worker.snapshot_binding().unwrap().clone();
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let path = directory.join("op_worker.lock");
+    let raw = std::fs::read(&path).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode ^ 0o200)).unwrap();
+    assert!(worker.verify_snapshot().is_err());
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    worker.verify_snapshot().unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let mut changed = record.clone();
+    changed["unrecognized_evidence"] = serde_json::json!("retained");
+    std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+    assert!(worker.verify_snapshot().is_err());
+    std::fs::write(&path, &raw).unwrap();
+    worker.verify_snapshot().unwrap();
+    assert_eq!(
+        record["snapshot_binding"],
+        serde_json::to_value(binding).unwrap()
+    );
+    let alias = directory.join("alias");
+    std::fs::hard_link(&path, &alias).unwrap();
+    assert!(worker.verify_snapshot().is_err());
+    std::fs::remove_file(alias).unwrap();
+    worker.verify_snapshot().unwrap();
+    let replacement = directory.join("replacement");
+    std::fs::write(&replacement, &raw).unwrap();
+    std::fs::rename(replacement, &path).unwrap();
+    assert!(worker.verify_snapshot().is_err());
+    assert!(worker.settle_retained().is_err());
+    assert_eq!(std::fs::read(path).unwrap(), raw);
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_native_checkout_proof_retains_creation_and_namespace_pins() {
+    for cut in ["creation_contents", "creation_replacement", "namespace"] {
+        let fixture = Fixture::new();
+        let repository = fixture.repository();
+        let managed = fixture
+            .create(
+                &repository,
+                &Name::parse("snapshot-route").unwrap(),
+                &Settings::default(),
+            )
+            .unwrap();
+        let worker =
+            block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).unwrap();
+        let creation = managed
+            .common_dir
+            .join("cyber-worktrees/snapshot-route.json");
+        let raw = std::fs::read(&creation).unwrap();
+        match cut {
+            "creation_contents" => {
+                let mut changed = managed.clone();
+                changed.ready = false;
+                std::fs::write(&creation, serde_json::to_vec(&changed).unwrap()).unwrap();
+                assert!(worker.verify_snapshot().is_err());
+                std::fs::write(&creation, &raw).unwrap();
+                worker.verify_snapshot().unwrap();
+                continue;
+            }
+            "creation_replacement" => {
+                let replacement = creation.with_extension("replacement");
+                std::fs::write(&replacement, &raw).unwrap();
+                std::fs::rename(replacement, &creation).unwrap();
+            }
+            _ => {
+                let directory = managed
+                    .common_dir
+                    .join("cyber-worktree-activity")
+                    .join(&managed.id);
+                let record = std::fs::read(directory.join("op_worker.lock")).unwrap();
+                std::fs::rename(&directory, directory.with_extension("retained")).unwrap();
+                std::fs::create_dir(&directory).unwrap();
+                std::fs::write(directory.join("op_worker.lock"), record).unwrap();
+            }
+        }
+        assert!(worker.verify_snapshot().is_err(), "{cut}");
+        assert!(worker.settle_retained().is_err(), "{cut}");
+    }
+}
+
 #[test]
 fn snapshot_worker_owns_a_distinct_checkout_lock_through_retained_settlement() {
     let fixture = Fixture::new();
@@ -32,6 +134,9 @@ fn snapshot_worker_owns_a_distinct_checkout_lock_through_retained_settlement() {
         .unwrap_err();
     assert!(error.to_string().contains("op_worker"), "{error}");
     drop(proof);
+    assert!(
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).is_err()
+    );
     block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false)).unwrap();
 }
 

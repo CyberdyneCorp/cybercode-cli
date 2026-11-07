@@ -7,13 +7,17 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{GitExecution, Managed, Name, RemovalActivity, Repository, RepositoryLock};
+mod snapshot;
+pub use snapshot::CheckoutBinding;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct UseRecord {
     worktree_id: String,
     #[serde(alias = "session_id")]
     owner_id: String,
     settled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot_binding: Option<CheckoutBinding>,
 }
 
 /// Dropping without `settle` releases the OS lock but retains unknown activity.
@@ -21,6 +25,7 @@ struct UseRecord {
 pub struct CheckoutLease {
     file: LockedRecord,
     record: UseRecord,
+    snapshot_pins: Option<snapshot::Pins>,
 }
 
 impl CheckoutLease {
@@ -32,14 +37,36 @@ impl CheckoutLease {
         &self.record.owner_id
     }
 
+    pub fn snapshot_binding(&self) -> io::Result<&CheckoutBinding> {
+        self.record
+            .snapshot_binding
+            .as_ref()
+            .ok_or_else(|| invalid("Checkout has no exact snapshot binding"))
+    }
+
+    /// Metadata-only verification against retained native descriptors. This does
+    /// not acknowledge an unknown lease or launch Git/process work.
+    pub fn verify_snapshot(&self) -> io::Result<()> {
+        self.snapshot_pins
+            .as_ref()
+            .ok_or_else(|| invalid("Checkout snapshot pins are missing"))?
+            .verify(&self.file, &self.record)
+    }
+
     pub fn settle(self) -> io::Result<()> {
         self.settle_retained().map(drop)
     }
 
     /// Record acknowledgement while retaining the native lock through a later commit.
     pub fn settle_retained(mut self) -> io::Result<Self> {
+        if self.record.snapshot_binding.is_some() {
+            self.verify_snapshot()?;
+        }
         self.record.settled = true;
         write_record(&mut self.file, &self.record)?;
+        if self.record.snapshot_binding.is_some() {
+            self.verify_snapshot()?;
+        }
         Ok(self)
     }
 }
@@ -166,7 +193,13 @@ impl Repository {
         activity: &str,
     ) -> io::Result<CheckoutLease> {
         safe_id(activity, "op")?;
-        self.claim_owner(execution, managed, activity).await
+        let mut lease = self.claim_owner(execution, managed, activity).await?;
+        let (binding, pins) = snapshot::Pins::capture(managed, activity, &lease.file)?;
+        lease.record.snapshot_binding = Some(binding);
+        lease.snapshot_pins = Some(pins);
+        write_record(&mut lease.file, &lease.record)?;
+        lease.verify_snapshot()?;
+        Ok(lease)
     }
 
     async fn claim_owner(
@@ -199,7 +232,17 @@ impl Repository {
         }
         let path = use_directory(managed, true)?.join(format!("{session}.lock"));
         let existed = path.try_exists()?;
-        let file = open_record(&path, true)?;
+        let file = if crate::ids::has_prefix(session, "op") {
+            // An activity is a one-shot owner. Preserve old/future evidence even
+            // after settlement; no new operation may reset this claim.
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&path)?
+        } else {
+            open_record(&path, true)?
+        };
         if !try_lock(&file)? {
             return Err(io::Error::other(format!("Worktree in use by {session}")));
         }
@@ -215,10 +258,15 @@ impl Repository {
             worktree_id: managed.id.clone(),
             owner_id: session.into(),
             settled: false,
+            snapshot_binding: None,
         };
         write_record(&mut file, &record)?;
         sync_parent(&path)?;
-        Ok(CheckoutLease { file, record })
+        Ok(CheckoutLease {
+            file,
+            record,
+            snapshot_pins: None,
+        })
     }
 }
 
@@ -315,6 +363,9 @@ fn check_record(record: &UseRecord, managed: &Managed, session: &str) -> io::Res
 
 fn write_record(file: &mut File, record: &UseRecord) -> io::Result<()> {
     let bytes = serde_json::to_vec(record).map_err(invalid)?;
+    if bytes.len() > 4096 {
+        return Err(invalid("Activity record exceeds 4 KiB"));
+    }
     file.rewind()?;
     file.set_len(0)?;
     file.write_all(&bytes)?;
@@ -364,11 +415,13 @@ mod tests {
             worktree_id: "wt_test".into(),
             owner_id: "ses_test".into(),
             settled: false,
+            snapshot_binding: None,
         };
         write_record(&mut file, &record).unwrap();
         let proof = CheckoutLease {
             file: LockedRecord(file),
             record,
+            snapshot_pins: None,
         }
         .settle_retained()
         .unwrap();
@@ -397,6 +450,7 @@ mod tests {
             worktree_id: "wt_test".into(),
             owner_id: "ses_test".into(),
             settled: false,
+            snapshot_binding: None,
         };
         write_record(&mut initial, &record).unwrap();
         drop(initial);
@@ -405,7 +459,8 @@ mod tests {
         assert!(
             CheckoutLease {
                 file: LockedRecord(file),
-                record
+                record,
+                snapshot_pins: None
             }
             .settle_retained()
             .is_err()
@@ -449,11 +504,13 @@ mod tests {
                 worktree_id: "wt_test".into(),
                 owner_id: "ses_test".into(),
                 settled: false,
+                snapshot_binding: None,
             };
             write_record(&mut file, &record).unwrap();
             let lease = CheckoutLease {
                 file: LockedRecord(file),
                 record,
+                snapshot_pins: None,
             };
             if settle {
                 lease.settle().unwrap();

@@ -189,3 +189,12 @@ unknown claim retention and preservation of unrelated Session evidence. This is
 acquisition ownership, not native reconciliation authority: immutable persisted
 checkout route/creation/lifetime binding and interrupted-claim acknowledgement
 remain incomplete, so M2–M8 and parent tasks remain open.
+
+
+Acquired checkout proof continuation: snapshot claims retain native common/activity/
+creation directory pins and record exact file/creation identity. Runtime source
+callbacks and consuming commits verify the dedicated native proof, including inside
+the Store writer through commit/reply. Changed routes/records refuse without source
+callbacks or acknowledgement. This does not finish immutable lifetime/resource
+publication or unknown-claim reacquisition across early cuts. Those and complete
+platform/client acceptance keep M2–M8 and parent tasks open.

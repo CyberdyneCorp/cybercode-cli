@@ -164,3 +164,10 @@ from Session IDs to independent native activity IDs through a dedicated host por
 CLI/App retain those locks through settlement; unsupported managed hosts refuse.
 Unknown checkout claims remain protected. Exact interrupted-claim proof and
 reconciliation are still required before accepting managed resource recovery.
+
+
+Acquired snapshot checkout claims now carry pinned native route/creation evidence.
+The actual worker and consuming Store writer verify and retain that proof; aliases,
+replacement and changed records refuse. Binding publication before interrupted
+acquisition and recovery-owned native acknowledgement remain required. Git rewind
+still follows its legacy path; compatibility tests do not establish owned Git recovery.

@@ -1212,6 +1212,35 @@ impl cyber_server::runtime::LocationGuard for ActiveLocation {
         let proof = lease.settle_retained()?;
         Ok(Box::new((proof, activity)))
     }
+    fn settle_snapshot_retained(
+        self: Box<Self>,
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        let Self { lease, activity } = *self;
+        Ok(Box::new(ActiveSnapshotLocation {
+            proof: lease.settle_snapshot_retained()?,
+            _activity: activity,
+        }))
+    }
+}
+
+struct ActiveSnapshotLocation {
+    proof: Box<dyn cyber_server::runtime::SnapshotLocationGuard>,
+    _activity: crate::lsp::Activity,
+}
+impl cyber_server::runtime::SnapshotLocationGuard for ActiveSnapshotLocation {
+    fn verify(&self) -> Result<(), String> {
+        self.proof.verify()
+    }
+}
+
+struct SnapshotWorktreeProof(Vec<cyber_core::worktrees::CheckoutLease>);
+impl cyber_server::runtime::SnapshotLocationGuard for SnapshotWorktreeProof {
+    fn verify(&self) -> Result<(), String> {
+        for lease in &self.0 {
+            lease.verify_snapshot().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 impl cyber_server::runtime::LocationGuard for WorktreeLease {
@@ -1229,6 +1258,21 @@ impl cyber_server::runtime::LocationGuard for WorktreeLease {
             .map(|lease| lease.settle_retained().map_err(|error| error.to_string()))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Box::new(leases))
+    }
+    fn settle_snapshot_retained(
+        self: Box<Self>,
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        for lease in &self.0 {
+            lease.verify_snapshot().map_err(|error| error.to_string())?;
+        }
+        let leases = self
+            .0
+            .into_iter()
+            .map(|lease| lease.settle_retained().map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let proof = SnapshotWorktreeProof(leases);
+        cyber_server::runtime::SnapshotLocationGuard::verify(&proof)?;
+        Ok(Box::new(proof))
     }
 }
 
