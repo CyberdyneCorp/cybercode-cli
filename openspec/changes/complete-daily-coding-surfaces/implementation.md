@@ -3078,3 +3078,66 @@ attribution. Full workspace, native preparation TUI process-kill, additional
 Linux/macOS architectures, Windows and source-bound CI were not run here; this is
 local evidence, not complete M7/M8 or accepted delivery. No PR/push is made by this
 increment and no parent task or issue is closed.
+
+## Production TUI process death with a committed preparation reply withheld (2026-11-07)
+
+A new default Linux/macOS branch integration case drives the actual `cyber --resume`
+binary through a POSIX pseudo-terminal, using production terminal setup, keyboard
+dispatch, event loop and HTTP transport. Its Python standard-library driver lives
+under CLI test support; the Rust fixture retains native source and Store assertions.
+It uses the same real service-kill boundaries before origin and after origin but
+before source admission, with exact retained lifetime evidence. No production fault
+hook or recovery admission behavior changes.
+
+A loopback proxy redirects only the fixture's private registration URL, forwards
+the original owner authentication, and withholds all confirmation response headers
+and bytes after receiving a successful committed receipt from the real server.
+The test observes SIGKILL termination of the first TUI, launches a new production
+TUI, and enters preparation recovery through Esc-Esc/C/P and actual Enter keys.
+The new process discovers the existing receipt, makes outcome Enter inert, looks
+up the original key with R and explicitly reconciles it with A. The proxy requires
+exactly one cancellation POST across both terminal processes and no additional
+review after committed receipt discovery. Positive lookup and acknowledgement
+responses must be HTTP 200, and no acknowledgement request may precede explicit A.
+Transient busy read-only reviews may be explicitly rediscovered/reviewed up to
+three times before confirmation; no mutation is retried. Read-only C/P entry also
+handles loading and journal-inspection refusal from an unconstructed pre-origin
+namespace; that absence never supplies cancellation proof. The proxy restores registration and releases held responses in cleanup.
+
+The saved draft and text-attachment payload survive the killed terminal and the
+second terminal's graceful exit. The shared native fixture also verifies immutable
+receipt/resource identity, restart lookup and idempotent confirmation, later owner
+symlink/target bytes, other source bytes, unchanged messages and no inference.
+The final focused two-boundary case passed locally on macOS arm64 in 74.23 seconds.
+
+Code-review skill inspection covered private registration/credential handling,
+PTY ownership and bounded diagnostics/timeouts, source assertions, exact request
+correlation, read-only retry versus cancellation replay, child cleanup and honest
+platform scope. Rust Clippy's new fixture 16/15 finding was resolved by separating
+client confirmation dispatch. The cognitive-complexity skill ran complexipy 8.3.0
+from an isolated temporary environment: the Python driver's maximum was 13 in its
+PTY pump, with no analyzer warnings. No unresolved critical/major review finding
+was identified. Other native platforms, writer/native-acknowledgement/reclaim crash
+cuts, managed Git source admission, partial constructors and safe reclamation
+remain incomplete; this local acceptance does not close M7/M8 or either issue.
+
+Verification: the serial branch/recovery invocation passed all 17 existing cases
+and failed the new PTY case because its driver incorrectly required successful
+journal inspection before P. After correcting only that synchronization assumption,
+the final focused case passed both native boundaries with the stricter positive
+HTTP/explicit-acknowledgement checks. The full 18-case invocation was not repeated
+after that driver fix; the existing cases do not use this Python driver. All-target
+CLI Clippy, Python compilation, complexity analysis, format/diff checks and pinned
+strict OpenSpec (117 items) passed. Spec lint reported 0 errors/25 warnings, without
+unchanged-main attribution. C deprecation and oversized-unwind linker warnings
+were observed without origin attribution. All Cargo tests/Clippy used
+CARGO_INCREMENTAL=0 and --locked. No separate SDK/server/TUI-library/full-workspace
+or additional native platform/CI checks ran for this test-only increment. It makes
+no PR/push and closes no parent task or issue.
+
+Reproduce the focused real-terminal case with Python 3 and its POSIX PTY standard
+library available (it runs by default in Linux/macOS branch integration tests):
+
+```sh
+CARGO_INCREMENTAL=0 cargo test --locked -p cyber-cli --test branches_cli terminal_preparation_recovery -- --test-threads=1
+```

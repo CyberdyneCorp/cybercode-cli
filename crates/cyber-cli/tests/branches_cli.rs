@@ -785,17 +785,24 @@ fn managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_file
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_restart() {
-    cancelled_pre_effect_preparation(false);
+    cancelled_pre_effect_preparation(false, false);
 }
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn exited_origin_preparation_before_source_admission_is_cancelled_after_real_kill() {
-    cancelled_pre_effect_preparation(true);
+    cancelled_pre_effect_preparation(true, false);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn terminal_preparation_recovery_survives_client_kill_with_a_committed_reply_withheld() {
+    cancelled_pre_effect_preparation(false, true);
+    cancelled_pre_effect_preparation(true, true);
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn cancelled_pre_effect_preparation(published: bool) {
+fn cancelled_pre_effect_preparation(published: bool, terminal: bool) {
     let model = scripted_model::ScriptedModel::start(reply);
     let env = Env::new(&model);
     let repo = env.root.join("repo");
@@ -832,7 +839,9 @@ fn cancelled_pre_effect_preparation(published: bool) {
     let request_id = "before-origin/ owner #?%";
     let body = json!({"confirmation":review["confirmation"],"request_id":request_id});
     assert_preparation_client_refusals(&env, &id, &activity, &body);
-    let receipt = json(&preparation_confirm_cli(&env, &id, &activity, &body));
+    let receipt = preparation_with_client(&env, &id, &activity, &body, terminal);
+    let request_id = receipt["request_id"].as_str().unwrap();
+    let body = json!({"confirmation":receipt["confirmation"],"request_id":request_id});
     assert_preparation_resource_digest(&review, &receipt, published);
     assert_eq!(
         json(&preparation_request_cli(
@@ -875,6 +884,41 @@ fn cancelled_pre_effect_preparation(published: bool) {
     assert_eq!(env.messages(&id), messages);
     assert_eq!(model.requests().len(), requests);
     env.exec(Some(&id), "after preparation cancellation");
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn preparation_with_client(
+    env: &Env,
+    session: &str,
+    activity: &str,
+    body: &Value,
+    terminal: bool,
+) -> Value {
+    if terminal {
+        terminal_preparation(env, session, activity)
+    } else {
+        json(&preparation_confirm_cli(env, session, activity, body))
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn terminal_preparation(env: &Env, session: &str, activity: &str) -> Value {
+    let template = env.command(&[]);
+    let environment = template
+        .get_envs()
+        .filter_map(|(key, value)| value.map(|value| (key, value)));
+    let output = Command::new("python3")
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/tui_preparation_driver.py"
+        ))
+        .args([env!("CARGO_BIN_EXE_cyber"), session, activity])
+        .env_clear()
+        .envs(environment)
+        .current_dir(env.root.join("repo"))
+        .output()
+        .unwrap();
+    json(&output)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

@@ -513,7 +513,11 @@ attachments and conversation. Opt-in history keeps default pending listing intac
 exact receipt discovery delegates to the validated original committed pair.
 Controller and actual HTTP transport coverage accompanies native CLI service-kill
 cuts before/after origin publication, including restarted history/discovery and
-foreign-Session refusal. Actual native preparation cancellation driven by a killed
-TUI process remains a separate acceptance gap. M7/M8 and their parent tasks stay
-open alongside partial constructors, managed Git admission, safe reclamation and
-complete compatibility/platform evidence.
+foreign-Session refusal. The subsequent real-binary PTY test now covers native
+pre-origin and published-origin cancellation with the committed confirmation
+response withheld, SIGKILL of the TUI, and fresh-process discovery/lookup/explicit
+acknowledgement without another cancellation. It preserves saved draft attachment
+payloads and later source symlinks/bytes, messages and inference counts. These are
+local macOS arm64 positives; other platform/cut combinations remain unproven.
+M7/M8 and their parent tasks stay open alongside partial constructors, managed Git
+admission, safe reclamation and complete compatibility/platform evidence.
