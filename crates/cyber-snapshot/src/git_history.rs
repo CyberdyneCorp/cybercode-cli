@@ -129,12 +129,23 @@ impl Shadow {
         &self,
         id: &str,
     ) -> Result<Option<Vec<String>>, String> {
+        self.snapshot_metadata(id)
+            .await
+            .map(|(_, excluded)| excluded)
+    }
+
+    /// Return the root identity from the same verified bytes as the exclusions.
+    /// Resolving the tag again would allow a later substitution to change its root.
+    pub(super) async fn snapshot_metadata(
+        &self,
+        id: &str,
+    ) -> Result<(String, Option<Vec<String>>), String> {
         if !oid(id) {
             return Err("Invalid snapshot identity".into());
         }
         let kind = self.run(&["cat-file", "-t", id]).await?;
         if kind == b"tree\n" {
-            return Ok(None);
+            return Ok((id.to_owned(), None));
         }
         if kind != b"tag\n" {
             return Err("Snapshot identity is not a tree or exclusion record".into());
@@ -148,7 +159,10 @@ impl Shadow {
         if size > LIMIT + 512 {
             return Err("Snapshot exclusion record exceeds limit".into());
         }
-        let bytes = self.run(&["cat-file", "tag", id]).await?;
+        let bytes = self
+            .run_bounded(&["cat-file", "tag", id], LIMIT + 512)
+            .await?;
+        super::images::verify_object(id, "tag", &bytes)?;
         let text = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
         let (header, body) = text
             .split_once("\n\n")
@@ -168,7 +182,7 @@ impl Shadow {
                 "Snapshot exclusion record belongs to another Location or is corrupt".into(),
             );
         }
-        Ok(Some(record.excluded))
+        Ok((record.tree, Some(record.excluded)))
     }
     pub(super) async fn excluded_between(
         &self,

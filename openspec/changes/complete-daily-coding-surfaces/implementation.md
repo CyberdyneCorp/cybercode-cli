@@ -1688,3 +1688,53 @@ increment; owned Git recovery and its complete crash/platform acceptance remain 
 
 Strict pinned OpenSpec passed all 117 items; spec lint reports 0 errors/25 warnings.
 Generated SDK consistency passed with no API shape changes.
+
+
+## Verified scoped Git catalogs (2026-11-07)
+
+The next Git integration prerequisite replaces changed-path derivation from Git
+diff output with an immutable literal-path catalog. Exclusion-tag payloads and
+every eligible scoped directory tree are checked against type/length-framed Git
+object identities before paths, modes and leaf IDs are used. Raw binary tree
+records preserve unusual names and reject malformed modes, unsafe paths, duplicate
+names and truncated IDs. Leaf bytes remain verified when materialized. This does
+not assert that all unchanged blobs were read or enable the native Git journal.
+
+Each tree read is bounded to 8 MiB; traversed graph, catalog contents and pending
+path/object queue each have a 64 MiB byte bound. Traversal limits depth to 64 and
+directories/catalog entries to 65,536. At most four catalogs are cached per Shadow
+instance, keyed by shadow repository, Location and snapshot identity. Excess
+subprocess output is rejected after killing and awaiting the child, with bounded
+diagnostics. These are metadata bounds, not source effect or reclamation authority.
+CLI path selectors are literal and inherited pathspec flags are removed. Location
+components retain literal Unix backslashes rather than changing them to separators.
+
+Regression coverage uses real Git repositories with different valid compressed
+objects substituted for exclusion tags, root trees and nested trees. Each restore
+refuses while preserving source and the user index. Literal glob-shaped scopes and
+backslash names restore only their exact Location and preserve sibling owner edits.
+A separate subprocess repeats this under inherited GIT_GLOB_PATHSPECS. Unit tests
+cover binary SHA-1/SHA-256 tree IDs, duplicate/truncated records and metadata
+overflow, including an actual Git child followed by a successful read.
+
+The code-review skill was applied to all changed source, tests and specs. Review
+checked typed object hashes, scoped traversal, byte/entry bounds, exact paths,
+subprocess failure cleanup and absence of new native acknowledgement authority.
+No critical or major finding remains in this catalog increment. The new catalog
+module remains inside the existing Git adapter; runtime ports and schemas are
+unchanged. Owned Git source/link handling and durable original Git context in native
+journals remain the next integration work; all parent recovery tasks stay open.
+
+Verification on macOS arm64: locked snapshot tests passed 94 cases with two ignored
+fixtures (the pathspec subprocess fixture is invoked by its parent). All-target
+snapshot Clippy passed with warnings denied. An initial collapsible-if Clippy
+finding was resolved before the passing final run. Full-workspace tests, SDK
+execution tests, real CLI/TUI/App recovery and Linux/Windows execution were not run
+for this increment; no broader acceptance is inferred.
+
+Final review found and removed a second tag resolution between verification and
+root traversal. Root identity and exclusions now come from the same verified tag
+bytes; legacy bare trees retain their exact supplied identity. This closes the
+substitution window rather than trusting a subsequent rev-parse result. Final
+formatting, generated SDK consistency and diff checks passed. Strict pinned
+OpenSpec passed 117 items; spec lint reports 0 errors/25 warnings.

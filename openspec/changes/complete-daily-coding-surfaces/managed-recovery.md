@@ -459,3 +459,11 @@ unsupported entry kinds, and never substitute a pathspec match. Blob contents mu
 match the Git SHA-1/SHA-256 object ID before becoming restore or recovery authority.
 Existing historical exclusion evidence remains mandatory. Corrupt images fail
 before source replacement; this does not enable owned Git journaling by itself.
+
+Git image preparation also verifies exclusion-tag identities and the complete eligible
+scoped directory-tree graph before deriving changed paths. A verified in-memory
+catalog binds literal paths, modes and leaf object IDs to that graph, so a corrupt
+nested tree cannot make a restore appear to have no changes. Metadata reads are
+bounded and over-limit subprocess output is killed and awaited. This catalog is
+preparation input for the future Git journal bridge, not native origin authority;
+source mutation must still run under the retained synchronous filesystem worker.

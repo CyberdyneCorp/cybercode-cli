@@ -134,6 +134,8 @@
 - **WHEN** a Git checkpoint image is materialized for planning or recovery
 - **THEN** the implementation SHALL resolve one exact literal path with a validated mode/object ID and historical exclusions
 - **AND** malformed or ambiguous listings, unsupported entry kinds and blob contents that do not match the Git object ID SHALL refuse before source replacement
+- **AND** exclusion tags and every scoped directory tree SHALL match their object IDs before changed paths are derived from a verified literal-path catalog
+- **AND** metadata traversal and subprocess output SHALL be bounded, with over-limit children killed and awaited
 
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition

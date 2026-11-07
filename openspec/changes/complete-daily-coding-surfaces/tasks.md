@@ -258,3 +258,13 @@ blob bytes refuse before replacement. Real unusual-path and corrupted-loose-obje
 cases preserve the user's index and current source on failure. Historical exclusion
 lookup remains mandatory. This is an image-materialization prerequisite for owned
 Git journals, not their implementation; M2–M8 and all parent tasks remain open.
+
+
+Verified Git catalog continuation: changed-path derivation now uses a bounded
+Location-scoped catalog whose exclusion tag and every traversed directory tree
+match their typed Git object IDs. Metadata subprocess overflow refuses after
+killing/awaiting the child. Literal Location selectors preserve Unix backslashes
+and glob-shaped names independently of inherited pathspec environment. Real
+corrupt tag/root/nested-tree restores refuse without changing source or user index;
+scoped restores preserve sibling files. This remains preparation for owned Git
+journals; M2–M8 and parent tasks are unchanged and incomplete.

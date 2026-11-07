@@ -2,9 +2,11 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 
 use cyber_server::runtime::{FileDiff, Snapshot};
 use sha1::{Digest, Sha1};
+mod catalog;
 #[path = "git_history.rs"]
 pub(crate) mod history;
 mod images;
@@ -18,6 +20,7 @@ pub(crate) struct Shadow {
     common_dir: PathBuf,
     /// The Location relative to the worktree, as a pathspec (`.` for the root).
     pathspec: String,
+    catalogs: Arc<Mutex<catalog::CatalogCache>>,
 }
 
 /// Environment variables that would redirect git away from the shadow repository.
@@ -29,6 +32,10 @@ const GIT_ENV: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
     "GIT_NAMESPACE",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
 ];
 
 /// Git for Windows does not accept verbatim (`\\?\`) paths as `GIT_DIR`, work tree or
@@ -77,13 +84,16 @@ impl Shadow {
         let rel = location
             .strip_prefix(&worktree)
             .ok()?
-            .to_string_lossy()
-            .replace('\\', "/");
+            .components()
+            .map(|part| part.as_os_str().to_str())
+            .collect::<Option<Vec<_>>>()?
+            .join("/");
         Some(Self {
             git_dir: git_path(&root.join(&project.id).join(hex)),
             worktree: git_path(&worktree),
             common_dir: git_path(&common_dir),
             pathspec: if rel.is_empty() { ".".into() } else { rel },
+            catalogs: Arc::new(Mutex::new(catalog::CatalogCache::new())),
         })
     }
 
@@ -113,6 +123,7 @@ impl Shadow {
             .env("GIT_WORK_TREE", &self.worktree)
             .current_dir(&self.worktree)
             .args([
+                "--literal-pathspecs",
                 "-c",
                 "core.autocrlf=false",
                 "-c",
@@ -177,6 +188,7 @@ impl Shadow {
             cmd.env_remove(name);
         }
         let out = cmd
+            .arg("--literal-pathspecs")
             .arg("-C")
             .arg(&self.worktree)
             .args([
@@ -219,25 +231,21 @@ impl Shadow {
 
     pub async fn changed(&self, from: &str, to: &str) -> Result<Vec<String>, String> {
         let excluded = self.excluded_between(from, to).await?;
-        let out = self
-            .run(&[
-                "diff",
-                "--name-only",
-                "--no-renames",
-                "-z",
-                from,
-                to,
-                "--",
-                &self.pathspec,
-            ])
-            .await?;
-        Ok(split_z(&out)
+        let before = self.image_catalog(from).await?;
+        let after = self.image_catalog(to).await?;
+        let names: std::collections::BTreeSet<_> =
+            before.keys().chain(after.keys()).cloned().collect();
+        Ok(names
             .into_iter()
-            .filter(|p| !history::excludes(&excluded, p))
+            .filter(|path| {
+                before.get(path) != after.get(path) && !history::excludes(&excluded, path)
+            })
             .collect())
     }
 
     pub async fn diff(&self, from: &str, to: &str) -> Result<Vec<FileDiff>, String> {
+        self.image_catalog(from).await?;
+        self.image_catalog(to).await?;
         let excluded = self.excluded_between(from, to).await?;
         let status = split_z(
             &self
@@ -399,16 +407,17 @@ impl Shadow {
 
     /// `(mode, contents)` of a path in a tree, or `None` when absent.
     pub async fn blob(&self, tree: &str, path: &str) -> Result<Option<(String, Vec<u8>)>, String> {
-        self.recorded_exclusions(tree).await?;
-        let listing = self
-            .run(&["--literal-pathspecs", "ls-tree", "-z", tree, "--", path])
-            .await?;
-        let Some((mode, object)) = images::entry(&listing, path)? else {
+        images::validate_path(path)?;
+        let catalog = self.image_catalog(tree).await?;
+        let Some((mode, object)) = catalog.get(path) else {
             return Ok(None);
         };
-        let bytes = self.run(&["cat-file", "blob", &object]).await?;
-        images::verify(&object, &bytes)?;
-        Ok(Some((mode, bytes)))
+        if !matches!(mode.as_str(), "100644" | "100755" | "120000") {
+            return Err("Unsupported Git image entry".into());
+        }
+        let bytes = self.run(&["cat-file", "blob", object]).await?;
+        images::verify(object, &bytes)?;
+        Ok(Some((mode.clone(), bytes)))
     }
 }
 

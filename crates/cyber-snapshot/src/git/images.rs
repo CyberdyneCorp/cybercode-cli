@@ -2,57 +2,78 @@
 use sha1::{Digest, Sha1};
 use sha2::Sha256;
 
-pub(super) fn entry(listing: &[u8], path: &str) -> Result<Option<(String, String)>, String> {
+pub(super) type Catalog = std::collections::BTreeMap<String, (String, String)>;
+pub(super) const TREE_LIMIT: usize = 8 * 1024 * 1024;
+pub(super) const GRAPH_LIMIT: usize = 64 * 1024 * 1024;
+
+pub(super) fn validate_path(path: &str) -> Result<(), String> {
     if path.is_empty()
         || path.len() > 4096
         || path.contains('\0')
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
         || std::path::Path::new(path)
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
     {
         return Err("Invalid Git image path".into());
     }
-    if listing.is_empty() {
-        return Ok(None);
+    Ok(())
+}
+/// Parse raw Git tree records without treating binary object IDs as delimiters.
+pub(super) fn tree_entries(
+    mut bytes: &[u8],
+    width: usize,
+) -> Result<Vec<(String, String, String)>, String> {
+    if !matches!(width, 20 | 32) {
+        return Err("Invalid Git tree object width".into());
     }
-    let record = listing
-        .strip_suffix(&[0])
-        .ok_or("Unterminated Git image listing")?;
-    if record.contains(&0) {
-        return Err("Ambiguous Git image listing".into());
-    }
-    let split = record
-        .iter()
-        .position(|byte| *byte == b'\t')
-        .ok_or("Malformed Git image listing")?;
-    if &record[split + 1..] != path.as_bytes() {
-        return Err("Git image path differs from the requested literal path".into());
-    }
-    let metadata =
-        std::str::from_utf8(&record[..split]).map_err(|_| "Invalid Git image metadata")?;
-    let fields: Vec<_> = metadata.split(' ').collect();
-    if let ["040000", "tree", object] = fields.as_slice() {
-        if !oid(object) {
-            return Err("Invalid Git directory image identity".into());
+    let mut entries = Vec::new();
+    let mut names = std::collections::BTreeSet::new();
+    while !bytes.is_empty() {
+        let space = bytes
+            .iter()
+            .position(|byte| *byte == b' ')
+            .ok_or("Malformed Git tree mode")?;
+        let mode = std::str::from_utf8(&bytes[..space]).map_err(|_| "Invalid Git tree mode")?;
+        let tail = &bytes[space + 1..];
+        let nul = tail
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or("Unterminated Git tree path")?;
+        let name = std::str::from_utf8(&tail[..nul])
+            .map_err(|_| "Non-UTF-8 Git tree path is unsupported")?;
+        validate_path(name)?;
+        if name.contains('/') || !names.insert(name.to_owned()) {
+            return Err("Ambiguous Git tree path".into());
         }
-        return Ok(None); // A directory is not a file image at this exact path.
+        let object = tail
+            .get(nul + 1..nul + 1 + width)
+            .ok_or("Truncated Git tree object")?;
+        let mode = match mode {
+            "40000" | "040000" => "040000",
+            "100644" | "100755" | "120000" | "160000" => mode,
+            _ => return Err("Unsupported Git tree mode".into()),
+        };
+        entries.push((
+            name.into(),
+            mode.into(),
+            object.iter().map(|byte| format!("{byte:02x}")).collect(),
+        ));
+        if entries.len() > 65536 {
+            return Err("Git tree entry limit exceeded".into());
+        }
+        bytes = &tail[nul + 1 + width..];
     }
-    let [mode, "blob", object] = fields.as_slice() else {
-        return Err("Unsupported Git image entry".into());
-    };
-    if !matches!(*mode, "100644" | "100755" | "120000") || !oid(object) {
-        return Err("Invalid Git image mode or object identity".into());
-    }
-    Ok(Some(((*mode).into(), (*object).into())))
+    Ok(entries)
 }
-fn oid(object: &str) -> bool {
-    matches!(object.len(), 40 | 64)
-        && object
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
+
 pub(super) fn verify(object: &str, bytes: &[u8]) -> Result<(), String> {
-    let header = format!("blob {}\0", bytes.len());
+    verify_object(object, "blob", bytes)
+}
+pub(super) fn verify_object(object: &str, kind: &str, bytes: &[u8]) -> Result<(), String> {
+    let header = format!("{kind} {}\0", bytes.len());
     let actual = match object.len() {
         40 => {
             let mut hash = Sha1::new();
@@ -78,25 +99,25 @@ pub(super) fn verify(object: &str, bytes: &[u8]) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn exact_nul_records_preserve_unusual_paths_and_refuse_ambiguous_or_foreign_images() {
-        let object = "a".repeat(40);
-        let path = ":(glob)*\tline\nname";
-        let record = format!("100755 blob {object}\t{path}\0");
+    fn binary_tree_records_preserve_literal_names_and_bound_object_width() {
+        let name = ":(glob)*\tline\nname";
+        let mut record = format!("100755 {name}\0").into_bytes();
+        record.extend([0x11; 20]);
         assert_eq!(
-            entry(record.as_bytes(), path).unwrap(),
-            Some(("100755".into(), object.clone()))
+            tree_entries(&record, 20).unwrap(),
+            [(name.into(), "100755".into(), "11".repeat(20))]
         );
-        assert_eq!(entry(b"", path).unwrap(), None);
-        assert!(entry(b"", "../outside").is_err());
+        assert!(tree_entries(&record, 32).is_err());
+        assert!(tree_entries(&[record.clone(), record.clone()].concat(), 20).is_err());
+        assert!(tree_entries(b"40000 ../outside\0", 20).is_err());
+        assert!(validate_path("../outside").is_err());
+        assert!(validate_path("a//b").is_err());
+        let mut wide = b"40000 nested\0".to_vec();
+        wide.extend([0; 32]);
         assert_eq!(
-            entry(format!("040000 tree {object}\t{path}\0").as_bytes(), path).unwrap(),
-            None
+            tree_entries(&wide, 32).unwrap(),
+            [("nested".into(), "040000".into(), "00".repeat(32))]
         );
-        assert!(entry(record.as_bytes(), "different").is_err());
-        assert!(entry(record.trim_end_matches('\0').as_bytes(), path).is_err());
-        assert!(entry(format!("{record}{record}").as_bytes(), path).is_err());
-        assert!(entry(format!("160000 commit {object}\t{path}\0").as_bytes(), path).is_err());
-        assert!(entry(format!("100644 blob invalid\t{path}\0").as_bytes(), path).is_err());
     }
     #[test]
     fn git_object_hashes_are_checked_with_the_type_and_length_frame() {
