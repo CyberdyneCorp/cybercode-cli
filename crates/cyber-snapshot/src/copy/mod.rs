@@ -77,6 +77,9 @@ pub(crate) struct WorkerGuard {
 }
 
 impl cyber_server::runtime::SnapshotNativeGuard for WorkerGuard {
+    fn intent_digest(&self) -> Option<&str> {
+        self.digest.as_deref()
+    }
     fn verify(&self, origin: Option<&cyber_server::runtime::SnapshotOrigin>) -> Result<()> {
         let _retained_workspace = &self.workspace;
         if origin != self.origin.as_ref() {

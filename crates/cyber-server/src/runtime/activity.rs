@@ -34,6 +34,8 @@ pub(super) struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_receipt: Option<super::SnapshotRecoveryReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_restore_receipt: Option<super::SnapshotRestoreReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_bindings: Option<Vec<super::admission_authority::Binding>>,
 }
 pub(super) struct Scope {
@@ -117,6 +119,7 @@ impl Scope {
             snapshot_origin: None,
             snapshot_request: Some(request.clone()),
             snapshot_receipt: None,
+            snapshot_restore_receipt: None,
             admission_bindings: Some(authority.bindings().to_vec()),
         };
         let captured = authority.clone();
@@ -181,6 +184,7 @@ impl Scope {
             snapshot_origin: None,
             snapshot_request: None,
             snapshot_receipt: None,
+            snapshot_restore_receipt: None,
             admission_bindings: Some(authority.bindings.clone()),
         };
         inner
@@ -253,6 +257,7 @@ impl Scope {
         state: &mut super::SessionState,
         sequence: i64,
         events: Vec<NewEvent>,
+        intent_digest: Option<&str>,
     ) -> Result<(), RuntimeError> {
         let runtime = Runtime {
             inner: self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?,
@@ -272,6 +277,16 @@ impl Scope {
         settled.status = "settled".into();
         settled.phase = "snapshot_restore_committed".into();
         settled.admission_bindings = None;
+        settled.snapshot_restore_receipt = intent_digest
+            .map(|digest| {
+                super::snapshot_restore_receipt::capture(
+                    self.snapshot_origin(),
+                    digest,
+                    sequence,
+                    &events,
+                )
+            })
+            .transpose()?;
         let bindings = authority.bindings.clone();
         let acknowledgement = change(&settled);
         let owners = [

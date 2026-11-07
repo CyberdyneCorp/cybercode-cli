@@ -10,7 +10,7 @@ pub struct SnapshotAcknowledgementWorker {
     runtime: Runtime,
     authority: RecoveryAuthority,
     sequence: i64,
-    receipt: SnapshotRecoveryReceipt,
+    receipt: Acknowledgement,
     origin: SnapshotOrigin,
     control: Arc<activity::Control>,
     // Actual resources are released before ordinary admission or Stop waiters.
@@ -18,6 +18,28 @@ pub struct SnapshotAcknowledgementWorker {
     _lifecycle: OwnedRwLockReadGuard<()>,
     _admission: Admission,
     _completion: Completion,
+}
+#[derive(Clone)]
+pub(super) enum Acknowledgement {
+    Recovery(SnapshotRecoveryReceipt),
+    Restore(super::SnapshotRestoreReceipt),
+}
+impl Acknowledgement {
+    fn verify(
+        &self,
+        db: &rusqlite::Connection,
+        origin: &SnapshotOrigin,
+    ) -> Result<(), cyber_store::StoreError> {
+        match self {
+            Self::Recovery(receipt) => verify_pair(db, receipt, origin),
+            Self::Restore(receipt) if receipt.origin == *origin => {
+                super::snapshot_restore_receipt::verify(db, receipt)
+            }
+            Self::Restore(_) => Err(cyber_store::StoreError::InvalidAppend(
+                "Foreign restore origin".into(),
+            )),
+        }
+    }
 }
 struct Admission(Arc<Handle>);
 impl Drop for Admission {
@@ -46,8 +68,17 @@ impl Drop for Completion {
 /// installation, intent creation, generic launch authority or worker-origin adoption.
 pub struct SnapshotAcknowledgementWork<'a>(&'a SnapshotAcknowledgementWorker);
 impl SnapshotAcknowledgementWork<'_> {
-    pub fn receipt(&self) -> &SnapshotRecoveryReceipt {
-        &self.0.receipt
+    pub fn recovery_receipt(&self) -> Option<&SnapshotRecoveryReceipt> {
+        match &self.0.receipt {
+            Acknowledgement::Recovery(receipt) => Some(receipt),
+            _ => None,
+        }
+    }
+    pub fn restore_receipt(&self) -> Option<&super::SnapshotRestoreReceipt> {
+        match &self.0.receipt {
+            Acknowledgement::Restore(receipt) => Some(receipt),
+            _ => None,
+        }
     }
     pub fn origin(&self) -> &SnapshotOrigin {
         &self.0.origin
@@ -66,7 +97,7 @@ impl SnapshotAcknowledgementWork<'_> {
             .store
             .read(move |db| {
                 let tx = db.unchecked_transaction()?;
-                verify_pair(&tx, &receipt, &origin)?;
+                receipt.verify(&tx, &origin)?;
                 let current: i64 = tx.query_row(
                     "SELECT COALESCE(MAX(seq),-1) FROM event WHERE aggregate_id=?1",
                     [&origin.session_id],
@@ -108,6 +139,21 @@ impl Runtime {
         receipt: SnapshotRecoveryReceipt,
         origin: SnapshotOrigin,
     ) -> Result<SnapshotAcknowledgementWorker, RuntimeError> {
+        self.snapshot_acknowledgement_worker_for(
+            handle,
+            state,
+            Acknowledgement::Recovery(receipt),
+            origin,
+        )
+        .await
+    }
+    pub(super) async fn snapshot_acknowledgement_worker_for(
+        &self,
+        handle: &Arc<Handle>,
+        state: &SessionState,
+        receipt: Acknowledgement,
+        origin: SnapshotOrigin,
+    ) -> Result<SnapshotAcknowledgementWorker, RuntimeError> {
         let lifecycle = self.memory_mutation_lease().await?;
         self.inner.ensure_idle(&state.info.id)?;
         self.ensure_no_background(&state.info.id)?;
@@ -137,7 +183,7 @@ impl Runtime {
         let bound_origin = origin.clone();
         self.inner.store.read(move |db| {
             let tx = db.unchecked_transaction()?;
-            verify_pair(&tx, &bound_receipt, &bound_origin)?;
+            bound_receipt.verify(&tx, &bound_origin)?;
             tx.commit()?;
             Ok(())
         })?;

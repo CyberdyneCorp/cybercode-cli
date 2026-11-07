@@ -1583,6 +1583,18 @@ export interface Operations {
     body: S.SnapshotRecoverySelection;
     response: S.SnapshotRecoveryReview;
   };
+  "v1.session.snapshotRestoreAcknowledge": {
+    path: { sessionID: string; activityID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotRestoreReceipt;
+  };
+  "v1.session.snapshotRestoreLookup": {
+    path: { sessionID: string; activityID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotRestoreReceipt;
+  };
   "v1.session.startDelegation": {
     path: { sessionID: string; requestID: string };
     query: Record<string, never>;
@@ -4716,6 +4728,30 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.snapshotRestoreAcknowledge": {
+    tag: "session",
+    name: "snapshotRestoreAcknowledge",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge",
+    pathParams: ["sessionID", "activityID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotRestoreLookup": {
+    tag: "session",
+    name: "snapshotRestoreLookup",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/restores/{activityID}",
+    pathParams: ["sessionID", "activityID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.startDelegation": {
     tag: "session",
     name: "startDelegation",
@@ -6121,6 +6157,12 @@ export function createGroups(caller: Caller) {
       /** Review retained snapshot effects without restoring, acknowledging native activity or starting inference (`POST /api/v1/sessions/{sessionID}/rewind/recovery/review`) */
       snapshotRecoveryReview: (sessionID: string, body: Operations["v1.session.snapshotRecoveryReview"]["body"], options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryReview"]["response"]> =>
         caller.call("v1.session.snapshotRecoveryReview", { path: { sessionID }, body }, options),
+      /** Acknowledge the immutable ordinary restore intent after its paired Session commit without replaying source files (`POST /api/v1/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge`) */
+      snapshotRestoreAcknowledge: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRestoreAcknowledge"]["response"]> =>
+        caller.call("v1.session.snapshotRestoreAcknowledge", { path: { sessionID, activityID } }, options),
+      /** Read the exact committed ordinary restore receipt without native access or replay (`GET /api/v1/sessions/{sessionID}/rewind/restores/{activityID}`) */
+      snapshotRestoreLookup: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRestoreLookup"]["response"]> =>
+        caller.call("v1.session.snapshotRestoreLookup", { path: { sessionID, activityID } }, options),
       /** Durably reserve a named user delegation request (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
       startDelegation: (sessionID: string, requestID: string, body: Operations["v1.session.startDelegation"]["body"], options?: RequestOptions): Promise<Operations["v1.session.startDelegation"]["response"]> =>
         caller.call("v1.session.startDelegation", { path: { sessionID, requestID }, body }, options),

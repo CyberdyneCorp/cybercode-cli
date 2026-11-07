@@ -58,3 +58,16 @@ test("snapshot recovery acknowledgement uses the retained request without a repl
   assert.equal(calls[0]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/recovery/requests/request%2Fwith%20space/acknowledge");
   assert.ok(!calls[0]!.body);
 });
+
+test("ordinary restore lookup and acknowledgement preserve immutable paired receipt identity", async () => {
+  const receipt = { origin: { activity_id: "op_ordinary" }, intent_digest: "d".repeat(64),
+    session_before: 9, session_after: 11, events_digest: "e".repeat(64) };
+  const { client, calls } = mockClient(() => json(200, { data: receipt }));
+  assert.deepEqual(await client.session.snapshotRestoreLookup("ses_owner", "op_ordinary"), receipt);
+  assert.deepEqual(await client.session.snapshotRestoreAcknowledge("ses_owner", "op_ordinary"), receipt);
+  assert.equal(calls[0]!.method, "GET");
+  assert.equal(calls[0]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/restores/op_ordinary");
+  assert.equal(calls[1]!.method, "POST");
+  assert.equal(calls[1]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/restores/op_ordinary/acknowledge");
+  assert.ok(!calls[1]!.body);
+});

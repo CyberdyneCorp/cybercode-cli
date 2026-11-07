@@ -51,8 +51,7 @@ captured closed boundaries; ordinary native/hook admission is fenced at the writ
 Actual CLI/API service-kill cases resolve a partial namespace with keep and
 rollback, preserve unrelated/later owner files and the transcript, and repeat only
 lookup after restart. This is local non-Git evidence, not complete operator/client
-or platform acceptance. Typed CLI/TUI recovery, ordinary-restore acknowledgement reconciliation,
-pre-origin cuts and Git-native equivalents remain required. Explicit recovery-request
+or platform acceptance. Typed CLI/TUI recovery, pre-origin cuts and Git-native equivalents remain required. Explicit recovery-request
 acknowledgement reconciliation now uses the exact committed pair and persisted
 immutable resolution digest; it changes only journal metadata under retained native
 locks and never rescans or reinstalls source files.
@@ -74,7 +73,10 @@ acknowledgement with missing journal acknowledgement from an uncommitted filesys
 outcome. Regression coverage refuses the latter before calling the native adapter,
 and preserves later owner edits, including a source replaced with a symlink.
 Older receipts without an immutable resolution digest cannot authorize new journal
-writes. Ordinary restore receipts still require their own reconciliation path.
+writes. New ordinary file-copy restores now persist a separate immutable intent/Session-batch
+receipt in the paired append. Its lookup and metadata-only acknowledgement path
+checks the exact batch without replay. Historical settlements lacking that proof
+cannot authorize new journal writes.
 Unprepared reservation/origin/intent cuts still require exact resource ownership
 proof; missing records alone do not license acknowledgement.
 
@@ -88,7 +90,7 @@ The non-Git reviewed-confirm path now uses a runtime-issued synchronous worker,
 origin-bound intent and paired Session/native commit followed by journal
 acknowledgement. The recovery path adds globally reserved request ownership and
 paired original/resolution settlement. M2–M8 remain open: Git and legacy entry-point
-integration, pre-origin resource proof, ordinary-restore journal reconciliation, cleanup,
+integration, pre-origin resource proof, cleanup,
 complete clients and native/platform acceptance are still required.
 
 New version-3 file-copy intents retain native per-change source/staged file and

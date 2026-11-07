@@ -63,6 +63,72 @@ impl Prepared {
 }
 
 #[test]
+fn ordinary_reconciliation_requires_completed_immutable_intent_and_current_authority() {
+    let p = Prepared::managed();
+    let mut journal = p.record.clone();
+    let mut receipt = cyber_server::runtime::SnapshotRestoreReceipt {
+        origin: journal.origin.clone().unwrap(),
+        intent_digest: p
+            .store
+            .worker_digest(journal.origin.as_ref())
+            .unwrap()
+            .unwrap(),
+        session_before: 0,
+        session_after: 1,
+        events_digest: "a".repeat(64),
+    };
+    assert!(
+        p.store
+            .reconcile_restore_receipt(&receipt, &|| Ok(()))
+            .is_err()
+    );
+    for index in 0..journal.changes.len() {
+        p.apply(index);
+    }
+    journal.applied = journal
+        .changes
+        .iter()
+        .map(|change| change.path.clone())
+        .collect();
+    journal.completed = true;
+    Store::record(&p.dir, &journal).unwrap();
+    receipt.intent_digest = "0".repeat(64);
+    assert!(
+        p.store
+            .reconcile_restore_receipt(&receipt, &|| Ok(()))
+            .is_err()
+    );
+    receipt.intent_digest = p
+        .store
+        .worker_digest(journal.origin.as_ref())
+        .unwrap()
+        .unwrap();
+    let calls = std::cell::Cell::new(0);
+    assert!(
+        p.store
+            .reconcile_restore_receipt(&receipt, &|| {
+                calls.set(calls.get() + 1);
+                if calls.get() == 2 {
+                    Err("revoked before metadata write".into())
+                } else {
+                    Ok(())
+                }
+            })
+            .is_err()
+    );
+    assert!(!p.store.journal("restore_fixture").unwrap().1.acknowledged);
+    std::fs::write(p.root.join("existing/replace"), b"later owner bytes").unwrap();
+    p.store
+        .reconcile_restore_receipt(&receipt, &|| Ok(()))
+        .unwrap();
+    assert!(p.store.journal("restore_fixture").unwrap().1.acknowledged);
+    assert_eq!(
+        std::fs::read(p.root.join("existing/replace")).unwrap(),
+        b"later owner bytes"
+    );
+}
+
+#[test]
 fn reconciliation_rejects_changed_intent_and_unverifiable_legacy_writes() {
     let p = Prepared::managed();
     p.apply(0);

@@ -9,6 +9,9 @@ struct Guard {
     acknowledgements: Arc<AtomicUsize>,
 }
 impl SnapshotNativeGuard for Guard {
+    fn intent_digest(&self) -> Option<&str> {
+        Some("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")
+    }
     fn verify(&self, origin: Option<&SnapshotOrigin>) -> Result<(), String> {
         if self.origin.as_ref() != origin {
             return Err("foreign worker receipt".into());
@@ -133,6 +136,150 @@ impl Snapshots for Acknowledgements {
                 .await
         })
     }
+}
+
+#[tokio::test]
+async fn ordinary_restore_lost_pair_reply_retains_exact_receipt_without_replaying_the_worker() {
+    fn lost_reply(_: &rusqlite::hooks::Wal, _: i32) -> rusqlite::Result<()> {
+        Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("lost ordinary restore reply".into()),
+        ))
+    }
+    let (temp, base, _, _, _) = super::super::binary_documents_tests::fixture().await;
+    let path = temp.path().join("ordinary-owner.db");
+    let store = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        cyber_core::paths::DatabaseLocation::File(path.clone()),
+        Runtime::registry(),
+    ))
+    .unwrap();
+    let acknowledged = Arc::new(AtomicUsize::new(0));
+    let runtime = runtime_with_snapshots(
+        &base,
+        Arc::new(store),
+        temp.path(),
+        Arc::new(Acknowledgements(acknowledged.clone())),
+    );
+    let session = runtime
+        .create_session(super::super::CreateSession {
+            directory: temp.path().to_str().unwrap().into(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let source_ack = Arc::new(AtomicUsize::new(0));
+    let count = source_ack.clone();
+    let binding = binding(temp.path().canonicalize().unwrap());
+    let completed = worker(&runtime, &session)
+        .await
+        .run(move |work| {
+            let origin = work.begin(binding).map_err(RestoreError::Failed)?;
+            Ok(SnapshotNativeResult::new(
+                vec![],
+                Box::new(Guard {
+                    origin: Some(origin),
+                    acknowledgements: count,
+                }),
+            ))
+        })
+        .await
+        .unwrap();
+    let activity = completed.worker.scope.id().to_owned();
+    runtime
+        .inner
+        .store
+        .transaction(|db| {
+            db.wal_hook(Some(lost_reply));
+            Ok(())
+        })
+        .unwrap();
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let mut state = handle.state.lock().await;
+    let before = state.last_seq;
+    let notifications = runtime.inner.store.subscribe();
+    assert!(
+        completed
+            .commit(
+                &mut state,
+                vec![events::event(
+                    events::TITLE_GENERATED,
+                    &events::Titled {
+                        title: "durable restore batch".into(),
+                        usage: None,
+                        cost: None,
+                        model: None
+                    }
+                )]
+            )
+            .is_err()
+    );
+    drop(state);
+    assert!(notifications.try_recv().is_err());
+    let receipt = runtime
+        .snapshot_restore_lookup(&session, &activity)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.session_before, before);
+    assert_eq!(receipt.session_after, before + 1);
+    assert_eq!(source_ack.load(Ordering::SeqCst), 0);
+    assert!(
+        runtime
+            .snapshot_restore_acknowledge(&session, &activity)
+            .await
+            .is_err()
+    );
+    assert_eq!(acknowledged.load(Ordering::SeqCst), 0);
+    runtime.shutdown().await;
+    drop(handle);
+    drop(runtime);
+    let reopened = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        cyber_core::paths::DatabaseLocation::File(path.clone()),
+        Runtime::registry(),
+    ))
+    .unwrap();
+    let reloaded = runtime_with_snapshots(
+        &base,
+        Arc::new(reopened),
+        temp.path(),
+        Arc::new(Acknowledgements(acknowledged.clone())),
+    );
+    assert_eq!(
+        reloaded
+            .snapshot_restore_lookup(&session, &activity)
+            .await
+            .unwrap(),
+        Some(receipt.clone())
+    );
+    let handle = reloaded.inner.handle(&session).await.unwrap();
+    let mut state = handle.state.lock().await;
+    reloaded
+        .inner
+        .commit_locked(
+            &mut state,
+            vec![events::event(
+                events::TITLE_GENERATED,
+                &events::Titled {
+                    title: "later owner revision".into(),
+                    usage: None,
+                    cost: None,
+                    model: None,
+                },
+            )],
+        )
+        .unwrap();
+    drop(state);
+    let reconciled = reloaded
+        .snapshot_restore_acknowledge(&session, &activity)
+        .await
+        .unwrap();
+    assert_eq!(reconciled, receipt);
+    assert_eq!(acknowledged.load(Ordering::SeqCst), 1);
+    assert_eq!(source_ack.load(Ordering::SeqCst), 0);
+    reloaded.shutdown().await;
+    base.shutdown().await;
 }
 
 #[tokio::test]
@@ -335,6 +482,19 @@ async fn acknowledgement_cannot_adopt_an_uncommitted_filesystem_receipt() {
         Arc::new(Acknowledgements(count.clone())),
     );
     let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    assert!(
+        runtime
+            .snapshot_restore_lookup(&session, &original.activity_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        runtime
+            .snapshot_restore_acknowledge(&session, &original.activity_id)
+            .await
+            .is_err()
+    );
     let request = recovery_request(original);
     let handle = runtime.inner.handle(&session).await.unwrap();
     let state = handle.state.lock().await;
@@ -1007,6 +1167,39 @@ async fn snapshot_completion_commits_session_and_exact_origin_before_native_ack(
         .id
         .clone();
     assert_eq!(record["snapshot_origin"]["session_created_id"], created);
+    let activity = record["snapshot_origin"]["activity_id"].as_str().unwrap();
+    let receipt = runtime
+        .snapshot_restore_lookup(&session, activity)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.origin.activity_id, activity);
+    assert_eq!(receipt.session_after - receipt.session_before, 1);
+    assert!(
+        runtime
+            .snapshot_restore_lookup("ses_foreign", activity)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let mut changed = receipt.clone();
+    changed.events_digest = "0".repeat(64);
+    assert!(
+        runtime
+            .inner
+            .store
+            .read(move |db| { super::super::snapshot_restore_receipt::verify(db, &changed) })
+            .is_err()
+    );
+    let mut changed = receipt;
+    changed.intent_digest = "0".repeat(64);
+    assert!(
+        runtime
+            .inner
+            .store
+            .read(move |db| { super::super::snapshot_restore_receipt::verify(db, &changed) })
+            .is_err()
+    );
     assert!(record.get("binary_document").is_none());
     assert_eq!(acknowledgements.load(Ordering::SeqCst), 1);
     let unrelated = runtime

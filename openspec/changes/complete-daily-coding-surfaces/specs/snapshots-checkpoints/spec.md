@@ -105,6 +105,17 @@
 - **WHEN** a managed journal records filesystem completion but its runtime commit or journal acknowledgement is unobserved
 - **THEN** the retained evidence blocks another restore and is not treated as successful recovery or eligible for deletion
 
+#### Scenario: Ordinary restore loses its acknowledgement reply
+- **WHEN** an ordinary file-copy restore's paired Session/native commit is durable but its reply or journal acknowledgement is lost
+- **THEN** lookup proves its original immutable intent and exact Session event batch without redispatching restore
+- **AND** explicit acknowledgement rechecks current runtime authority and original native namespace/lock under retained worker owners, changes only journal acknowledgement metadata, and preserves later owner files, symlinks and transcript state
+- **AND** stale in-memory Session state requires reload, historical settlements without the persisted immutable receipt cannot authorize new writes, and unrelated unknown activities retain their own fences
+
+#### Scenario: Recovery request reconciles journal acknowledgement
+- **WHEN** both exact recovery owner records contain the durable consuming receipt but a journal acknowledgement is missing
+- **THEN** explicit reconciliation verifies the persisted immutable resolution digest and original intent, publishes child acknowledgement before the parent's settlement link, and permits idempotent retry after an interrupted metadata write without inspecting or replaying later owner edits
+- **AND** an uncommitted filesystem outcome or an older receipt without the digest cannot authorize new acknowledgement writes
+
 #### Scenario: Legacy journal compatibility
 - **WHEN** inspection reads an origin-less version-1 file-copy intent
 - **THEN** it remains readable with its original completion semantics and is never upgraded into authority to acknowledge an unknown native activity

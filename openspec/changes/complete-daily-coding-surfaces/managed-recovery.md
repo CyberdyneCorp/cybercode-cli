@@ -196,5 +196,19 @@ an explicit metadata-only acknowledgement operation. New durable receipts bind a
 immutable resolution digest; older receipts lacking it cannot authorize new journal
 writes. The worker observes the exact committed owner pair, retains native locks,
 and checks current authority before publishing child and parent acknowledgements.
-Lookup remains read-only. Ordinary restore reconciliation, pre-origin cuts, Git
-integration and reference-aware reclamation remain pending implementation.
+Lookup remains read-only. Ordinary file-copy restore reconciliation now uses a receipt binding the immutable
+intent and exact paired Session event batch. Pre-origin cuts, Git integration and
+reference-aware reclamation remain pending implementation.
+
+
+Ordinary restore acknowledgements use a distinct `SnapshotRestoreReceipt`, stored
+on the exact native activity in the same checked append as the Session changes.
+The receipt binds the original native origin, immutable intent digest, bounded
+Session sequence range and a digest of that range's event types, payloads and
+causation IDs. Reconciliation observes this pair in a single database snapshot,
+then reacquires the original native namespace and lock. It may publish only the
+acknowledgement flag after current authority checks; it never inspects/replaces
+later owner files. Historical native settlements lacking this receipt remain
+inspectable but cannot acquire new acknowledgement-write authority. A stale
+in-memory Session after a committed-but-lost writer reply must be reloaded before
+this operation can proceed. This does not manufacture a second transcript change.

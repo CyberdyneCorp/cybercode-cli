@@ -1099,6 +1099,51 @@ fn reviewed_non_git_code_rewind_uses_private_snapshots_and_keeps_owner_files() {
     assert_eq!(model.requests().len(), requests);
     let all = json(&env.cyber(&["sessions", "export", &id, "--all-branches"]));
     assert!(all.to_string().contains(&first));
+    reconcile_ordinary_restore_metadata(&env, &id, journals[0]["id"].as_str().unwrap());
+    assert_eq!(model.requests().len(), requests);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reconcile_ordinary_restore_metadata(env: &Env, session: &str, journal: &str) {
+    let namespace = std::fs::read_dir(env.root.join("cyber-home/data/snapshot/global"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let path = namespace.join("journals").join(journal).join("intent.json");
+    let mut intent: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let activity = intent["origin"]["activity_id"].as_str().unwrap().to_owned();
+    let route = format!("/sessions/{session}/rewind/restores/{activity}");
+    let receipt = json(&env.cyber(&["api", "GET", &route]))["data"].clone();
+    assert_eq!(receipt["origin"], intent["origin"]);
+    assert_eq!(receipt["intent_digest"].as_str().unwrap().len(), 64);
+    // Simulate an acknowledgement flush cut without changing immutable intent.
+    intent["acknowledged"] = false.into();
+    std::fs::write(&path, serde_json::to_vec(&intent).unwrap()).unwrap();
+    let target = env.root.join("ordinary-ack-owner");
+    std::fs::write(&target, "later owner bytes").unwrap();
+    let source = env.root.join("repo/a.txt");
+    std::os::unix::fs::symlink(&target, &source).unwrap();
+    let before = env.messages(session);
+    for _ in 0..2 {
+        let result =
+            json(&env.cyber(&["api", "POST", &format!("{route}/acknowledge"), "-d", "{}"]));
+        assert_eq!(result["data"], receipt);
+    }
+    let acknowledged: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(acknowledged["acknowledged"], true);
+    assert!(
+        std::fs::symlink_metadata(source)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "later owner bytes"
+    );
+    assert_eq!(env.messages(session), before);
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

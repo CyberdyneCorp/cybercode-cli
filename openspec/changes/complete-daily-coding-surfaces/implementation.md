@@ -829,7 +829,7 @@ restore kill, then acknowledge with a source replaced by an external-target syml
 Both preserve that symlink, its target, transcript and inference count. This fixture
 models the acknowledgement cut; it is not an actual process kill at that boundary.
 
-The recovery-request path does not yet reconcile an ordinary successful rewind's
+At that checkpoint, the recovery-request path did not reconcile an ordinary successful rewind's
 Session/native receipt, reservations lacking native origin, Git journals, or
 reclamation. Those remain required alongside complete clients and platform cuts.
 M2–M8 and both issues remain open.
@@ -859,3 +859,77 @@ one snapshot. No additional critical/major findings remain for this increment;
 the missing broader recovery capabilities above remain acceptance gaps for the
 complete feature. Architecture follows the repository's runtime port and native
 adapter split. The increment remains local and does not make M2–M8 complete.
+
+
+### Ordinary file-copy restore acknowledgement reconciliation
+
+New ordinary restore settlements retain `SnapshotRestoreReceipt` on their exact
+native activity. The native guard supplies its captured immutable intent digest;
+the existing paired append binds it to the same Session event batch by sequence
+range and SHA-256 digest of serialized event kind/data/causation IDs. The batch is
+bounded to 4096 events. No new Session event or transcript movement is introduced.
+Older adapters omitting immutable proof retain their existing settlement behavior,
+but cannot authorize later acknowledgement writes through this API.
+
+GET `/sessions/{id}/rewind/restores/{activity_id}` observes the original native
+settlement and exact Session batch in a single read transaction; absent, foreign
+or historical receipts without this proof return 404. POST to its `/acknowledge`
+child obtains the same metadata-only worker resources used for recovery requests.
+The worker verifies current Session revision/authority before the native adapter
+checks original lock, private namespace and journal identity, completed ordinary
+intent and immutable digest. It writes only the acknowledgement flag. It neither
+rescans source files nor invokes restore. Later Session batches do not invalidate
+the original receipt, but changes during the acquired worker remain fenced.
+
+The real CLI/API regression resets only mutable journal acknowledgement after a
+successful ordinary non-Git rewind, creates a symlink at the restored path to an
+external file, then performs acknowledgement twice. Both responses retain exactly
+the lookup receipt, and the source symlink, target bytes, transcript and inference
+count remain unchanged. This is a simulated acknowledgement-flush cut, not a real
+process kill at that boundary. Additional runtime coverage uses an actual file-
+backed Store WAL hook to lose the paired commit reply, retains lookup evidence,
+refuses acknowledgement against stale in-memory Session state, reopens the Store,
+adds a later Session revision, and reconciles without calling the source worker.
+The native adapter fixture refuses incomplete/digest-mismatched intents and a
+revocation before its final metadata write. These fixtures do not supply production
+runtime authority by themselves.
+
+Pre-origin ownership proof, Git journal equivalence, safe reference-aware cleanup,
+complete CLI/TUI/App recovery, remaining crash cuts and platform acceptance remain
+required. M2–M8 and both issues stay open; the feature is not merge-ready.
+
+
+Final local macOS arm64 verification: 407 server unit tests passed with one ignored
+subprocess fixture; all 22 affected integration cases passed (4 idle-cancellation,
+13 Location, 5 rewind-preview). All 73 snapshot cases passed (38 unit, 18 file-copy,
+17 Git), including the native cancellation/digest/incomplete-intent regression.
+All 14 real CLI branch/recovery cases passed, including the two actual partial-
+restore kill scenarios and the new ordinary acknowledgement fixture. SDK typecheck
+and generation consistency passed; 132 SDK tests passed and 10 configured process
+tests were skipped because `CYBER_BIN` was unset. OpenAPI consistency, formatting,
+diff checks and server/snapshot/CLI all-target Clippy with warnings denied passed.
+Strict pinned OpenSpec passed all 117 items; lint reported 0 errors/25 warnings,
+and inventory remains 53 capabilities/1030 requirements. Native sandbox deprecation
+and Darwin linker warnings were observed without assigning their origin to main.
+Linux/Windows, full-workspace and TUI/App recovery acceptance were not run here.
+
+During verification the new Store fixture initially used the wrong options type,
+then installed its lost-reply hook on a reader rather than the actual writer. The
+corrected writer hook proves an actual durable paired commit with a lost reply and
+no notification. The new native fixture initially omitted required progress from
+its completed journal; it now performs all native installs and records valid
+completion before testing metadata-only acknowledgement. The SDK regression also
+caught the optional response wrapper contract; missing receipt lookup now returns
+404 consistently with recovery-request lookup. Final tests above supersede those
+failed fixture/contract runs.
+
+The code-review skill was applied across the changed runtime/native/HTTP/test/spec
+and generated SDK files. The review checks Session/activity key equality, native
+origin/type separation, read-transaction consistency, sequence bounds and batch
+identity, current authority/cancellation, exact native locks and namespace, and the
+absence of source reads/replay during acknowledgement. Lookup checks both requested
+owner keys against the receipt, and even an empty batch requires its original
+Session sequence anchor. The repository runtime port/native adapter separation is
+preserved. No critical/major findings remain for this increment; broader feature
+acceptance gaps remain recorded above. A remote refresh reports main `db9e171e`,
+issues #92/#93 open and no open PRs. This increment is local, not pushed or merged.

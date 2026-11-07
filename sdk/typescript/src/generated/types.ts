@@ -1114,6 +1114,10 @@ export type Data_SnapshotRecoveryReview = {
   data: SnapshotRecoveryReview;
 };
 
+export type Data_SnapshotRestoreReceipt = {
+  data: SnapshotRestoreReceipt;
+};
+
 export type Data_SubtreeReopenReport = {
   data: SubtreeReopenReport;
 };
@@ -4804,6 +4808,18 @@ export type SnapshotRecoverySelection = {
 };
 
 export type SnapshotRecoveryState = "pending" | "unknown" | "acknowledged" | "resolved_by_another_request";
+
+/**
+ * Exact native intent and Session batch consumed by an ordinary restore.
+ * This is durable acknowledgement evidence, never authority to replay files.
+ */
+export type SnapshotRestoreReceipt = {
+  origin: SnapshotOrigin;
+  intent_digest: string;
+  session_before: number;
+  session_after: number;
+  events_digest: string;
+};
 
 export type SolveCandidateEvidence = {
   candidate_id: string;

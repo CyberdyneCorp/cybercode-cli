@@ -770,6 +770,10 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
         op("post", "/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge", "v1.session.snapshotRecoveryAcknowledge", "Reconcile journal acknowledgement for the exact committed native pair without replaying source changes or starting inference")
             .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
+        op("get", "/sessions/{sessionID}/rewind/restores/{activityID}", "v1.session.snapshotRestoreLookup", "Read the exact committed ordinary restore receipt without native access or replay")
+            .ok::<Data<crate::runtime::SnapshotRestoreReceipt>>(g),
+        op("post", "/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge", "v1.session.snapshotRestoreAcknowledge", "Acknowledge the immutable ordinary restore intent after its paired Session commit without replaying source files")
+            .ok::<Data<crate::runtime::SnapshotRestoreReceipt>>(g),
         op("post", "/sessions/{sessionID}/rewind/preview", "v1.session.rewindPreview", "Review a rewind without changing files or the active conversation")
             .body::<crate::runtime::RewindSelection>(g)
             .ok::<Data<crate::runtime::RewindPreview>>(g),

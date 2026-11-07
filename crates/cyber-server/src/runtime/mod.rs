@@ -129,6 +129,7 @@ mod rewind;
 mod rewind_preview;
 mod snapshot_recovery;
 mod snapshot_recovery_types;
+mod snapshot_restore_receipt;
 mod snapshot_work;
 pub use rewind_preview::{
     RewindAction, RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview,
@@ -141,7 +142,7 @@ pub use snapshot_recovery_types::{
 };
 pub use snapshot_work::{
     SnapshotBinding, SnapshotCompletion, SnapshotNativeGuard, SnapshotNativeResult, SnapshotOrigin,
-    SnapshotRestoreRequest, SnapshotWork, SnapshotWorker,
+    SnapshotRestoreReceipt, SnapshotRestoreRequest, SnapshotWork, SnapshotWorker,
 };
 mod routing;
 mod sandbox_events;

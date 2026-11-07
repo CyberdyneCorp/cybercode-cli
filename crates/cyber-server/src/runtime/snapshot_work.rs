@@ -33,6 +33,24 @@ pub struct SnapshotOrigin {
     pub binding: SnapshotBinding,
 }
 
+/// Exact native intent and Session batch consumed by an ordinary restore.
+/// This is durable acknowledgement evidence, never authority to replay files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotRestoreReceipt {
+    pub origin: SnapshotOrigin,
+    pub intent_digest: String,
+    pub session_before: i64,
+    pub session_after: i64,
+    pub events_digest: String,
+}
+
+pub(super) fn restore_events_digest(events: &[NewEvent]) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::to_vec(events).map_err(|error| error.to_string())?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
 pub struct SnapshotRestoreRequest {
     pub directory: String,
     pub target: String,
@@ -43,6 +61,11 @@ pub struct SnapshotRestoreRequest {
 
 /// Native locks and descriptors held through the consuming runtime commit.
 pub trait SnapshotNativeGuard: Send {
+    /// Captured immutable intent under the retained native locks. Older adapters
+    /// may omit this; their settlement cannot authorize later journal writes.
+    fn intent_digest(&self) -> Option<&str> {
+        None
+    }
     fn verify(&self, origin: Option<&SnapshotOrigin>) -> Result<(), String>;
     /// Called only after observed durable runtime acknowledgement, under retained locks.
     fn acknowledge(&mut self, origin: Option<&SnapshotOrigin>) -> Result<(), String>;
@@ -254,9 +277,12 @@ impl SnapshotCompletion {
             .guard
             .verify(self.worker.scope.snapshot_origin())
             .map_err(RuntimeError::Conflict)?;
-        self.worker
-            .scope
-            .commit_snapshot(state, self.worker.sequence, events)?;
+        self.worker.scope.commit_snapshot(
+            state,
+            self.worker.sequence,
+            events,
+            self.native.guard.intent_digest(),
+        )?;
         self.native
             .guard
             .acknowledge(self.worker.scope.snapshot_origin())

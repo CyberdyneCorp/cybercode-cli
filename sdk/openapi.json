@@ -7485,6 +7485,48 @@
           "filesystem_complete"
         ]
       },
+      "Data_SnapshotRestoreReceipt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotRestoreReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotRestoreReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "intent_digest": {
+            "type": "string"
+          },
+          "session_before": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_after": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "events_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "origin",
+          "intent_digest",
+          "session_before",
+          "session_after",
+          "events_digest"
+        ],
+        "description": "Exact native intent and Session batch consumed by an ordinary restore.\nThis is durable acknowledgement evidence, never authority to replay files."
+      },
       "RewindSelection": {
         "type": "object",
         "additionalProperties": false,
@@ -24552,6 +24594,112 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_SnapshotRecoveryResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/restores/{activityID}": {
+      "get": {
+        "operationId": "v1.session.snapshotRestoreLookup",
+        "summary": "Read the exact committed ordinary restore receipt without native access or replay",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRestoreReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge": {
+      "post": {
+        "operationId": "v1.session.snapshotRestoreAcknowledge",
+        "summary": "Acknowledge the immutable ordinary restore intent after its paired Session commit without replaying source files",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRestoreReceipt"
                 }
               }
             }

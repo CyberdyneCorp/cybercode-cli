@@ -311,7 +311,34 @@ impl Store {
         &self,
         work: &cyber_server::runtime::SnapshotAcknowledgementWork<'_>,
     ) -> Result<()> {
-        self.reconcile_receipt(work.origin(), work.receipt(), &|| work.authorize())
+        if let Some(receipt) = work.recovery_receipt() {
+            return self.reconcile_receipt(work.origin(), receipt, &|| work.authorize());
+        }
+        let receipt = work
+            .restore_receipt()
+            .ok_or("Missing acknowledgement receipt")?;
+        self.reconcile_restore_receipt(receipt, &|| work.authorize())
+    }
+    pub(super) fn reconcile_restore_receipt(
+        &self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+        authorize: &dyn Fn() -> Result<()>,
+    ) -> Result<()> {
+        let origin = &receipt.origin;
+        authorize()?;
+        self.verify_worker_namespace(origin)?;
+        let (dir, mut journal) = self.journal(&origin.binding.journal_id)?;
+        if journal.origin.as_ref() != Some(origin)
+            || !journal.completed
+            || journal.resolution.is_some()
+            || immutable_digest(&journal)? != receipt.intent_digest
+        {
+            return Err("Ordinary restore intent differs from its committed receipt".into());
+        }
+        authorize()?;
+        self.verify_worker_namespace(origin)?;
+        journal.acknowledged = true;
+        Self::record(&dir, &journal)
     }
     pub(super) fn reconcile_receipt(
         &self,
