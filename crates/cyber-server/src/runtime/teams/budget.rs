@@ -201,6 +201,7 @@ impl Runtime {
         let admission = Admission {
             source: super::NOTICE_SOURCE.into(),
             resume: true,
+            output_schema: None,
             ..Admission::text(line, Delivery::Steer)
         };
         self.admit_message(

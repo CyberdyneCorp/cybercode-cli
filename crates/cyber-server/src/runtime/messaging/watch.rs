@@ -599,6 +599,7 @@ impl Runtime {
             message_id: Some(notice),
             source: "session".into(),
             resume: true,
+            output_schema: None,
             ..Admission::text(text, Delivery::Steer)
         };
         let admitted = retry_busy(BUSY_RETRY, || {

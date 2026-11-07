@@ -208,6 +208,7 @@ impl Runtime {
             message_id: Some(notice_id(&team.id, &member.name, idle.seq)),
             source: NOTICE_SOURCE.into(),
             resume: true,
+            output_schema: None,
             ..Admission::text(
                 render::team_idle_notice(&team.id, &member.name, &line),
                 Delivery::Steer,
