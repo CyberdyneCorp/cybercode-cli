@@ -1289,6 +1289,59 @@ fn reviewed_non_git_code_rewind_uses_private_snapshots_and_keeps_owner_files() {
     assert_eq!(model.requests().len(), requests);
 }
 
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reviewed_non_git_noop_rewind_keeps_a_real_unadmitted_empty_journal() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let id = env.exec(None, "WRITE-A");
+    let first = env.user_ids(&id)[0].clone();
+    // The owner already restored the target bytes before preview. Conversation
+    // rewind still requires an exact owned completion, without any source effect.
+    std::fs::remove_file(env.root.join("repo/a.txt")).unwrap();
+    std::fs::write(env.root.join("repo/owner.txt"), "later owner file").unwrap();
+    let requests = model.requests().len();
+    let preview = rewind_preview(&env, &id, &first, "both");
+    json(&confirm_rewind(&env, &id, &first, "both", &preview));
+    assert!(env.user_ids(&id).is_empty());
+    assert_eq!(env.file("a.txt"), None);
+    assert_eq!(env.file("owner.txt").as_deref(), Some("later owner file"));
+    let catalog = json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/recovery")]));
+    let journals = catalog["data"].as_array().unwrap();
+    assert_eq!(journals.len(), 1);
+    assert_eq!(journals[0]["filesystem_complete"], true);
+    assert!(journals[0]["paths"].as_array().unwrap().is_empty());
+    let journal = journals[0]["id"].as_str().unwrap();
+    assert_owned_snapshot_receipt(&env, &id, journal);
+    let namespace = std::fs::read_dir(env.root.join("cyber-home/data/snapshot/global"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let intent: Value = serde_json::from_slice(
+        &std::fs::read(namespace.join("journals").join(journal).join("intent.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(intent["changes"].as_array().unwrap().is_empty());
+    assert!(intent["ownership"]["files"].as_array().unwrap().is_empty());
+    let activity = intent["origin"]["activity_id"].as_str().unwrap();
+    let route = format!("/sessions/{id}/rewind/restores/{activity}");
+    let receipt = json(&env.cyber(&["api", "GET", &route]));
+    let phase_name = receipt["data"]["checkout"]["lifetime"]["source_phase"]
+        .as_str()
+        .unwrap();
+    let phase: Value =
+        serde_json::from_slice(&std::fs::read(namespace.join("workers").join(phase_name)).unwrap())
+            .unwrap();
+    assert_eq!(phase["admitted"], false);
+    assert!(phase["origin"].is_null());
+    reconcile_ordinary_restore_metadata(&env, &id, journal);
+    assert_eq!(env.file("owner.txt").as_deref(), Some("later owner file"));
+    assert_eq!(model.requests().len(), requests);
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn reconcile_ordinary_restore_metadata(env: &Env, session: &str, journal: &str) {
     let namespace = std::fs::read_dir(env.root.join("cyber-home/data/snapshot/global"))
@@ -1387,6 +1440,7 @@ fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
     assert_snapshot_lifetime(&namespaces[0], &activity, origin);
     assert_eq!(activity["status"], "settled");
     assert_eq!(activity["phase"], "snapshot_restore_committed");
+    assert_restore_receipt_binding(&activity, origin);
     let created: String = db
         .query_row(
             "SELECT id FROM event WHERE aggregate_id=?1 ORDER BY seq LIMIT 1",
@@ -1395,6 +1449,21 @@ fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
         )
         .unwrap();
     assert_eq!(origin["session_created_id"], created);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_restore_receipt_binding(activity: &Value, origin: &Value) {
+    let receipt = &activity["snapshot_restore_receipt"];
+    assert_eq!(receipt["origin"], *origin);
+    assert_eq!(
+        receipt["checkout"]["lifetime"],
+        activity["snapshot_lifetime"]
+    );
+    assert_ne!(
+        receipt["checkout"]["lifetime"]["namespace_identity"],
+        origin["binding"]["namespace_identity"],
+        "lifetime namespace and journal collection are distinct native directories"
+    );
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1422,8 +1491,16 @@ fn assert_snapshot_lifetime(namespace: &std::path::Path, activity: &Value, origi
     )
     .unwrap();
     assert_eq!(phase["lifetime"], *lifetime);
-    assert_eq!(phase["admitted"], true);
-    assert_eq!(phase["origin"], *origin);
+    assert_eq!(phase["admitted"], activity["snapshot_source_admitted"]);
+    if phase["admitted"] == true {
+        assert_eq!(phase["origin"], *origin);
+    } else {
+        assert_eq!(phase["admitted"], false);
+        assert!(
+            phase["origin"].is_null(),
+            "no-op publication must not admit source effects"
+        );
+    }
     // These real-service fixtures use unmanaged Locations. An explicitly
     // published empty set is distinct from missing constructor evidence.
     assert_eq!(phase["checkout_bindings"], serde_json::json!([]));

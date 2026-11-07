@@ -32,6 +32,8 @@ impl SnapshotRestoreReceipt {
 
 impl super::SnapshotRestoreCheckout {
     pub(super) fn validate(&self, origin: &SnapshotOrigin) -> Result<(), String> {
+        // The lifetime's Location namespace and the origin's journal collection
+        // are different directories. Native guards verify each route separately.
         let owner = &self.lifetime.owner;
         if self.version != 1
             || self.lifetime.version != 2
@@ -43,7 +45,6 @@ impl super::SnapshotRestoreCheckout {
             || owner.worktree_id != origin.worktree_id
             || owner.directory != origin.binding.directory
             || self.lifetime.root_identity != origin.binding.root_identity
-            || self.lifetime.namespace_identity != origin.binding.namespace_identity
             || self.resources_digest.len() != 64
             || !self
                 .resources_digest

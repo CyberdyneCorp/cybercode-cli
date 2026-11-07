@@ -368,3 +368,15 @@ no-effect completion is not implemented. Recovery-resolution receipt/checkout
 integration, actual Git source/backend/runtime and complete crash/platform/client
 acceptance, reference-aware cleanup and other M2–M8/parent obligations remain open.
 Ordinary Git source admission remains disabled.
+
+
+Owned no-op and native namespace continuation: both journal backends now retain a
+real empty intent for an owned empty plan, using ordinary origin/completion and
+receipt acknowledgement without source admission. Unowned no-op behavior stays
+unchanged. Receipt validation no longer equates the lifetime Location namespace
+with its distinct journal collection. Real CLI regressions cover owned file-copy
+no-op completion, retained owner files, receipt lookup and repeated acknowledgement
+without source replay/inference. The full managed Git backend/source/checkout path,
+recovery-resolution resource acknowledgement, complete native cuts/platforms and
+reference-aware cleanup still require acceptance; parent tasks and Git admission
+remain unchanged and open.

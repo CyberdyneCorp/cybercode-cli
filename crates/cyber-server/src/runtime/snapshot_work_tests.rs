@@ -690,7 +690,7 @@ impl Snapshots for Lifetimes {
                     version: 2,
                     owner: request,
                     root_identity: "instrumented_root".into(),
-                    namespace_identity: "instrumented_namespace".into(),
+                    namespace_identity: "fixture-lifetime-namespace".into(),
                     directory_identity: "fixture-directory".into(),
                     file_identity: "fixture-file".into(),
                     source_phase: Some("phase_fixture".into()),
@@ -3101,6 +3101,10 @@ async fn ordinary_restore_receipt_binds_native_lifetime_and_rechecks_resources_a
                 .unwrap();
             let checkout = receipt.checkout.as_ref().unwrap();
             assert_eq!(checkout.lifetime, lifetime);
+            assert_ne!(
+                checkout.lifetime.namespace_identity,
+                receipt.origin.binding.namespace_identity
+            );
             assert_eq!(
                 checkout.resources_digest,
                 lifetime.checkout_resources_digest(&[]).unwrap()

@@ -120,7 +120,7 @@ impl Store {
             worker.authorize().map_err(RestoreError::Failed)?;
         }
         let (changes, context) = self.plan_git(&prepared)?;
-        if changes.is_empty() {
+        if changes.is_empty() && worker.is_none() {
             return Ok(vec![]);
         }
         let id = format!("restore_{}", ulid::Ulid::new());

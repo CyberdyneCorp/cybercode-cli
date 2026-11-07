@@ -2264,3 +2264,73 @@ real CLI/TUI/App, actual Git backend consuming callbacks, Linux/Windows and
 source-bound CI acceptance were not run for this increment. No-op success,
 recovery-resolution checkout acknowledgements and reference-aware cleanup remain
 open, as do all parent recovery acceptance tasks.
+
+
+## Real owned no-op journals and distinct native namespaces (2026-11-07)
+
+Both native restore adapters now publish a real empty journal when the revalidated
+plan is empty and a worker is present. They use the normal bounded intent budget,
+worker begin/origin, empty prepared ownership, durable completion and immutable
+receipt path. The source-effect loop is empty, so neither database nor native source
+admission occurs. No fake origin or journal identity is introduced. Ordinary
+consuming receipts and checkout markers can therefore settle an owned no-op; the
+writer still refuses a managed adapter that supplies no journal receipt. Legacy
+unowned no-op calls still return without creating a journal. Git source admission
+remains gated independently of this backend change.
+
+Real client verification exposed a receipt-validation mistake in the recent
+checkout evidence work: lifetime.namespace_identity identifies the private Location
+namespace, whereas origin.binding.namespace_identity identifies its journals
+collection. Equating them caused actual owned copy restores to fail with 'Restore
+receipt checkout ownership differs'. The existing real CLI code-rewind test failed
+on unchanged local 08bc1d9e with that exact error before this fix. Earlier mock
+fixtures used equal strings and missed the distinct native directories. This is
+our local receipt regression, not a claim about main's result.
+
+Receipt validation now retains exact owner/Session creation/worktree/Location/root
+checks while allowing the two independently verified namespaces to differ. Native
+lifetime and journal guards continue validating their own paths, identities and
+records; lookup still attests the original lifetime and receipt, and native checkout
+resource digests still bind that lifetime. The runtime lifetime fixture deliberately
+uses a different namespace and asserts the receipt retains it.
+
+A new real CLI/service/scripted-provider test puts source bytes at the rewind target
+before preview, then commits conversation rewind through an empty owned journal.
+It verifies retained origin/receipt, empty changes and ownership, false database and
+native source admission, no native admitted origin, unchanged owner files and no
+inference. It then resets acknowledgement metadata and twice reconciles the original
+receipt after introducing a later owner symlink, verifying no source replay. Shared
+real-client assertions now compare native source phase with durable activity
+admission, allowing a real unadmitted empty intent without weakening normal effect
+checks; they also assert distinct namespace identities in actual receipts.
+
+The code-review skill was applied to source/tests/artifacts, focusing on real versus
+synthetic intent evidence, zero source admission, metadata budgeting, shared guard
+completion and acknowledgement, separate namespace semantics, foreign proof
+rejection and unchanged legacy/admission behavior. The real positive is file-copy
+with an unmanaged Location; actual managed Git source/checkout no-op integration,
+recovery-resolution resource acknowledgement, retention and complete client/
+platform/cut acceptance remain open. No parent recovery task is accepted here.
+
+Final local macOS arm64 verification: all 17 real CLI branch/recovery tests passed,
+including actual partial-restore kill/restart keep/rollback, pre-origin/pre-source
+cuts, restage/clear, disabled snapshots and the new no-op case. These remain local
+unmanaged/file-copy and legacy-Git evidence, not owned managed-Git acceptance.
+Locked snapshot tests passed 137 cases with two ignored fixtures (the pathspec
+fixture is invoked by its parent); server library tests passed 432 cases with one
+ignored fixture. The focused distinct-namespace receipt test also passed after
+its explicit assertion was added. Three-package all-target locked Clippy
+(server/snapshot/CLI) passed with Rust warnings denied. Native C build emitted two
+sandbox API deprecation warnings; no main comparison or pre-existing attribution
+was made. Clippy initially reported cognitive complexity 17 against limit 15 for
+the expanded receipt assertion helper. The cognitive-complexity skill's extraction
+workflow was applied using Rust's native Clippy analyzer (Rust is outside that
+skill's dispatcher); splitting receipt binding assertions removed the violation.
+The four affected real CLI cases passed again after this helper refactor.
+
+Final format/diff and generated SDK consistency passed. Pinned strict OpenSpec
+passed all 117 items; spec lint reported 0 errors/25 warnings. Full workspace/SDK
+execution, real TUI/App, owned managed-Git source/checkout callbacks, Linux/Windows
+and source-bound CI were not run for this increment. Native recovery-resolution
+resource acknowledgement and reference-aware cleanup remain required; parent
+tasks and ordinary Git admission stay open/gated.

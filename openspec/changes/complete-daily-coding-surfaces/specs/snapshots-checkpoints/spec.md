@@ -282,6 +282,16 @@
 - **THEN** reconciliation SHALL reacquire the exact original lifetime and complete checkout set, refuse missing/changed/live proof, and perform only bounded journal and checkout acknowledgement metadata writes
 - **AND** legacy receipts SHALL gain no claim adoption authority and a managed completion without a journal receipt SHALL NOT manufacture one or discard its recovery fence
 
+#### Scenario: Owned restore has no source changes after revalidation
+- **WHEN** an owned restore validates the complete expected state and its plan has no source changes
+- **THEN** it SHALL publish a real bounded empty intent with native origin, empty ownership evidence and durable completion, consuming its normal receipt and checkout acknowledgement without source admission or installation
+- **AND** failed or lost consuming replies SHALL retain the same journal evidence for lookup/reconciliation, while legacy unowned no-op calls SHALL preserve their former no-journal behavior
+
+#### Scenario: Receipt binds distinct lifetime and journal namespaces
+- **WHEN** a native restore's lifetime and journal guards verify their respective namespace routes
+- **THEN** consuming receipt validation SHALL bind both exact identities and the common owner/Location/root context without requiring the distinct namespace directories to have equal identities
+- **AND** lookup and acknowledgement SHALL retain the original lifetime and journal verification and reject foreign owner or changed resource proof
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

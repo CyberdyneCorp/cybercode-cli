@@ -388,7 +388,7 @@ impl Store {
             worker.authorize().map_err(RestoreError::Failed)?;
         }
         let (_, changes, context) = self.plan(target, recorded, expected, paths)?;
-        if changes.is_empty() {
+        if changes.is_empty() && worker.is_none() {
             return Ok(vec![]);
         }
         let id = format!("restore_{}", ulid::Ulid::new());

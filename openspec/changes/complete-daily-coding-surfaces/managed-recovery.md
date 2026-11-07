@@ -598,3 +598,12 @@ SHALL refuse. Legacy receipts retain their original metadata path without gainin
 claim adoption. Managed completions lacking a journal receipt SHALL retain their
 pre-effect/unknown evidence instead of committing an unacknowledgeable claim; a
 positive no-effect consuming protocol remains required before ordinary admission.
+
+An owned no-op restore SHALL publish a real bounded empty intent after complete
+planning and revalidation. Its native origin, empty ownership section and durable
+completion SHALL use the same consuming-receipt/checkout acknowledgement path as
+other owned restores, without calling source admission or installing files. An
+empty plan does not justify a synthetic journal ID or invented historical proof.
+Legacy unowned no-op calls retain their former no-journal behavior. Lifetime and
+journal namespace identities refer to different native directories; each is
+verified by its native guard, and the receipt binds both rather than equating them.
