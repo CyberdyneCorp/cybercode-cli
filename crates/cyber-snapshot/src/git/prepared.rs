@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Image {
+    pub source: ImageSource,
     pub mode: String,
     pub object: String,
     pub bytes: Vec<u8>,
@@ -13,10 +14,43 @@ pub(crate) struct Image {
 
 impl Image {
     pub(crate) fn verify(&self) -> Result<(), String> {
-        images::verify(&self.object, &self.bytes)
+        match self.source {
+            ImageSource::Git => images::verify(&self.object, &self.bytes),
+            ImageSource::Copy if self.object == crate::copy::object_digest(&self.bytes) => Ok(()),
+            ImageSource::Copy => Err("Copy image does not match its object identity".into()),
+        }
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ImageSource {
+    Git,
+    Copy,
+}
+
+impl ImageSource {
+    pub(crate) fn for_id(id: &str) -> Result<Self, String> {
+        if let Some(digest) = id.strip_prefix("copy:") {
+            if digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Ok(Self::Copy);
+            }
+        } else if matches!(id.len(), 40 | 64)
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Ok(Self::Git);
+        }
+        Err("Invalid snapshot image source identity".into())
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct PreparedTree {
     pub id: String,
     /// Paths relative to the exact Location, rather than the Git worktree root.
@@ -50,6 +84,7 @@ pub(crate) struct PreparedRestore {
     /// The expected snapshot's exact worktree-relative exclusions, not globs.
     /// Historical exclusions constrain mutation, but not the current-state check.
     pub expected_excluded: Vec<String>,
+    pub historical_excluded: Vec<String>,
     pub allowed: Option<BTreeSet<String>>,
     pub ignore: IgnoreInputs,
     pub expected_policy: Option<String>,
@@ -108,17 +143,14 @@ impl Shadow {
             return Err("Git image handoff belongs to another Location".into());
         }
         let ids = [&request.target, &request.recorded, &request.expected];
-        let mut excluded = BTreeSet::new();
-        for id in ids {
-            excluded.extend(self.recorded_exclusions(id).await?.unwrap_or_default());
+        if ImageSource::for_id(&request.expected)? != ImageSource::Git {
+            return Err("Mixed native restore requires a fresh Git expected checkpoint".into());
         }
+        let (excluded, exclusions) = self.git_image_exclusions(ids).await?;
         let expected_excluded = self
             .recorded_exclusions(&request.expected)
             .await?
             .unwrap_or_default();
-        let exclusions = self
-            .historical_exclusions(&ids.map(|id| id.to_owned()))
-            .await?;
         let allowed = request
             .paths
             .as_ref()
@@ -133,6 +165,13 @@ impl Shadow {
         let mut trees = Vec::new();
         for (index, id) in ids.into_iter().enumerate() {
             let mut entries = BTreeMap::new();
+            if ImageSource::for_id(id)? == ImageSource::Copy {
+                trees.push(PreparedTree {
+                    id: id.clone(),
+                    images: entries,
+                });
+                continue;
+            }
             for (path, (mode, object)) in self.native_image_catalog(id).await?.iter() {
                 let omitted = if index == 2 {
                     history::excludes(&expected_excluded, path)
@@ -160,6 +199,7 @@ impl Shadow {
                 entries.insert(
                     relative(prefix, path)?,
                     Image {
+                        source: ImageSource::Git,
                         mode: mode.clone(),
                         object: object.clone(),
                         bytes,
@@ -181,10 +221,27 @@ impl Shadow {
             expected: trees.next().ok_or("Missing expected images")?,
             exclusions,
             expected_excluded,
+            historical_excluded: excluded.into_iter().collect(),
             allowed,
             ignore,
             expected_policy,
         })
+    }
+
+    async fn git_image_exclusions(
+        &self,
+        ids: [&String; 3],
+    ) -> Result<(BTreeSet<String>, Vec<String>), String> {
+        let mut excluded = BTreeSet::new();
+        let mut git_ids = vec![];
+        for id in ids {
+            if ImageSource::for_id(id)? == ImageSource::Copy {
+                continue;
+            }
+            git_ids.push(id.clone());
+            excluded.extend(self.recorded_exclusions(id).await?.unwrap_or_default());
+        }
+        Ok((excluded, self.historical_exclusions(&git_ids).await?))
     }
 }
 

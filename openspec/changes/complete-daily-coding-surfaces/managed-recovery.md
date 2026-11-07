@@ -698,3 +698,24 @@ native policy evidence. Full configuration/dependency/race and Git compatibility
 acceptance remain required before managed source admission; these observations do
 not claim an atomic snapshot of every external configuration input or independent
 permission authority.
+
+
+### Mixed historical image provenance
+
+Native Git planning SHALL be able to use retained Location-bound copy target or
+recorded images with a fresh raw Git expected checkpoint. It SHALL retain all
+original checkpoint IDs and verify copy manifests/objects using their BLAKE3
+identity; no copy image SHALL be reinterpreted as a Git object or relabeled as a
+Git checkpoint. The expected checkpoint SHALL retain complete current Git policy,
+raw-image and namespace revalidation. Both backends' historical exclusions SHALL
+constrain mutation while current expected images remain part of stale detection.
+
+A new version-6 Git journal context SHALL bind explicit target/recorded/expected
+image-source kinds to the original IDs and common Git worktree/Location scope.
+Version-4/5 Git contexts SHALL keep their original all-Git interpretation and byte
+encoding; source annotations cannot grant mixed-image authority to an old record.
+Version-6 immutable digest framing SHALL be distinct. Complete existing copy
+manifest validation, byte/path/count budgets, scoped selection, native preimages,
+conflict refusal, worker ownership, acknowledgement and recovery remain mandatory.
+This image bridge alone SHALL NOT enable managed Git source admission or substitute
+for runtime/client/migration and crash/retention acceptance.

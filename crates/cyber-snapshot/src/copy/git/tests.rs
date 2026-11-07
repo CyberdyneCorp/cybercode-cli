@@ -173,6 +173,160 @@ impl Repo {
 }
 
 #[tokio::test]
+async fn mixed_copy_git_images_keep_original_ids_scope_exclusions_and_new_journal_authority() {
+    for (scoped, target_copy, recorded_copy) in [
+        (false, true, true),
+        (true, true, true),
+        (false, true, false),
+        (true, true, false),
+        (false, false, true),
+        (true, false, true),
+    ] {
+        let repo = Repo::with_format("sha256");
+        let location = if scoped {
+            repo.root.join("scope")
+        } else {
+            repo.root.clone()
+        };
+        std::fs::create_dir_all(&location).unwrap();
+        let mut store = repo.store(&location);
+        store.options.ignore = vec!["protected".into()];
+        std::fs::write(location.join("file"), "before\n").unwrap();
+        std::fs::write(location.join("protected"), "excluded before").unwrap();
+        let target = if target_copy {
+            store.track().unwrap().tree
+        } else {
+            repo.track(&location).await
+        };
+        std::fs::write(location.join("file"), "after\n").unwrap();
+        let recorded = if recorded_copy {
+            store.track().unwrap().tree
+        } else {
+            repo.track(&location).await
+        };
+        store.options.ignore.clear();
+        std::fs::write(location.join("protected"), "new eligible owner bytes").unwrap();
+        let expected = repo.track(&location).await;
+        let prepared = repo.prepare(&location, &target, &recorded, &expected).await;
+        let preview = store.preview_git(&prepared).unwrap();
+        assert_eq!(preview.len(), 1);
+        assert_eq!(preview[0].file, if scoped { "scope/file" } else { "file" });
+        assert_eq!(store.restore_git_worker(prepared, None).unwrap(), ["file"]);
+        assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before\n");
+        assert_eq!(
+            std::fs::read(location.join("protected")).unwrap(),
+            b"new eligible owner bytes"
+        );
+        let id = store.recovery().unwrap()[0].id.clone();
+        let (dir, journal) = store.journal(&id).unwrap();
+        assert_eq!(journal.version, 6);
+        let context = journal.context.as_ref().unwrap();
+        assert_eq!(
+            (&context.target, &context.recorded, &context.expected),
+            (&target, &recorded, &expected)
+        );
+        assert_eq!(
+            serde_json::to_value(context).unwrap()["git"]["sources"],
+            serde_json::json!({"target":if target_copy { "copy" } else { "git" },"recorded":if recorded_copy { "copy" } else { "git" },"expected":"git"})
+        );
+        assert!(
+            context
+                .exclusions
+                .iter()
+                .any(|value| value.contains("ignore: protected"))
+        );
+        assert!(context.validate(&location, 5).is_err());
+        let mut downgraded = journal.clone();
+        downgraded.version = 5;
+        Store::record(&dir, &downgraded).unwrap();
+        assert!(store.journal(&id).is_err());
+        Store::record(&dir, &journal).unwrap();
+        let mut mismatched = context.clone();
+        mismatched
+            .git
+            .as_mut()
+            .unwrap()
+            .sources
+            .as_mut()
+            .unwrap()
+            .expected = ImageSource::Copy;
+        assert!(mismatched.validate(&location, 6).is_err());
+        assert!(
+            !repo
+                .snapshots
+                .owned_restore_available(location.to_str().unwrap())
+        );
+        assert!(!repo.root.join(".git/index").exists());
+    }
+}
+
+#[tokio::test]
+async fn mixed_image_import_refuses_corruption_foreign_manifests_stale_source_and_combined_budget()
+{
+    for fault in ["corrupt", "foreign", "stale", "budget", "packet"] {
+        let repo = Repo::new();
+        let mut store = repo.store(&repo.root);
+        std::fs::write(repo.root.join("file"), "before\n").unwrap();
+        let mut target = store.track().unwrap().tree;
+        std::fs::write(repo.root.join("file"), "after\n").unwrap();
+        let recorded = store.track().unwrap().tree;
+        if fault == "corrupt" {
+            let tree = store.load(&target).unwrap();
+            store
+                .objects
+                .write(&tree.files["file"].object, b"corrupt")
+                .unwrap();
+        }
+        if fault == "foreign" {
+            let other = repo.root.join("foreign");
+            std::fs::create_dir(&other).unwrap();
+            let foreign = repo.store(&other);
+            let snapshot = foreign.track().unwrap().tree;
+            let digest = snapshot.strip_prefix("copy:").unwrap();
+            let bytes =
+                storage::read(&foreign.manifests, digest, super::super::RECORD_LIMIT).unwrap();
+            storage::atomic(&store.manifests, digest, &bytes).unwrap();
+            target = snapshot;
+        }
+        let expected = repo.track(&repo.root).await;
+        let mut prepared = repo
+            .prepare(&repo.root, &target, &recorded, &expected)
+            .await;
+        if fault == "packet" {
+            let bytes = b"caller-supplied image".to_vec();
+            prepared.target.images.insert(
+                "file".into(),
+                Image {
+                    source: ImageSource::Copy,
+                    mode: "100644".into(),
+                    object: storage::digest(&bytes),
+                    bytes,
+                },
+            );
+        }
+        if fault == "stale" {
+            std::fs::write(repo.root.join("file"), "later owner").unwrap();
+        }
+        if fault == "budget" {
+            store.options.max_total = 18;
+        }
+        let error = store.restore_git_worker(prepared, None).unwrap_err();
+        if fault == "budget" {
+            assert!(error.to_string().contains("handoff exceeds"), "{error}");
+        }
+        assert_eq!(
+            std::fs::read(repo.root.join("file")).unwrap(),
+            if fault == "stale" {
+                b"later owner".as_slice()
+            } else {
+                b"after\n".as_slice()
+            }
+        );
+        assert!(store.recovery().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn native_git_import_restores_files_modes_creations_deletions_and_retains_original_ids() {
     let repo = Repo::new();
     std::fs::write(repo.root.join("file"), b"before").unwrap();
@@ -383,6 +537,7 @@ fn legacy_copy_context_keeps_its_encoding_and_cannot_be_reinterpreted_as_git() {
     assert_eq!(serde_json::to_value(&context).unwrap(), value);
     let mut invalid = context;
     invalid.git = Some(GitContext {
+        sources: None,
         worktree: "/fixture".into(),
         prefix: String::new(),
     });
@@ -395,16 +550,30 @@ async fn imported_git_preimages_support_native_keep_and_rollback_with_retained_g
         SnapshotBinding, SnapshotOrigin, SnapshotRecoveryAction as Action,
         SnapshotRecoveryConfirmation,
     };
-    for action in [Action::Keep, Action::Rollback] {
+    for (action, mixed) in [
+        (Action::Keep, false),
+        (Action::Rollback, false),
+        (Action::Keep, true),
+        (Action::Rollback, true),
+    ] {
         let repo = Repo::new();
-        std::fs::write(repo.root.join("file"), b"target before").unwrap();
-        let target = repo.track(&repo.root).await;
-        std::fs::write(repo.root.join("file"), b"recorded after").unwrap();
-        let recorded = repo.track(&repo.root).await;
-        let prepared = repo
-            .prepare(&repo.root, &target, &recorded, &recorded)
-            .await;
         let store = repo.store(&repo.root);
+        std::fs::write(repo.root.join("file"), b"target before").unwrap();
+        let target = if mixed {
+            store.track().unwrap().tree
+        } else {
+            repo.track(&repo.root).await
+        };
+        std::fs::write(repo.root.join("file"), b"recorded after").unwrap();
+        let recorded = if mixed {
+            store.track().unwrap().tree
+        } else {
+            repo.track(&repo.root).await
+        };
+        let expected = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &expected)
+            .await;
         store.restore_git_worker(prepared, None).unwrap();
         let id = store.recovery().unwrap()[0].id.clone();
         let (dir, mut journal) = store.journal(&id).unwrap();
@@ -439,7 +608,7 @@ async fn imported_git_preimages_support_native_keep_and_rollback_with_retained_g
             .resolve_recovery(&confirmation, &|| Ok(()), None)
             .unwrap();
         let (_, resolution) = store.journal(&receipt.resolution_id).unwrap();
-        assert_eq!(resolution.version, 5);
+        assert_eq!(resolution.version, if mixed { 6 } else { 5 });
         assert_eq!(resolution.context.as_ref().unwrap().target, target);
         assert_eq!(
             std::fs::read(repo.root.join("file")).unwrap(),
@@ -1787,5 +1956,103 @@ async fn git_lifetime_port_keeps_scoped_locations_and_managed_checkout_completen
         !repo
             .snapshots
             .owned_restore_available(scope.to_str().unwrap())
+    );
+}
+
+#[tokio::test]
+async fn interrupted_mixed_native_replacement_reopens_and_rolls_back_only_retained_effects() {
+    use cyber_server::runtime::{
+        SnapshotBinding, SnapshotOrigin, SnapshotRecoveryAction, SnapshotRecoveryConfirmation,
+    };
+    let repo = Repo::new();
+    let store = repo.store(&repo.root);
+    for file in ["a", "b"] {
+        std::fs::write(repo.root.join(file), "before").unwrap();
+    }
+    let target = store.track().unwrap().tree;
+    for file in ["a", "b"] {
+        std::fs::write(repo.root.join(file), "after").unwrap();
+    }
+    let recorded = store.track().unwrap().tree;
+    let expected = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &expected)
+        .await;
+    let (changes, context) = store.plan_git(&prepared).unwrap();
+    let id = "restore_mixed_partial";
+    let mut journal = store
+        .prepare_journal(changes, id, None, Some(context), None)
+        .unwrap();
+    let stop = || {
+        if std::fs::read(repo.root.join("a")).unwrap() == b"before" {
+            Err("fixture stopped after first actual replacement".into())
+        } else {
+            Ok(())
+        }
+    };
+    assert!(
+        store
+            .execute_journal(id, &mut journal, &stop, None)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(repo.root.join("a")).unwrap(), b"before");
+    assert_eq!(std::fs::read(repo.root.join("b")).unwrap(), b"after");
+    let (directory, mut journal) = store.journal(id).unwrap();
+    assert_eq!(journal.version, 6);
+    assert!(!journal.completed);
+    // Native backend fixture only: no runtime/Store or checkout admission proof.
+    journal.origin = Some(SnapshotOrigin {
+        version: 1,
+        session_id: "ses_fixture".into(),
+        session_created_id: "evt_fixture".into(),
+        activity_id: "op_fixture".into(),
+        worktree_id: None,
+        binding: SnapshotBinding {
+            directory: store.root.clone(),
+            root_identity: store.root_id.clone(),
+            namespace_identity: storage::dir_identity(&store.journals).unwrap(),
+            journal_id: id.into(),
+            journal_identity: storage::dir_identity(&directory).unwrap(),
+            lock_identity: Some(store.lock_identity().unwrap()),
+        },
+    });
+    Store::record(&directory, &journal).unwrap();
+    drop(directory);
+    drop(store);
+    let reopened = repo.store(&repo.root);
+    std::fs::write(repo.root.join("owner-file"), "later owner").unwrap();
+    let action = SnapshotRecoveryAction::Rollback;
+    let review = reopened.recovery_review(id, action).unwrap();
+    assert!(review.conflicts.is_empty());
+    let confirmation = SnapshotRecoveryConfirmation {
+        journal_id: id.into(),
+        action,
+        confirmation: review.confirmation.unwrap(),
+        request_id: "mixed-partial-reopened".into(),
+    };
+    let receipt = reopened
+        .resolve_recovery(&confirmation, &|| Ok(()), None)
+        .unwrap();
+    assert_eq!(
+        reopened.journal(&receipt.resolution_id).unwrap().1.version,
+        6
+    );
+    for file in ["a", "b"] {
+        assert_eq!(std::fs::read(repo.root.join(file)).unwrap(), b"after");
+    }
+    assert_eq!(
+        std::fs::read(repo.root.join("owner-file")).unwrap(),
+        b"later owner"
+    );
+    std::fs::write(repo.root.join("a"), "owner after resolution").unwrap();
+    assert_eq!(
+        reopened
+            .resolve_recovery(&confirmation, &|| Ok(()), None)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("a")).unwrap(),
+        b"owner after resolution"
     );
 }

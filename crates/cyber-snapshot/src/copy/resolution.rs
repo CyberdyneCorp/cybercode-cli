@@ -176,7 +176,16 @@ fn immutable_digest(record: &Journal) -> Result<String> {
     match &record.backend {
         None => Ok(legacy),
         Some(backend) => Ok(storage::digest(
-            &serde_json::to_vec(&("snapshot-journal-v5", backend, legacy)).map_err(fail)?,
+            &serde_json::to_vec(&(
+                if record.version == 6 {
+                    "snapshot-journal-v6"
+                } else {
+                    "snapshot-journal-v5"
+                },
+                backend,
+                legacy,
+            ))
+            .map_err(fail)?,
         )),
     }
 }

@@ -1,7 +1,11 @@
 //! Location-bound native recovery journals and private non-Git BLAKE3 snapshots.
 pub(crate) mod config_inputs;
+pub(crate) fn object_digest(bytes: &[u8]) -> String {
+    storage::digest(bytes)
+}
 mod git;
 pub(crate) mod git_capture;
+mod git_images;
 pub(crate) mod git_rules;
 mod inventory;
 mod links;

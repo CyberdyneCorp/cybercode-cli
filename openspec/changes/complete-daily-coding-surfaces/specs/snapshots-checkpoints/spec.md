@@ -338,3 +338,10 @@
 - **WHEN** a selecting config root, include target, conditional-include HEAD or relevant environment changes after resolution
 - **THEN** native inventory SHALL refuse before journal/source effects by revalidating bounded capture-bound configuration evidence without spawning Git in the filesystem worker
 - **AND** absent root/include candidates SHALL be bound against later creation, unsupported origin/capability proof SHALL remain unavailable, and old policy fingerprints SHALL gain no retrospective proof
+
+
+#### Scenario: Native Git planning retains historical copy image provenance
+- **GIVEN** a Location retains copy target/recorded checkpoints and a fresh raw Git expected checkpoint
+- **WHEN** the native planner prepares restoration after backend routing changes
+- **THEN** it SHALL verify each backend's original images and Location binding, retain namespaced IDs and historical exclusions, and revalidate complete current Git state before source effects
+- **AND** a version-6 journal SHALL bind explicit per-image source kinds and distinct digest framing; old journal versions SHALL refuse those annotations rather than acquire new mixed-image authority

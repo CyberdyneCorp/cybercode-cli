@@ -432,3 +432,17 @@ retain unavailable proof. This fixes the reproduced post-preparation locator cha
 but does not finish complete configuration/ABA/dependency, filter, actual Git
 runtime/checkout, migration, crash/platform/client or reclamation acceptance.
 Managed Git source admission and all parent tasks remain open and disabled.
+
+
+Mixed-image journal continuation: native Git preparation can retain copy target or
+recorded IDs as typed deferred manifests with a fresh raw Git expected checkpoint.
+The synchronous native store loads only its original Location-bound manifests,
+verifies BLAKE3 objects, enforces combined image budgets, and applies both backends'
+historical exclusions without hiding expected-state checks. A version-6 context
+and digest bind per-image source kinds; old versions reject those annotations.
+Native preview/restore and keep/rollback, including interrupted replacement after
+reopening the namespace, have backend coverage. Runtime-owned Git callbacks,
+client planning/routing, complete migration/limit combinations, config/generated
+rule-source and filter compatibility, native kills/platforms and reference-aware
+cleanup remain required. Managed Git source admission and M2–M8/parent tasks remain
+open; backend fixture origins do not constitute runtime/checkout proof.

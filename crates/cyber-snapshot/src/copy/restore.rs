@@ -32,6 +32,7 @@ pub(super) struct Journal {
     // only the worker and cannot acquire that historical proof retroactively.
     // Version 4 binds Git context. Version 5 adds explicit backend and link kinds;
     // older records retain their original file-only encoding and digest framing.
+    // Version 6 binds mixed copy/Git image provenance without relabeling IDs.
     pub version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<JournalBackend>,
@@ -99,14 +100,14 @@ impl Store {
                 .map_err(fail)?;
         if !matches!(
             (record.version, record.origin.is_some()),
-            (1, false) | (2, true) | (3, _) | (4, _) | (5, _)
+            (1, false) | (2, true) | (3, _) | (4, _) | (5, _) | (6, _)
         ) || (record.version == 4
             && !record
                 .context
                 .as_ref()
                 .is_some_and(|context| context.git.is_some()))
             || (record.version < 5 && record.backend.is_some())
-            || (record.version == 5
+            || (record.version >= 5
                 && match &record.backend {
                     Some(JournalBackend::Git) => !record
                         .context
@@ -118,6 +119,7 @@ impl Store {
                         .is_some_and(|context| context.git.is_some()),
                     None => true,
                 })
+            || (record.version == 6 && record.backend != Some(JournalBackend::Git))
             || record.location != self.root
             || record.root != self.root_id
             || (record.version < 5
@@ -554,6 +556,12 @@ impl Store {
         }
         let version = if context
             .as_ref()
+            .and_then(|context| context.git.as_ref())
+            .is_some_and(|git| git.sources.is_some())
+        {
+            6
+        } else if context
+            .as_ref()
             .is_some_and(|context| context.git.is_some())
             || changes.iter().any(|change| {
                 [&change.before, &change.after]
@@ -571,7 +579,7 @@ impl Store {
         };
         let mut journal = Journal {
             version,
-            backend: (version == 5).then(|| {
+            backend: (version >= 5).then(|| {
                 if context
                     .as_ref()
                     .is_some_and(|context| context.git.is_some())

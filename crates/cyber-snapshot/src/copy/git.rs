@@ -2,7 +2,7 @@
 use super::restore::{Change, RestoreContext};
 use super::storage::{self, Result};
 use super::{ENTRY_LIMIT, Entry, Store};
-use crate::git::prepared::{Image, PreparedRestore};
+use crate::git::prepared::{Image, ImageSource, PreparedRestore};
 use cyber_server::runtime::{RestoreError, SnapshotWork};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -14,29 +14,72 @@ use std::path::{Component, Path, PathBuf};
 pub(super) struct GitContext {
     pub worktree: PathBuf,
     pub prefix: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sources: Option<ImageSources>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ImageSources {
+    target: ImageSource,
+    recorded: ImageSource,
+    expected: ImageSource,
+}
+impl ImageSources {
+    fn for_ids(ids: [&str; 3]) -> Result<Option<Self>> {
+        let kinds = ids.map(ImageSource::for_id);
+        let [target, recorded, expected] = kinds;
+        let (target, recorded, expected) = (target?, recorded?, expected?);
+        if expected != ImageSource::Git
+            || ids
+                .iter()
+                .filter(|id| !id.starts_with("copy:"))
+                .any(|id| id.len() != ids[2].len())
+        {
+            return Err(
+                "Mixed Git context requires a common Git format and Git expected image".into(),
+            );
+        }
+        Ok(
+            (target == ImageSource::Copy || recorded == ImageSource::Copy).then_some(Self {
+                target,
+                recorded,
+                expected,
+            }),
+        )
+    }
 }
 
 impl RestoreContext {
     pub(super) fn validate(&self, location: &Path, version: u32) -> Result<()> {
         let ids = [&self.target, &self.recorded, &self.expected];
         if let Some(git) = &self.git {
-            if !matches!(version, 4 | 5)
+            let sources = ImageSources::for_ids([&self.target, &self.recorded, &self.expected])?;
+            if !matches!(version, 4..=6)
                 || !git.worktree.is_absolute()
                 || git
                     .worktree
                     .components()
                     .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
                 || git.worktree.join(&git.prefix) != location
-                || !ids.iter().all(|id| git_id(id) && id.len() == ids[0].len())
+                || match version {
+                    6 => sources.is_none() || git.sources != sources,
+                    _ => {
+                        sources.is_some()
+                            || git.sources.is_some()
+                            || !ids.iter().all(|id| git_id(id) && id.len() == ids[0].len())
+                    }
+                }
             {
                 return Err("Invalid Git recovery snapshot context".into());
             }
             if !git.prefix.is_empty() {
                 super::tree::safe_path(&git.prefix)?;
             }
-        } else if !ids
-            .iter()
-            .all(|id| id.strip_prefix("copy:").is_some_and(storage::valid_digest))
+        } else if version == 6
+            || !ids
+                .iter()
+                .all(|id| id.strip_prefix("copy:").is_some_and(storage::valid_digest))
         {
             return Err("Invalid recovery snapshot context".into());
         }
@@ -134,19 +177,6 @@ impl Store {
         &self,
         prepared: &PreparedRestore,
     ) -> std::result::Result<(Vec<Change>, RestoreContext), RestoreError> {
-        let context = RestoreContext {
-            target: prepared.target.id.clone(),
-            recorded: prepared.recorded.id.clone(),
-            expected: prepared.expected.id.clone(),
-            exclusions: prepared.exclusions.clone(),
-            git: Some(GitContext {
-                worktree: prepared.worktree.clone(),
-                prefix: prepared.prefix.clone(),
-            }),
-        };
-        context
-            .validate(&self.root, 4)
-            .map_err(RestoreError::Failed)?;
         if prepared.directory != self.root {
             return Err(RestoreError::Failed(
                 "Git handoff belongs to another native Location".into(),
@@ -159,10 +189,55 @@ impl Store {
             ));
         }
         self.ensure_recovered().map_err(RestoreError::Failed)?;
+        let imported = self
+            .import_git_images(prepared)
+            .map_err(RestoreError::Failed)?;
+        let sources = ImageSources::for_ids([
+            &prepared.target.id,
+            &prepared.recorded.id,
+            &prepared.expected.id,
+        ])
+        .map_err(RestoreError::Failed)?;
+        let mut context = RestoreContext {
+            target: prepared.target.id.clone(),
+            recorded: prepared.recorded.id.clone(),
+            expected: prepared.expected.id.clone(),
+            exclusions: prepared.exclusions.clone(),
+            git: Some(GitContext {
+                worktree: prepared.worktree.clone(),
+                prefix: prepared.prefix.clone(),
+                sources,
+            }),
+        };
+        context.exclusions.extend(imported.reports.iter().cloned());
+        context
+            .validate(
+                &self.root,
+                if context
+                    .git
+                    .as_ref()
+                    .is_some_and(|git| git.sources.is_some())
+                {
+                    6
+                } else {
+                    5
+                },
+            )
+            .map_err(RestoreError::Failed)?;
         // Known image validation precedes any source effect. Full state scanning
         // and actual runtime lifetime integration remain required before activation.
-        for tree in [&prepared.target, &prepared.recorded, &prepared.expected] {
+        for tree in [
+            imported.target.as_ref(),
+            imported.recorded.as_ref(),
+            &prepared.expected,
+        ] {
+            let source = ImageSource::for_id(&tree.id).map_err(RestoreError::Failed)?;
             for (path, image) in &tree.images {
+                if image.source != source {
+                    return Err(RestoreError::Failed(
+                        "Snapshot image provenance differs".into(),
+                    ));
+                }
                 image.verify().map_err(RestoreError::Failed)?;
                 self.check_source_path(path).map_err(RestoreError::Failed)?;
                 if !matches!(image.mode.as_str(), "100644" | "100755" | "120000") {
@@ -184,11 +259,12 @@ impl Store {
                 }
             }
         }
-        let paths: BTreeSet<_> = prepared
+        let paths: BTreeSet<_> = imported
             .target
             .images
             .keys()
-            .chain(prepared.recorded.images.keys())
+            .chain(imported.recorded.images.keys())
+            .filter(|path| !imported.excludes(prepared, path))
             .chain(prepared.expected.images.keys())
             .cloned()
             .collect();
@@ -205,9 +281,10 @@ impl Store {
             if !matches(current.as_ref(), prepared.expected.images.get(&path)) {
                 return Err(RestoreError::Stale);
             }
-            let base = prepared.recorded.images.get(&path);
-            let want = prepared.target.images.get(&path);
-            if base == want
+            let base = imported.recorded.images.get(&path);
+            let want = imported.target.images.get(&path);
+            if imported.excludes(prepared, &path)
+                || base == want
                 || prepared
                     .allowed
                     .as_ref()

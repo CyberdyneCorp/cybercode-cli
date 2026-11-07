@@ -2652,3 +2652,90 @@ OpenSpec validated 117 items; spec lint reported 0 errors and 25 warnings withou
 unchanged-main attribution. Public schema/SDK shapes remain unchanged. The
 production managed-Git availability guard remains disabled, and no PR/push or
 parent-task acceptance is made by this local prerequisite.
+
+
+## Mixed copy/Git historical image materialization (2026-11-07)
+
+The native Git planner now accepts retained copy target and/or recorded checkpoints
+with a fresh raw Git expected checkpoint. Immutable Git preparation retains typed
+copy placeholders without attempting Git object lookup for copy IDs. Inside the
+synchronous native store, original copy manifests are loaded under the existing
+namespace lock, including their original Location/root binding and immutable tree
+digest. Original object bytes are checked against BLAKE3 identities; Git images
+retain typed SHA-1/SHA-256 verification. These image kinds are explicit, including
+when both content hashes happen to be 64 characters. IDs remain unchanged: a copy
+checkpoint is never relabeled as a Git checkpoint or given an invented Git blob.
+Git image buffers are borrowed; copy buffers are materialized under shared total
+and per-file/count limits. Limits conservatively cover the full prepared/imported
+image set; this is not complete selected-path/large-image migration acceptance.
+
+Git worktree/prefix and exact native Location still bind the handoff. Historical
+exclusions from copy and Git constrain target/recorded mutation; expected eligible
+images remain in the complete current-state check even when a historical exclusion
+protects them from mutation. Originally skipped files that are now eligible remain
+unchanged. Copy manifests cannot supply caller-populated image packets instead of
+actual manifest authority. Corrupt objects and copied-in foreign manifests refuse
+before intent publication or source effects.
+
+A new version-6 Git context records target/recorded/expected image-source kinds and
+original IDs. The physical journal backend remains Git; its native payload objects
+still use the existing BLAKE3 CAS. Version-6 validation requires a Git expected
+checkpoint, at least one copy historical input, consistent Git ID widths and exact
+kind/ID correspondence. Version-4/5 encodings omit the optional section and retain
+all-Git interpretation; annotation or version downgrades refuse instead of adopting
+mixed authority. Version-6 immutable digest framing is distinct, and new recovery
+intents preserve the context and original identifiers. Existing older digest
+regressions still pass.
+
+Native backend regressions cover all three mixed source combinations at both root
+and nested Locations, using an actual SHA-256 repository and retained copy stores.
+They check preview/restore, original IDs, typed annotations, historical exclusions,
+user-index preservation and old-version/mismatched-kind refusal. Separate cases
+refuse corrupt copy objects, a valid foreign manifest copied into the current
+namespace, stale source bytes and combined budget overflow without a journal or
+source modification. The existing native keep/rollback test now exercises both
+all-Git and mixed version-6 contexts, preserving unrelated edits and never replaying
+source changes for a repeated request.
+
+A further real-filesystem case stops execution after the first actual namespace
+replacement, verifies the second file is untouched, drops/reopens the native Store,
+and rolls back only proven retained effects. Unrelated owner files and edits made
+after resolution survive; repeated lookup returns the same receipt without replay.
+This is injected interruption and reopened native storage, not an OS kill/restart
+or runtime-bound checkout test. Synthetic fixture origins grant no runtime Store
+pair or actual worker-lifetime acknowledgement authority.
+
+The cognitive-complexity skill was consulted. Its dispatcher does not support
+Rust; native Clippy identified preparer complexity 17 against the repository's
+limit of 15. Extracting historical Git exclusion collection into a small helper
+resolved the diagnostic without allowances or policy changes. An incorrect FileDiff
+field in the new test was also corrected before verification.
+
+The code-review skill was applied to source kinds/hashes, manifest/root validation,
+combined limits, exclusion/stale-state separation, pre-effect unknown-journal
+fencing, native preimages, version/digest compatibility, recovery/retry and tests.
+Review verdict: approve this local gated backend continuation, with no unresolved
+critical/major finding in that scope. Public client migration and runtime-owned Git
+integration remain incomplete, alongside complete config/generated-rule-source,
+filter and remaining compatibility, constructor/native kill/platform and GC
+acceptance. No Git availability guard, parent task or issue is marked complete.
+
+Local macOS arm64 verification: the final full locked snapshot suite passed 156
+cases (116 unit, 18 file-copy integration, 22 Git integration), with four ignored
+helper fixtures across binaries and no doc tests. The focused interrupted mixed
+replacement case passed independently. All-target locked snapshot Clippy passed
+with Rust warnings denied. The full locked 17-case real CLI branch/recovery suite
+passed, preserving existing unmanaged copy/legacy Git kill/restart, keep/rollback,
+stage/clear and no-op behavior. These CLI cases do not exercise public version-6
+migration because managed Git admission remains disabled. Public API shapes are
+unchanged; no separate SDK, full workspace, TUI/App, Linux/Windows native execution
+or source-bound CI is claimed for this continuation. Native C compilation emitted
+sandbox_init/sandbox_free_error deprecation warnings without origin attribution.
+
+
+Final-source denial coverage also rejects a caller-populated, internally
+hash-consistent copy image packet instead of its original manifest; that focused
+case passed after the full suite. Final format/diff, generated SDK consistency and
+all-target snapshot Clippy checks passed. Pinned strict OpenSpec validated all 117
+items, and spec lint reported 0 errors/25 warnings without baseline attribution.
+No PR/push or native Git source activation is made by this backend increment.
