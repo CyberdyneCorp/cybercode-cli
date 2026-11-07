@@ -1738,3 +1738,64 @@ bytes; legacy bare trees retain their exact supplied identity. This closes the
 substitution window rather than trusting a subsequent rev-parse result. Final
 formatting, generated SDK consistency and diff checks passed. Strict pinned
 OpenSpec passed 117 items; spec lint reports 0 errors/25 warnings.
+
+
+## Git image import into the native journal (2026-11-07)
+
+`git/prepared.rs` now constructs a bounded image packet from verified private Git
+objects before the synchronous source callback. It retains original target, recorded
+and expected IDs, leaf IDs/modes/bytes, exact worktree/Location prefix, allowed paths
+and the union of historical exclusions. Paths become exact Location-relative names
+for the native engine. Per-file output and combined packet bytes are bounded; each
+tree has at most 4,096 images. No source reads, merge subprocesses or Git index
+writes occur in this object preparation. Native import verifies the handed-off leaf
+hashes again and revalidates every known expected path before source replacement.
+
+`copy/git.rs` imports regular files through the existing CAS, conflict merge, native
+source/stage/parent ownership and durable journal executor. Version-4 intents retain
+a distinct exact Git context with the original IDs; no copy IDs are manufactured.
+Git contexts reject wrong versions, mixed/invalid identities and foreign Locations.
+The complete-record ownership requirement applies to version 4 as well as version 3.
+Legacy copy contexts omit the new optional field, preserving their encoded identity.
+The owned adapter has the preparation/worker dispatch, but its ordinary Git
+availability and lifetime reservation gates remain disabled. There is no new
+production admission claim for this partial integration.
+
+Nine added tests cover real Git image capture followed by native regular-file
+creation/deletion/restoration and executable modes, retained displaced preimages,
+user index preservation, owner-edit merging, stale handoff refusal, exact glob-shaped
+subdirectory scope, historical ignored-file protection, corrupt handoff bytes,
+packet byte bounds and legacy context compatibility. A positive test removes the
+shadow repository after object preparation; native execution still succeeds without
+Git access. Native fixture keep/rollback reuses those actual preimages, retains Git
+context in its independent resolution intent and returns the same request receipt
+after a later owner edit without replay. Fixture origins are synthetic and provide
+no runtime acknowledgement authority or process-lifetime evidence. A separate
+negative test refuses symlink images before source or journal effects; that refusal
+is explicitly not symlink compatibility acceptance.
+
+The next work is symbolic-link image/native ownership support, complete expected
+state scanning (including new paths and Git ignore semantics), actual Git worker
+lifetime/reservation and runtime acknowledgement integration, then process-kill
+acceptance. Current native import does not yet handle file/directory transitions or
+literal Unix backslashes through the copy engine. These requirements prevent
+enabling the Git gate. Full recovery cleanup, clients and platform acceptance also
+remain open. No parent task is accepted by the regular-file fixtures.
+
+Code review covered all changed adapter, codec, native import, tests and spec files.
+The existing snapshot adapter/native engine split is preserved; no unrelated
+architecture was introduced. Review required typed hash revalidation at import,
+version-4 context/ownership refusal and enforcement of the availability gate inside
+the direct owned port as well as its caller. These corrections are included. An
+additional exact reviewed-path test restores only one file and refuses a similar
+foreign scope prefix. No unresolved critical/major finding remains for this
+disabled regular-file bridge; the activation gaps above remain mandatory.
+
+Verification on local macOS arm64: locked snapshot tests passed 103 cases, with
+two ignored subprocess fixtures (the pathspec fixture is invoked by its parent).
+All-target snapshot Clippy passed with warnings denied after the import and direct
+gate changes. Formatting, generated SDK consistency and diff checks passed. Strict
+pinned OpenSpec passed all 117 items; spec lint reports 0 errors/25 warnings. Full
+workspace tests, SDK execution, real CLI/TUI/App acceptance, native process-kill
+Git acceptance and Linux/Windows execution were not run for this increment. The
+backend fixture keep/rollback tests are not runtime lifecycle or crash evidence.

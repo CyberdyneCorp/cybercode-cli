@@ -467,3 +467,17 @@ nested tree cannot make a restore appear to have no changes. Metadata reads are
 bounded and over-limit subprocess output is killed and awaited. This catalog is
 preparation input for the future Git journal bridge, not native origin authority;
 source mutation must still run under the retained synchronous filesystem worker.
+
+
+### Git journal handoff
+
+Git object preparation may read only immutable private snapshot objects before the
+synchronous native source callback. The bounded handoff retains original target,
+recorded and expected Git identities, exact worktree/Location prefix, historical
+exclusions and verified images; it must not manufacture copy snapshot identities.
+Native import reads/revalidates source only inside the existing retained worker and
+uses the same durable change/preimage/ownership journal. A distinct journal context
+version binds Git identity and Location. Legacy copy contexts keep their existing
+encoded identity. Git admission remains disabled until symbolic links, full expected
+state revalidation and all native recovery/acknowledgement paths are integrated;
+regular-file import tests alone do not authorize that switch.

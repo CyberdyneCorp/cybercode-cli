@@ -10,6 +10,8 @@ mod catalog;
 #[path = "git_history.rs"]
 pub(crate) mod history;
 mod images;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) mod prepared;
 
 /// A shadow git directory bound to one worktree and scoped to one Location.
 #[derive(Debug, Clone)]

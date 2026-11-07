@@ -137,6 +137,13 @@
 - **AND** exclusion tags and every scoped directory tree SHALL match their object IDs before changed paths are derived from a verified literal-path catalog
 - **AND** metadata traversal and subprocess output SHALL be bounded, with over-limit children killed and awaited
 
+#### Scenario: Git images enter a native recovery journal
+- **WHEN** verified Git images are imported by the retained native snapshot worker
+- **THEN** the journal SHALL retain original target/recorded/expected Git identities and exact worktree/Location context in a distinct versioned context
+- **AND** the bounded handoff SHALL retain and revalidate each leaf object identity before native source planning, without Git subprocesses inside the synchronous source callback
+- **AND** native source changes SHALL retain displaced preimages and use the same ownership, recovery review and retry-lookup rules as file-copy journals
+- **AND** legacy copy contexts SHALL preserve their encoded identity and SHALL NOT be reinterpreted as Git contexts
+
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
 - **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents

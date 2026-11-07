@@ -268,3 +268,15 @@ and glob-shaped names independently of inherited pathspec environment. Real
 corrupt tag/root/nested-tree restores refuse without changing source or user index;
 scoped restores preserve sibling files. This remains preparation for owned Git
 journals; M2–M8 and parent tasks are unchanged and incomplete.
+
+
+Git/native regular-file handoff continuation: the owned adapter now prepares a
+bounded immutable Git object packet before the synchronous filesystem callback.
+Native import rechecks leaf hashes and known expected paths, uses the shared CAS/
+preimage/ownership engine and writes version-4 intents with original Git IDs and
+exact worktree/Location context. Native fixture keep/rollback and request retry
+retain that context; legacy copy encoding and fences remain distinct. Ordinary
+Git worker reservation/admission is still disabled. Symbolic links, full expected
+state scanning (including newly appearing paths), exact runtime Git lifetime/
+receipt acknowledgement, retention and complete crash/client/platform acceptance
+remain required; M2–M8 and parent tasks remain open.

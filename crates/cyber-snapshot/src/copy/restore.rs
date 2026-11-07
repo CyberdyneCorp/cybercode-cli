@@ -53,6 +53,8 @@ pub(super) struct RestoreContext {
     pub recorded: String,
     pub expected: String,
     pub exclusions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git: Option<super::git::GitContext>,
 }
 
 impl Store {
@@ -86,8 +88,13 @@ impl Store {
                 .map_err(fail)?;
         if !matches!(
             (record.version, record.origin.is_some()),
-            (1, false) | (2, true) | (3, _)
-        ) || record.location != self.root
+            (1, false) | (2, true) | (3, _) | (4, _)
+        ) || (record.version == 4
+            && !record
+                .context
+                .as_ref()
+                .is_some_and(|context| context.git.is_some()))
+            || record.location != self.root
             || record.root != self.root_id
             || record.changes.len() > ENTRY_LIMIT
             || record.applied.len() > record.changes.len()
@@ -109,7 +116,7 @@ impl Store {
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
             })
             || (record.version < 3 && record.ownership.is_some())
-            || (record.version == 3
+            || (record.version >= 3
                 && record.ownership.is_none()
                 && (record.completed || !record.applied.is_empty()))
         {
@@ -122,14 +129,7 @@ impl Store {
             resolution.validate(id, &record)?;
         }
         if let Some(context) = &record.context {
-            for id in [&context.target, &context.recorded, &context.expected] {
-                if !id.strip_prefix("copy:").is_some_and(storage::valid_digest) {
-                    return Err("Invalid recovery snapshot context".into());
-                }
-            }
-            if context.exclusions.len() > ENTRY_LIMIT * 3 {
-                return Err("Recovery exclusion inventory exceeds limit".into());
-            }
+            context.validate(&self.root, record.version)?;
         }
         if let Some(origin) = &record.origin {
             let binding = &origin.binding;
@@ -183,6 +183,7 @@ impl Store {
             recorded: recorded.into(),
             expected: expected.into(),
             exclusions: vec![],
+            git: None,
         };
         self.ensure_recovered().map_err(RestoreError::Failed)?;
         let before = self.capture().map_err(RestoreError::Failed)?;
@@ -271,7 +272,7 @@ impl Store {
         }
         Ok((before, changes, context))
     }
-    fn merged(
+    pub(super) fn merged(
         &self,
         current: Option<&Entry>,
         base: Option<&Entry>,
@@ -485,8 +486,16 @@ impl Store {
         if let Some(resolution) = &mut resolution {
             resolution.outcome = Some(resolution.review.budget());
         }
+        let version = if context
+            .as_ref()
+            .is_some_and(|context| context.git.is_some())
+        {
+            4
+        } else {
+            3
+        };
         let mut journal = Journal {
-            version: 3,
+            version,
             location: self.root.clone(),
             root: self.root_id.clone(),
             created: now(),

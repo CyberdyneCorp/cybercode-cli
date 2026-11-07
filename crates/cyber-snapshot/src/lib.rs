@@ -431,11 +431,24 @@ impl Snapshots for GitSnapshots {
             }
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
-                if !self.non_git(&request.directory) {
+                // Keep the same admission gate for direct port callers. The Git
+                // journal bridge cannot be activated before its remaining gates.
+                if !self.owned_restore_available(&request.directory) {
                     return Err(RestoreError::Failed(
-                        "Owned file-copy restore is unavailable for this Location".into(),
+                        "Owned snapshot restore is unavailable for this Location".into(),
                     ));
                 }
+                self.recovery_location(&request.directory)
+                    .map_err(RestoreError::Failed)?;
+                let shadow = if self.non_git(&request.directory) {
+                    None
+                } else {
+                    Some(self.shadow(&request.directory).ok_or_else(|| {
+                        RestoreError::Failed(
+                            "Owned snapshot restore is unavailable for this Location".into(),
+                        )
+                    })?)
+                };
                 let config = (self.config)(Path::new(&request.directory));
                 let (ignore, max_file) = Self::options_value(&config);
                 let max_total = config
@@ -448,6 +461,15 @@ impl Snapshots for GitSnapshots {
                     max_total,
                     private_roots: self.private_roots.clone(),
                 };
+                let prepared = match shadow {
+                    Some(shadow) => Some(
+                        shadow
+                            .prepare_restore(&request, options.max_file, options.max_total)
+                            .await
+                            .map_err(RestoreError::Failed)?,
+                    ),
+                    None => None,
+                };
                 let data = self.data_dir.clone();
                 let lock = cyber_server::workspace::mutation_lock(Path::new(&request.directory))
                     .map_err(|error| RestoreError::Failed(error.to_string()))?;
@@ -456,14 +478,18 @@ impl Snapshots for GitSnapshots {
                     .run(move |work| {
                         let store = copy::Store::open(&data, &request.directory, options)
                             .map_err(RestoreError::Failed)?;
-                        let paths = store.restore_worker(
-                            &request.target,
-                            &request.recorded,
-                            &request.expected,
-                            request.paths.as_deref(),
-                            &|| Ok(()),
-                            Some(work),
-                        )?;
+                        let paths = if let Some(prepared) = prepared {
+                            store.restore_git_worker(prepared, Some(work))?
+                        } else {
+                            store.restore_worker(
+                                &request.target,
+                                &request.recorded,
+                                &request.expected,
+                                request.paths.as_deref(),
+                                &|| Ok(()),
+                                Some(work),
+                            )?
+                        };
                         let origin = work.origin().cloned();
                         let digest = store
                             .worker_digest(origin.as_ref())

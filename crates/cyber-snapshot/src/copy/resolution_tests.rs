@@ -143,6 +143,7 @@ fn reconciliation_rejects_changed_intent_and_unverifiable_legacy_writes() {
     );
     let (dir, mut journal) = p.store.journal(&receipt.resolution_id).unwrap();
     journal.context = Some(super::super::RestoreContext {
+        git: None,
         target: format!("copy:{}", "0".repeat(64)),
         recorded: format!("copy:{}", "0".repeat(64)),
         expected: format!("copy:{}", "0".repeat(64)),
@@ -245,6 +246,7 @@ async fn immutable_intent_handoff_rejects_changed_context_with_unchanged_files_a
     guard.verify(Some(&origin)).unwrap();
     let snapshot = format!("copy:{}", "0".repeat(64));
     journal.context = Some(super::super::RestoreContext {
+        git: None,
         target: snapshot.clone(),
         recorded: snapshot.clone(),
         expected: snapshot,

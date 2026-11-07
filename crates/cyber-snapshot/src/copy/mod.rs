@@ -1,4 +1,5 @@
 //! Private BLAKE3 snapshots for exact non-Git Locations; no user repository required.
+mod git;
 mod ownership;
 mod preparation;
 mod resolution;
