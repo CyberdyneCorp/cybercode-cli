@@ -128,7 +128,7 @@ impl Run {
             )
     }
 
-    fn combined_cost(&self) -> f64 {
+    pub(super) fn combined_cost(&self) -> f64 {
         self.cost
             + self
                 .children_usage
@@ -523,6 +523,11 @@ impl Out {
         self.delegation = Some((parent.into(), job.into()));
     }
 
+    /// One `stream-json` line of `kind` (nothing in other formats).
+    pub(super) fn stream_line(&self, kind: &str, payload: Value) {
+        self.line(kind, payload);
+    }
+
     fn line(&self, kind: &str, mut payload: Value) {
         if self.format != Format::StreamJson {
             return;
@@ -542,6 +547,11 @@ impl Out {
     }
 
     pub async fn init(&self, client: &Client, session: &Value) {
+        self.init_version(client, session, 1).await;
+    }
+
+    /// The `init` line; version 2 declares the streaming-input types.
+    pub async fn init_version(&self, client: &Client, session: &Value, version: u32) {
         if self.format != Format::StreamJson {
             return;
         }
@@ -561,7 +571,7 @@ impl Out {
             .collect();
         self.line(
             "system",
-            json!({ "subtype": "init", "schema_version": 1, "model": session["model"], "agent": agent, "mode": mode, "cwd": session["directory"], "tools": names, "mcp_servers": [] }),
+            json!({ "subtype": "init", "schema_version": version, "model": session["model"], "agent": agent, "mode": mode, "cwd": session["directory"], "tools": names, "mcp_servers": [] }),
         );
     }
 

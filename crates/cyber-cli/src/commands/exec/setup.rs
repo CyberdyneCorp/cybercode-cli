@@ -213,7 +213,9 @@ fn mode(args: &ExecArgs, global: &GlobalArgs) -> String {
     if args.auto {
         return "auto".into();
     }
-    global.mode.clone().unwrap_or_else(|| "dont-ask".into())
+    // A driver on stdin answers requests, so they are asked instead of denied.
+    let unattended = if args.driven() { "default" } else { "dont-ask" };
+    global.mode.clone().unwrap_or_else(|| unattended.into())
 }
 
 pub async fn session(
@@ -238,7 +240,7 @@ pub async fn session(
     let Some(existing) = reused else {
         let body = json!({
             "model": global.model, "agent": args.agent, "mode": mode(args, global),
-            "title": args.name, "rules": cyber_core::config::never_ask_rules(), "max_steps": args.max_turns.filter(|_| args.goals.is_empty()),
+            "title": args.name, "rules": (!args.driven()).then(cyber_core::config::never_ask_rules), "max_steps": args.max_turns.filter(|_| args.goals.is_empty()),
             "messaging": inbound(args), "output_style": args.output_style,
             // `exec-mode` → Usage limit waits in exec: nobody attends this Session.
             "unattended": true,
