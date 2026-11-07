@@ -326,3 +326,8 @@ consuming commit, so a database backup cannot replace a different native receipt
 An authorized later worktree removal retains referenced creation metadata for
 retry/recreation. Payloads, construction records and archived creation evidence
 remain protected until reference-aware cleanup is implemented.
+
+Git restore resolves file paths literally and verifies each blob image against its
+Git object ID. Corrupt blob data or ambiguous image listings refuse before source
+replacement. Retain the snapshot data for diagnosis; this check does not provide
+the still-unfinished owned Git crash-recovery workflow.

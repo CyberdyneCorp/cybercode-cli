@@ -249,3 +249,12 @@ settlement. Actual native pre-publication kill/namespace replacement and real Gi
 removal/recreation cases cover this step. M2–M8 and parent tasks remain open for
 partial acquisition/corrupt construction, post-effect/owned Git integration, safe
 reclamation, complete clients and full crash/platform acceptance.
+
+
+Git image boundary continuation: shadow-Git blob lookup now resolves an exact literal
+NUL-delimited path, validates mode/object identity and checks the typed SHA-1/SHA-256
+blob hash. Malformed/ambiguous output, unsafe paths, unsupported entries and corrupt
+blob bytes refuse before replacement. Real unusual-path and corrupted-loose-object
+cases preserve the user's index and current source on failure. Historical exclusion
+lookup remains mandatory. This is an image-materialization prerequisite for owned
+Git journals, not their implementation; M2–M8 and all parent tasks remain open.

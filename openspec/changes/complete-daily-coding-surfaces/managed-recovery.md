@@ -448,3 +448,14 @@ unsettled. A cut after complete publication and before checkout settlement has
 positive exited-lifetime/resource evidence for the new metadata acknowledgement;
 partial acquisition and corrupt/incomplete records remain fenced until their
 separate exact recovery proof is implemented.
+
+
+### Exact Git image materialization
+
+Git checkpoint images used for planning or owned-journal materialization must resolve
+one exact literal path and retain its validated object ID and mode. NUL-delimited
+listings must match that requested path, reject ambiguous/malformed records and
+unsupported entry kinds, and never substitute a pathspec match. Blob contents must
+match the Git SHA-1/SHA-256 object ID before becoming restore or recovery authority.
+Existing historical exclusion evidence remains mandatory. Corrupt images fail
+before source replacement; this does not enable owned Git journaling by itself.

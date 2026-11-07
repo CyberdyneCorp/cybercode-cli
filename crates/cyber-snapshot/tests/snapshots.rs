@@ -492,3 +492,92 @@ async fn ignored_build_directories_use_one_bounded_exclusion_prefix() {
     assert_eq!(evidence.len(), 1);
     assert!(evidence[0].ends_with(": target/"));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn git_restore_materializes_literal_unusual_paths_without_touching_the_user_index() {
+    let r = Repo::new();
+    let names = ["[ab].txt", "a.txt", "b.txt", ":(glob)*", "tab\tline\nfile"];
+    for (index, name) in names.iter().enumerate() {
+        std::fs::write(r.root.join(name), format!("before {index}\n")).unwrap();
+    }
+    let index = std::fs::read(r.root.join(".git/index")).unwrap();
+    let target = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    for (item, name) in names.iter().enumerate() {
+        std::fs::write(r.root.join(name), format!("after {item}\n")).unwrap();
+    }
+    let recorded = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    r.snaps
+        .restore_reviewed(
+            &r.dir(),
+            &target.tree,
+            &recorded.tree,
+            &recorded.tree,
+            Arc::new(|| Ok(())),
+        )
+        .await
+        .unwrap();
+    for (item, name) in names.iter().enumerate() {
+        assert_eq!(
+            std::fs::read_to_string(r.root.join(name)).unwrap(),
+            format!("before {item}\n")
+        );
+    }
+    assert_eq!(std::fs::read(r.root.join(".git/index")).unwrap(), index);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn corrupt_git_snapshot_blob_refuses_restore_and_preserves_current_source() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = Repo::new();
+    std::fs::write(r.root.join("a.txt"), "unique original snapshot image").unwrap();
+    let target = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    std::fs::write(r.root.join("a.txt"), "replacement snapshot image").unwrap();
+    let recorded = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    let project = std::fs::read_dir(r.data.join("snapshot"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let shadow = std::fs::read_dir(project)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.join("HEAD").exists())
+        .unwrap();
+    let object = |snapshot: &str| {
+        let out = Command::new("git")
+            .arg("--git-dir")
+            .arg(&shadow)
+            .args(["rev-parse", &format!("{snapshot}:a.txt")])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let id = String::from_utf8(out.stdout).unwrap();
+        let id = id.trim();
+        shadow.join("objects").join(&id[..2]).join(&id[2..])
+    };
+    let original = object(&target.tree);
+    let replacement = std::fs::read(object(&recorded.tree)).unwrap();
+    std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(&original, replacement).unwrap();
+    let index = std::fs::read(r.root.join(".git/index")).unwrap();
+    assert!(
+        r.snaps
+            .restore_reviewed(
+                &r.dir(),
+                &target.tree,
+                &recorded.tree,
+                &recorded.tree,
+                Arc::new(|| Ok(()))
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(r.root.join("a.txt")).unwrap(),
+        "replacement snapshot image"
+    );
+    assert_eq!(std::fs::read(r.root.join(".git/index")).unwrap(), index);
+}

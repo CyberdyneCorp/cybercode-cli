@@ -130,6 +130,11 @@
 - **AND** a retained acknowledgement stage SHALL grant no authority by itself and SHALL be preserved until separate acknowledged reference-aware reclamation
 - **AND** only explicit metadata reconciliation after committed receipt attestation SHALL resume interrupted acknowledgements without source replay
 
+#### Scenario: Git journal images resolve exact immutable objects
+- **WHEN** a Git checkpoint image is materialized for planning or recovery
+- **THEN** the implementation SHALL resolve one exact literal path with a validated mode/object ID and historical exclusions
+- **AND** malformed or ambiguous listings, unsupported entry kinds and blob contents that do not match the Git object ID SHALL refuse before source replacement
+
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
 - **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents

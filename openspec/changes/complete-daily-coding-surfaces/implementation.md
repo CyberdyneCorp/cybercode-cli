@@ -1649,3 +1649,42 @@ unchanged-main comparison or origin attribution. An initial integration compile
 used the async listing API incorrectly; it was corrected before the passing full
 worktree run. No critical/major review issue remains in this pre-effect native
 acknowledgement scope. The broader unfinished obligations above remain required.
+
+
+## Exact Git image reads before owned-journal integration (2026-11-07)
+
+Git restore planning previously accepted the first loosely decoded tree-listing
+record without checking the returned path or blob bytes against its object ID.
+The shared `Shadow::blob` boundary now asks for a literal path and decodes exactly
+one NUL-terminated record, preserving tabs/newlines in names. It validates safe
+relative path components, supported modes and full object IDs. A valid directory
+entry remains absence of a file image, preserving the existing planner distinction;
+unsupported entry kinds and malformed/ambiguous records refuse. File, executable
+and symbolic-link blob images are checked against Git's type/length-framed SHA-1
+or SHA-256 identity before being returned. Historical exclusion validation remains
+first, and the user's index/refs/config are not changed. SHA-2 reuses the already
+locked workspace 0.10.9 dependency; no dependency versions were upgraded.
+
+Unit coverage pins independent empty-blob identities for both formats and rejects
+corrupt bytes, unsafe paths, mismatched names, multiple or unterminated records,
+unsupported entries and invalid object IDs. Real Git restores cover literal glob/
+magic-looking names and tabs/newlines while preserving the user index. Another
+real-repository test replaces a loose target blob with a different valid compressed
+Git object; restore refuses and leaves both current source and user index unchanged.
+The code-review skill was applied to all code, dependency/lock, test and spec changes,
+checking exact byte parsing, no option/pathspec substitution, supported mode handling,
+framed hashes and refusal before effects. This does not enable owned Git restore,
+complete Git graph/native journal provenance or satisfy parent recovery acceptance.
+
+Verification: the full snapshot run passed 88 cases with one ignored fixture before
+the additional real corrupt-object regression. The final 19-case Git integration
+run passed with that regression included. Snapshot all-target Clippy passed with
+warnings denied; formatting and diff checks passed. The initial locked command
+required adding the existing SHA-2 dependency to the snapshot lock entry, which was
+updated without changing versions before the passing locked run. Final strict
+OpenSpec validation is recorded below. Full-workspace tests, real CLI/TUI/App
+acceptance and native Linux/Windows execution were not run for this image-read
+increment; owned Git recovery and its complete crash/platform acceptance remain open.
+
+Strict pinned OpenSpec passed all 117 items; spec lint reports 0 errors/25 warnings.
+Generated SDK consistency passed with no API shape changes.

@@ -7,6 +7,7 @@ use cyber_server::runtime::{FileDiff, Snapshot};
 use sha1::{Digest, Sha1};
 #[path = "git_history.rs"]
 pub(crate) mod history;
+mod images;
 
 /// A shadow git directory bound to one worktree and scoped to one Location.
 #[derive(Debug, Clone)]
@@ -399,22 +400,15 @@ impl Shadow {
     /// `(mode, contents)` of a path in a tree, or `None` when absent.
     pub async fn blob(&self, tree: &str, path: &str) -> Result<Option<(String, Vec<u8>)>, String> {
         self.recorded_exclusions(tree).await?;
-        let listing = self.run(&["ls-tree", "-z", tree, "--", path]).await?;
-        let entry = String::from_utf8_lossy(&listing).to_string();
-        let Some(meta) = entry.split('\t').next().filter(|m| !m.is_empty()) else {
+        let listing = self
+            .run(&["--literal-pathspecs", "ls-tree", "-z", tree, "--", path])
+            .await?;
+        let Some((mode, object)) = images::entry(&listing, path)? else {
             return Ok(None);
         };
-        let fields: Vec<&str> = meta.split(' ').collect();
-        let [mode, kind, sha] = fields[..] else {
-            return Ok(None);
-        };
-        if kind != "blob" {
-            return Ok(None);
-        }
-        Ok(Some((
-            mode.to_string(),
-            self.run(&["cat-file", "blob", sha]).await?,
-        )))
+        let bytes = self.run(&["cat-file", "blob", &object]).await?;
+        images::verify(&object, &bytes)?;
+        Ok(Some((mode, bytes)))
     }
 }
 

@@ -1311,6 +1311,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "sha2 0.10.9",
  "similar 3.2.0",
  "tempfile",
  "tokio",
