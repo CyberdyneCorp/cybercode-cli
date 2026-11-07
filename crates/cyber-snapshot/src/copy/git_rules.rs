@@ -30,6 +30,7 @@ impl Rules {
         Self::open(&prepared.worktree, &prepared.prefix, &prepared.ignore)
     }
     fn open(worktree: &Path, prefix: &str, inputs: &IgnoreInputs) -> Result<Self, RestoreError> {
+        inputs.config.verify().map_err(|_| RestoreError::Stale)?;
         let mut rules = Self {
             root: Dir::open_ambient_dir(worktree, cap_std::ambient_authority()).map_err(failed)?,
             path: worktree.to_path_buf(),
@@ -145,7 +146,7 @@ impl Rules {
             (left.source, &left.path, &left.hash).cmp(&(right.source, &right.path, &right.hash))
         });
         let bytes = serde_json::to_vec(&(
-            "git-policy-capture-v1",
+            "git-policy-capture-v2",
             &self.path,
             &self.inputs,
             bindings,
@@ -155,6 +156,10 @@ impl Rules {
         Ok(blake3::hash(&bytes).to_hex().to_string())
     }
     pub(super) fn verify(&self) -> Result<(), RestoreError> {
+        self.inputs
+            .config
+            .verify()
+            .map_err(|_| RestoreError::Stale)?;
         for binding in &self.bindings {
             let bytes = read(&self.root, &binding.path, binding.source)?;
             if bytes

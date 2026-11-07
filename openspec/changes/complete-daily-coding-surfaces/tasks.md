@@ -417,3 +417,18 @@ by typed IDs through existing namespaces; mixed-backend comparison refuses. This
 does not admit managed Git source work or implement cross-backend restore/migration.
 These compatibility/acceptance requirements, configuration races, partial
 construction and reference-aware cleanup remain open with M2–M8 and parent tasks.
+
+
+Git configuration locator continuation: supported native policy collection now
+binds Git-reported root candidates (including absent files), active origins,
+include targets, environment digest, exact file observations and physical directory
+context. Selected values come from the bound origin inventory; batched explicit
+path/boolean expansion cannot reselect a different value. Native planning rechecks
+these inputs without Git subprocesses, using a new fingerprint frame that does not
+upgrade old checkpoint proof. Metadata reads/waits have output/deadline limits and
+kill/await cleanup. The application-created private reference-layout profile is
+revalidated; unsupported topology, remote-URL conditions and named-user expansion
+retain unavailable proof. This fixes the reproduced post-preparation locator change
+but does not finish complete configuration/ABA/dependency, filter, actual Git
+runtime/checkout, migration, crash/platform/client or reclamation acceptance.
+Managed Git source admission and all parent tasks remain open and disabled.

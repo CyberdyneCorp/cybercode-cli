@@ -1,4 +1,5 @@
 //! Location-bound native recovery journals and private non-Git BLAKE3 snapshots.
+pub(crate) mod config_inputs;
 mod git;
 pub(crate) mod git_capture;
 pub(crate) mod git_rules;

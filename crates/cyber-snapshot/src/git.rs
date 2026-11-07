@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 use cyber_server::runtime::{FileDiff, Snapshot};
 use sha1::{Digest, Sha1};
 mod catalog;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod config;
 #[path = "git_history.rs"]
 pub(crate) mod history;
 mod images;
@@ -31,7 +33,7 @@ pub(crate) struct Shadow {
 }
 
 /// Environment variables that would redirect git away from the shadow repository.
-const GIT_ENV: &[&str] = &[
+pub(crate) const GIT_ENV: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_INDEX_FILE",

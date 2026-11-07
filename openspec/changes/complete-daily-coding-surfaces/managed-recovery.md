@@ -650,3 +650,51 @@ replacement namespace. Comparing a copy checkpoint to a Git checkpoint SHALL
 refuse explicitly rather than return an empty difference or reinterpret IDs.
 This read-only compatibility grants no cross-backend restore/migration authority;
 that acceptance remains required before complete managed Git delivery.
+
+
+### Capture-bound Git configuration locators
+
+The policy handoff SHALL bind the configuration roots, active origin files and
+include targets that selected ignore locators, case behavior and includes. Roots
+include Git-reported system/global candidates even when absent, the private shadow
+config/config.worktree and HEAD, and explicit environment config paths. Included
+paths SHALL be expanded by Git, interpreted relative to their origin file and
+bounded together with origin metadata. Relevant inherited environment SHALL be
+bound by a digest; persistent handoff evidence SHALL NOT retain full configuration
+file contents or cleartext environment values. Resolved policy paths remain part
+of the private handoff.
+
+Resolution SHALL bracket selected-value queries with the same bounded origin/include
+inventory and stable file observations. Native inventory SHALL revalidate exact
+configuration file state and environment before reading rules and again before
+intent publication, without spawning Git from the synchronous filesystem worker.
+Changed locators, missing-file creation, include changes and HEAD-dependent policy
+changes SHALL refuse before source effects. Configuration origins grant read-only
+policy evidence, never source mutation or checkout acknowledgement authority.
+Unsupported metadata/capabilities retain explicit unavailable native proof and
+legacy-readable capture behavior. A new policy fingerprint frame SHALL distinguish
+this proof; old checkpoints SHALL NOT be retroactively upgraded.
+
+
+Physical worktree/private-Git-directory identities and canonical routes SHALL be
+bound because conditional Git-directory includes depend on that context. Selected
+values SHALL come from the bound origin stream; Git path/boolean expansion SHALL
+use explicit supplied overrides rather than reselect mutable settings in separate
+queries. Include path expansion SHALL be batched and bounded. Named-user home
+expansion without native account-database proof SHALL remain unavailable. Metadata
+subprocesses SHALL have a bounded read/wait deadline and SHALL be killed and awaited
+on timeout or output failure; this does not claim that every legacy capture/filter
+subprocess has the same deadline or native source ownership.
+
+
+The current prerequisite supports unconditional includes and Git-directory/branch
+conditions in the application-created standalone private shadow with an unborn
+HEAD. Its native checks decline common-dir/worktree/reftable substitutions, linked
+HEADs and loose/packed branch references rather than inferring an unknown reference
+store. Ordinary packed snapshot refs remain readable and may change through Git GC.
+Remote-URL conditional dependencies and named-user home expansion lack complete
+native dependency proof and SHALL retain legacy-readable captures with unavailable
+native policy evidence. Full configuration/dependency/race and Git compatibility
+acceptance remain required before managed source admission; these observations do
+not claim an atomic snapshot of every external configuration input or independent
+permission authority.

@@ -22,6 +22,16 @@ async fn bounded(reader: impl AsyncRead + Unpin, limit: usize) -> Result<Vec<u8>
 
 impl Shadow {
     pub(super) async fn run_bounded(&self, args: &[&str], limit: usize) -> Result<Vec<u8>, String> {
+        self.run_bounded_for(args, limit, std::time::Duration::from_secs(10))
+            .await
+    }
+
+    async fn run_bounded_for(
+        &self,
+        args: &[&str],
+        limit: usize,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, String> {
         let mut child = self
             .command(args)
             .stdout(Stdio::piped())
@@ -33,16 +43,23 @@ impl Shadow {
             .stderr
             .take()
             .ok_or("Missing Git metadata diagnostics")?;
-        let reads = tokio::try_join!(bounded(stdout, limit), bounded(stderr, 64 * 1024));
-        let (bytes, diagnostics) = match reads {
-            Ok(reads) => reads,
+        let completion = tokio::time::timeout(timeout, async {
+            let (bytes, diagnostics) =
+                tokio::try_join!(bounded(stdout, limit), bounded(stderr, 64 * 1024))?;
+            let status = child.wait().await.map_err(|error| error.to_string())?;
+            Ok((bytes, diagnostics, status))
+        })
+        .await
+        .map_err(|_| "Git snapshot metadata timed out".to_owned())
+        .and_then(|result| result);
+        let (bytes, diagnostics, status) = match completion {
+            Ok(result) => result,
             Err(error) => {
                 let _ = child.kill().await;
                 let _ = child.wait().await;
                 return Err(error);
             }
         };
-        let status = child.wait().await.map_err(|error| error.to_string())?;
         if !status.success() {
             return Err(format!(
                 "Git snapshot metadata: {}",
@@ -196,5 +213,46 @@ mod tests {
     async fn metadata_reads_reject_overflow_without_accepting_a_prefix() {
         assert_eq!(bounded(&b"abc"[..], 3).await.unwrap(), b"abc");
         assert!(bounded(&b"abcd"[..], 3).await.is_err());
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn stalled_configuration_metadata_is_killed_awaited_and_reader_remains_usable() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .arg(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let shadow = Shadow::locate(&root.join("data"), &root).unwrap();
+        shadow.ensure_init().await.unwrap();
+        let path = root.join("blocked.config");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let args = ["config", "--file", path.to_str().unwrap(), "--list"];
+        assert!(
+            shadow
+                .run_bounded_for(&args, 1024, std::time::Duration::from_millis(50))
+                .await
+                .unwrap_err()
+                .contains("timed out")
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, "[fixture]\nvalue=ok\n").unwrap();
+        let output = shadow.run_bounded(&args, 1024).await.unwrap();
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("fixture.value=ok")
+        );
     }
 }

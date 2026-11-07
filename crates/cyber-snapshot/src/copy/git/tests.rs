@@ -10,6 +10,95 @@ struct Repo {
     data: PathBuf,
     snapshots: Arc<crate::GitSnapshots>,
 }
+
+#[tokio::test]
+async fn changed_git_config_locator_after_preparation_refuses_native_source_effects() {
+    let repo = Repo::new();
+    repo.track(&repo.root).await;
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    let first = repo._temp.path().join("first-ignore");
+    let second = repo._temp.path().join("second-ignore");
+    std::fs::write(&first, "").unwrap();
+    std::fs::write(&second, "").unwrap();
+    let configure = |path: &Path| {
+        assert!(
+            std::process::Command::new("git")
+                .arg("--git-dir")
+                .arg(&shadow.git_dir)
+                .args(["config", "core.excludesfile"])
+                .arg(path)
+                .status()
+                .unwrap()
+                .success()
+        )
+    };
+    configure(&first);
+    std::fs::write(repo.root.join("file"), "before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), "after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    configure(&second);
+    let store = repo.store(&repo.root);
+    assert!(store.restore_git_worker(prepared, None).is_err());
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+    assert!(store.recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_git_config_proof_rejects_include_creation_changes_and_conditional_head_changes() {
+    for kind in ["missing", "included", "head"] {
+        let repo = Repo::new();
+        repo.track(&repo.root).await;
+        let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+        let include = shadow.git_dir.join("native-policy.include");
+        let key = if kind == "head" {
+            let head = std::fs::read_to_string(shadow.git_dir.join("HEAD")).unwrap();
+            format!(
+                "includeIf.onbranch:{}.path",
+                head.trim().strip_prefix("ref: refs/heads/").unwrap()
+            )
+        } else {
+            "include.path".into()
+        };
+        if kind != "missing" {
+            std::fs::write(&include, "[core]\nignorecase=false\n").unwrap();
+        }
+        assert!(
+            std::process::Command::new("git")
+                .arg("--git-dir")
+                .arg(&shadow.git_dir)
+                .args(["config", &key, "native-policy.include"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(repo.root.join("file"), "before").unwrap();
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join("file"), "after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        let store = repo.store(&repo.root);
+        assert_eq!(store.preview_git(&prepared).unwrap().len(), 1);
+        if kind == "head" {
+            std::fs::write(
+                shadow.git_dir.join("HEAD"),
+                "ref: refs/heads/changed-private-branch\n",
+            )
+            .unwrap();
+        } else {
+            std::fs::write(&include, "[core]\nignorecase=true\n").unwrap();
+        }
+        assert!(store.restore_git_worker(prepared, None).is_err(), "{kind}");
+        assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+        assert!(store.recovery().unwrap().is_empty());
+    }
+}
+
 impl Repo {
     fn new() -> Self {
         Self::with_format("sha1")

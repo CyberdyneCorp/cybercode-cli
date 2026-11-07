@@ -31,6 +31,7 @@ pub(crate) struct CaptureSettings {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct IgnoreInputs {
+    pub config: crate::copy::config_inputs::ConfigInputs,
     pub info: PathBuf,
     pub global: Option<PathBuf>,
     pub case_insensitive: bool,
@@ -56,50 +57,33 @@ pub(crate) struct PreparedRestore {
 
 impl Shadow {
     pub(crate) async fn ignore_inputs(&self) -> Result<IgnoreInputs, String> {
+        let (config, origins) = self.config_inputs().await?;
         let default_global = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|value| !value.is_empty())
             .map(|path| PathBuf::from(path).join("git/ignore"))
             .unwrap_or_else(|| PathBuf::from("~/.config/git/ignore"));
-        let configured = self
-            .run_bounded(
-                &[
-                    "config",
-                    "--null",
-                    "--path",
-                    "--default",
-                    default_global
-                        .to_str()
-                        .ok_or("Invalid global ignore path")?,
-                    "--get",
-                    "core.excludesfile",
-                ],
-                8192,
-            )
-            .await?;
-        let global = std::str::from_utf8(
-            configured
-                .strip_suffix(&[0])
-                .ok_or("Invalid global ignore setting")?,
-        )
-        .map_err(|_| "Non-UTF-8 global ignore path is unsupported")?;
-        let global = (!global.is_empty()).then(|| self.worktree.join(global));
-        let ignore_case = self
-            .run_bounded(
-                &[
-                    "config",
-                    "--bool",
-                    "--default",
-                    "false",
-                    "--get",
-                    "core.ignorecase",
-                ],
-                16,
-            )
-            .await?;
+        let raw = match origins.selected("core.excludesfile")? {
+            Some(value) => value.ok_or("Git ignore path lacks a value")?,
+            None => default_global
+                .to_str()
+                .ok_or("Invalid global ignore path")?,
+        };
+        let global = self
+            .expand_config_paths(&[raw])
+            .await?
+            .pop()
+            .ok_or("Missing Git ignore expansion")?;
+        let global = (!global.as_os_str().is_empty()).then(|| self.worktree.join(global));
+        let raw = origins
+            .selected("core.ignorecase")?
+            .map_or("false", |value| value.unwrap_or("true"));
+        let ignore_case = self.config_boolean("core.ignorecase", raw).await?;
+        self.verify_config_inputs(&config, &origins).await?;
         Ok(IgnoreInputs {
+            config,
             info: self.git_dir.join("info/exclude"),
             global,
-            case_insensitive: ignore_case == b"true\n",
+            case_insensitive: ignore_case,
             private_roots: self.private_roots.clone(),
             settings: self.capture_settings.clone(),
         })

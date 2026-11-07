@@ -331,3 +331,10 @@
 - **WHEN** the caller inspects changed paths, diffs or historical exclusions
 - **THEN** typed copy IDs SHALL select the existing Location-bound copy store without creating a missing namespace, and exclusions from copy and Git history SHALL remain reportable
 - **AND** comparisons between copy and Git IDs SHALL refuse explicitly without source effects or fabricated empty differences; read compatibility SHALL NOT authorize cross-backend restore or migration
+
+
+#### Scenario: Git configuration locator changes after preparation
+- **GIVEN** prepared native Git images bind the capture policy and resolved ignore inputs
+- **WHEN** a selecting config root, include target, conditional-include HEAD or relevant environment changes after resolution
+- **THEN** native inventory SHALL refuse before journal/source effects by revalidating bounded capture-bound configuration evidence without spawning Git in the filesystem worker
+- **AND** absent root/include candidates SHALL be bound against later creation, unsupported origin/capability proof SHALL remain unavailable, and old policy fingerprints SHALL gain no retrospective proof

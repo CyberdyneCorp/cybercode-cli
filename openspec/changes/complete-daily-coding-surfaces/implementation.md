@@ -2560,3 +2560,95 @@ disabled snapshots and ordinary no-op receipts. These cases preserve unmanaged
 file-copy and legacy Git behavior; the new SHA-256 fixtures above separately cover
 actual repository-format discovery and scoped materialization. No managed Git
 runtime activation or full goal acceptance is inferred from these results.
+
+
+## Capture-bound Git configuration locator observations (2026-11-07)
+
+A regression against the preceding local production implementation at 4d801312
+prepared a valid native Git restore, then changed the private config's
+core.excludesfile from one empty fixture file to another. The restore proceeded:
+only resolved ignore inputs were retained, so changing the selecting configuration
+after preparation escaped revalidation. The new test failed before implementation
+and passes now, with unchanged source bytes and no published journal. This is a
+local-head regression comparison, not attribution to unchanged main.
+
+Supported policy collection now obtains bounded origin metadata and selecting
+root candidates, including nonexistent Git-reported system/global config files,
+the shadow config/config.worktree/HEAD, explicit config environment and include
+targets resolved relative to their origin files. Configuration files are regular,
+size-bounded stable observations with content digest, native generation, canonical
+route and parent identity. Environment values enter only a digest; full configuration file contents and
+cleartext environment values are not retained in the handoff or checkpoint tags.
+Resolved policy paths remain necessary private handoff metadata.
+Physical worktree/private-directory identities bind Git-directory conditions.
+Root/input state is rechecked around resolution and in native inventory before
+intent publication, without starting Git inside the synchronous filesystem worker.
+
+Review corrected a value-selection race: querying settings independently of their
+origin stream could choose a different include during resolution. Values now come
+from the bounded inventory itself. Git expands explicit supplied overrides, with
+include paths batched under argument/output limits and literal NUL framing. It
+cannot silently reselect a different setting. Unsupported named-user home expansion
+is refused rather than depending on an unbound account database. File alias checks
+also bind canonical parent identity, including same-inode hardlink aliases.
+
+The policy fingerprint frame is now git-policy-capture-v2. Historical checkpoint
+encodings remain readable; their old fingerprint cannot gain current config proof.
+An old expected native checkpoint requires a fresh captured review instead of a
+retroactive upgrade. This changes private policy evidence, not public API shapes.
+
+Native policy collection admits the app-created standalone private shadow with
+unborn HEAD; common-dir/worktree/reftable substitutions, linked HEAD or loose/packed
+branch refs are unsupported. Packed snapshot refs are allowed so ordinary Git GC
+does not invalidate the policy merely by packing snapshots. Remote-URL conditional
+include dependency closure and general alternate shadow reference storage are not
+implemented: affected captures retain explicit unavailable policy/raw-state proof
+and canonical legacy-readable checkpoints. They do not acquire native source,
+checkout acknowledgement or cleanup authority. Full configuration/metadata ABA,
+dependency and compatibility acceptance remains open; this is bounded optimistic
+revalidation, not a claim of a globally atomic external-config snapshot.
+
+Git's own documentation describes
+[system/global candidate paths even when absent](https://git-scm.com/docs/git-var#Documentation/git-var.txt-GITCONFIGGLOBAL),
+and its [versioned config implementation](https://github.com/git/git/blob/v2.51.0/config.c)
+shows the Git-directory/branch/remote dependencies that motivate these bounds.
+Capability failure keeps legacy capture readable; no new production support floor
+or managed Git source gate was selected.
+
+Shared bounded metadata execution now covers reads and process exit with a ten
+second deadline. Timeout/output errors kill and await the exact subprocess before
+returning. A real FIFO configuration fixture exercises timeout and subsequent
+reader reuse. This does not extend that guarantee to every legacy capture/filter
+subprocess; external filter effects remain a separate admission/compatibility gap.
+
+Verification on local macOS arm64: the locked full snapshot suite passed 153 tests
+(113 unit, 18 file-copy integration, 22 Git integration), with four ignored helper
+fixtures across binaries; the environment/global-root helpers execute through their
+parent tests. The final focused capability case also passed after extending its
+legacy-readability assertions. Real cases cover locator changes after preparation,
+missing include/global creation, included file changes, conditional HEAD changes,
+environment binding without cleartext values, file replacement/size limits,
+symlink/hardlink retargeting, physical directory context, original private reference
+layout and packed snapshot preservation. All-target locked snapshot Clippy passed
+with Rust warnings denied. Full locked real CLI branch/recovery acceptance passed
+all 17 cases, preserving actual kill/restart, keep/rollback, stage/clear and no-op
+behavior. These CLI cases use unmanaged copy and legacy Git paths; they do not
+accept managed Git runtime source integration.
+
+The code-review skill was applied across collectors, native observations,
+subprocess cleanup, handoff/fingerprint, tests and spec deltas. It led to bound
+value expansion, physical context and unsupported-layout/dependency refusals above.
+Review verdict: approve this local gated metadata prerequisite, with no unresolved
+critical/major finding for its exposed scope. Full managed Git activation still
+requires the recorded dependency/ABA/filter, backend/runtime/checkout, migration,
+crash/platform/client and reclamation acceptance; no M2–M8 or parent task closes.
+Native Linux/Windows, TUI/App, full workspace, separate SDK runtime checks and
+source-bound CI were not run for this continuation. Native C compilation reported
+sandbox_init/sandbox_free_error deprecation warnings without origin attribution.
+
+
+Final format/diff and generated SDK consistency checks passed. Pinned strict
+OpenSpec validated 117 items; spec lint reported 0 errors and 25 warnings without
+unchanged-main attribution. Public schema/SDK shapes remain unchanged. The
+production managed-Git availability guard remains disabled, and no PR/push or
+parent-task acceptance is made by this local prerequisite.
