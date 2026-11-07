@@ -541,3 +541,17 @@ fingerprint with the expected tag before journaling. This is a policy/state-inpu
 precondition, not worker, mutation, acknowledgement or reclamation authority. Raw
 working-tree representation and the remaining admission/compatibility gates remain
 required; a policy fingerprint alone does not activate ordinary Git recovery.
+
+### Exact captured Git working-tree representations
+
+Supported native captures SHALL bracket canonical Git capture with bounded,
+no-follow reads of eligible regular files and link target bytes, refusing changed
+successful captures. A version-3 tag SHALL retain a typed envelope tree linking
+both the canonical Git tree and a raw representation tree. Both graphs remain
+reachable from the checkpoint ref. Legacy consumers SHALL resolve the canonical
+tree; native materialization SHALL use verified raw images without running clean
+or smudge filters inside the filesystem worker. Historical IDs/exclusions remain
+intact. Unsupported capture SHALL retain explicit unavailable proof and SHALL NOT
+silently promote canonical blobs into raw-state evidence. This does not admit
+ordinary Git workers or resolve their lifetime, acknowledgement, configuration
+race, reclamation or complete compatibility/acceptance gates.

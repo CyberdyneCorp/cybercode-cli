@@ -1087,3 +1087,209 @@ async fn capture_bound_policy_rejects_application_ignore_and_size_setting_change
         assert!(store.recovery().unwrap().is_empty());
     }
 }
+
+#[tokio::test]
+async fn native_git_uses_exact_captured_crlf_bytes_and_keeps_both_graphs_reachable() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join(".gitattributes"), b"*.txt text eol=crlf\n").unwrap();
+    std::fs::write(repo.root.join("file.txt"), b"before\r\n").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file.txt"), b"after\r\n").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    // Canonical public Git consumers still see the normalized object.
+    assert_eq!(
+        shadow.blob(&target, "file.txt").await.unwrap().unwrap().1,
+        b"before\n"
+    );
+    // Aggressive ordinary Git GC must retain the raw graph through the tag ref.
+    assert!(
+        std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&shadow.git_dir)
+            .args(["gc", "--prune=now"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    assert_eq!(prepared.target.images["file.txt"].bytes, b"before\r\n");
+    assert_eq!(prepared.expected.images["file.txt"].bytes, b"after\r\n");
+    let store = repo.store(&repo.root);
+    assert_eq!(
+        store.restore_git_worker(prepared, None).unwrap(),
+        ["file.txt"]
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("file.txt")).unwrap(),
+        b"before\r\n"
+    );
+}
+
+#[tokio::test]
+async fn native_git_rejects_later_normalization_equivalent_owner_bytes() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join(".gitattributes"), b"*.txt text eol=lf\n").unwrap();
+    std::fs::write(repo.root.join("file.txt"), b"before\n").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file.txt"), b"after\n").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file.txt"), b"after\r\n").unwrap();
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    let store = repo.store(&repo.root);
+    assert!(matches!(
+        store.restore_git_worker(prepared, None),
+        Err(RestoreError::Stale)
+    ));
+    assert_eq!(
+        std::fs::read(repo.root.join("file.txt")).unwrap(),
+        b"after\r\n"
+    );
+    assert!(store.recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_git_raw_capture_supports_sha256_shadow_graphs_and_encoded_bytes() {
+    let repo = Repo::new();
+    // Test the graph codec at both object widths. This does not claim public
+    // discovery of SHA-256 user repositories (libgit2 discovery still refuses it).
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    std::fs::create_dir_all(&shadow.git_dir).unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&shadow.git_dir)
+            .args(["init", "--bare", "--quiet", "--object-format=sha256"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::write(
+        repo.root.join(".gitattributes"),
+        b"*.txt working-tree-encoding=UTF-16LE\n",
+    )
+    .unwrap();
+    let before: Vec<u8> = "before\n"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    let after: Vec<u8> = "after\n"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    std::fs::write(repo.root.join("file.txt"), &before).unwrap();
+    let target = repo.track(&repo.root).await;
+    assert_eq!(target.len(), 64);
+    std::fs::write(repo.root.join("file.txt"), &after).unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    assert_eq!(
+        shadow.blob(&target, "file.txt").await.unwrap().unwrap().1,
+        b"before\n"
+    );
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    assert_eq!(prepared.expected.images["file.txt"].bytes, after);
+    let store = repo.store(&repo.root);
+    assert_eq!(
+        store.restore_git_worker(prepared, None).unwrap(),
+        ["file.txt"]
+    );
+    assert_eq!(std::fs::read(repo.root.join("file.txt")).unwrap(), before);
+}
+
+#[tokio::test]
+async fn corrupt_raw_git_blob_cannot_be_promoted_to_native_restore_evidence() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join(".gitattributes"), b"*.txt text eol=crlf\n").unwrap();
+    std::fs::write(repo.root.join("file.txt"), b"before\r\n").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file.txt"), b"after\r\n").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    let object = |id: &str| shadow.git_dir.join("objects").join(&id[..2]).join(&id[2..]);
+    let original = object(&prepared.target.images["file.txt"].object);
+    let replacement = std::fs::read(object(&prepared.recorded.images["file.txt"].object)).unwrap();
+    std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(original, replacement).unwrap();
+    assert!(
+        shadow
+            .prepare_restore(
+                &SnapshotRestoreRequest {
+                    directory: repo.root.to_str().unwrap().into(),
+                    target,
+                    recorded: recorded.clone(),
+                    expected: recorded,
+                    paths: None,
+                },
+                65536,
+                8 * 1024 * 1024
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("file.txt")).unwrap(),
+        b"after\r\n"
+    );
+    assert!(repo.store(&repo.root).recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn git_capture_does_not_publish_a_checkpoint_if_a_fixture_filter_changes_raw_state() {
+    let repo = Repo::new();
+    repo.track(&repo.root).await;
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    let refs = || {
+        let output = std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&shadow.git_dir)
+            .args([
+                "for-each-ref",
+                "--format=%(objectname)",
+                "refs/cyber/snapshots",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        output.stdout
+    };
+    let before = refs();
+    // This explicitly configured fixture filter changes only its own temp repo.
+    // Canonical capture already executes Git filters; raw proof must not hide it.
+    assert!(
+        std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&shadow.git_dir)
+            .args([
+                "config",
+                "filter.fixture.clean",
+                "printf changed > capture-marker; cat"
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::write(repo.root.join(".gitattributes"), b"file filter=fixture\n").unwrap();
+    std::fs::write(repo.root.join("file"), b"owner").unwrap();
+    let result = repo.snapshots.track(repo.root.to_str().unwrap()).await;
+    assert!(matches!(result, Err(error) if error.contains("raw state changed")));
+    assert_eq!(
+        refs(),
+        before,
+        "failed capture must not publish a checkpoint ref"
+    );
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"owner");
+    assert_eq!(
+        std::fs::read(repo.root.join("capture-marker")).unwrap(),
+        b"changed"
+    );
+}

@@ -314,3 +314,14 @@ Application ignore/size settings and private roots are included. Raw working-tre
 representation, configuration-resolution races, Git compatibility, actual worker
 lifetime/acknowledgement, reclamation and full clients/platform acceptance remain
 open. Git admission stays disabled; M2–M8 and parent tasks remain incomplete.
+
+
+Raw-state continuation: supported captures now bracket Git tree creation with
+bounded exact raw file/link reads. Version-3 tags retain canonical and raw graphs
+through a verified envelope tree; native preparation uses raw graphs, preserving
+original checkpoint identities and exclusion rules. Public Git diff/blob behavior
+resolves the canonical graph. Legacy bare/v1/v2 checkpoints remain readable but
+cannot supply missing raw native proof. Git runtime ownership/acknowledgement,
+preview/path-selection parity for normalized-only changes, configuration races,
+remaining Git compatibility, retention and full client/platform acceptance still
+block ordinary admission. M2–M8 and parent tasks remain incomplete.

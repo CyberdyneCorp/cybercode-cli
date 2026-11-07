@@ -149,7 +149,7 @@ impl Shadow {
         let mut trees = Vec::new();
         for (index, id) in ids.into_iter().enumerate() {
             let mut entries = BTreeMap::new();
-            for (path, (mode, object)) in self.image_catalog(id).await?.iter() {
+            for (path, (mode, object)) in self.native_image_catalog(id).await?.iter() {
                 let omitted = if index == 2 {
                     history::excludes(&expected_excluded, path)
                 } else {

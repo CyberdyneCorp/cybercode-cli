@@ -1996,3 +1996,72 @@ parent recovery tasks remain open.
 Final format/diff checks and SDK generation consistency passed. Pinned strict
 OpenSpec validation passed all 117 items; spec lint reported 0 errors/25 warnings.
 These results do not provide source-bound CI or complete recovery acceptance.
+
+
+## Exact Git working-tree representation graphs (2026-11-07)
+
+Supported captures now collect exact eligible file bytes, executable classification
+and symbolic-link target bytes before and after canonical Git capture. Source
+reads use retained directories, no-follow unique regular-file opens, plain metadata
+checks and source generation/identity revalidation; links reuse the pinned-inode
+reader without following targets. Each collection is bounded by 4,096 files,
+64 MiB per regular file and 200 MiB combined payload, plus existing namespace/rule
+bounds. Before/after collections coexist for comparison; this is not a 200 MiB
+process-memory claim or a completed retention cap. Changed successful collections
+refuse publication; an unsupported initial collection returns a legacy checkpoint
+with explicit unavailable policy/raw-state proof.
+
+Raw bytes are written with `hash-object --no-filters`, then literal NUL-delimited
+`mktree` records build a separate worktree-relative graph. A version-3 tag points
+to an envelope with exactly two typed tree links: canonical and raw. The reader
+verifies the tag, envelope hash, exact links and each traversed raw directory/blob
+hash. Thus ordinary Git GC retains both graphs through the existing immutable
+checkpoint ref rather than relying on a raw tree ID embedded only in JSON.
+Native preparation now requires raw proof for target/recorded/expected and retains
+original checkpoint IDs in journals. It never promotes a bare/v1/v2 canonical
+blob into raw proof. Earlier records remain readable through the public Git API.
+
+Public diff and projected preview-index construction explicitly resolve the
+canonical tree. Existing blob/change/exclusion behavior stays canonical. The first
+full suite exposed envelope use in diff and preview construction; those operations
+were corrected, and corruption fixtures now deliberately resolve canonical graph
+paths while still testing envelope/tag corruption. Fixtures do not weaken hash or
+source/index-preservation assertions.
+
+Five new native/real-Git regressions cover CRLF restoration plus aggressive GC,
+normalization-equivalent later owner-byte refusal, UTF-16LE representation with
+SHA-256 shadow graphs, corrupt raw blob refusal, and a deliberately configured
+fixture filter that changes only its temp repository during capture. The last
+case verifies no new checkpoint ref is published after changed raw state. History
+coverage includes v1/v2/v3 and bare reading, policy-only native refusal and a valid
+forged tag whose canonical root cannot substitute for the envelope. Existing
+scoped/literal paths, link images, merge/recovery, exclusions and Git source/index
+preservation tests remain included.
+
+The SHA-256 user-repository experiment revealed public libgit2 worktree discovery
+returns no root, selecting the non-Git backend. This increment does not fix that
+compatibility gap. The passing graph-width fixture explicitly creates a SHA-256
+shadow over an ordinarily discovered worktree; it proves the raw graph codec, not
+public SHA-256 repository discovery. Its initial failed discovery expectation is
+retained here rather than characterized as accepted support. A test compile failure
+from calling a private helper was fixed by invoking fixture-owned Git explicitly.
+
+The code-review skill was applied to all changed source/tests/artifacts. Review
+checked route/type/identity validation, unknown leaf nonblocking opens, file/link
+payload bounds, no-filter object writes, graph reachability, typed graph hashes,
+exact envelope framing, legacy rejection and the public canonical compatibility
+paths. No critical/major issue remains in this disabled raw materialization scope.
+Still required: preview/path-selection parity for normalization-only changes,
+configuration-resolution races and complete attribute/filter behavior, public
+SHA-256 discovery, gitlinks, file/directory transitions, remaining link/large-file
+compatibility, actual Git worker lifetime and durable acknowledgement, reference-
+aware reclamation, performance and real client/platform acceptance. Canonical
+capture still executes configured Git filters; this is not process isolation.
+Ordinary Git availability/reservation remains disabled; parent tasks stay open.
+
+Final local macOS arm64 verification: locked snapshot tests passed 133 cases with
+two ignored fixtures (the pathspec fixture is invoked by its parent). Snapshot
+all-target locked Clippy passed with warnings denied. Format/diff and generated
+SDK consistency passed. Pinned strict OpenSpec validation passed all 117 items;
+spec lint reported 0 errors/25 warnings. Full workspace/SDK execution, Linux,
+Windows, real CLI/TUI/App and source-bound CI acceptance were not run here.

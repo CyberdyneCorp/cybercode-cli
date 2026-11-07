@@ -247,6 +247,12 @@
 - **AND** successful policy collections before and after capture SHALL agree; unsupported capture SHALL report unavailable proof without inventing it, and legacy tags/bare trees SHALL remain readable without acquiring native admission authority
 - **AND** this policy fingerprint SHALL NOT substitute for raw working-tree state, exact worker ownership, native acknowledgement or reference-aware reclamation
 
+#### Scenario: Canonical Git blobs differ from captured owner bytes
+- **WHEN** Git normalizes a captured file's line endings or working-tree encoding
+- **THEN** supported native checkpoints SHALL retain exact bounded raw file/link images alongside the canonical tree in a verified envelope graph reachable from the immutable checkpoint ref
+- **AND** native expected-state validation and restoration SHALL use verified raw images, retaining original snapshot IDs and historical exclusions without invoking filters inside the filesystem worker
+- **AND** legacy public Git diff/blob behavior SHALL resolve the canonical tree, older records SHALL remain readable without acquiring raw proof, and changed successful captures SHALL refuse publication
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

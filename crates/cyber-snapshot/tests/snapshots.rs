@@ -42,6 +42,25 @@ impl Repo {
     }
     fn shadow_object(&self, revision: &str) -> PathBuf {
         let shadow = self.shadow_directory();
+        // v3 tags peel to a retention envelope. Corrupt the canonical graph
+        // when the fixture names an ordinary snapshot path.
+        let canonical;
+        let revision = if let Some((snapshot, path)) = revision.split_once(':') {
+            let tag = Command::new("git")
+                .arg("--git-dir")
+                .arg(&shadow)
+                .args(["cat-file", "tag", snapshot])
+                .output()
+                .unwrap();
+            assert!(tag.status.success());
+            let tag = String::from_utf8(tag.stdout).unwrap();
+            let (_, body) = tag.split_once("\n\n").unwrap();
+            let record: serde_json::Value = serde_json::from_str(body).unwrap();
+            canonical = format!("{}:{path}", record["tree"].as_str().unwrap());
+            canonical.as_str()
+        } else {
+            revision
+        };
         let output = Command::new("git")
             .arg("--git-dir")
             .arg(&shadow)
@@ -556,29 +575,7 @@ async fn corrupt_git_snapshot_blob_refuses_restore_and_preserves_current_source(
     let target = r.snaps.track(&r.dir()).await.unwrap().unwrap();
     std::fs::write(r.root.join("a.txt"), "replacement snapshot image").unwrap();
     let recorded = r.snaps.track(&r.dir()).await.unwrap().unwrap();
-    let project = std::fs::read_dir(r.data.join("snapshot"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    let shadow = std::fs::read_dir(project)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| path.join("HEAD").exists())
-        .unwrap();
-    let object = |snapshot: &str| {
-        let out = Command::new("git")
-            .arg("--git-dir")
-            .arg(&shadow)
-            .args(["rev-parse", &format!("{snapshot}:a.txt")])
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-        let id = String::from_utf8(out.stdout).unwrap();
-        let id = id.trim();
-        shadow.join("objects").join(&id[..2]).join(&id[2..])
-    };
+    let object = |snapshot: &str| r.shadow_object(&format!("{snapshot}:a.txt"));
     let original = object(&target.tree);
     let replacement = std::fs::read(object(&recorded.tree)).unwrap();
     std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o600)).unwrap();

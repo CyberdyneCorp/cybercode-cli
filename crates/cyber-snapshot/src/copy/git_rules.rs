@@ -227,18 +227,20 @@ fn failed(error: impl std::fmt::Display) -> RestoreError {
     RestoreError::Failed(fail(error))
 }
 
-/// Collect only read-only policy/state inputs. This is not native effect ownership.
-pub(crate) fn capture_policy(
+/// Collect read-only policy and raw images. This is not native effect ownership.
+pub(crate) fn capture_state(
     worktree: &Path,
     prefix: &str,
     inputs: &IgnoreInputs,
-) -> Result<String, RestoreError> {
+) -> Result<super::git_capture::Capture, RestoreError> {
     let mut capture = PolicyCapture {
         rules: Rules::open(worktree, prefix, inputs)?,
         ignored: std::collections::BTreeSet::new(),
         marks: vec![],
         nodes: 0,
         bytes: 0,
+        files: std::collections::BTreeMap::new(),
+        content_bytes: 0,
     };
     let mut directory = capture.rules.root.try_clone().map_err(failed)?;
     for part in Path::new(prefix).components() {
@@ -259,7 +261,10 @@ pub(crate) fn capture_policy(
         }
     }
     capture.rules.verify()?;
-    capture.rules.fingerprint(&capture.ignored)
+    Ok(super::git_capture::Capture {
+        policy: capture.rules.fingerprint(&capture.ignored)?,
+        files: capture.files,
+    })
 }
 struct PolicyCapture {
     rules: Rules,
@@ -267,6 +272,8 @@ struct PolicyCapture {
     marks: Vec<(String, String)>,
     nodes: usize,
     bytes: usize,
+    files: std::collections::BTreeMap<String, super::git_capture::RawImage>,
+    content_bytes: usize,
 }
 impl PolicyCapture {
     fn walk(
@@ -330,6 +337,19 @@ impl PolicyCapture {
                     return Err(failed("Embedded Git policy proof is unavailable"));
                 }
                 self.walk(&child, &relative, prefix, depth + 1)?;
+            } else {
+                if self.files.len() >= 4096 {
+                    return Err(failed("Git raw capture file count exceeds limit"));
+                }
+                let image = super::git_capture::read(dir, &leaf).map_err(failed)?;
+                self.content_bytes = self
+                    .content_bytes
+                    .checked_add(image.bytes.len())
+                    .ok_or_else(|| failed("Git raw capture size overflow"))?;
+                if self.content_bytes > 200 * 1024 * 1024 {
+                    return Err(failed("Git raw capture exceeds limit"));
+                }
+                self.files.insert(full, image);
             }
         }
         if dir_generation(dir)? != before {

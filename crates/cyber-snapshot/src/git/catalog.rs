@@ -87,7 +87,7 @@ impl Shadow {
         Ok(catalog)
     }
 
-    async fn read_catalog(
+    pub(super) async fn read_catalog(
         &self,
         root: String,
         excluded: &[String],

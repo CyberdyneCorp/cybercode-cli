@@ -12,6 +12,8 @@ pub(crate) mod history;
 mod images;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) mod prepared;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod raw;
 
 /// A shadow git directory bound to one worktree and scoped to one Location.
 #[derive(Debug, Clone)]
@@ -171,7 +173,7 @@ impl Shadow {
         let skipped = self.large_untracked(max_bytes).await;
         self.write_excludes(ignore, &skipped)?;
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        let policy_before = self.capture_policy(ignore, max_bytes).await;
+        let capture_before = self.capture_git_state(ignore, max_bytes).await;
         let excluded = self.omitted().await?;
         let cached_paths: Vec<_> = excluded
             .iter()
@@ -191,32 +193,34 @@ impl Shadow {
             .to_string();
         let skipped = excluded.clone();
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        let (policy, skipped) = match policy_before {
+        let (policy, raw, skipped) = match capture_before {
             Ok(before) => {
-                let after = self.capture_policy(ignore, max_bytes).await?;
+                let after = self.capture_git_state(ignore, max_bytes).await?;
                 if before != after {
-                    return Err("Git policy changed during checkpoint capture".into());
+                    return Err("Git policy or raw state changed during checkpoint capture".into());
                 }
-                (Some(after), skipped)
+                let raw = self.write_raw_capture(&after.files).await?;
+                (Some(after.policy), Some(raw), skipped)
             }
             Err(_) => {
                 let mut skipped = skipped;
-                skipped.push("native Git policy proof unavailable for this capture".into());
-                (None, skipped)
+                skipped
+                    .push("native Git policy/raw-state proof unavailable for this capture".into());
+                (None, None, skipped)
             }
         };
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        let policy = None;
-        let tree = self.record_snapshot(&tree, excluded, policy).await?;
+        let (policy, raw) = (None, None);
+        let tree = self.record_snapshot(&tree, excluded, policy, raw).await?;
         Ok(Snapshot { tree, skipped })
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    async fn capture_policy(
+    async fn capture_git_state(
         &self,
         ignore: &[String],
         max_untracked: u64,
-    ) -> Result<String, String> {
+    ) -> Result<crate::copy::git_capture::Capture, String> {
         let mut inputs = self.ignore_inputs().await?;
         inputs.settings = prepared::CaptureSettings {
             ignore: ignore.to_vec(),
@@ -229,7 +233,7 @@ impl Shadow {
             self.pathspec.clone()
         };
         tokio::task::spawn_blocking(move || {
-            crate::copy::git_rules::capture_policy(&worktree, &prefix, &inputs)
+            crate::copy::git_rules::capture_state(&worktree, &prefix, &inputs)
         })
         .await
         .map_err(|error| error.to_string())?
@@ -302,6 +306,8 @@ impl Shadow {
         self.image_catalog(from).await?;
         self.image_catalog(to).await?;
         let excluded = self.excluded_between(from, to).await?;
+        let from = self.snapshot_metadata(from).await?.0;
+        let to = self.snapshot_metadata(to).await?.0;
         let status = split_z(
             &self
                 .run(&[
@@ -309,8 +315,8 @@ impl Shadow {
                     "--name-status",
                     "--no-renames",
                     "-z",
-                    from,
-                    to,
+                    &from,
+                    &to,
                     "--",
                     &self.pathspec,
                 ])
@@ -323,8 +329,8 @@ impl Shadow {
                     "--numstat",
                     "--no-renames",
                     "-z",
-                    from,
-                    to,
+                    &from,
+                    &to,
                     "--",
                     &self.pathspec,
                 ])
@@ -354,8 +360,8 @@ impl Shadow {
                     "--no-ext-diff",
                     "--no-color",
                     "--no-renames",
-                    from,
-                    to,
+                    &from,
+                    &to,
                     "--",
                     file,
                 ])
@@ -386,12 +392,12 @@ impl Shadow {
         changes: Vec<TreeChange>,
     ) -> Result<String, String> {
         use tokio::io::AsyncWriteExt;
-        self.recorded_exclusions(current).await?;
+        let current = self.snapshot_metadata(current).await?.0;
         let index = PreviewIndex(
             self.git_dir
                 .join(format!("preview-{}.index", ulid::Ulid::new())),
         );
-        self.index_command(&index.0, &["read-tree", current])
+        self.index_command(&index.0, &["read-tree", &current])
             .await?;
         for change in changes {
             match change.image {

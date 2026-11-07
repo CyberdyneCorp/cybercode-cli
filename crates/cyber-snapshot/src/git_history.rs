@@ -17,6 +17,8 @@ struct Record {
     excluded: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    raw: Option<String>,
 }
 fn oid(id: &str) -> bool {
     matches!(id.len(), 40 | 64)
@@ -99,6 +101,7 @@ impl Shadow {
         tree: &str,
         excluded: Vec<String>,
         policy: Option<String>,
+        raw: Option<String>,
     ) -> Result<String, String> {
         if !oid(tree) {
             return Err("Invalid snapshot tree identity".into());
@@ -111,18 +114,37 @@ impl Shadow {
         }) {
             return Err("Invalid Git policy fingerprint".into());
         }
+        if raw
+            .as_ref()
+            .is_some_and(|raw| !oid(raw) || raw.len() != tree.len())
+            || (raw.is_some() && policy.is_none())
+        {
+            return Err("Invalid Git raw capture identity".into());
+        }
+        let root = if let Some(raw) = &raw {
+            self.envelope_tree(tree, raw).await?
+        } else {
+            tree.to_owned()
+        };
         let record = Record {
-            version: if policy.is_some() { 2 } else { 1 },
+            version: if raw.is_some() {
+                3
+            } else if policy.is_some() {
+                2
+            } else {
+                1
+            },
             location: self.worktree.join(&self.pathspec),
             tree: tree.into(),
             excluded,
             policy,
+            raw,
         };
         let bytes = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
         if bytes.len() > LIMIT {
             return Err("Snapshot exclusions exceed record limit".into());
         }
-        let mut tag = format!("object {tree}\ntype tree\ntag cyber-snapshot-v{}\ntagger Cyber Snapshot <snapshot@localhost> 0 +0000\n\n", record.version).into_bytes();
+        let mut tag = format!("object {root}\ntype tree\ntag cyber-snapshot-v{}\ntagger Cyber Snapshot <snapshot@localhost> 0 +0000\n\n", record.version).into_bytes();
         tag.extend(bytes);
         let id = String::from_utf8(self.input(&["mktag"], &tag).await?)
             .map_err(|e| e.to_string())?
@@ -137,6 +159,32 @@ impl Shadow {
             .await?;
         Ok(id)
     }
+    async fn envelope_tree(&self, tree: &str, raw: &str) -> Result<String, String> {
+        let records =
+            format!("040000 tree {tree}\tcanonical\0") + &format!("040000 tree {raw}\traw\0");
+        let id = String::from_utf8(self.input(&["mktree", "-z"], records.as_bytes()).await?)
+            .map_err(|_| "Invalid Git envelope identity")?
+            .trim()
+            .to_owned();
+        if !oid(&id) {
+            return Err("Invalid Git envelope identity".into());
+        }
+        Ok(id)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) async fn native_image_catalog(
+        &self,
+        id: &str,
+    ) -> Result<super::images::Catalog, String> {
+        let record = self
+            .read_record(id)
+            .await?
+            .ok_or("Git checkpoint lacks raw capture proof")?;
+        let raw = record.raw.ok_or("Git checkpoint lacks raw capture proof")?;
+        self.read_catalog(raw, &record.excluded).await
+    }
+
     pub(super) async fn recorded_exclusions(
         &self,
         id: &str,
@@ -191,9 +239,19 @@ impl Shadow {
             .split_once("\n\n")
             .ok_or("Invalid snapshot exclusion record")?;
         let record: Record = serde_json::from_str(body).map_err(|e| e.to_string())?;
+        let root = header
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("object "))
+            .filter(|root| oid(root))
+            .ok_or("Invalid Git snapshot root")?;
         if !matches!(
-            (record.version, record.policy.as_deref()),
-            (1, None) | (2, Some(_))
+            (
+                record.version,
+                record.policy.as_deref(),
+                record.raw.as_deref()
+            ),
+            (1, None, None) | (2, Some(_), None) | (3, Some(_), Some(_))
         ) || record.policy.as_ref().is_some_and(|policy| {
             policy.len() != 64
                 || !policy
@@ -205,12 +263,29 @@ impl Shadow {
             || record.excluded.iter().any(|p| !safe_path(p))
             || !header.starts_with(&format!(
                 "object {}\ntype tree\ntag cyber-snapshot-v{}\n",
-                record.tree, record.version
+                root, record.version
             ))
         {
             return Err(
                 "Snapshot exclusion record belongs to another Location or is corrupt".into(),
             );
+        }
+        if let Some(raw) = &record.raw {
+            if !oid(raw) || raw.len() != record.tree.len() || root.len() != raw.len() {
+                return Err("Invalid Git raw capture identity".into());
+            }
+            let bytes = self.run_bounded(&["cat-file", "tree", root], 1024).await?;
+            super::images::verify_object(root, "tree", &bytes)?;
+            if super::images::tree_entries(&bytes, root.len() / 2)?
+                != vec![
+                    ("canonical".into(), "040000".into(), record.tree.clone()),
+                    ("raw".into(), "040000".into(), raw.clone()),
+                ]
+            {
+                return Err("Invalid Git capture envelope".into());
+            }
+        } else if root != record.tree {
+            return Err("Git snapshot root does not match its record".into());
         }
         Ok(Some(record))
     }
@@ -266,10 +341,41 @@ mod policy_tests {
         let shadow = Shadow::locate(&base.join("data/snapshot"), &root).unwrap();
         let checkpoint = shadow.track(&[], 2 * 1024 * 1024).await.unwrap();
         let record = shadow.read_record(&checkpoint.tree).await.unwrap().unwrap();
-        assert_eq!(record.version, 2);
+        assert_eq!(record.version, 3);
+        assert!(record.raw.is_some());
         assert!(record.policy.is_some());
+        let policy_only = shadow
+            .record_snapshot(
+                &record.tree,
+                record.excluded.clone(),
+                record.policy.clone(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            shadow
+                .read_record(&policy_only)
+                .await
+                .unwrap()
+                .unwrap()
+                .version,
+            2
+        );
+        assert!(shadow.native_image_catalog(&policy_only).await.is_err());
+        // A valid tag hash cannot substitute its canonical tree for the envelope.
+        let mut wrong_envelope = format!("object {}\ntype tree\ntag cyber-snapshot-v3\ntagger Cyber Snapshot <snapshot@localhost> 0 +0000\n\n", record.tree).into_bytes();
+        wrong_envelope.extend(serde_json::to_vec(&record).unwrap());
+        let wrong_envelope =
+            String::from_utf8(shadow.input(&["mktag"], &wrong_envelope).await.unwrap()).unwrap();
+        assert!(
+            shadow
+                .snapshot_metadata(wrong_envelope.trim())
+                .await
+                .is_err()
+        );
         let legacy = shadow
-            .record_snapshot(&record.tree, record.excluded.clone(), None)
+            .record_snapshot(&record.tree, record.excluded.clone(), None, None)
             .await
             .unwrap();
         assert_eq!(
@@ -290,7 +396,7 @@ mod policy_tests {
         );
         assert!(
             shadow
-                .record_snapshot(&record.tree, vec![], Some("invalid".into()))
+                .record_snapshot(&record.tree, vec![], Some("invalid".into()), None)
                 .await
                 .is_err()
         );
