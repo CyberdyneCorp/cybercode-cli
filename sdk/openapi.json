@@ -7633,6 +7633,20 @@
           "directory"
         ]
       },
+      "Data_Array_of_SnapshotRecoveryConfirmation": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotRecoveryConfirmation"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "Data_SnapshotRestoreReceipt": {
         "type": "object",
         "properties": {
@@ -24834,6 +24848,55 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SnapshotRecoveryConfirmation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/requests": {
+      "get": {
+        "operationId": "v1.session.snapshotRecoveryRequests",
+        "summary": "Discover up to 4096 retained request identities for this Session creation and exact journal without native access, acknowledgement or replay",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "journal_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_SnapshotRecoveryConfirmation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

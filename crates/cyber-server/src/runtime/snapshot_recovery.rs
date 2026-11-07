@@ -120,6 +120,48 @@ impl Runtime {
         Ok(result)
     }
 
+    /// Read-only discovery of retained request identities; never native authority.
+    pub async fn snapshot_recovery_requests(
+        &self,
+        session: &str,
+        journal: &str,
+    ) -> Result<Vec<super::SnapshotRecoveryConfirmation>, RuntimeError> {
+        if !valid_journal(journal) {
+            return Err(RuntimeError::Invalid("Invalid recovery journal".into()));
+        }
+        self.session_info(session).await?;
+        let created = self
+            .inner
+            .store
+            .read_events(session, -1, 1)?
+            .events
+            .first()
+            .ok_or_else(|| RuntimeError::Conflict("Recovery Session creation is missing".into()))?
+            .id
+            .clone();
+        let session = session.to_owned();
+        let journal = journal.to_owned();
+        self.inner.store.read(move |db| {
+            let mut query = db.prepare("SELECT aggregate_id,json_extract(data,'$.snapshot_request.confirmation') FROM event e WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 AND json_extract(data,'$.binary_document') IS NULL AND json_extract(data,'$.snapshot_request.original.session_id')=?1 AND json_extract(data,'$.snapshot_request.original.session_created_id')=?2 AND json_extract(data,'$.snapshot_request.original.binding.journal_id')=?3 AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq) ORDER BY e.id DESC LIMIT 4097")?;
+            let rows = query.query_map(rusqlite::params![session, created, journal], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+            let mut requests = Vec::new();
+            for row in rows {
+                let (owner, data) = row?;
+                let request: super::SnapshotRecoveryConfirmation = serde_json::from_str(&data)
+                    .map_err(|error| cyber_store::StoreError::InvalidAppend(error.to_string()))?;
+                validate_request(&request).map_err(|error| cyber_store::StoreError::InvalidAppend(error.to_string()))?;
+                if request.journal_id != journal || owner != request_owner(&created, &request.request_id) {
+                    return Err(cyber_store::StoreError::InvalidAppend("Recovery discovery owner mismatch".into()));
+                }
+                requests.push(request);
+                if requests.len() > 4096 {
+                    return Err(cyber_store::StoreError::InvalidAppend("Recovery discovery limit exceeded".into()));
+                }
+            }
+            Ok(requests)
+        }).map_err(RuntimeError::from)
+    }
+
     /// Durable request lookup never opens a native namespace or starts inference.
     pub async fn snapshot_recovery_lookup(
         &self,
@@ -357,6 +399,13 @@ pub(super) fn validate_request_id(id: &str) -> Result<(), RuntimeError> {
     }
     Ok(())
 }
+fn valid_journal(journal: &str) -> bool {
+    journal.starts_with("restore_")
+        && journal.len() <= 256
+        && journal
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
 pub(super) fn validate_request(
     request: &super::SnapshotRecoveryConfirmation,
 ) -> Result<(), RuntimeError> {
@@ -366,12 +415,7 @@ pub(super) fn validate_request(
             .confirmation
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        || !request.journal_id.starts_with("restore_")
-        || request.journal_id.len() > 256
-        || !request
-            .journal_id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        || !valid_journal(&request.journal_id)
     {
         return Err(RuntimeError::Invalid(
             "Invalid recovery journal or fingerprint".into(),

@@ -1607,6 +1607,14 @@ export interface Operations {
     body: undefined;
     response: S.SnapshotRecoveryResult;
   };
+  "v1.session.snapshotRecoveryRequests": {
+    path: { sessionID: string };
+    query: {
+      journal_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.SnapshotRecoveryConfirmation[];
+  };
   "v1.session.snapshotRecoveryReview": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -4806,6 +4814,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.snapshotRecoveryRequests": {
+    tag: "session",
+    name: "snapshotRecoveryRequests",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery/requests",
+    pathParams: ["sessionID"],
+    query: ["journal_id"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.snapshotRecoveryReview": {
     tag: "session",
     name: "snapshotRecoveryReview",
@@ -6259,6 +6279,9 @@ export function createGroups(caller: Caller) {
       /** Look up a durable recovery request without native access, acknowledgement reconciliation, replay or inference (`GET /api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}`) */
       snapshotRecoveryLookup: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryLookup"]["response"]> =>
         caller.call("v1.session.snapshotRecoveryLookup", { path: { sessionID, requestID } }, options),
+      /** Discover up to 4096 retained request identities for this Session creation and exact journal without native access, acknowledgement or replay (`GET /api/v1/sessions/{sessionID}/rewind/recovery/requests`) */
+      snapshotRecoveryRequests: (sessionID: string, query?: Operations["v1.session.snapshotRecoveryRequests"]["query"], options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryRequests"]["response"]> =>
+        caller.call("v1.session.snapshotRecoveryRequests", { path: { sessionID }, query }, options),
       /** Review retained snapshot effects without restoring, acknowledging native activity or starting inference (`POST /api/v1/sessions/{sessionID}/rewind/recovery/review`) */
       snapshotRecoveryReview: (sessionID: string, body: Operations["v1.session.snapshotRecoveryReview"]["body"], options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryReview"]["response"]> =>
         caller.call("v1.session.snapshotRecoveryReview", { path: { sessionID }, body }, options),

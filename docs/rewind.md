@@ -406,3 +406,39 @@ Linux/macOS hosts. Ordinary managed Git source recovery remains disabled pending
 its remaining compatibility and runtime acceptance gates. Preparation cancellation
 is still available through its existing API; typed preparation/TUI recovery,
 reference-aware reclamation and complete native/platform acceptance remain open.
+
+## Recovery in the terminal panel
+
+Open `/rewind` (or idle Esc-Esc) and press **C** to inspect recovery. This entry
+also remains available when code rewind reports unavailable or conflicting state.
+Select a journal with Up/Down, then Enter to discover its retained requests.
+
+- If there are no requests, **K** reviews keep and **B** reviews rollback. The
+  review shows original worker identity, images, historical exclusions, protected
+  created parents and conflicts. A second Enter confirms its fingerprint.
+- If requests already exist, select one and press Enter to look it up. A fresh
+  terminal uses these server-retained identities after a lost reply; it does not
+  choose another request ID to replay the operation.
+- **R** refreshes the current read/review. After confirmation or an ambiguous
+  response it performs exact request lookup. Enter never retries source work from
+  an outcome view.
+- An acknowledged runtime result may still have unobserved native acknowledgement.
+  **A** explicitly reconciles that request's native metadata without reinstalling
+  source files. A positively cancelled pre-effect attempt, or an attempt resolved by another
+  owned request, offers K/B for a fresh review of the original restore;
+  pending/unknown outcomes retain their fences.
+- PgUp/PgDn scroll; Esc closes. Closing does not cancel an already admitted native
+  worker. Reopen recovery to discover its retained request.
+
+Recovery preserves the composer, attachments and conversation. Replies from an old
+Session, Location or UI generation are ignored. Missing legacy proof never enables
+confirmation, and failed request discovery cannot license a fresh attempt.
+Preparation cancellation still uses the existing preparation API; its typed panel
+and the remaining managed Git/cleanup/platform acceptance work are unfinished.
+
+`GET /api/v1/sessions/{id}/rewind/recovery/requests?journal_id=restore_example`
+provides the read-only discovery used by the panel. It requires an exact journal,
+filters to the current Session creation, verifies request-owner identities and
+returns at most 4096 retained confirmation records. Overflow refuses explicitly
+without deleting history. Discovery does not inspect source files, acknowledge
+native work or start inference. The SDK exposes `session.snapshotRecoveryRequests`.

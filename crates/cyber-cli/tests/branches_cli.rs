@@ -1026,6 +1026,15 @@ fn assert_foreign_recovery_request_refused(env: &Env, request: &Value) {
         "{\"title\":\"foreign recovery request\"}",
     ]));
     let foreign_id = foreign["data"]["id"].as_str().unwrap();
+    let discovered = json(&env.cyber(&[
+        "api",
+        "GET",
+        &format!(
+            "/sessions/{foreign_id}/rewind/recovery/requests?journal_id={}",
+            request["journal_id"].as_str().unwrap()
+        ),
+    ]));
+    assert_eq!(discovered["data"], json!([]));
     assert!(
         !env.cyber(&[
             "sessions",
@@ -1237,6 +1246,15 @@ fn assert_recovery_lookup_does_not_replay(
         "changed request content reused an existing owner"
     );
     kill_registered_service(env);
+    let discovered = json(&env.cyber(&[
+        "api",
+        "GET",
+        &format!(
+            "/sessions/{id}/rewind/recovery/requests?journal_id={}",
+            request["journal_id"].as_str().unwrap()
+        ),
+    ]));
+    assert_eq!(discovered["data"], json!([request]));
     let lookup = json(&env.cyber(&[
         "sessions",
         "recovery-request",

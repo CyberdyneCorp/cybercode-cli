@@ -358,3 +358,10 @@
 - **THEN** confirmation SHALL require the exact fingerprint and an explicit stable request ID, and incomplete or malformed combinations SHALL fail before service startup
 - **AND** `sessions recovery-request` SHALL look up the exact retained request without replay; only explicit `--acknowledge` SHALL invoke metadata reconciliation
 - **AND** text/JSON SHALL distinguish current images, historical evidence availability, conflicts, durable state and observed native acknowledgement; stale/foreign responses or requests SHALL NOT authorize another Session/journal operation
+
+#### Scenario: A fresh terminal discovers the existing recovery request
+- **GIVEN** a recovery confirmation reserved an exact durable request and its reply was lost
+- **WHEN** the owner reopens rewind recovery in a fresh TUI
+- **THEN** bounded read-only discovery SHALL identify requests for that exact Session creation and journal without native access, acknowledgement or replay
+- **AND** the panel SHALL offer lookup of retained identities, keep native reconciliation explicit, preserve the composer/conversation and reject stale Session/Location/generation replies
+- **AND** unavailable discovery or legacy proof SHALL NOT enable an unreviewed replacement attempt or clear native fences

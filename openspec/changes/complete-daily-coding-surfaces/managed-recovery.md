@@ -748,3 +748,16 @@ for the exact request. Text and JSON SHALL distinguish filesystem completion,
 durable runtime state and observed native acknowledgement, including unavailable
 historical evidence, conflicts and retained created parents. These clients SHALL
 NOT manufacture origin proof or bypass unavailable backend/runtime admission.
+
+### Recovery request discovery and terminal panel
+
+A bounded authenticated read-only request-discovery operation SHALL expose retained
+confirmation identities for an exact Session creation and journal. It SHALL verify
+native request ownership and SHALL NOT inspect source files, acknowledge work or
+replay a request. A fresh terminal SHALL use discovery to find previously reserved
+requests after reply loss; client memory SHALL NOT be the sole retained identity.
+The rewind panel SHALL link to recovery with `C`, list journals and their retained
+requests, review explicit keep/rollback selections, and require a second Enter for
+the reviewed fingerprint. Request lookup and native acknowledgement reconciliation
+SHALL remain separate explicit keys. Session/Location/UI-generation changes SHALL
+invalidate stale replies without changing the composer or clearing native fences.

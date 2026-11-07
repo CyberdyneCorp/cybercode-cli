@@ -910,6 +910,10 @@ export type Data_Array_of_SnapshotRecovery = {
   data: SnapshotRecovery[];
 };
 
+export type Data_Array_of_SnapshotRecoveryConfirmation = {
+  data: SnapshotRecoveryConfirmation[];
+};
+
 export type Data_Array_of_Task = {
   data: Task[];
 };

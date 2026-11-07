@@ -1253,6 +1253,24 @@ async fn cancelling_an_unstarted_resolution_keeps_its_original_failed_restore_fe
         )
         .await
         .unwrap();
+    let discovered = runtime
+        .snapshot_recovery_requests(&session, &original.binding.journal_id)
+        .await
+        .unwrap();
+    assert_eq!(discovered, vec![request.confirmation.clone()]);
+    assert!(
+        runtime
+            .snapshot_recovery_requests(&session, "restore_other")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        runtime
+            .snapshot_recovery_requests(&session, "../restore_other")
+            .await
+            .is_err()
+    );
     let lookup = runtime
         .snapshot_recovery_lookup(&session, &request.confirmation.request_id)
         .await

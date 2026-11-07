@@ -38,6 +38,7 @@ mod plugins;
 mod prefs;
 mod progress;
 mod recap;
+mod recovery;
 mod rename;
 mod review;
 mod rewind;

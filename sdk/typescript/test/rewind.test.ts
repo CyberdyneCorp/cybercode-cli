@@ -100,3 +100,15 @@ test("pre-effect cancellation acknowledgement retains origin proof without repla
   assert.equal(calls[0]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/preparations/op_fixture/requests/cancel%2Fwith%20space/acknowledge");
   assert.ok(!calls[0]!.body);
 });
+
+test("snapshot recovery request discovery is a scoped read without acknowledgement", async () => {
+  const request = { journal_id: "restore_one", action: "rollback" as const,
+    confirmation: "a".repeat(64), request_id: "retained/with space" };
+  const { client, calls } = mockClient(() => json(200, { data: [request] }));
+  assert.deepEqual(await client.session.snapshotRecoveryRequests("ses_owner", { journal_id: request.journal_id }), [request]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.method, "GET");
+  assert.equal(calls[0]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/recovery/requests");
+  assert.equal(calls[0]!.url.searchParams.get("journal_id"), request.journal_id);
+  assert.ok(!calls[0]!.body);
+});

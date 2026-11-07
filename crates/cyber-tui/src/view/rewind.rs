@@ -47,12 +47,16 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 "Waiting for the owner server… Esc closes. Failed confirmations require fresh status and review.",
             ));
         }
+        Phase::Recovery => lines.extend(crate::recovery::lines(app)),
         Phase::Review => review(app, &mut lines),
         _ => choose(app, &mut lines),
     }
     if let Some(error) = &view.code_error {
         lines.push(Line::styled(
-            format!("Code unavailable/conflicting: {}", clean(error)),
+            format!(
+                "Code unavailable/conflicting: {} · C inspects retained recovery",
+                clean(error)
+            ),
             Style::default().fg(app.theme.warning),
         ));
     }
@@ -76,7 +80,7 @@ fn choose(app: &App, lines: &mut Vec<Line<'static>>) {
         view.target, view.action
     )));
     lines.push(Line::from(
-        "↑/↓ select · Enter preview · U undo · D redo · R reload · Esc close",
+        "↑/↓ select · Enter preview · U undo · D redo · C recovery · R reload · Esc close",
     ));
     if view.saved_draft(&app.session).is_some() {
         lines.push(Line::from("P copies the saved original text draft"));

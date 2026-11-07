@@ -28,6 +28,7 @@ pub struct Op {
     optional_body: bool,
     response: Option<Schema>,
     query: Vec<&'static str>,
+    required_query: Vec<&'static str>,
     located: bool,
     stream: bool,
     binary: bool,
@@ -49,6 +50,7 @@ fn op(method: &'static str, path: &'static str, id: &'static str, summary: &'sta
         optional_body: false,
         response: None,
         query: Vec::new(),
+        required_query: Vec::new(),
         located: false,
         stream: false,
         binary: false,
@@ -95,6 +97,12 @@ impl Op {
 
     fn query(mut self, names: &[&'static str]) -> Self {
         self.query.extend_from_slice(names);
+        self
+    }
+
+    fn required_query(mut self, names: &[&'static str]) -> Self {
+        self.query.extend_from_slice(names);
+        self.required_query.extend_from_slice(names);
         self
     }
 
@@ -766,6 +774,9 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         op("post", "/sessions/{sessionID}/rewind/recovery/confirm", "v1.session.snapshotRecoveryConfirm", "Resolve fingerprint-confirmed native snapshot effects with an exact durable request; repeated IDs are lookup-only")
             .body::<crate::runtime::SnapshotRecoveryConfirmation>(g)
             .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
+        op("get", "/sessions/{sessionID}/rewind/recovery/requests", "v1.session.snapshotRecoveryRequests", "Discover up to 4096 retained request identities for this Session creation and exact journal without native access, acknowledgement or replay")
+            .required_query(&["journal_id"])
+            .ok::<Data<Vec<crate::runtime::SnapshotRecoveryConfirmation>>>(g),
         op("get", "/sessions/{sessionID}/rewind/recovery/requests/{requestID}", "v1.session.snapshotRecoveryLookup", "Look up a durable recovery request without native access, acknowledgement reconciliation, replay or inference")
             .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
         op("post", "/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge", "v1.session.snapshotRecoveryAcknowledge", "Reconcile journal acknowledgement for the exact committed native pair without replaying source changes or starting inference")
@@ -2047,7 +2058,7 @@ fn operation(o: &Op, error: &Schema, envelope: &Schema) -> Value {
     if o.id == "v1.memory.delete" {
         parameters.push(json!({ "name": "x-cyber-memory-review", "in": "header", "required": false, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }));
     }
-    parameters.extend(o.query.iter().map(|name| json!({ "name": name, "in": "query", "required": false, "schema": { "type": "string" } })));
+    parameters.extend(o.query.iter().map(|name| json!({ "name": name, "in": "query", "required": o.required_query.contains(name), "schema": { "type": "string" } })));
     if o.located {
         parameters.push(json!({ "name": "location[directory]", "in": "query", "required": false, "schema": { "type": "string" } }));
         parameters.push(json!({ "name": "x-cyber-directory", "in": "header", "required": false, "schema": { "type": "string" } }));

@@ -355,6 +355,10 @@ pub fn routes() -> Router<AppState> {
             post(snapshot_recovery_confirm),
         )
         .route(
+            &format!("{s}/rewind/recovery/requests"),
+            get(snapshot_recovery_requests),
+        )
+        .route(
             &format!("{s}/rewind/recovery/requests/{{request_id}}"),
             get(snapshot_recovery_lookup),
         )
@@ -1262,6 +1266,22 @@ async fn snapshot_recovery_confirm(
         data: state
             .runtime
             .snapshot_recovery_confirm(&id, &confirmation)
+            .await?,
+    }))
+}
+#[derive(Deserialize)]
+struct RecoveryRequestsQuery {
+    journal_id: String,
+}
+async fn snapshot_recovery_requests(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<RecoveryRequestsQuery>,
+) -> Result<Json<Data<Vec<crate::runtime::SnapshotRecoveryConfirmation>>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_requests(&id, &query.journal_id)
             .await?,
     }))
 }

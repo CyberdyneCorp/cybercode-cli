@@ -2892,3 +2892,92 @@ observed without origin attribution. No separate full snapshot/workspace suite,
 SDK runtime suite, TUI/App acceptance, native Linux/Windows execution or
 source-bound CI ran for this command-only continuation. Managed Git source
 availability remains disabled and all broader completion gates remain open.
+
+## Terminal restore recovery and retained-request discovery (2026-11-07)
+
+Rewind C now opens a recovery panel without inference. Journal selection performs
+read-only request discovery before permitting a new attempt. K/B reviews an exact
+keep/rollback selection; Enter confirms only a confirmable fingerprint and generates
+one retained request identity. Confirmation immediately drops its preview. An
+ambiguous response retains that identity and R performs lookup, never source
+replay. A separately reconciles native metadata for an acknowledged runtime result.
+A positively cancelled pre-effect request, or one resolved by another owned
+request, can lead to a fresh explicit review of the original restore. Pending and
+unknown outcomes cannot license another attempt. No force-clear is introduced.
+
+The controller uses rewind's existing Session/Location/UI-generation/overlay guard
+and never invokes rewind's composer-replacement finish path. It validates full
+confirmation identity and original Session/directory/journal on results; reviews
+must match their selected action/journal and cannot confirm without original
+worker identity. Closing or switching scope invalidates late replies without
+cancelling or replaying an admitted worker. Display preserves exact quoted paths
+and request IDs with escaped controls, distinguishes absent historical evidence
+and separates runtime settlement from observed native acknowledgement. Review and
+outcome capabilities are dropped on failed/mismatched replies. A failed refresh of
+previously empty discovery also disables fresh-attempt keys until discovery
+succeeds, rather than treating cached emptiness as current evidence.
+
+New authenticated GET recovery/requests with required journal_id discovers up to
+4096 retained confirmation identities for the current Session creation and exact
+journal. It reads latest native snapshot-worker records, excludes binary document
+owners, validates request syntax and recomputes each exact request-owner identity.
+Overflow refuses without deleting history; discovery is not acknowledgement or
+native origin authority. It does not open native namespaces or inspect source
+files. This server-side discovery lets a fresh TUI App recover a lost request
+without making an in-memory ID or local preference file its sole retry identity.
+OpenAPI, generated TypeScript operations/types, SDK tests and the operator guide
+are synchronized. Query metadata now declares the required journal selector.
+
+Two real production-App/native scenarios create 1280 changed files, start a
+reviewed rewind through the TUI action port, observe an actual first replacement
+with the last file still untouched, and interrupt the exact live worker. The
+runtime correctly retains uncertainty and returns recovery-required; the original
+fixture's expectation of successful interruption was corrected. Both keep and
+rollback are then reviewed and confirmed through the TUI/public API. Assertions
+verify their distinct first-file results, unrelated owner data, the original draft,
+no transcript movement and no inference. After discarding the successful recovery
+reply, a freshly loaded TUI App discovers the existing request, reads its durable
+outcome and explicitly reconciles native acknowledgement while preserving a later
+owner edit and new terminal draft. These are native cancellation and fresh-App
+cases against a live server, not OS process kills of the TUI or server. The updated
+real CLI service-kill case separately verifies discovery after server restart and
+empty discovery for a foreign Session. Existing runtime cancellation coverage also
+verifies discovery of an exactly owned cancelled request, journal filtering and
+invalid selector refusal.
+
+The code-review skill was applied to bounded/parameterized discovery, Session
+creation and native-owner filtering, response correlation, UI generation fencing,
+duplicate/ambiguous requests, proof availability, terminal display, independent
+native acknowledgement and all changed tests/generated artifacts. Review fixed
+cached-discovery admission and the missing fresh-review route after another owned
+request resolves an attempt. No unresolved critical/major finding remains for
+this local restore-journal UI/discovery scope. The cognitive-complexity skill was
+consulted; its dispatcher does not support Rust. Native Clippy required boxing the
+large review reply and splitting a fixture's source-observation wait (16 versus
+15); final checks pass without allowances. Test helper reborrows, a clone of a Copy
+state and an initially missed guard edit were corrected before final verification.
+
+Verification on local macOS arm64: the full four-thread TUI library suite passed
+669 tests with three configured ignores in 325.60 seconds. These include existing
+rewind/undo/redo, composer, theme, accessibility and screen regressions. Subsequent
+focused recovery checks passed five cases including the strengthened native
+keep/rollback/unrelated-owner case (44.13 seconds), plus the final settled-attempt
+fresh-review state test. The full HTTP suite passed all 79 tests, and the focused
+runtime cancelled-request/discovery case passed. The actual CLI partial-kill
+keep/rollback test passed in 86.26 seconds, including post-restart and foreign
+request discovery. Final all-target locked server/TUI Clippy passed with Rust
+warnings denied. All Cargo checks/builds/tests used CARGO_INCREMENTAL=0 and --locked.
+
+SDK typechecking passed. The initial SDK run passed 135 with ten real-binary cases
+skipped because CYBER_BIN was absent; rerunning with the built binary passed 143
+with two platform skips. TUI ignores include the isolated pure-mode child fixture
+and two Linux temporary-protected-file cases that avoid native vault writes on
+macOS. Native C sandbox_init/sandbox_free_error deprecation and oversized unwind
+linker warnings were observed without unchanged-main attribution. OpenAPI generation,
+SDK consistency, format/diff, pinned strict OpenSpec (117 items) and spec lint
+(0 errors/25 warnings) passed. No native Linux/Windows execution, full workspace,
+OS TUI-kill matrix or source-bound CI is claimed. Preparation clients, actual managed
+Git source/runtime integration, partial-constructor recovery, reference/reader/
+lease-aware reclamation and full cap/platform/client acceptance remain open. No
+parent task, issue, Git availability guard or delivery status is promoted; no
+PR/push is made by this local continuation.

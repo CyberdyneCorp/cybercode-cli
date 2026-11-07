@@ -472,3 +472,20 @@ stale/foreign request, repeat lookup and later owner-edit coverage now exercise
 these typed commands. This advances the restore-journal client portion of M7;
 preparation/TUI clients, actual managed Git integration, safe cleanup and full
 native/platform/client acceptance remain open. No parent task is closed.
+
+Terminal restore-recovery continuation: rewind now exposes C recovery with retained
+journal/request selection, explicit keep/rollback review and second-Enter
+confirmation, read-only request lookup and separate A acknowledgement metadata
+reconciliation. Bounded server-side discovery uses the exact Session creation,
+journal and native request-owner identity, so a fresh App can find a reserved
+request after losing its reply. Failed discovery cannot authorize a fresh attempt;
+legacy proof, pending/unknown outcomes and unrelated fences remain protected.
+Actual production-App/native tests interrupt after a proven source replacement,
+exercise both keep/rollback, preserve unrelated/later owner edits and the composer,
+discard a successful reply, create a fresh TUI App and discover/lookup/reconcile
+without inference or transcript movement. This is native cancellation plus a fresh
+App, not an OS kill of the TUI process. Updated CLI service-kill acceptance also
+checks discovery after server restart and foreign-Session filtering. Preparation
+clients, ordinary managed Git source integration, partial construction, reclamation
+and complete cut/platform acceptance remain open; M2–M8 and parent tasks are not
+closed by this client continuation.
