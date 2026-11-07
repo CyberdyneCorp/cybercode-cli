@@ -384,7 +384,11 @@ pub fn request(id: &str, args: &ExecArgs, prompt: String) -> Result<(String, Val
     for file in &args.files {
         parts.push(file_part(file, args.attach.is_none())?);
     }
-    Ok((format!("/sessions/{id}/prompt"), json!({ "parts": parts })))
+    let mut body = json!({ "parts": parts });
+    if let Some(schema) = &args.schema {
+        body["format"] = json!({ "type": "json_schema", "schema": schema });
+    }
+    Ok((format!("/sessions/{id}/prompt"), body))
 }
 
 /// One `--file` part. An image or a PDF, judged by its first bytes, goes to a server on

@@ -5,6 +5,7 @@ mod delegation;
 pub(crate) mod goals;
 pub(crate) mod report;
 mod review_run;
+mod schema;
 pub(crate) mod setup;
 mod style;
 mod workflow;
@@ -90,6 +91,14 @@ pub struct ExecArgs {
     /// listed at the Location, or the run exits 2 before any Session exists.
     #[arg(long, value_name = "NAME")]
     pub output_style: Option<String>,
+    /// A JSON Schema file the final answer must satisfy: the model ends with a validated
+    /// object, which becomes `result` (printed as JSON in text mode). Three invalid
+    /// submissions exit 1 with `StructuredOutputError`.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["workflow", "command", "goal"])]
+    pub output_schema: Option<PathBuf>,
+    /// The parsed `--output-schema` (filled by `run`).
+    #[arg(skip)]
+    pub schema: Option<serde_json::Value>,
     /// Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return
     /// value is the result.
     #[arg(long, value_name = "NAME|PATH", conflicts_with_all = ["command", "prompt"])]
@@ -169,6 +178,7 @@ pub fn run(mut args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(),
     if args.workflow.is_some() {
         return launch(args, ctx, global, String::new(), None);
     }
+    args.schema = schema::load(args.output_schema.as_deref())?;
     let prompt = if args.goals.is_empty() {
         setup::prompt(&args.prompt)?
     } else {
