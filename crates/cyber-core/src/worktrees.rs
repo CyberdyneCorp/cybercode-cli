@@ -8,7 +8,9 @@ mod location;
 mod removal;
 pub(crate) mod repository;
 mod setup;
-pub use activity::{CheckoutActivity, CheckoutBinding, CheckoutLease, CheckoutOwner};
+pub use activity::{
+    CheckoutActivity, CheckoutBinding, CheckoutLease, CheckoutOwner, SnapshotClaim,
+};
 pub use changes::{ChangedFile, Changes};
 pub use includes::IncludedFile;
 pub use removal::{RemovalActivity, RemovalPhase, RemovalRecord};

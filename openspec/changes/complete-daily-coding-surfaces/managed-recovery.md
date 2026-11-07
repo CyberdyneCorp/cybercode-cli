@@ -368,3 +368,23 @@ publication, while a retained extra link refuses verification. It does not gain
 lifetime-bound durability or recovery authority; that path refuses before creating
 claim evidence until native directory durability has been implemented and verified.
 This remains part of the explicit Windows/platform acceptance limits.
+
+
+### Reacquisition and durable acquired-resource publication
+
+An exited claim may be reacquired only from its exact version-2 binding and matching
+immutable lifetime context. Reacquisition opens existing native evidence without
+creating a name, resetting settled state or acknowledging a Session/process claim.
+It retains the original lock and metadata pins; live, missing, replaced, aliased,
+legacy or foreign evidence refuses. The read-only proof is distinct from an ordinary
+claim and cannot be passed to generic settlement.
+
+Before a ready worker can publish an origin or dispatch source effects, its actual
+complete acquired binding set is published under the private lifetime phase. Native
+publication is bounded/quota-checked, cannot replace a different set, and cannot add
+references after source admission. Empty complete sets remain distinct from absent
+or incomplete publication. Managed source admission requires complete publication.
+This resource set is retained alongside source admission/origin and remains protected
+for later consuming receipt reconciliation. The current step does not acknowledge
+unknown claims or infer completeness from missing files; pre-publication construction
+cuts and complete reference/cleanup acceptance remain required.

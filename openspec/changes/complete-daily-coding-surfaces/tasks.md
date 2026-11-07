@@ -210,3 +210,15 @@ collision tests retain evidence and refuse activity reuse. Unbound legacy claims
 and Windows durability limits remain distinct. Unknown-claim acknowledgement,
 full publication/recovery cuts, Git journals and reclamation remain incomplete;
 no parent M2–M8 or 2.4/3.2–3.4 task is accepted here.
+
+
+Read-only reacquisition and acquired-resource publication continuation (2026-11-07):
+core now reacquires an exact exited version-2 checkout claim under its native lock,
+retaining original metadata pins without creating, settling or changing evidence.
+A distinct proof type exposes no generic settlement. Runtime publishes the actual
+complete acquired binding set into the private lifetime source phase before origin
+or source dispatch. Publication is quota-checked and immutable; source admission
+retains references and refuses missing managed sets. Explicit empty unmanaged sets
+remain distinct from absent constructor evidence. Unknown-claim acknowledgement,
+partial acquisition/publication cuts, Git journals, reclamation and full native/client
+acceptance remain open; no parent task is marked complete.

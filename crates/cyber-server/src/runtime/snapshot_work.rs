@@ -474,6 +474,11 @@ impl Runtime {
         }
         let location =
             SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
+        if let Some(lifetime) = &lifetime {
+            lifetime
+                .bind_checkouts(&location.bindings().map_err(RuntimeError::Conflict)?)
+                .map_err(RuntimeError::Conflict)?;
+        }
         Ok(SnapshotWorker {
             scope,
             admission,
@@ -539,6 +544,11 @@ impl Runtime {
         let worktree_id = state.info.worktree_id.clone();
         let location =
             SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
+        if let Some(lifetime) = &lifetime {
+            lifetime
+                .bind_checkouts(&location.bindings().map_err(RuntimeError::Conflict)?)
+                .map_err(RuntimeError::Conflict)?;
+        }
         Ok(SnapshotWorker {
             scope,
             runtime: self.clone(),

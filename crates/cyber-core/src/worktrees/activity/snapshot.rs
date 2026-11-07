@@ -42,6 +42,69 @@ pub struct CheckoutOwner {
     pub directory: PathBuf,
     pub lifetime_digest: String,
 }
+
+/// Read-only reacquired evidence, deliberately separate from `CheckoutLease`.
+/// No generic settlement, creation or source mutation capability is exposed.
+pub struct SnapshotClaim {
+    lease: super::CheckoutLease,
+}
+impl SnapshotClaim {
+    pub fn binding(&self) -> &CheckoutBinding {
+        self.lease
+            .record
+            .snapshot_binding
+            .as_ref()
+            .expect("reacquired binding")
+    }
+    pub fn verify(&self) -> io::Result<()> {
+        self.lease.verify_snapshot()
+    }
+}
+
+pub(super) fn reacquire(
+    managed: &Managed,
+    binding: &CheckoutBinding,
+    owner: &CheckoutOwner,
+) -> io::Result<SnapshotClaim> {
+    super::safe_id(&managed.id, "wt")?;
+    super::super::Name::parse(&managed.name).map_err(invalid)?;
+    owner.validate(managed)?;
+    if binding.version != 2
+        || binding.lifetime.as_ref() != Some(owner)
+        || binding.owner_id != owner.activity_id
+        || binding.worktree_id != managed.id
+        || binding.name != managed.name
+        || binding.common_dir != managed.common_dir
+    {
+        return Err(invalid(
+            "Checkout reacquisition differs from its exact lifetime or creation",
+        ));
+    }
+    let pins = Pins::open(&binding.common_dir, &binding.worktree_id, &binding.name)?;
+    pins.matches(binding)?;
+    let observed: Managed = serde_json::from_slice(&bytes(&pins.creation)?).map_err(invalid)?;
+    if observed != *managed || !observed.ready {
+        return Err(invalid(
+            "Snapshot checkout creation differs from reacquisition",
+        ));
+    }
+    let file = open_file(&pins.directory, &format!("{}.lock", binding.owner_id))?;
+    if !super::try_lock(&file)? {
+        return Err(invalid("Snapshot checkout worker is still active"));
+    }
+    let mut file = super::LockedRecord(file);
+    let record = super::read_record(&mut file)?;
+    if record.snapshot_binding.as_ref() != Some(binding) {
+        return Err(invalid("Snapshot checkout binding changed"));
+    }
+    let lease = super::CheckoutLease {
+        file,
+        record,
+        snapshot_pins: Some(pins),
+    };
+    lease.verify_snapshot()?;
+    Ok(SnapshotClaim { lease })
+}
 impl CheckoutOwner {
     fn validate_fields(&self) -> io::Result<()> {
         super::safe_id(&self.activity_id, "op")?;

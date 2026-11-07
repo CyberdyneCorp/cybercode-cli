@@ -15,6 +15,38 @@ struct SourcePhase {
     lifetime: SnapshotLifetimeBinding,
     admitted: bool,
     origin: Option<cyber_server::runtime::SnapshotOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    checkout_bindings: Option<Vec<cyber_core::worktrees::CheckoutBinding>>,
+}
+
+fn validate_checkouts(
+    binding: &SnapshotLifetimeBinding,
+    resources: &[cyber_core::worktrees::CheckoutBinding],
+) -> Result<(), String> {
+    let owner = binding.checkout_owner()?;
+    if resources.len() > 4096
+        || binding
+            .owner
+            .worktree_id
+            .as_ref()
+            .is_some_and(|id| !resources.iter().any(|resource| &resource.worktree_id == id))
+        || binding.owner.worktree_id.is_none() && !resources.is_empty()
+    {
+        return Err("Snapshot checkout resource set is incomplete or exceeds limits".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for resource in resources {
+        if resource.version != 2
+            || resource.owner_id != binding.owner.activity_id
+            || resource.lifetime.as_ref() != Some(&owner)
+            || !seen.insert((&resource.common_dir, &resource.worktree_id))
+        {
+            return Err(
+                "Snapshot checkout resource set has foreign ownership or duplicates".into(),
+            );
+        }
+    }
+    Ok(())
 }
 
 pub(crate) struct Lifetime {
@@ -30,6 +62,30 @@ impl Drop for Lifetime {
 }
 
 impl SnapshotLifetime for Lifetime {
+    fn bind_checkouts(
+        &self,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<(), String> {
+        self.verify()?;
+        let store = Store::recover_existing(
+            &self.data,
+            &self.binding.owner.directory.to_string_lossy(),
+            self.options.clone(),
+        )?;
+        store.record_checkout_bindings(&self.binding, bindings)
+    }
+    fn checkout_bindings(
+        &self,
+    ) -> Result<Option<Vec<cyber_core::worktrees::CheckoutBinding>>, String> {
+        self.verify()?;
+        let store = Store::existing(
+            &self.data,
+            &self.binding.owner.directory.to_string_lossy(),
+            self.options.clone(),
+        )?
+        .ok_or("Missing snapshot resource namespace")?;
+        Ok(store.read_source_phase(&self.binding)?.checkout_bindings)
+    }
     fn binding(&self) -> &SnapshotLifetimeBinding {
         &self.binding
     }
@@ -131,6 +187,51 @@ fn valid_owner(owner: &SnapshotLifetimeRequest) -> Result<(), String> {
 }
 
 impl Store {
+    fn record_checkout_bindings(
+        &self,
+        binding: &SnapshotLifetimeBinding,
+        resources: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<(), String> {
+        validate_checkouts(binding, resources)?;
+        let mut phase = self.read_source_phase(binding)?;
+        if phase.admitted {
+            return Err("Source admission prevents checkout resource publication".into());
+        }
+        if let Some(existing) = &phase.checkout_bindings {
+            return if existing == resources {
+                Ok(())
+            } else {
+                Err("Snapshot checkout resource set is immutable".into())
+            };
+        }
+        phase.checkout_bindings = Some(resources.to_vec());
+        self.write_source_phase(binding, &phase)
+    }
+    fn write_source_phase(
+        &self,
+        binding: &SnapshotLifetimeBinding,
+        phase: &SourcePhase,
+    ) -> Result<(), String> {
+        let bytes = serde_json::to_vec(phase).map_err(storage::fail)?;
+        if bytes.len() as u64 > cyber_server::runtime::SnapshotPreparationReceipt::MAX_ENCODED_BYTES
+        {
+            return Err("Native source phase exceeds limit".into());
+        }
+        self.reserve(
+            (bytes.len() as u64)
+                .checked_mul(2)
+                .ok_or("Snapshot source size overflow")?,
+        )?;
+        let directory = storage::existing_child(&self.namespace, "workers", true)?;
+        storage::atomic(
+            &directory,
+            binding
+                .source_phase
+                .as_deref()
+                .ok_or("Missing source phase")?,
+            &bytes,
+        )
+    }
     pub(crate) fn reserve_lifetime(
         &self,
         owner: SnapshotLifetimeRequest,
@@ -170,6 +271,7 @@ impl Store {
             lifetime: binding.clone(),
             admitted: false,
             origin: None,
+            checkout_bindings: None,
         })
         .map_err(storage::fail)?
         .len() as u64;
@@ -194,6 +296,7 @@ impl Store {
             lifetime: binding.clone(),
             admitted: false,
             origin: None,
+            checkout_bindings: None,
         };
         storage::create(
             &directory,
@@ -307,6 +410,9 @@ impl Store {
         if phase.lifetime != *binding || phase.admitted != phase.origin.is_some() {
             return Err("Native source phase changed owner".into());
         }
+        if let Some(resources) = &phase.checkout_bindings {
+            validate_checkouts(binding, resources)?;
+        }
         Ok(phase)
     }
     pub(super) fn verify_native_preparation(
@@ -324,6 +430,9 @@ impl Store {
         origin: &cyber_server::runtime::SnapshotOrigin,
     ) -> Result<(), String> {
         let phase = self.read_source_phase(binding)?;
+        if binding.owner.worktree_id.is_some() && phase.checkout_bindings.is_none() {
+            return Err("Managed source admission lacks a complete resource set".into());
+        }
         if origin.activity_id != binding.owner.activity_id
             || origin.session_id != binding.owner.session_id
             || origin.session_created_id != binding.owner.session_created_id
@@ -347,26 +456,9 @@ impl Store {
             lifetime: binding.clone(),
             admitted: true,
             origin: Some(origin.clone()),
+            checkout_bindings: phase.checkout_bindings,
         };
-        let bytes = serde_json::to_vec(&phase).map_err(storage::fail)?;
-        if bytes.len() as u64 > cyber_server::runtime::SnapshotPreparationReceipt::MAX_ENCODED_BYTES
-        {
-            return Err("Native source phase exceeds limit".into());
-        }
-        self.reserve(
-            (bytes.len() as u64)
-                .checked_mul(2)
-                .ok_or("Snapshot source size overflow")?,
-        )?;
-        let directory = storage::existing_child(&self.namespace, "workers", true)?;
-        storage::atomic(
-            &directory,
-            binding
-                .source_phase
-                .as_deref()
-                .ok_or("Missing source phase")?,
-            &bytes,
-        )
+        self.write_source_phase(binding, &phase)
     }
 }
 
@@ -398,6 +490,115 @@ mod tests {
             options(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn complete_resource_publication_is_immutable_quota_checked_and_retained_after_source_admission()
+     {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = store(temp.path());
+        let mut owner = request(&store.root);
+        owner.worktree_id = Some("wt_fixture".into());
+        let lifetime = store.reserve_lifetime(owner).unwrap();
+        let binding = lifetime.binding().clone();
+        assert_eq!(lifetime.checkout_bindings().unwrap(), None);
+        // The core/runtime suites verify actual resource locks. This fixture
+        // exercises the native reference-publication state and durability.
+        let resource = cyber_core::worktrees::CheckoutBinding {
+            version: 2,
+            owner_id: binding.owner.activity_id.clone(),
+            worktree_id: "wt_fixture".into(),
+            name: "fixture".into(),
+            common_dir: store.root.clone(),
+            common_identity: "fixture".into(),
+            root_identity: "fixture".into(),
+            directory_identity: "fixture".into(),
+            file_identity: "fixture".into(),
+            creation_directory_identity: "fixture".into(),
+            creation_file_identity: "fixture".into(),
+            creation_digest: "a".repeat(64),
+            lifetime: Some(binding.checkout_owner().unwrap()),
+            staging_name: Some("fixture".into()),
+        };
+        let mut foreign = resource.clone();
+        foreign.lifetime.as_mut().unwrap().session_created_id = "evt_foreign".into();
+        assert!(
+            store
+                .record_checkout_bindings(&binding, &[foreign])
+                .is_err()
+        );
+        assert!(store.record_checkout_bindings(&binding, &[]).is_err());
+        assert!(
+            store
+                .record_checkout_bindings(&binding, &[resource.clone(), resource.clone()])
+                .is_err()
+        );
+        assert_eq!(lifetime.checkout_bindings().unwrap(), None);
+        store.options.max_total = 1;
+        assert!(
+            store
+                .record_checkout_bindings(&binding, std::slice::from_ref(&resource))
+                .is_err()
+        );
+        assert_eq!(lifetime.checkout_bindings().unwrap(), None);
+        store.options.max_total = 4 * 1024 * 1024;
+        let id = "restore_resource_test";
+        let directory = storage::private_child(&store.journals, id).unwrap();
+        let origin = cyber_server::runtime::SnapshotOrigin {
+            version: 1,
+            activity_id: binding.owner.activity_id.clone(),
+            session_id: binding.owner.session_id.clone(),
+            session_created_id: binding.owner.session_created_id.clone(),
+            worktree_id: binding.owner.worktree_id.clone(),
+            binding: cyber_server::runtime::SnapshotBinding {
+                directory: store.root.clone(),
+                root_identity: store.root_id.clone(),
+                namespace_identity: storage::dir_identity(&store.journals).unwrap(),
+                journal_id: id.into(),
+                journal_identity: storage::dir_identity(&directory).unwrap(),
+                lock_identity: Some(store.lock_identity().unwrap()),
+            },
+        };
+        assert!(lifetime.admit_source(&origin).is_err());
+        let resources = vec![resource];
+        store
+            .record_checkout_bindings(&binding, &resources)
+            .unwrap();
+        store
+            .record_checkout_bindings(&binding, &resources)
+            .unwrap();
+        let mut changed = resources.clone();
+        changed[0].file_identity.push_str("_replacement");
+        assert!(store.record_checkout_bindings(&binding, &changed).is_err());
+        assert_eq!(
+            lifetime.checkout_bindings().unwrap(),
+            Some(resources.clone())
+        );
+        let mut journal = store.prepare_journal(vec![], id, None, None, None).unwrap();
+        journal.origin = Some(origin.clone());
+        journal.ownership =
+            Some(super::super::ownership::Ownership::prepare(&store, &directory, &[]).unwrap());
+        Store::record(&directory, &journal).unwrap();
+        lifetime.admit_source(&origin).unwrap();
+        assert!(
+            store
+                .record_checkout_bindings(&binding, &resources)
+                .is_err()
+        );
+        drop(store);
+        assert_eq!(lifetime.checkout_bindings().unwrap(), Some(resources));
+    }
+
+    #[test]
+    fn empty_complete_resource_set_is_distinct_from_missing() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = store(temp.path());
+        let lifetime = store.reserve_lifetime(request(&store.root)).unwrap();
+        assert_eq!(lifetime.checkout_bindings().unwrap(), None);
+        drop(store);
+        lifetime.bind_checkouts(&[]).unwrap();
+        assert_eq!(lifetime.checkout_bindings().unwrap(), Some(vec![]));
+        lifetime.bind_checkouts(&[]).unwrap();
     }
 
     #[test]

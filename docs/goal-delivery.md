@@ -179,3 +179,11 @@ native settlement; prior writer catalogs refuse mutation. Construction kills ret
 evidence and refuse replay. Unknown-claim acknowledgement and reclamation remain
 incomplete, and Windows lifetime-bound durability is not yet admitted. This does not
 accept the complete recovery feature or either issue.
+
+
+The local acquired-resource continuation adds exact read-only exited-claim
+reacquisition and durable complete checkout references before source dispatch.
+Publication failure preserves the unknown reservation; no new native acknowledgement
+or cleanup authority is granted. Interrupted-claim consuming receipts and native
+reconciliation remain the next recovery work, alongside the existing Git,
+reclamation and platform/client acceptance obligations.

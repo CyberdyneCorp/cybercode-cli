@@ -3,6 +3,81 @@ use cyber_core::worktrees::CheckoutActivity;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
+fn exact_snapshot_reacquisition_preserves_unknown_state_and_refuses_live_foreign_and_replaced_evidence()
+ {
+    use cyber_core::worktrees::CheckoutOwner;
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("reacquire-snapshot").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let owner = CheckoutOwner {
+        activity_id: "op_bound".into(),
+        session_id: "ses_fixture".into(),
+        session_created_id: "evt_fixture".into(),
+        directory: managed.path.clone(),
+        lifetime_digest: "a".repeat(64),
+    };
+    let lease =
+        block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner)).unwrap();
+    let binding = lease.snapshot_binding().unwrap().clone();
+    assert!(
+        repository
+            .reacquire_snapshot(&managed, &binding, &owner)
+            .is_err()
+    );
+    drop(lease); // Unknown native outcome remains; reacquisition must not settle it.
+    let path = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id)
+        .join("op_bound.lock");
+    let original = std::fs::read(&path).unwrap();
+    let proof = repository
+        .reacquire_snapshot(&managed, &binding, &owner)
+        .unwrap();
+    assert_eq!(proof.binding(), &binding);
+    proof.verify().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    drop(proof);
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let mut foreign = owner.clone();
+    foreign.session_created_id = "evt_foreign".into();
+    assert!(
+        repository
+            .reacquire_snapshot(&managed, &binding, &foreign)
+            .is_err()
+    );
+    let mut legacy = binding.clone();
+    legacy.version = 1;
+    legacy.lifetime = None;
+    assert!(
+        repository
+            .reacquire_snapshot(&managed, &legacy, &owner)
+            .is_err()
+    );
+    let retained = path.with_extension("retained");
+    std::fs::rename(&path, &retained).unwrap();
+    std::fs::write(&path, &original).unwrap();
+    assert!(
+        repository
+            .reacquire_snapshot(&managed, &binding, &owner)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read(retained).unwrap(), original);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
 fn lifetime_bound_snapshot_claim_publishes_complete_context_without_reusing_existing_owners() {
     use cyber_core::worktrees::CheckoutOwner;
     let fixture = Fixture::new();

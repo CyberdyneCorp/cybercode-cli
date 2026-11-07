@@ -1389,3 +1389,77 @@ findings remain for initialized lifetime-bound publication. Full unknown-resourc
 reconciliation, complete ownership/reference publication across all cuts, Git recovery,
 reclamation and platform/client acceptance remain open. This local continuation does
 not make the complete recovery increment merge-ready or complete either issue.
+
+
+## Exact exited-claim reacquisition and durable acquired resources (2026-11-07)
+
+Core exposes a separate read-only `SnapshotClaim`: callers supply the exact
+version-2 binding, immutable lifetime context and managed creation. Reacquisition
+opens existing evidence, takes the native exclusive lock and verifies retained
+common/activity/creation pins, creation bytes, file identity and complete record.
+It does not create or rewrite a claim and exposes no settlement API. Real managed
+checkout coverage checks live-worker refusal, unchanged unknown bytes, retained
+removal exclusion, foreign creation/lifetime and legacy refusal, and a byte-identical
+replacement refusal while retaining both original and replacement evidence.
+
+Ordinary and recovery runtime factories publish their verified complete acquired
+binding set through the lifetime port before returning a worker. The private source
+phase retains `Some([])` for a complete unmanaged acquisition and `None` for absent
+constructor evidence. Publication holds the native global snapshot lock for quota
+accounting, checks bounded ownership/context and duplicates, refuses changed sets
+or publication after source admission, and retains the original references when
+admitting source work. Managed source admission refuses absent resource evidence.
+The compatibility catalog marker prevents previous Store writers from erasing the
+new phase fields; its migration regression preserves retained reference bytes.
+
+Native tests cover missing/empty, foreign/duplicate, quota failure, identical retry,
+immutable replacement and post-admission reference retention. The resource DTOs in
+that state-machine fixture are instrumented; actual file/lock ownership is covered
+by the core integration and existing production-host tests. Runtime failure injection
+checks that rejected publication returns no worker, retains an unknown reservation
+with no origin/source admission, releases admission/lifetime permits and performs
+no acknowledgement. Real CLI successful restore assertions inspect the actual
+private source phase and require its original lifetime/origin and explicit empty
+resource set in unmanaged fixtures.
+
+The code-review skill was applied across every changed core/runtime/native/Store,
+test and spec file. Review checks no-follow existing-only reacquisition, exact
+creation/record comparison, retained locks on all exits, no generic settlement on
+read-only proof, private bounded atomic publication under native quota ownership,
+resource immutability and source ordering, and backward writer refusal. The added
+runtime failure and managed native missing-set regressions close the observed test
+gaps. This step enables no unknown-claim acknowledgement and does not complete
+partial-constructor reconciliation, Git recovery, reference-aware reclamation,
+M2–M8 or either issue. The final runtime regression found that pre-origin disposal could settle a lifetime-bound
+reservation after failed resource publication. Disposal now preserves that exact
+snapshot uncertainty until explicit reconciliation; generic and binary scopes keep
+their existing disposal rules.
+
+
+Verification for this continuation on local macOS arm64: the broad runs passed
+84 snapshot cases (one ignored child fixture), 423 server unit cases (one ignored
+fixture) plus 22 affected server integrations, 62 Store cases and 72 core worktree
+integration cases (one ignored child fixture). After final creation validation,
+the exact native core reacquisition regression passed again. All 16 real CLI
+branch/recovery cases passed with the new durable resource assertions. All-target
+Clippy for core/server/Store/snapshot/tools/App/CLI passed with warnings denied.
+Strict pinned OpenSpec passed 117 items, spec lint reports 0 errors/25 warnings,
+and generated SDK consistency, formatting and diff checks passed. Native sandbox
+API deprecation warnings were observed; no unchanged-main comparison or origin
+attribution is made here. Full-workspace tests, SDK execution tests, native Linux/
+Windows runs and live TUI/App recovery acceptance were not run for this increment.
+
+
+The final native missing-managed-resource admission regression passed. The initial
+focused runtime run passed 40 cases and failed the new publication-failure case,
+exposing the pre-origin disposal gap above. After the fix all 424 server unit
+cases passed with one ignored fixture, and server all-target Clippy passed again.
+The first test-selection command matched zero tests and was replaced by the actual
+snapshot module selection; no coverage is attributed to that empty run.
+
+The final focused disposal regression passed with explicit exact snapshot
+uncertainty and no opaque Location flag. All 16 real CLI cases passed again after
+the disposal fix, including both pre-origin/pre-source service kills and partial
+keep/rollback restart cases. Final formatting/diff checks passed. Review found no
+remaining critical/major issue within this increment; the broader recovery and
+platform/client acceptance gaps above remain required before delivery.

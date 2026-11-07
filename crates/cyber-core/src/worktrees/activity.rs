@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{GitExecution, Managed, Name, RemovalActivity, Repository, RepositoryLock};
 mod snapshot;
-pub use snapshot::{CheckoutBinding, CheckoutOwner};
+pub use snapshot::{CheckoutBinding, CheckoutOwner, SnapshotClaim};
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct UseRecord {
@@ -138,6 +138,19 @@ impl RemovalActivity for CheckoutActivity {
 }
 
 impl Repository {
+    /// Reacquire exact existing evidence, without creating or settling a claim.
+    /// Caller must separately retain the matching snapshot lifetime proof.
+    pub fn reacquire_snapshot(
+        &self,
+        managed: &Managed,
+        binding: &CheckoutBinding,
+        owner: &CheckoutOwner,
+    ) -> io::Result<SnapshotClaim> {
+        if self.common_dir != managed.common_dir {
+            return Err(invalid("Foreign checkout repository"));
+        }
+        snapshot::reacquire(managed, binding, owner)
+    }
     /// Admit Location use under the same lock as removal and verify exact ready
     /// ownership before creating a persistent per-Session activity lock.
     pub async fn claim(

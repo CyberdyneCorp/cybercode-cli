@@ -189,6 +189,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261106030000_snapshot_checkout_lifetime",
         sql: include_str!("../migrations/20261106030000_snapshot_checkout_lifetime.sql"),
     },
+    Migration {
+        id: "20261107000000_snapshot_checkout_resources",
+        sql: include_str!("../migrations/20261107000000_snapshot_checkout_resources.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -436,13 +440,48 @@ mod tests {
         let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
             panic!("activity-only writer accepted lifetime-bound checkout storage");
         };
-        assert_eq!(unknown, ["20261106030000_snapshot_checkout_lifetime"]);
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
         let retained: String = db
             .query_row("SELECT data FROM event WHERE id='evt_context'", [], |row| {
                 row.get(0)
             })
             .unwrap();
         assert_eq!(retained, evidence);
+    }
+
+    #[test]
+    fn native_resource_catalog_blocks_previous_writers_without_changing_reference_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("resources.db");
+        let phase = directory.path().join("phase_retained");
+        let evidence = br#"{"admitted":false,"checkout_bindings":[]}"#;
+        std::fs::write(&phase, evidence).unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261107000000_snapshot_checkout_resources")
+            .unwrap();
+        let mut db = Connection::open(&path).unwrap();
+        assert!(matches!(
+            migrate(&mut db, &MIGRATIONS[..at]).unwrap(),
+            Outcome::Current
+        ));
+        assert!(matches!(
+            migrate(&mut db, MIGRATIONS).unwrap(),
+            Outcome::Current
+        ));
+        drop(db);
+        let mut db = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted native resource publication");
+        };
+        assert_eq!(unknown, ["20261107000000_snapshot_checkout_resources"]);
+        assert_eq!(std::fs::read(phase).unwrap(), evidence);
     }
 
     #[test]

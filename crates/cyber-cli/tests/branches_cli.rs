@@ -1395,6 +1395,21 @@ fn assert_snapshot_lifetime(namespace: &std::path::Path, activity: &Value, origi
     let recorded_lifetime: Value =
         serde_json::from_slice(&std::fs::read(lifetime_file).unwrap()).unwrap();
     assert_eq!(recorded_lifetime, *lifetime);
+    let phase: Value = serde_json::from_slice(
+        &std::fs::read(
+            namespace
+                .join("workers")
+                .join(lifetime["source_phase"].as_str().unwrap()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(phase["lifetime"], *lifetime);
+    assert_eq!(phase["admitted"], true);
+    assert_eq!(phase["origin"], *origin);
+    // These real-service fixtures use unmanaged Locations. An explicitly
+    // published empty set is distinct from missing constructor evidence.
+    assert_eq!(phase["checkout_bindings"], serde_json::json!([]));
 }
 
 #[test]

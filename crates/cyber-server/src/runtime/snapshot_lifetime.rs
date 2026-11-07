@@ -112,6 +112,20 @@ pub trait SnapshotLifetime: Send {
     /// Synchronous native metadata verification; may run inside the Store writer.
     /// It must not call the runtime/Store, launch processes or perform source effects.
     fn verify(&self) -> Result<(), String>;
+    /// Publish the complete acquired set before origin/effect dispatch. This is
+    /// native metadata only; it cannot acknowledge claims or reenter the Store.
+    fn bind_checkouts(
+        &self,
+        _bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<(), String> {
+        Err("Durable checkout resource publication is unavailable".into())
+    }
+    /// Missing is not an empty complete resource set and grants no new authority.
+    fn checkout_bindings(
+        &self,
+    ) -> Result<Option<Vec<cyber_core::worktrees::CheckoutBinding>>, String> {
+        Ok(None)
+    }
     /// Persist native admission before a source callback. A legacy lifetime may
     /// never grant the new positive pre-effect cancellation proof.
     fn admit_source(&self, _origin: &super::SnapshotOrigin) -> Result<(), String> {

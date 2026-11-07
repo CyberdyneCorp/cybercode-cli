@@ -105,6 +105,17 @@
 - **AND** runtime admission SHALL refuse returned resources with foreign or missing lifetime context
 - **AND** a construction crash SHALL preserve private evidence without granting an incomplete stable record or legacy claim new acknowledgement authority
 
+#### Scenario: Exact exited claim reacquisition is read-only
+- **WHEN** recovery reacquires an exited checkout claim under the exact stored version-2 binding and lifetime context
+- **THEN** it SHALL retain the existing native lock and metadata pins without creating or resetting any claim or acknowledgement
+- **AND** live, aliased, replaced, missing, legacy or foreign evidence SHALL refuse
+
+#### Scenario: Acquired resource set precedes source admission
+- **WHEN** a lifetime-owned worker completes native checkout acquisition
+- **THEN** its complete acquired binding set SHALL be durably published before an origin or source callback, with empty and missing sets distinguished
+- **AND** a changed set or post-admission addition SHALL refuse, source admission SHALL retain the published set, and incomplete evidence SHALL NOT gain reference-completeness authority
+- **AND** disposal before origin publication SHALL retain a lifetime-bound reservation as unknown until explicit exact-owner reconciliation
+
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
 - **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents

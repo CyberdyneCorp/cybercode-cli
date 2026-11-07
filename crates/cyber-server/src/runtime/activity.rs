@@ -551,7 +551,11 @@ impl Scope {
         // Publish before enqueueing. Even an unavailable writer retains the exact
         // owner; a later writer acknowledgement can clear it without racing a
         // post-commit caller-side flag write.
-        if (self.launched || original.snapshot_request.is_some()) && original.snapshot_worker {
+        if original.snapshot_worker
+            && (self.launched
+                || original.snapshot_request.is_some()
+                || original.snapshot_lifetime.is_some())
+        {
             handle.mark_snapshot_uncertain(&id);
         }
         let (_, uncertain) = self.store.append_checked(&self.id, Expected::Any, move |tx| {
@@ -607,13 +611,18 @@ impl Drop for Scope {
             // possible file effects remain in the separate document intent.
             let mut disposed = self.snapshot_record();
             disposed.snapshot_origin = self.snapshot_origin().cloned();
-            disposed.status =
-                if (self.launched || self.record.snapshot_request.is_some()) && !filesystem_only {
-                    "unknown"
-                } else {
-                    "settled"
-                }
-                .into();
+            // A lifetime-bound reservation can already own checkout evidence
+            // before origin publication; only exact reconciliation clears it.
+            disposed.status = if (self.launched
+                || self.record.snapshot_request.is_some()
+                || self.record.snapshot_worker && self.record.snapshot_lifetime.is_some())
+                && !filesystem_only
+            {
+                "unknown"
+            } else {
+                "settled"
+            }
+            .into();
             if filesystem_only {
                 disposed.phase = "filesystem_worker_disposed_query_document".into();
             }

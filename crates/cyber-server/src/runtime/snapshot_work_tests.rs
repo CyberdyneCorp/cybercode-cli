@@ -230,6 +230,7 @@ async fn checkout_lifetime_context_is_checked_before_any_native_settlement() {
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let owner = worker(&runtime, &session).await;
@@ -489,12 +490,27 @@ struct Lifetimes {
     inner: Acknowledgements,
     permits: Arc<tokio::sync::Semaphore>,
     foreign: bool,
+    reject_resources: bool,
 }
 struct LifetimePermit {
     binding: super::super::SnapshotLifetimeBinding,
     _permit: tokio::sync::OwnedSemaphorePermit,
+    reject_resources: bool,
 }
 impl super::super::SnapshotLifetime for LifetimePermit {
+    fn bind_checkouts(
+        &self,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<(), String> {
+        if self.reject_resources {
+            return Err("injected resource publication failure".into());
+        }
+        if bindings.is_empty() {
+            Ok(())
+        } else {
+            Err("instrumented lifetime supports unmanaged resource fixtures only".into())
+        }
+    }
     fn admit_source(&self, _: &SnapshotOrigin) -> Result<(), String> {
         Ok(())
     }
@@ -528,6 +544,7 @@ impl Snapshots for Lifetimes {
                 .map_err(|error| error.to_string())?;
             Ok(Box::new(LifetimePermit {
                 binding,
+                reject_resources: self.reject_resources,
                 _permit: permit,
             }) as Box<dyn super::super::SnapshotLifetime>)
         })
@@ -559,6 +576,7 @@ impl Snapshots for Lifetimes {
                     file_identity: "fixture-file".into(),
                     source_phase: Some("phase_fixture".into()),
                 },
+                reject_resources: self.reject_resources,
                 _permit: permit,
             })
                 as Box<dyn super::super::SnapshotLifetime>))
@@ -626,6 +644,7 @@ async fn published_origin_with_positive_false_admission_can_cancel_but_admitted_
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let native_binding = binding(temp.path().canonicalize().unwrap());
@@ -682,6 +701,7 @@ async fn rejected_source_admission_prevents_the_callback_and_retains_positive_pr
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let owner = worker(&runtime, &session).await;
@@ -745,6 +765,7 @@ async fn lost_source_admission_reply_never_calls_the_source_and_never_becomes_fa
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let session = runtime
@@ -823,6 +844,7 @@ async fn preparation_lost_commit_reply_is_lookup_only_after_reopening_the_real_s
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let session = runtime
@@ -896,6 +918,7 @@ async fn preparation_cancellation_is_paired_and_retry_never_reopens_native_proof
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: permits.clone(),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let owner = worker(&runtime, &session).await;
@@ -985,6 +1008,7 @@ async fn preparation_writer_failure_rolls_back_both_owners_and_changed_session_r
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: permits.clone(),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let id = crash_unstarted(worker(&runtime, &session).await);
@@ -1061,6 +1085,7 @@ async fn cancelling_an_unstarted_resolution_keeps_its_original_failed_restore_fe
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
@@ -1125,6 +1150,7 @@ async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_re
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: permits.clone(),
             foreign: false,
+            reject_resources: false,
         }),
     );
     let owner = worker(&runtime, &session).await;
@@ -1168,6 +1194,45 @@ async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_re
 }
 
 #[tokio::test]
+async fn resource_publication_failure_retains_unknown_reservation_without_origin_or_source_work() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let permits = Arc::new(tokio::sync::Semaphore::new(1));
+    let acknowledgements = Arc::new(AtomicUsize::new(0));
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(acknowledgements.clone()),
+            permits: permits.clone(),
+            foreign: false,
+            reject_resources: true,
+        }),
+    );
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let state = handle.state.lock().await;
+    let error = match runtime.snapshot_worker(&handle, &state).await {
+        Ok(_) => panic!("worker admitted without durable resource publication"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, RuntimeError::Conflict(message) if message.contains("resource publication failure"))
+    );
+    drop(state);
+    assert_eq!(permits.available_permits(), 1);
+    assert!(!handle.snapshot_active.load(Ordering::SeqCst));
+    let activity = latest(&runtime, &session);
+    assert_eq!(activity["status"], "unknown");
+    assert!(activity["snapshot_origin"].is_null());
+    assert_ne!(activity["snapshot_source_admitted"], true);
+    assert!(handle.has_location_uncertainty());
+    assert!(!handle.location_uncertain.load(Ordering::SeqCst));
+    assert_eq!(acknowledgements.load(Ordering::SeqCst), 0);
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
 async fn foreign_lifetime_proof_is_rejected_before_any_native_reservation() {
     let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
     let permits = Arc::new(tokio::sync::Semaphore::new(1));
@@ -1179,6 +1244,7 @@ async fn foreign_lifetime_proof_is_rejected_before_any_native_reservation() {
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
             permits: permits.clone(),
             foreign: true,
+            reject_resources: false,
         }),
     );
     let handle = runtime.inner.handle(&session).await.unwrap();
