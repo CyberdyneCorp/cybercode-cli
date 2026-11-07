@@ -9,6 +9,14 @@ use std::{
 
 const RECORD_LIMIT: u64 = 16 * 1024;
 
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourcePhase {
+    lifetime: SnapshotLifetimeBinding,
+    admitted: bool,
+    origin: Option<cyber_server::runtime::SnapshotOrigin>,
+}
+
 pub(crate) struct Lifetime {
     binding: SnapshotLifetimeBinding,
     file: File,
@@ -37,6 +45,64 @@ impl SnapshotLifetime for Lifetime {
         )?
         .ok_or("Snapshot lifetime namespace is missing")?;
         store.verify_lifetime(&self.binding)
+    }
+    fn verify_preparation(
+        &self,
+        origin: Option<&cyber_server::runtime::SnapshotOrigin>,
+    ) -> Result<(), String> {
+        self.verify()?;
+        let store = Store::existing(
+            &self.data,
+            &self.binding.owner.directory.to_string_lossy(),
+            self.options.clone(),
+        )?
+        .ok_or("Missing preparation namespace")?;
+        store.verify_native_preparation(&self.binding)?;
+        if let Some(origin) = origin {
+            if origin.activity_id != self.binding.owner.activity_id
+                || origin.session_id != self.binding.owner.session_id
+                || origin.session_created_id != self.binding.owner.session_created_id
+                || origin.worktree_id != self.binding.owner.worktree_id
+            {
+                return Err("Foreign preparation origin".into());
+            }
+            let store = Store::existing(
+                &self.data,
+                &self.binding.owner.directory.to_string_lossy(),
+                self.options.clone(),
+            )?
+            .ok_or("Missing preparation namespace")?;
+            store.verify_preparation_origin(origin)?;
+        }
+        Ok(())
+    }
+    fn admit_source(&self, origin: &cyber_server::runtime::SnapshotOrigin) -> Result<(), String> {
+        self.verify()?;
+        let store = Store::existing(
+            &self.data,
+            &self.binding.owner.directory.to_string_lossy(),
+            self.options.clone(),
+        )?
+        .ok_or("Missing source-admission namespace")?;
+        store.record_source_admission(&self.binding, origin)
+    }
+    fn acknowledge_preparation(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        if receipt.lifetime != self.binding {
+            return Err("Foreign preparation receipt".into());
+        }
+        self.verify_preparation(receipt.origin.as_ref())?;
+        if receipt.origin.is_some() {
+            let store = Store::recover_existing(
+                &self.data,
+                &self.binding.owner.directory.to_string_lossy(),
+                self.options.clone(),
+            )?;
+            store.acknowledge_preparation(receipt)?;
+        }
+        Ok(())
     }
 }
 
@@ -88,18 +154,30 @@ impl Store {
             if binding.owner != owner {
                 return Err("Snapshot lifetime owner changed".into());
             }
+            self.verify_native_preparation(&binding)?;
             return self.lock_lifetime(&binding);
         }
         let mut binding = SnapshotLifetimeBinding {
-            version: 1,
+            version: 2,
             owner,
             root_identity: self.root_id.clone(),
             namespace_identity: storage::dir_identity(&self.namespace)?,
             directory_identity: storage::dir_identity(&directory)?,
             file_identity: "0".repeat(storage::IDENTITY_MAX_BYTES),
+            source_phase: Some(format!("phase_{}", ulid::Ulid::new())),
         };
-        let budget = serde_json::to_vec(&binding).map_err(storage::fail)?.len() as u64;
-        if budget > RECORD_LIMIT {
+        let phase_budget = serde_json::to_vec(&SourcePhase {
+            lifetime: binding.clone(),
+            admitted: false,
+            origin: None,
+        })
+        .map_err(storage::fail)?
+        .len() as u64;
+        let binding_budget = serde_json::to_vec(&binding).map_err(storage::fail)?.len() as u64;
+        let budget = binding_budget
+            .checked_add(phase_budget)
+            .ok_or("Snapshot lifetime size overflow")?;
+        if binding_budget > RECORD_LIMIT || phase_budget > RECORD_LIMIT {
             return Err("Snapshot lifetime record exceeds limit".into());
         }
         self.reserve(budget)?;
@@ -112,6 +190,20 @@ impl Store {
         let bytes = serde_json::to_vec(&binding).map_err(storage::fail)?;
         file.write_all(&bytes).map_err(storage::fail)?;
         storage::sync_file(&file)?;
+        let phase = SourcePhase {
+            lifetime: binding.clone(),
+            admitted: false,
+            origin: None,
+        };
+        storage::create(
+            &directory,
+            binding
+                .source_phase
+                .as_deref()
+                .ok_or("Missing source phase")?,
+            &serde_json::to_vec(&phase).map_err(storage::fail)?,
+        )?;
+        storage::sync(&directory)?;
         before_publish()?;
         rustix::fs::renameat_with(
             &directory,
@@ -155,7 +247,7 @@ impl Store {
     fn verify_lifetime(&self, binding: &SnapshotLifetimeBinding) -> Result<(), String> {
         valid_owner(&binding.owner)?;
         self.verify_root()?;
-        if binding.version != 1
+        if !matches!(binding.version, 1 | 2)
             || binding.owner.directory != self.root
             || binding.root_identity != self.root_id
             || binding.namespace_identity != storage::dir_identity(&self.namespace)?
@@ -183,6 +275,98 @@ impl Store {
             return Err("Snapshot lifetime binding changed".into());
         }
         Ok(())
+    }
+
+    fn read_source_phase(&self, binding: &SnapshotLifetimeBinding) -> Result<SourcePhase, String> {
+        self.verify_lifetime(binding)?;
+        let name = binding
+            .source_phase
+            .as_deref()
+            .ok_or("Legacy worker has no native source phase")?;
+        if binding.version != 2
+            || !name.starts_with("phase_")
+            || name.len() > 128
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err("Unsupported native source phase".into());
+        }
+        let directory = storage::existing_child(&self.namespace, "workers", true)?;
+        let file = storage::open(&directory, Path::new(name))?;
+        storage::validate_lock(&file)?;
+        let mut bytes = Vec::new();
+        file.take(cyber_server::runtime::SnapshotPreparationReceipt::MAX_ENCODED_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(storage::fail)?;
+        if bytes.len() as u64 > cyber_server::runtime::SnapshotPreparationReceipt::MAX_ENCODED_BYTES
+        {
+            return Err("Native source phase exceeds limit".into());
+        }
+        let phase: SourcePhase = serde_json::from_slice(&bytes).map_err(storage::fail)?;
+        if phase.lifetime != *binding || phase.admitted != phase.origin.is_some() {
+            return Err("Native source phase changed owner".into());
+        }
+        Ok(phase)
+    }
+    pub(super) fn verify_native_preparation(
+        &self,
+        binding: &SnapshotLifetimeBinding,
+    ) -> Result<(), String> {
+        if self.read_source_phase(binding)?.admitted {
+            return Err("Native source effects may already have been admitted".into());
+        }
+        Ok(())
+    }
+    fn record_source_admission(
+        &self,
+        binding: &SnapshotLifetimeBinding,
+        origin: &cyber_server::runtime::SnapshotOrigin,
+    ) -> Result<(), String> {
+        let phase = self.read_source_phase(binding)?;
+        if origin.activity_id != binding.owner.activity_id
+            || origin.session_id != binding.owner.session_id
+            || origin.session_created_id != binding.owner.session_created_id
+            || origin.worktree_id != binding.owner.worktree_id
+        {
+            return Err("Foreign native source admission".into());
+        }
+        self.verify_worker_namespace(origin)?;
+        let (_, journal) = self.journal(&origin.binding.journal_id)?;
+        if journal.origin.as_ref() != Some(origin) || journal.ownership.is_none() {
+            return Err("Source admission lacks prepared native intent".into());
+        }
+        if phase.admitted {
+            return if phase.origin.as_ref() == Some(origin) {
+                Ok(())
+            } else {
+                Err("Native source origin changed".into())
+            };
+        }
+        let phase = SourcePhase {
+            lifetime: binding.clone(),
+            admitted: true,
+            origin: Some(origin.clone()),
+        };
+        let bytes = serde_json::to_vec(&phase).map_err(storage::fail)?;
+        if bytes.len() as u64 > cyber_server::runtime::SnapshotPreparationReceipt::MAX_ENCODED_BYTES
+        {
+            return Err("Native source phase exceeds limit".into());
+        }
+        self.reserve(
+            (bytes.len() as u64)
+                .checked_mul(2)
+                .ok_or("Snapshot source size overflow")?,
+        )?;
+        let directory = storage::existing_child(&self.namespace, "workers", true)?;
+        storage::atomic(
+            &directory,
+            binding
+                .source_phase
+                .as_deref()
+                .ok_or("Missing source phase")?,
+            &bytes,
+        )
     }
 }
 
@@ -256,6 +440,39 @@ mod tests {
         std::fs::remove_file(&file).unwrap();
         assert!(store.lock_lifetime(&binding).is_err());
         assert!(!file.exists());
+    }
+
+    #[test]
+    fn legacy_lifetime_stays_inspectable_but_never_grants_preparation_cancellation() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = store(temp.path());
+        let lifetime = store.reserve_lifetime(request(&store.root)).unwrap();
+        let mut binding = lifetime.binding().clone();
+        drop(lifetime);
+        // Reproduce a genuine version-1 record in the same private inode. It
+        // has valid lifetime ownership, but predates native source-phase proof.
+        binding.version = 1;
+        binding.source_phase = None;
+        let workers = storage::existing_child(&store.namespace, "workers", true).unwrap();
+        let mut file = workers
+            .open_with(
+                &binding.owner.activity_id,
+                cap_std::fs::OpenOptions::new().write(true).truncate(true),
+            )
+            .unwrap();
+        file.write_all(&serde_json::to_vec(&binding).unwrap())
+            .unwrap();
+        file.sync_all().unwrap();
+        let legacy = store.lock_lifetime(&binding).unwrap();
+        legacy.verify().unwrap();
+        assert!(legacy.verify_preparation(None).is_err());
+        drop(legacy);
+        assert!(store.reserve_lifetime(binding.owner.clone()).is_err());
+        let retained: SnapshotLifetimeBinding = serde_json::from_slice(
+            &storage::read(&workers, &binding.owner.activity_id, RECORD_LIMIT).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(retained, binding);
     }
 
     #[test]
@@ -333,15 +550,26 @@ mod tests {
         let store = store(temp.path());
         let directory = storage::existing_child(&store.namespace, "workers", true).unwrap();
         let stages = storage::names(&directory, 10).unwrap();
-        assert_eq!(stages.len(), 1);
-        assert!(stages[0].starts_with("preparing_"));
-        let bytes = storage::read(&directory, &stages[0], RECORD_LIMIT).unwrap();
+        assert_eq!(stages.len(), 2);
+        assert!(stages.iter().any(|name| name.starts_with("preparing_")));
+        assert!(stages.iter().any(|name| name.starts_with("phase_")));
+        let retained: Vec<_> = stages
+            .iter()
+            .map(|name| {
+                (
+                    name.clone(),
+                    storage::read(&directory, name, RECORD_LIMIT).unwrap(),
+                )
+            })
+            .collect();
         let lifetime = store.reserve_lifetime(request(&store.root)).unwrap();
-        assert_eq!(
-            storage::read(&directory, &stages[0], RECORD_LIMIT).unwrap(),
-            bytes
-        );
-        assert_eq!(storage::names(&directory, 10).unwrap().len(), 2);
+        for (name, bytes) in retained {
+            assert_eq!(
+                storage::read(&directory, &name, RECORD_LIMIT).unwrap(),
+                bytes
+            );
+        }
+        assert_eq!(storage::names(&directory, 10).unwrap().len(), 4);
         lifetime.verify().unwrap();
     }
 

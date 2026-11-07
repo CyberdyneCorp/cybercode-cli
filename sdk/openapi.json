@@ -7441,7 +7441,8 @@
           "unknown",
           "acknowledged",
           "resolved_by_another_request",
-          "cancelled_before_origin"
+          "cancelled_before_origin",
+          "cancelled_before_effects"
         ]
       },
       "SnapshotRecoveryReceipt": {
@@ -7594,6 +7595,16 @@
           },
           "warning": {
             "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -7628,6 +7639,12 @@
           },
           "file_identity": {
             "type": "string"
+          },
+          "source_phase": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -7719,6 +7736,22 @@
           "session_sequence": {
             "type": "integer",
             "format": "int64"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_admitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         },
         "required": [
@@ -24866,7 +24899,7 @@
     "/api/v1/sessions/{sessionID}/rewind/preparations": {
       "get": {
         "operationId": "v1.session.snapshotPreparations",
-        "summary": "List retained snapshot reservations without a published origin or native access",
+        "summary": "List retained preparation candidates without native access; review checks eligibility",
         "tags": [
           "session"
         ],
@@ -24964,7 +24997,7 @@
     "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/confirm": {
       "post": {
         "operationId": "v1.session.snapshotPreparationConfirm",
-        "summary": "Cancel only a fingerprint-confirmed unstarted snapshot preparation without moving files or transcript",
+        "summary": "Cancel only a fingerprint-confirmed pre-effect snapshot preparation without moving files or transcript",
         "tags": [
           "session"
         ],
@@ -25056,6 +25089,71 @@
             "name": "requestID",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotPreparationReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}/acknowledge": {
+      "post": {
+        "operationId": "v1.session.snapshotPreparationAcknowledge",
+        "summary": "Reconcile native metadata acknowledgement of an exact committed pre-effect cancellation without source changes",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
             "schema": {
               "type": "string"
             }

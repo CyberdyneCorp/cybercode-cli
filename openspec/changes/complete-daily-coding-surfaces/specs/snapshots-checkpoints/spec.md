@@ -103,7 +103,17 @@
 - **WHEN** the owner confirms a fingerprint review of a positive unstarted reservation under its exact reacquired native lifetime lock
 - **THEN** the writer atomically acknowledges only that activity and retains its cancellation request receipt, rechecking current Session/recovery authority without moving source files or transcript state
 - **AND** retry looks up the original durable pair without native access, changed or cross-owner request reuse refuses, and a lost commit reply does not dispatch another operation
-- **AND** live, legacy, generic, binary or already-launched owners refuse; independent checkout/process uncertainty remains fenced, and cancelling an unstarted resolution leaves its failed parent restore unresolved
+- **AND** live, legacy, generic, binary or source-admitted owners refuse; independent checkout/process uncertainty remains fenced, and cancelling an unstarted resolution leaves its failed parent restore unresolved
+
+#### Scenario: Published origin has no admitted source effects
+- **WHEN** an exited worker has a published origin but both its exact database history and version-2 native lifetime phase positively prove no admitted source effects
+- **THEN** fingerprint-confirmed cancellation SHALL preserve source files and transcript state, commit the exact paired cancellation receipt, and only then publish bounded native cancellation metadata
+- **AND** missing intent alone SHALL NOT grant authority, the original intent SHALL remain unchanged, and explicit acknowledgement SHALL reconcile metadata without replay
+
+#### Scenario: Database backup cannot erase native source admission
+- **WHEN** a database backup shows an unadmitted preparation but its exact native phase is admitted, missing or legacy
+- **THEN** preparation cancellation SHALL refuse without changing source files or deleting evidence
+- **AND** a lost reply after database source admission SHALL prevent source callback dispatch and SHALL NOT downgrade the durable admitted record
 
 #### Scenario: Session changes before a source effect
 - **WHEN** the Session revision changes after preparation but before the next source mutation

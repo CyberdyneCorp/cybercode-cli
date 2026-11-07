@@ -148,3 +148,12 @@ keep/rollback, reconciliation, Git journaling, reclamation and full native/clien
 acceptance remain required. Approval and current evidence are recorded in the daily
 coding change's tasks.md and implementation.md; publishing a prerequisite does not
 complete recovery or either issue.
+
+
+The local pre-effect recovery continuation adds version-2 native source phases,
+positive cancellation of an exited published origin before source admission, and
+metadata acknowledgement reconciliation. Database and native admission evidence
+must both permit cancellation; a database backup cannot erase native admission.
+Original intents and payloads remain retained. This is progress on the approved
+recovery protocol, with independent checkout ownership, Git journaling, safe cleanup,
+complete clients and full platform/cut acceptance still required before delivery.

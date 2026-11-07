@@ -795,6 +795,17 @@ fn managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_file
 #[test]
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_restart() {
+    cancelled_pre_effect_preparation(false);
+}
+
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn exited_origin_preparation_before_source_admission_is_cancelled_after_real_kill() {
+    cancelled_pre_effect_preparation(true);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn cancelled_pre_effect_preparation(published: bool) {
     let model = scripted_model::ScriptedModel::start(reply);
     let env = Env::new(&model);
     let repo = env.root.join("repo");
@@ -811,7 +822,7 @@ fn exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_res
     }
     env.exec(Some(&id), "after snapshot");
     let messages = env.messages(&id);
-    let activity = kill_before_origin(&env, &id, &first);
+    let activity = kill_before_source_admission(&env, &id, &first, published);
     let requests = model.requests().len();
     let target = env.root.join("preparation-owner-target");
     std::fs::write(&target, "later owner bytes").unwrap();
@@ -830,6 +841,14 @@ fn exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_res
     let receipt =
         json(&env.cyber(&["api", "POST", &format!("{route}/confirm"), "-d", &body]))["data"]
             .clone();
+    let acknowledge = format!("{route}/requests/before-origin/acknowledge");
+    assert_eq!(
+        json(&env.cyber(&["api", "POST", &acknowledge]))["data"],
+        receipt
+    );
+    if published {
+        assert_preparation_tombstone(&env, &receipt);
+    }
     kill_registered_service(&env);
     let repeated =
         json(&env.cyber(&["api", "POST", &format!("{route}/confirm"), "-d", &body]))["data"]
@@ -839,6 +858,10 @@ fn exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_res
         json(&env.cyber(&["api", "GET", &format!("{route}/requests/before-origin")]))["data"]
             .clone();
     assert_eq!(lookup, receipt);
+    assert_eq!(
+        json(&env.cyber(&["api", "POST", &acknowledge]))["data"],
+        receipt
+    );
     assert!(
         std::fs::symlink_metadata(repo.join("bulk_0000"))
             .unwrap()
@@ -856,7 +879,30 @@ fn exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_res
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn kill_before_origin(env: &Env, id: &str, first: &str) -> String {
+fn assert_preparation_tombstone(env: &Env, receipt: &Value) {
+    let namespace = std::fs::read_dir(env.root.join("cyber-home/data/snapshot/global"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let journal = namespace
+        .join("journals")
+        .join(receipt["origin"]["binding"]["journal_id"].as_str().unwrap());
+    let tombstone: Value =
+        serde_json::from_slice(&std::fs::read(journal.join("preparation.json")).unwrap()).unwrap();
+    assert_eq!(&tombstone, receipt);
+    assert_eq!(receipt["source_admitted"], false);
+    if let Ok(bytes) = std::fs::read(journal.join("intent.json")) {
+        let intent: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(intent["completed"], false);
+        assert_eq!(intent["acknowledged"], false);
+        assert!(intent["applied"].as_array().unwrap().is_empty());
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn kill_before_source_admission(env: &Env, id: &str, first: &str, published: bool) -> String {
     use rusqlite::OptionalExtension;
     let selection = reviewed_selection(env, first, "both", "commit");
     let preview = reviewed_preview(env, id, &selection);
@@ -879,7 +925,7 @@ fn kill_before_origin(env: &Env, id: &str, first: &str) -> String {
             .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     let activity = loop {
-        let found: Option<String> = db.query_row("SELECT aggregate_id FROM event e WHERE type='native.activity.changed.1' AND seq=0 AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 AND json_extract(data,'$.snapshot_origin') IS NULL AND json_extract(data,'$.snapshot_lifetime') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)", [id], |row| row.get(0)).optional().unwrap();
+        let found: Option<String> = db.query_row("SELECT aggregate_id FROM event e WHERE type='native.activity.changed.1' AND ((?2=1 AND seq=1 AND json_extract(data,'$.snapshot_origin') IS NOT NULL) OR (?2=0 AND seq=0 AND json_extract(data,'$.snapshot_origin') IS NULL)) AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 AND json_extract(data,'$.snapshot_source_admitted')=0 AND json_extract(data,'$.snapshot_lifetime') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)", rusqlite::params![id, i64::from(published)], |row| row.get(0)).optional().unwrap();
         if let Some(found) = found {
             break found;
         }
@@ -903,9 +949,14 @@ fn kill_before_origin(env: &Env, id: &str, first: &str) -> String {
         )
         .unwrap();
     let record: Value = serde_json::from_str(&data).unwrap();
-    assert!(
-        record["snapshot_origin"].is_null(),
-        "kill missed the pre-origin cut"
+    assert_eq!(
+        record["snapshot_origin"].is_object(),
+        published,
+        "kill missed the selected origin boundary"
+    );
+    assert_eq!(
+        record["snapshot_source_admitted"], false,
+        "kill missed the pre-effect boundary"
     );
     activity
 }
@@ -1332,7 +1383,7 @@ fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn assert_snapshot_lifetime(namespace: &std::path::Path, activity: &Value, origin: &Value) {
     let lifetime = &activity["snapshot_lifetime"];
-    assert_eq!(lifetime["version"], 1);
+    assert_eq!(lifetime["version"], 2);
     assert_eq!(lifetime["owner"]["activity_id"], origin["activity_id"]);
     assert_eq!(
         lifetime["owner"]["session_created_id"],

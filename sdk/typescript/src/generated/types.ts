@@ -4726,6 +4726,7 @@ export type SnapshotLifetimeBinding = {
   namespace_identity: string;
   directory_identity: string;
   file_identity: string;
+  source_phase?: string | null;
 };
 
 export type SnapshotLifetimeRequest = {
@@ -4763,6 +4764,8 @@ export type SnapshotPreparationReceipt = {
   lifetime: SnapshotLifetimeBinding;
   native_sequence: number;
   session_sequence: number;
+  origin?: SnapshotOrigin | null;
+  source_admitted?: boolean | null;
 };
 
 export type SnapshotPreparationReview = {
@@ -4772,6 +4775,7 @@ export type SnapshotPreparationReview = {
   session_sequence: number;
   confirmation: string;
   warning: string;
+  origin?: SnapshotOrigin | null;
 };
 
 /** Retained filesystem evidence; completion does not acknowledge a Session/native receipt. */
@@ -4865,7 +4869,7 @@ export type SnapshotRecoverySelection = {
   action: SnapshotRecoveryAction;
 };
 
-export type SnapshotRecoveryState = "pending" | "unknown" | "acknowledged" | "resolved_by_another_request" | "cancelled_before_origin";
+export type SnapshotRecoveryState = "pending" | "unknown" | "acknowledged" | "resolved_by_another_request" | "cancelled_before_origin" | "cancelled_before_effects";
 
 /**
  * Exact native intent and Session batch consumed by an ordinary restore.

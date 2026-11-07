@@ -1094,3 +1094,84 @@ scope is ordinary `append`; it does not intercept checked/paired appends. Writer
 SQLite triggers now model the abrupt disposal and second-owner insertion cuts,
 and the final suites above pass. No production Store fault semantics were changed.
 This increment remains local and does not complete M2–M8, issue #93 or issue #92.
+
+
+### Published-origin cancellation before source admission (2026-11-06, local)
+
+This continuation extends the exited-preparation path to a published origin with
+positive unadmitted evidence. Before its first source callback a new file-copy worker
+commits native activity sequence 2 with `snapshot_source_admitted: true`, publishes
+the exact origin and admitted phase in private native metadata, then rechecks
+current authority. The local scope advances only after observing the Store reply;
+a lost reply cannot run the callback or overwrite durable admission with disposal.
+All native resources remain inside the actual worker through final filesystem work.
+
+Review found database-only false evidence insufficient after restoration of an older
+database backup. Version-2 lifetime bindings now name a native phase file, flushed
+before stable lifetime publication. It can only advance to admitted, never reset.
+Cancellation requires an exited exact lifetime lock, positive native false evidence,
+and, for an origin, exact database false reservation/launch history. Missing,
+legacy or admitted native phase refuses. Historical cancellation receipts remain
+readable without acquiring new authority. The compatibility marker prevents a
+previous worker-catalog binary from mutating this Store while retaining event bytes.
+
+The paired Store cancellation retains the original activity, request, creation,
+Session revision, origin and lifetime proof. Only after its observed commit does
+native metadata receive `preparation.json`; the original intent remains unchanged.
+The new preparation request `/acknowledge` route reconciles metadata without source
+mutation, inference or transcript movement. Lookup and duplicate confirmation only
+read the original durable pair. A cancelled resolution reports
+`cancelled_before_effects` when it had an origin; its failed parent remains fenced.
+Quota includes native phases, orphan construction files and cancellation receipts;
+existing conservative GC protection remains, with reclamation still incomplete.
+
+Regression coverage includes rejected admission and a real SQLite committed-but-lost
+reply before callback dispatch, native database-backup disagreement/missing phase,
+legacy lifetime refusal, cap/retry, missing/corrupt intent and later symlink owner
+bytes. A real service kill observes the exact origin/false admission boundary over
+1280 binary source files; cancellation/restart/retry preserves later owner edits
+and transcript, then permits an ordinary prompt in the unmanaged non-Git fixture.
+This real-process observation does not prove the finer before-intent cut; the native
+missing-intent case is separate. Independent checkout-resource proof, Git-native
+recovery, reclamation, complete clients and full M8 platform/cut coverage remain
+open. Neither issue nor the whole recovery delivery is complete or merge-ready.
+
+
+Local verification for this continuation: 416 server unit tests passed (one ignored
+existing subprocess fixture), plus all 22 affected integrations (4 idle cancellation,
+13 Location activity, 5 rewind preview). The complete snapshot suite passed 46 unit,
+18 file-copy and 17 Git cases; the added legacy-lifetime regression was then included
+in a passing 47-case native unit run, with its subprocess child fixture listed
+ignored and exercised by its parent tests. All 16 real CLI branch/recovery tests
+passed; the two early-kill cases were rerun successfully after adding explicit
+acknowledgement calls before/after restart and original-intent/tombstone assertions.
+Store tests passed all 59 cases, including the previous-catalog compatibility gate.
+OpenAPI consistency and generated SDK checks passed; SDK typechecking and 134 tests
+passed, with 10 configured process tests skipped because `CYBER_BIN` was unset.
+Strict pinned OpenSpec passed 117 items; lint reports 0 errors/25 warnings and the
+inventory remains 53 capabilities/1030 requirements. Formatting and diff checks
+passed. Server/snapshot/CLI all-target Clippy passed with warnings denied, followed
+by another passing server/snapshot check after the final port review. Native
+sandbox deprecation and Darwin linker warnings were observed without
+assigning an origin to main. Linux/Windows, full-workspace and TUI/App recovery
+acceptance were not run here.
+
+The code-review skill was applied to every changed runtime, port, native adapter,
+Store migration, HTTP, test, documentation and generated SDK file. The runtime/native
+port separation fits the repository. Review checked exact lifetime and journal
+routes, private file identities/modes/aliases, positive source-admission history,
+writer resource retention and lost replies, request identity/lookup, current owner
+authority, encoded/quota bounds, legacy compatibility and no source/transcript replay.
+It corrected database-only proof by adding native phases and made the default
+adapter preparation verification refuse without an explicit implementation. New
+public acknowledgement coverage reaches the actual route through the real CLI;
+metadata cap/retry and missing-intent behavior also have native regression tests.
+No critical or major findings remain for this continuation; complete recovery still
+has the parent acceptance gaps described above.
+
+Remote refresh confirmed main remains `db9e171e`, issues #92/#93 are open and no
+PRs are open. This continuation remains local; no merge or accepted delivery is
+claimed. The next ownership gap is the managed checkout acquisition/settlement cut:
+its Session-owned claim must become independent exact worker evidence before an
+exited preparation can safely settle that resource. No existing unknown lease may
+be cleared merely because the snapshot worker exited.

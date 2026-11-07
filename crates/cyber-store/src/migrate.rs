@@ -177,6 +177,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261106000000_snapshot_worker_ownership",
         sql: include_str!("../migrations/20261106000000_snapshot_worker_ownership.sql"),
     },
+    Migration {
+        id: "20261106010000_snapshot_source_admission",
+        sql: include_str!("../migrations/20261106010000_snapshot_source_admission.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -306,13 +310,53 @@ mod tests {
         let Outcome::TooNew(unknown) = migrate(&mut reopened, legacy).unwrap() else {
             panic!("older binaries accepted snapshot-worker storage for mutation");
         };
-        assert_eq!(unknown, ["20261106000000_snapshot_worker_ownership"]);
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
         let retained: String = reopened
             .query_row(
                 "SELECT data FROM event WHERE id='evt_retained'",
                 [],
                 |row| row.get(0),
             )
+            .unwrap();
+        assert_eq!(retained, evidence);
+    }
+
+    #[test]
+    fn source_admission_marker_preserves_evidence_and_rejects_the_previous_worker_catalog() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source-admission.db");
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261106010000_snapshot_source_admission")
+            .unwrap();
+        let legacy = &MIGRATIONS[..at];
+        let mut conn = Connection::open(&path).unwrap();
+        assert!(matches!(
+            migrate(&mut conn, legacy).unwrap(),
+            Outcome::Current
+        ));
+        let evidence = r#"{"session_id":"ses_retained","snapshot_worker":true,"status":"unknown","snapshot_source_admitted":true}"#;
+        conn.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_source','op_source',0,'native.activity.changed.1',?1,1)", [evidence]).unwrap();
+        assert!(matches!(
+            migrate(&mut conn, MIGRATIONS).unwrap(),
+            Outcome::Current
+        ));
+        drop(conn);
+        let mut reopened = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut reopened, legacy).unwrap() else {
+            panic!("previous worker catalog admitted source-admission storage");
+        };
+        assert_eq!(unknown, ["20261106010000_snapshot_source_admission"]);
+        let retained: String = reopened
+            .query_row("SELECT data FROM event WHERE id='evt_source'", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(retained, evidence);
     }

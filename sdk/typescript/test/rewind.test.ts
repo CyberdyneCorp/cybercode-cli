@@ -89,3 +89,14 @@ test("preparation recovery lists, reviews, confirms and looks up an exact cancel
   assert.deepEqual(JSON.parse(calls[2]!.body!), confirmation);
   assert.equal(calls[3]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/preparations/op_fixture/requests/cancel%2Fwith%20space");
 });
+
+test("pre-effect cancellation acknowledgement retains origin proof without replay input", async () => {
+  const receipt = { activity_id: "op_fixture", request_id: "cancel/with space",
+    origin: { activity_id: "op_fixture" }, source_admitted: false,
+    lifetime: { version: 2, source_phase: "phase_fixture" } };
+  const { client, calls } = mockClient(() => json(200, { data: receipt }));
+  assert.deepEqual(await client.session.snapshotPreparationAcknowledge("ses_owner", "op_fixture", receipt.request_id), receipt);
+  assert.equal(calls[0]!.method, "POST");
+  assert.equal(calls[0]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/preparations/op_fixture/requests/cancel%2Fwith%20space/acknowledge");
+  assert.ok(!calls[0]!.body);
+});

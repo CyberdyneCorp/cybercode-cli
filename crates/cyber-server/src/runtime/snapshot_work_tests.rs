@@ -99,10 +99,22 @@ struct LifetimePermit {
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 impl super::super::SnapshotLifetime for LifetimePermit {
+    fn admit_source(&self, _: &SnapshotOrigin) -> Result<(), String> {
+        Ok(())
+    }
     fn binding(&self) -> &super::super::SnapshotLifetimeBinding {
         &self.binding
     }
     fn verify(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn verify_preparation(&self, _: Option<&SnapshotOrigin>) -> Result<(), String> {
+        Ok(())
+    }
+    fn acknowledge_preparation(
+        &mut self,
+        _: &super::super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
         Ok(())
     }
 }
@@ -143,12 +155,13 @@ impl Snapshots for Lifetimes {
             }
             Ok(Some(Box::new(LifetimePermit {
                 binding: super::super::SnapshotLifetimeBinding {
-                    version: 1,
+                    version: 2,
                     owner: request,
-                    root_identity: "fixture-root".into(),
+                    root_identity: "instrumented_root".into(),
                     namespace_identity: "fixture-namespace".into(),
                     directory_identity: "fixture-directory".into(),
                     file_identity: "fixture-file".into(),
+                    source_phase: Some("phase_fixture".into()),
                 },
                 _permit: permit,
             })
@@ -204,6 +217,191 @@ fn crash_unstarted(owner: SnapshotWorker) -> String {
         })
         .unwrap();
     id
+}
+
+#[tokio::test]
+async fn published_origin_with_positive_false_admission_can_cancel_but_admitted_source_cannot() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            foreign: false,
+        }),
+    );
+    let native_binding = binding(temp.path().canonicalize().unwrap());
+    let result = worker(&runtime, &session)
+        .await
+        .run(move |work| {
+            work.begin(native_binding).unwrap();
+            Err(RestoreError::Failed(
+                "cut before intent or source admission".into(),
+            ))
+        })
+        .await;
+    assert!(result.is_err());
+    let origin: SnapshotOrigin =
+        serde_json::from_value(latest(&runtime, &session)["snapshot_origin"].clone()).unwrap();
+    let review = runtime
+        .snapshot_preparation_review(&session, &origin.activity_id)
+        .await
+        .unwrap();
+    assert_eq!(review.origin, Some(origin.clone()));
+    let receipt = runtime
+        .snapshot_preparation_confirm(
+            &session,
+            &origin.activity_id,
+            &super::super::SnapshotPreparationConfirmation {
+                confirmation: review.confirmation,
+                request_id: "cancel-before-source".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(receipt.source_admitted, Some(false));
+    assert_eq!(receipt.origin, Some(origin));
+    let admitted = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    assert!(
+        runtime
+            .snapshot_preparation_review(&session, &admitted.activity_id)
+            .await
+            .is_err()
+    );
+    assert_eq!(latest(&runtime, &session)["snapshot_source_admitted"], true);
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
+async fn rejected_source_admission_prevents_the_callback_and_retains_positive_preparation() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            foreign: false,
+        }),
+    );
+    let owner = worker(&runtime, &session).await;
+    let native_binding = binding(temp.path().canonicalize().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let calls = count.clone();
+    runtime
+        .inner
+        .store
+        .set_append_fault(Some(Arc::new(|_, event| {
+            event.data["phase"] == "snapshot_source_admitted"
+        })));
+    assert!(
+        owner
+            .run(move |work| {
+                work.begin(native_binding).unwrap();
+                assert!(
+                    work.effect(|| {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                    .is_err()
+                );
+                Err(RestoreError::Failed("admission rejected".into()))
+            })
+            .await
+            .is_err()
+    );
+    runtime.inner.store.set_append_fault(None);
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    let record = latest(&runtime, &session);
+    assert_eq!(record["snapshot_source_admitted"], false);
+    let activity = record["snapshot_origin"]["activity_id"].as_str().unwrap();
+    runtime
+        .snapshot_preparation_review(&session, activity)
+        .await
+        .unwrap();
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
+async fn lost_source_admission_reply_never_calls_the_source_and_never_becomes_false_proof() {
+    fn lost_reply(_: &rusqlite::hooks::Wal, _: i32) -> rusqlite::Result<()> {
+        Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("lost source-admission reply".into()),
+        ))
+    }
+    let (temp, base, _, _, _) = super::super::binary_documents_tests::fixture().await;
+    let store = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        cyber_core::paths::DatabaseLocation::File(temp.path().join("source-admission.db")),
+        Runtime::registry(),
+    ))
+    .unwrap();
+    let runtime = runtime_with_snapshots(
+        &base,
+        Arc::new(store),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            foreign: false,
+        }),
+    );
+    let session = runtime
+        .create_session(super::super::CreateSession {
+            directory: temp.path().to_str().unwrap().into(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let owner = worker(&runtime, &session).await;
+    let id = owner.scope.id().to_owned();
+    let binding = binding(temp.path().canonicalize().unwrap());
+    let store = runtime.inner.store.clone();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let effects = calls.clone();
+    assert!(
+        owner
+            .run(move |work| {
+                work.begin(binding).unwrap();
+                store
+                    .transaction(|tx| {
+                        tx.wal_hook(Some(lost_reply));
+                        Ok(())
+                    })
+                    .unwrap();
+                assert!(
+                    work.effect(|| {
+                        effects.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                    .is_err()
+                );
+                Err(RestoreError::Failed(
+                    "admission outcome requires journal recovery".into(),
+                ))
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let record = latest(&runtime, &session);
+    assert_eq!(record["snapshot_source_admitted"], true);
+    assert_eq!(record["phase"], "snapshot_source_admitted");
+    assert!(
+        runtime
+            .snapshot_preparation_review(&session, &id)
+            .await
+            .is_err()
+    );
+    runtime.shutdown().await;
+    base.shutdown().await;
 }
 
 #[tokio::test]
@@ -932,6 +1130,7 @@ async fn failed_snapshot(runtime: &Runtime, session: &str, directory: PathBuf) -
         owner
             .run(move |work| {
                 work.begin(binding(directory)).unwrap();
+                let _ = work.effect(|| Err::<(), String>("interrupted source operation".into()));
                 Err(RestoreError::Failed("interrupted native restore".into()))
             })
             .await

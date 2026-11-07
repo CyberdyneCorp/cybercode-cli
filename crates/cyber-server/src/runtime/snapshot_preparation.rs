@@ -1,4 +1,4 @@
-//! Consuming proof for an exited snapshot worker that never published an origin.
+//! Consuming proof for an exited snapshot worker with no admitted source effects.
 use super::snapshot_recovery_authority::RecoveryAuthority;
 use super::{Runtime, RuntimeError, SnapshotLifetime, SnapshotLifetimeBinding, activity};
 use cyber_store::{NewEvent, StoreError};
@@ -29,6 +29,7 @@ pub struct SnapshotPreparationReview {
     pub session_sequence: i64,
     pub confirmation: String,
     pub warning: String,
+    pub origin: Option<super::SnapshotOrigin>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +40,14 @@ pub struct SnapshotPreparationReceipt {
     pub lifetime: SnapshotLifetimeBinding,
     pub native_sequence: i64,
     pub session_sequence: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<super::SnapshotOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_admitted: Option<bool>,
+}
+
+impl SnapshotPreparationReceipt {
+    pub const MAX_ENCODED_BYTES: u64 = 64 * 1024;
 }
 
 struct Target {
@@ -65,9 +74,9 @@ pub(super) fn validate_event(data: &serde_json::Value) -> Result<(), String> {
     validate_receipt(&receipt).map_err(|error| error.to_string())
 }
 fn validate_receipt(receipt: &SnapshotPreparationReceipt) -> Result<(), StoreError> {
-    if !(0..=1).contains(&receipt.native_sequence)
+    if !(0..=2).contains(&receipt.native_sequence)
         || receipt.session_sequence < 0
-        || receipt.lifetime.version != 1
+        || !matches!(receipt.lifetime.version, 1 | 2)
         || receipt.lifetime.owner.activity_id != receipt.activity_id
         || receipt.request_id.is_empty()
         || receipt.request_id.len() > 256
@@ -79,6 +88,26 @@ fn validate_receipt(receipt: &SnapshotPreparationReceipt) -> Result<(), StoreErr
             .all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(invalid("Invalid preparation cancellation receipt"));
+    }
+    match &receipt.origin {
+        None if receipt.native_sequence <= 1 && receipt.source_admitted != Some(true) => {}
+        Some(origin)
+            if receipt.source_admitted == Some(false)
+                && receipt.lifetime.version == 2
+                && receipt.lifetime.source_phase.is_some()
+                && receipt.native_sequence >= 1
+                && origin.version == 1
+                && origin.activity_id == receipt.activity_id
+                && origin.session_id == receipt.lifetime.owner.session_id
+                && origin.session_created_id == receipt.lifetime.owner.session_created_id
+                && origin.worktree_id == receipt.lifetime.owner.worktree_id
+                && origin.binding.directory == receipt.lifetime.owner.directory
+                && origin.binding.root_identity == receipt.lifetime.root_identity => {}
+        _ => {
+            return Err(invalid(
+                "Cancellation receipt has no positive pre-effect proof",
+            ));
+        }
     }
     Ok(())
 }
@@ -98,27 +127,64 @@ fn target(db: &Connection, session: &str, activity: &str) -> Result<Target, Stor
     let reserved: activity::Record =
         serde_json::from_str(&first).map_err(|_| invalid("Invalid snapshot reservation"))?;
     validate_unstarted(&reserved)?;
-    validate_unstarted(&record)?;
+    validate_pre_effect(&record)?;
     let binding = record
         .snapshot_lifetime
         .clone()
         .ok_or_else(|| invalid("Historical reservation has no exact lifetime proof"))?;
     if kind != activity::CHANGED
-        || !(0..=1).contains(&sequence)
+        || !(0..=2).contains(&sequence)
         || reserved.status != "pending"
         || record.session_id != session
         || reserved.session_id != session
-        || (sequence == 0 && record.status != "pending")
-        || (sequence == 1 && record.status != "unknown")
         || reserved.snapshot_lifetime != record.snapshot_lifetime
         || reserved.snapshot_request != record.snapshot_request
-        || binding.version != 1
+        || binding.version != 2
         || binding.owner.activity_id != activity
         || binding.owner.session_id != session
     {
         return Err(invalid(
             "Snapshot reservation differs from its unstarted owner",
         ));
+    }
+    match &record.snapshot_origin {
+        None if (sequence == 0 && record.status == "pending"
+            || sequence == 1 && record.status == "unknown")
+            && record.phase == "reserved" => {}
+        Some(origin)
+            if reserved.snapshot_source_admitted == Some(false)
+                && record.snapshot_source_admitted == Some(false)
+                && (sequence == 1 && record.status == "pending"
+                    || sequence == 2 && record.status == "unknown")
+                && record.phase == "launching" =>
+        {
+            let data: String = db.query_row(
+                "SELECT data FROM event WHERE aggregate_id=?1 AND seq=1 AND type=?2",
+                [activity, activity::CHANGED],
+                |row| row.get(0),
+            )?;
+            let launched: activity::Record =
+                serde_json::from_str(&data).map_err(|_| invalid("Invalid preparation origin"))?;
+            validate_pre_effect(&launched)?;
+            if origin.version != 1
+                || launched.snapshot_origin.as_ref() != Some(origin)
+                || launched.status != "pending"
+                || launched.phase != "launching"
+                || launched.session_id != session
+                || launched.snapshot_lifetime != record.snapshot_lifetime
+                || launched.snapshot_request != record.snapshot_request
+                || launched.snapshot_source_admitted != Some(false)
+                || origin.activity_id != activity
+                || origin.session_id != session
+                || origin.session_created_id != binding.owner.session_created_id
+                || origin.worktree_id != binding.owner.worktree_id
+                || origin.binding.directory != binding.owner.directory
+                || origin.binding.root_identity != binding.root_identity
+            {
+                return Err(invalid("Preparation origin differs from its reservation"));
+            }
+        }
+        _ => return Err(invalid("Source effects may already have been admitted")),
     }
     let created: String = db.query_row(
         "SELECT id FROM event WHERE aggregate_id=?1 AND type=?2 ORDER BY seq LIMIT 1",
@@ -136,10 +202,16 @@ fn target(db: &Connection, session: &str, activity: &str) -> Result<Target, Stor
     })
 }
 fn validate_unstarted(record: &activity::Record) -> Result<(), StoreError> {
+    validate_pre_effect(record)?;
+    if record.snapshot_origin.is_some() || record.phase != "reserved" {
+        return Err(invalid("Reservation is not unstarted"));
+    }
+    Ok(())
+}
+fn validate_pre_effect(record: &activity::Record) -> Result<(), StoreError> {
     if !record.snapshot_worker
         || record.binary_document.is_some()
-        || record.phase != "reserved"
-        || record.snapshot_origin.is_some()
+        || record.snapshot_source_admitted == Some(true)
         || record.snapshot_receipt.is_some()
         || record.snapshot_restore_receipt.is_some()
         || record.snapshot_preparation_receipt.is_some()
@@ -150,6 +222,61 @@ fn validate_unstarted(record: &activity::Record) -> Result<(), StoreError> {
     }
     Ok(())
 }
+fn acknowledged_target(
+    db: &Connection,
+    receipt: &SnapshotPreparationReceipt,
+) -> Result<Target, StoreError> {
+    validate_receipt(receipt)?;
+    let owner = &receipt.lifetime.owner;
+    let created: String = db.query_row(
+        "SELECT id FROM event WHERE aggregate_id=?1 AND type=?2 ORDER BY seq LIMIT 1",
+        [&owner.session_id, super::events::CREATED],
+        |row| row.get(0),
+    )?;
+    let (request_seq, request_kind, data): (i64, String, String) = db.query_row(
+        "SELECT seq,type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+        [request_owner(&created, &receipt.request_id)],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let request: SnapshotPreparationReceipt =
+        serde_json::from_str(&data).map_err(|_| invalid("Invalid preparation request receipt"))?;
+    let (sequence, kind, raw): (i64, String, String) = db.query_row(
+        "SELECT seq,type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+        [&receipt.activity_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let record: activity::Record =
+        serde_json::from_str(&raw).map_err(|_| invalid("Invalid preparation owner"))?;
+    if created != owner.session_created_id
+        || request_seq != 0
+        || request_kind != CANCELLED
+        || request != *receipt
+        || sequence != receipt.native_sequence + 1
+        || kind != activity::CHANGED
+        || !record.snapshot_worker
+        || record.binary_document.is_some()
+        || record.session_id != owner.session_id
+        || record.status != "settled"
+        || record.phase != PHASE
+        || record.snapshot_preparation_receipt.as_ref() != Some(receipt)
+        || record.snapshot_origin != receipt.origin
+        || record.snapshot_source_admitted != receipt.source_admitted
+        || record.snapshot_lifetime.as_ref() != Some(&receipt.lifetime)
+        || record.snapshot_receipt.is_some()
+        || record.snapshot_restore_receipt.is_some()
+    {
+        return Err(invalid(
+            "Preparation receipt lacks its exact durable native pair",
+        ));
+    }
+    Ok(Target {
+        sequence,
+        raw,
+        record,
+        binding: receipt.lifetime.clone(),
+    })
+}
+
 fn request_owner(created: &str, request: &str) -> String {
     use sha2::{Digest, Sha256};
     let bytes = serde_json::to_vec(&("snapshot-preparation-request-v1", created, request))
@@ -208,9 +335,14 @@ impl Worker {
         if self.control.stop.is_cancelled() {
             return Err(invalid("Snapshot preparation cancellation was revoked"));
         }
-        self.proof.verify().map_err(|error| invalid(&error))?;
+        self.proof
+            .verify_preparation(self.target.record.snapshot_origin.as_ref())
+            .map_err(|error| invalid(&error))?;
         let owner = &self.target.binding.owner;
-        let current = target(db, &owner.session_id, &owner.activity_id)?;
+        let current = match self.target.record.snapshot_preparation_receipt.as_ref() {
+            Some(receipt) => acknowledged_target(db, receipt)?,
+            None => target(db, &owner.session_id, &owner.activity_id)?,
+        };
         let sequence: i64 = db.query_row(
             "SELECT MAX(seq) FROM event WHERE aggregate_id=?1",
             [&owner.session_id],
@@ -243,6 +375,8 @@ impl Worker {
                 lifetime: self.target.binding.clone(),
                 native_sequence: self.target.sequence,
                 session_sequence: self.sequence,
+                origin: self.target.record.snapshot_origin.clone(),
+                source_admitted: self.target.record.snapshot_source_admitted,
             };
             let mut record = self.target.record.clone();
             record.status = "settled".into();
@@ -278,9 +412,11 @@ impl Worker {
                     Ok((events, (self, receipt)))
                 })
                 .map_err(preparation_error)?;
+            let mut worker = worker;
             worker
                 .handle
                 .acknowledge_snapshot_uncertainty(&receipt.activity_id);
+            worker.proof.acknowledge_preparation(&receipt).map_err(|error| RuntimeError::Conflict(format!("Preparation cancellation committed; native journal acknowledgement requires reconciliation: {error}")))?;
             Ok::<_, RuntimeError>(receipt)
         });
         let result = joined.await.map_err(|_| {
@@ -301,7 +437,7 @@ impl Runtime {
         self.session_info(session).await?;
         let session = session.to_owned();
         self.inner.store.read(move |db| {
-            let mut query = db.prepare("SELECT aggregate_id,data FROM event e WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 AND json_extract(data,'$.status')<>'settled' AND json_extract(data,'$.snapshot_origin') IS NULL AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq) ORDER BY aggregate_id LIMIT 4097")?;
+            let mut query = db.prepare("SELECT aggregate_id,data FROM event e WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 AND json_extract(data,'$.status')<>'settled' AND COALESCE(json_extract(data,'$.snapshot_source_admitted'),0)=0 AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq) ORDER BY aggregate_id LIMIT 4097")?;
             let rows = query.query_map([session], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
             let mut result = Vec::new();
             for row in rows {
@@ -317,6 +453,7 @@ impl Runtime {
         &self,
         session: &str,
         activity: &str,
+        acknowledged: Option<SnapshotPreparationReceipt>,
     ) -> Result<Worker, RuntimeError> {
         let lifecycle = self.memory_mutation_lease().await?;
         let handle = self.inner.handle(session).await?;
@@ -341,7 +478,10 @@ impl Runtime {
             .store
             .read(move |db| {
                 let tx = db.unchecked_transaction()?;
-                let result = target(&tx, &source, &owner)?;
+                let result = match acknowledged.as_ref() {
+                    Some(receipt) => acknowledged_target(&tx, receipt)?,
+                    None => target(&tx, &source, &owner)?,
+                };
                 tx.commit()?;
                 Ok(result)
             })
@@ -412,13 +552,14 @@ impl Runtime {
         session: &str,
         activity: &str,
     ) -> Result<SnapshotPreparationReview, RuntimeError> {
-        let worker = self.preparation_worker(session, activity).await?;
+        let worker = self.preparation_worker(session, activity, None).await?;
         let store = self.inner.store.clone();
         tokio::task::spawn_blocking(move || {
             let worker = store.read(move |db| { let tx = db.unchecked_transaction()?; worker.authorize(&tx)?; tx.commit()?; Ok(worker) }).map_err(preparation_error)?;
             Ok(SnapshotPreparationReview { activity_id: worker.target.binding.owner.activity_id.clone(), lifetime: worker.target.binding.clone(),
                 native_sequence: worker.target.sequence, session_sequence: worker.sequence, confirmation: worker.fingerprint()?,
-                warning: "Cancels only this unstarted snapshot preparation. Files and transcript are preserved; checkout and process uncertainty remain independent.".into() })
+                origin: worker.target.record.snapshot_origin.clone(),
+                warning: "Cancels only this pre-effect snapshot preparation. Files and transcript are preserved; checkout and process uncertainty remain independent.".into() })
         }).await.map_err(|_| RuntimeError::Conflict("Snapshot preparation review interrupted".into()))?
     }
     pub async fn snapshot_preparation_confirm(
@@ -449,10 +590,55 @@ impl Runtime {
             }
             return Ok(receipt);
         }
-        self.preparation_worker(session, activity)
+        self.preparation_worker(session, activity, None)
             .await?
             .confirm(confirmation.clone())
             .await
+    }
+    pub async fn snapshot_preparation_acknowledge(
+        &self,
+        session: &str,
+        activity: &str,
+        request: &str,
+    ) -> Result<SnapshotPreparationReceipt, RuntimeError> {
+        let receipt = self
+            .snapshot_preparation_lookup(session, activity, request)
+            .await?
+            .ok_or_else(|| {
+                RuntimeError::Conflict("No committed preparation cancellation receipt".into())
+            })?;
+        if receipt.origin.is_none() {
+            return Ok(receipt);
+        }
+        let worker = self
+            .preparation_worker(session, activity, Some(receipt.clone()))
+            .await?;
+        let cancelled = worker.control.stop.clone().drop_guard();
+        let store = self.inner.store.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut worker = store
+                .read(move |db| {
+                    let tx = db.unchecked_transaction()?;
+                    worker.authorize(&tx)?;
+                    tx.commit()?;
+                    Ok(worker)
+                })
+                .map_err(preparation_error)?;
+            worker
+                .proof
+                .acknowledge_preparation(&receipt)
+                .map_err(RuntimeError::Conflict)?;
+            Ok(receipt)
+        })
+        .await
+        .map_err(|_| {
+            RuntimeError::Conflict(
+                "Preparation journal acknowledgement interrupted; reconcile its retained receipt"
+                    .into(),
+            )
+        })?;
+        cancelled.disarm();
+        result
     }
     pub async fn snapshot_preparation_lookup(
         &self,
@@ -493,27 +679,7 @@ impl Runtime {
             {
                 return Err(invalid("Preparation request belongs to another owner"));
             }
-            let (seq, kind, data): (i64, String, String) = tx.query_row(
-                "SELECT seq,type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
-                [&activity],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )?;
-            let native: activity::Record =
-                serde_json::from_str(&data).map_err(|_| invalid("Invalid preparation owner"))?;
-            if seq != receipt.native_sequence + 1
-                || kind != activity::CHANGED
-                || !native.snapshot_worker
-                || native.binary_document.is_some()
-                || native.session_id != source
-                || receipt.lifetime.owner.activity_id != activity
-                || native.status != "settled"
-                || native.phase != PHASE
-                || native.snapshot_preparation_receipt.as_ref() != Some(&receipt)
-                || native.snapshot_origin.is_some()
-                || native.snapshot_lifetime.as_ref() != Some(&receipt.lifetime)
-            {
-                return Err(invalid("Preparation receipt lacks its exact native pair"));
-            }
+            acknowledged_target(&tx, &receipt)?;
             tx.commit()?;
             Ok(Some(receipt))
         }).map_err(preparation_error)?;

@@ -191,7 +191,11 @@ impl Runtime {
                         "Preparation cancellation lacks its durable pair".into(),
                     ));
                 }
-                super::SnapshotRecoveryState::CancelledBeforeOrigin
+                if cancelled.origin.is_some() {
+                    super::SnapshotRecoveryState::CancelledBeforeEffects
+                } else {
+                    super::SnapshotRecoveryState::CancelledBeforeOrigin
+                }
             }
             ("unknown", None) | ("settled", None) => super::SnapshotRecoveryState::Unknown,
             ("settled", Some(receipt)) if receipt.request_id == request_id => {

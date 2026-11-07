@@ -40,6 +40,8 @@ pub(super) struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_preparation_receipt: Option<super::SnapshotPreparationReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_source_admitted: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_bindings: Option<Vec<super::admission_authority::Binding>>,
 }
 pub(super) struct Scope {
@@ -52,6 +54,7 @@ pub(super) struct Scope {
     pub control: Arc<Control>,
     launched: bool,
     settled: bool,
+    source_admitted: std::sync::Mutex<bool>,
 }
 enum Authority {
     Ordinary(AdmissionAuthority),
@@ -134,6 +137,7 @@ impl Scope {
             snapshot_request: Some(request.clone()),
             snapshot_receipt: None,
             snapshot_restore_receipt: None,
+            snapshot_source_admitted: lifetime.as_ref().map(|_| false),
             snapshot_lifetime: lifetime,
             snapshot_preparation_receipt: None,
             admission_bindings: Some(authority.bindings().to_vec()),
@@ -177,6 +181,7 @@ impl Scope {
             control,
             launched: false,
             settled: false,
+            source_admitted: std::sync::Mutex::new(false),
         })
     }
     async fn reserve_owner(
@@ -202,6 +207,7 @@ impl Scope {
             snapshot_request: None,
             snapshot_receipt: None,
             snapshot_restore_receipt: None,
+            snapshot_source_admitted: lifetime.as_ref().map(|_| false),
             snapshot_lifetime: lifetime,
             snapshot_preparation_receipt: None,
             admission_bindings: Some(authority.bindings.clone()),
@@ -232,6 +238,7 @@ impl Scope {
             control,
             launched: false,
             settled: false,
+            source_admitted: std::sync::Mutex::new(false),
         })
     }
     pub fn launch(&mut self) -> Result<(), RuntimeError> {
@@ -271,6 +278,63 @@ impl Scope {
             .then_some(self.record.snapshot_origin.as_ref())
             .flatten()
     }
+    fn sequence(&self) -> i64 {
+        if *self
+            .source_admitted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            2
+        } else if self.launched {
+            1
+        } else {
+            0
+        }
+    }
+    fn snapshot_record(&self) -> Record {
+        let mut record = self.record.clone();
+        if record.snapshot_source_admitted.is_some() {
+            let admitted = *self
+                .source_admitted
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            record.snapshot_source_admitted = Some(admitted);
+            if admitted {
+                record.phase = "snapshot_source_admitted".into();
+            }
+        }
+        record
+    }
+    pub(super) fn snapshot_lifetime(&self) -> Option<&super::SnapshotLifetimeBinding> {
+        self.record.snapshot_lifetime.as_ref()
+    }
+    /// A committed marker precedes the first source mutation. A lost reply stops
+    /// effects and conservatively retains a possibly-admitted outcome.
+    pub(super) fn admit_snapshot_source(&self) -> Result<(), RuntimeError> {
+        if self.record.snapshot_source_admitted.is_none() {
+            return Ok(());
+        }
+        let mut admitted = self
+            .source_admitted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if *admitted {
+            return Ok(());
+        }
+        self.verify_authority()?;
+        if self.snapshot_origin().is_none() {
+            return Err(RuntimeError::Conflict(
+                "Source admission lacks its native origin".into(),
+            ));
+        }
+        let mut record = self.record.clone();
+        record.phase = "snapshot_source_admitted".into();
+        record.snapshot_source_admitted = Some(true);
+        self.store
+            .append(&self.id, Expected::Seq(1), vec![change(&record)])?;
+        *admitted = true;
+        Ok(())
+    }
     pub(super) fn commit_snapshot(
         &mut self,
         state: &mut super::SessionState,
@@ -292,7 +356,7 @@ impl Scope {
                 "Snapshot commit authority changed".into(),
             ));
         }
-        let mut settled = self.record.clone();
+        let mut settled = self.snapshot_record();
         settled.status = "settled".into();
         settled.phase = "snapshot_restore_committed".into();
         settled.admission_bindings = None;
@@ -310,7 +374,7 @@ impl Scope {
         let acknowledgement = change(&settled);
         let owners = [
             (state.info.id.clone(), state.last_seq),
-            (self.id.clone(), if self.launched { 1 } else { 0 }),
+            (self.id.clone(), self.sequence()),
         ];
         let (stored, ()) = self.store.append_pair_checked(owners, move |tx| {
             if !super::admission_authority::bindings_current(tx, &bindings)? {
@@ -334,10 +398,12 @@ impl Scope {
                 "Recovery requires its paired native acknowledgement".into(),
             ));
         }
-        self.record.status = "settled".into();
-        self.record.admission_bindings = None;
+        let mut record = self.snapshot_record();
+        record.status = "settled".into();
+        record.admission_bindings = None;
         self.store
-            .append(&self.id, Expected::Any, vec![change(&self.record)])?;
+            .append(&self.id, Expected::Any, vec![change(&record)])?;
+        self.record = record;
         self.settled = true;
         Ok(())
     }
@@ -388,7 +454,7 @@ impl Scope {
             .store
             .aggregate_seq(&original.activity_id)?
             .ok_or_else(|| RuntimeError::Conflict("Original native owner disappeared".into()))?;
-        let mut settled = self.record.clone();
+        let mut settled = self.snapshot_record();
         settled.status = "settled".into();
         settled.phase = "snapshot_recovery_committed".into();
         settled.admission_bindings = None;
@@ -400,7 +466,7 @@ impl Scope {
         let stop = self.control.stop.clone();
         let owners = [
             (original.activity_id.clone(), original_sequence),
-            (self.id.clone(), 1),
+            (self.id.clone(), self.sequence()),
         ];
         self.store.append_pair_checked(owners, move |tx| {
             let (_, mut original_record) = super::snapshot_recovery_record::attest(tx, &original)?;
@@ -457,7 +523,7 @@ impl Scope {
         let id = self.id.clone();
         let original = self.record.clone();
         let handle = self.handle.clone();
-        let sequence = if self.launched { 1 } else { 0 };
+        let sequence = self.sequence();
         // Publish before enqueueing. Even an unavailable writer retains the exact
         // owner; a later writer acknowledgement can clear it without racing a
         // post-commit caller-side flag write.
@@ -477,7 +543,7 @@ impl Scope {
                 cyber_store::StoreError::CorruptEvent { id: id.clone(), reason: error.to_string() })?;
             // An unsuccessful launch may have set the in-memory origin without
             // publishing it. Its durable reservation must still have no origin.
-            let origin = if sequence == 1 { original.snapshot_origin.as_ref() } else { None };
+            let origin = if original.snapshot_origin.is_some() && sequence >= 1 { original.snapshot_origin.as_ref() } else { None };
             if kind != CHANGED || current.session_id != original.session_id
                 || current.binary_document != original.binary_document
                 || current.snapshot_worker != original.snapshot_worker
@@ -494,6 +560,9 @@ impl Scope {
                     handle.acknowledge_snapshot_uncertainty(&id);
                 }
                 return Ok((vec![], false));
+            }
+            if current.snapshot_source_admitted != record.snapshot_source_admitted {
+                return Err(cyber_store::StoreError::InvalidAppend("Snapshot source-admission state changed before disposal".into()));
             }
             if seq != sequence {
                 return Err(cyber_store::StoreError::Concurrency { aggregate: id, expected: sequence, actual: seq });
@@ -512,7 +581,7 @@ impl Drop for Scope {
             // This trusted scope owns only synchronous filesystem calls. Once
             // its actual worker unwinds, it has no escaped task/process to settle;
             // possible file effects remain in the separate document intent.
-            let mut disposed = self.record.clone();
+            let mut disposed = self.snapshot_record();
             disposed.snapshot_origin = self.snapshot_origin().cloned();
             disposed.status =
                 if (self.launched || self.record.snapshot_request.is_some()) && !filesystem_only {

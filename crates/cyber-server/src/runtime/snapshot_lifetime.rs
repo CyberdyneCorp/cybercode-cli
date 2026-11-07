@@ -21,6 +21,8 @@ pub struct SnapshotLifetimeBinding {
     pub namespace_identity: String,
     pub directory_identity: String,
     pub file_identity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_phase: Option<String>,
 }
 
 /// The actual worker retains this lock through all resource acquisition and work.
@@ -30,6 +32,25 @@ pub trait SnapshotLifetime: Send {
     /// Synchronous native metadata verification; may run inside the Store writer.
     /// It must not call the runtime/Store, launch processes or perform source effects.
     fn verify(&self) -> Result<(), String>;
+    /// Persist native admission before a source callback. A legacy lifetime may
+    /// never grant the new positive pre-effect cancellation proof.
+    fn admit_source(&self, _origin: &super::SnapshotOrigin) -> Result<(), String> {
+        Err("Native source admission is unavailable".into())
+    }
+    /// Positive native source-phase proof, not merely an unlocked lifetime file.
+    fn verify_preparation(&self, _origin: Option<&super::SnapshotOrigin>) -> Result<(), String> {
+        Err("Native preparation phase proof is unavailable".into())
+    }
+    /// Metadata publication only, after observed durable preparation cancellation.
+    fn acknowledge_preparation(
+        &mut self,
+        receipt: &super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        if receipt.origin.is_some() {
+            return Err("Preparation journal acknowledgement is unavailable".into());
+        }
+        Ok(())
+    }
 }
 
 impl super::Runtime {
@@ -66,7 +87,14 @@ impl super::Runtime {
             .map_err(super::RuntimeError::Conflict)?;
         if let Some(lifetime) = &lifetime {
             let binding = lifetime.binding();
-            if binding.version != 1
+            if binding.version != 2
+                || binding.source_phase.as_deref().is_none_or(|phase| {
+                    !phase.starts_with("phase_")
+                        || phase.len() > 128
+                        || !phase
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                })
                 || binding.owner != request
                 || [
                     &binding.root_identity,

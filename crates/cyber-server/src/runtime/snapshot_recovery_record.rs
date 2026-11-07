@@ -110,6 +110,8 @@ pub(super) fn project_pending(
                 .as_ref()
                 .ok_or("Missing resolution origin")?;
             if reserved.snapshot_request != record.snapshot_request
+                || reserved.snapshot_lifetime != record.snapshot_lifetime
+                || reserved.snapshot_source_admitted != record.snapshot_source_admitted
                 || reserved.status != "pending"
                 || origin.activity_id != event.aggregate_id
                 || origin.session_id != record.session_id
@@ -123,6 +125,28 @@ pub(super) fn project_pending(
                 || origin.binding.journal_id == request.original.binding.journal_id
             {
                 return Err("Resolution launch differs from its exact request reservation".into());
+            }
+        }
+        2 if record.phase == "snapshot_source_admitted"
+            && record.snapshot_source_admitted == Some(true) =>
+        {
+            let data: String = db
+                .query_row(
+                    "SELECT data FROM event WHERE aggregate_id=?1 AND seq=1 AND type=?2",
+                    [&event.aggregate_id, activity::CHANGED],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            let launched: activity::Record =
+                serde_json::from_str(&data).map_err(|error| error.to_string())?;
+            if launched.status != "pending"
+                || launched.phase != "launching"
+                || launched.snapshot_source_admitted != Some(false)
+                || launched.snapshot_origin != record.snapshot_origin
+                || launched.snapshot_lifetime != record.snapshot_lifetime
+                || launched.snapshot_request != record.snapshot_request
+            {
+                return Err("Snapshot source admission differs from its exact launch".into());
             }
         }
         _ => return Err("Invalid snapshot recovery launch sequence".into()),
@@ -178,5 +202,69 @@ pub(super) fn attest(
             "Native activity differs from the exact snapshot origin".into(),
         ));
     }
+    source_admission(db, origin, &launched, &latest)?;
     Ok((seq, latest))
+}
+
+fn source_admission(
+    db: &Connection,
+    origin: &SnapshotOrigin,
+    launched: &activity::Record,
+    latest: &activity::Record,
+) -> Result<(), StoreError> {
+    let invalid = || StoreError::InvalidAppend("Snapshot source-admission evidence changed".into());
+    match (
+        launched.snapshot_source_admitted,
+        latest.snapshot_source_admitted,
+    ) {
+        (None, None) => return Ok(()),
+        (Some(false), Some(false) | Some(true)) => {}
+        _ => return Err(invalid()),
+    }
+    let data: String = db.query_row(
+        "SELECT data FROM event WHERE aggregate_id=?1 AND seq=0 AND type=?2",
+        [&origin.activity_id, activity::CHANGED],
+        |row| row.get(0),
+    )?;
+    let reserved: activity::Record = serde_json::from_str(&data).map_err(|_| invalid())?;
+    if reserved.snapshot_source_admitted != Some(false)
+        || !reserved.snapshot_worker
+        || reserved.binary_document.is_some()
+        || reserved.status != "pending"
+        || reserved.phase != "reserved"
+        || reserved.session_id != origin.session_id
+        || reserved.snapshot_request != launched.snapshot_request
+        || reserved.snapshot_lifetime.is_none()
+        || reserved
+            .snapshot_lifetime
+            .as_ref()
+            .is_some_and(|lifetime| lifetime.version != 2)
+        || reserved.snapshot_lifetime != launched.snapshot_lifetime
+        || reserved.snapshot_origin.is_some()
+    {
+        return Err(invalid());
+    }
+    if latest.snapshot_source_admitted == Some(false) {
+        let admitted: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM event WHERE aggregate_id=?1 AND json_extract(data,'$.snapshot_source_admitted')=1)", [&origin.activity_id], |row| row.get(0))?;
+        if admitted {
+            return Err(invalid());
+        }
+    } else {
+        let data: String = db.query_row(
+            "SELECT data FROM event WHERE aggregate_id=?1 AND seq=2 AND type=?2",
+            [&origin.activity_id, activity::CHANGED],
+            |row| row.get(0),
+        )?;
+        let admitted: activity::Record = serde_json::from_str(&data).map_err(|_| invalid())?;
+        if admitted.phase != "snapshot_source_admitted"
+            || admitted.status != "pending"
+            || admitted.snapshot_source_admitted != Some(true)
+            || admitted.snapshot_origin.as_ref() != Some(origin)
+            || admitted.snapshot_lifetime != launched.snapshot_lifetime
+            || admitted.snapshot_request != launched.snapshot_request
+        {
+            return Err(invalid());
+        }
+    }
+    Ok(())
 }

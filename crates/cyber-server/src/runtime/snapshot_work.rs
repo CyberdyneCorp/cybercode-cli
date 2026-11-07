@@ -121,6 +121,28 @@ pub struct SnapshotCompletion {
 }
 
 impl SnapshotWork<'_> {
+    pub fn preparation_record_budget(&self, origin: &SnapshotOrigin) -> Result<u64, String> {
+        let Some(lifetime) = self.owner.scope.snapshot_lifetime() else {
+            return Ok(0);
+        };
+        let receipt = super::SnapshotPreparationReceipt {
+            activity_id: lifetime.owner.activity_id.clone(),
+            request_id: "\u{1}".repeat(256),
+            confirmation: "0".repeat(64),
+            lifetime: lifetime.clone(),
+            native_sequence: 2,
+            session_sequence: i64::MAX,
+            origin: Some(origin.clone()),
+            source_admitted: Some(false),
+        };
+        let bytes = serde_json::to_vec(&receipt)
+            .map_err(|error| error.to_string())?
+            .len() as u64;
+        if bytes > super::SnapshotPreparationReceipt::MAX_ENCODED_BYTES {
+            return Err("Preparation cancellation record exceeds limit".into());
+        }
+        Ok(bytes)
+    }
     pub fn origin(&self) -> Option<&SnapshotOrigin> {
         self.owner.scope.snapshot_origin()
     }
@@ -170,6 +192,15 @@ impl SnapshotWork<'_> {
             return Err("Snapshot source effects require a durable worker origin".into());
         }
         let state = self.owner.admission.0.state.blocking_lock();
+        self.authorize()?;
+        self.owner
+            .scope
+            .admit_snapshot_source()
+            .map_err(|error| error.to_string())?;
+        self.authorize()?;
+        if let Some(lifetime) = &self.owner._lifetime {
+            lifetime.admit_source(self.origin().ok_or("Source admission lacks origin")?)?;
+        }
         self.authorize()?;
         if state.last_seq != self.owner.sequence {
             return Err("Snapshot Session projection changed before its filesystem effect".into());

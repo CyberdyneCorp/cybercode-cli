@@ -58,6 +58,9 @@ pub(super) struct RestoreContext {
 impl Store {
     pub(super) fn ensure_recovered(&self) -> Result<()> {
         for id in storage::names(&self.journals, ENTRY_LIMIT)? {
+            if self.preparation_cancellation(&id)?.is_some() {
+                continue;
+            }
             let (_, record) = self.journal(&id)?;
             if record.settled_by.is_some() {
                 self.verify_settlement(&record)?;
@@ -146,6 +149,11 @@ impl Store {
         let mut result = vec![];
         let mut response_bytes = 32usize;
         for id in storage::names(&self.journals, ENTRY_LIMIT)? {
+            // Cancelled preparations are not completed restores. Their receipt is
+            // exposed by the preparation owner API; all private evidence remains.
+            if self.preparation_cancellation(&id)?.is_some() {
+                continue;
+            }
             let (_, record) = self.journal(&id)?;
             let view = super::Recovery {
                 id,
@@ -467,6 +475,13 @@ impl Store {
             })
             .transpose()?;
         let ownership = Some(Ownership::budget(&changes)?);
+        let cancellation_reserve = match (worker, origin.as_ref()) {
+            (Some(worker), Some(origin)) => worker
+                .preparation_record_budget(origin)?
+                .checked_mul(2)
+                .ok_or("Restore size overflow")?,
+            _ => 0,
+        };
         if let Some(resolution) = &mut resolution {
             resolution.outcome = Some(resolution.review.budget());
         }
@@ -517,6 +532,7 @@ impl Store {
                 bytes
                     .checked_mul(2)
                     .and_then(|bytes| bytes.checked_add(parent_reserve))
+                    .and_then(|bytes| bytes.checked_add(cancellation_reserve))
                     .ok_or("Restore size overflow")?,
                 |sum, length| sum.checked_add(length).ok_or("Restore size overflow"),
             )?;
@@ -563,6 +579,16 @@ impl Store {
     pub(super) fn verify_worker_namespace(&self, origin: &SnapshotOrigin) -> Result<()> {
         self.verify_root()?;
         let binding = &origin.binding;
+        if origin.version != 1
+            || !binding.journal_id.starts_with("restore_")
+            || binding.journal_id.len() > 256
+            || !binding
+                .journal_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err("Invalid snapshot worker journal binding".into());
+        }
         self.verify_lock_route(
             binding
                 .lock_identity

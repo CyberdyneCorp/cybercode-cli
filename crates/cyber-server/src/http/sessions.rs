@@ -386,6 +386,10 @@ pub fn routes() -> Router<AppState> {
             &format!("{s}/rewind/preparations/{{activity_id}}/requests/{{request_id}}"),
             get(snapshot_preparation_lookup),
         )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/requests/{{request_id}}/acknowledge"),
+            post(snapshot_preparation_acknowledge),
+        )
         .route(&format!("{s}/rewind/confirm"), post(rewind_confirm))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
@@ -1363,6 +1367,17 @@ async fn snapshot_preparation_lookup(
                     "No retained preparation cancellation request",
                 )
             })?,
+    }))
+}
+async fn snapshot_preparation_acknowledge(
+    State(state): State<AppState>,
+    Path((id, activity, request)): Path<(String, String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotPreparationReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparation_acknowledge(&id, &activity, &request)
+            .await?,
     }))
 }
 async fn rewind_preview(

@@ -162,3 +162,18 @@ retry after restart and admits a subsequent prompt in an unmanaged non-Git Locat
 Cancelling an unstarted resolution reports `cancelled_before_origin` without
 acknowledging its original failed restore. Origin-before-intent, independent checkout
 resources, complete clients, Git, reclamation and the remaining M8 cuts remain open.
+
+
+Pre-effect origin continuation (2026-11-06): new file-copy workers publish version-2
+native source-phase proof before their stable lifetime reservation. A durable
+activity admission marker and native true phase precede the first source callback;
+missing/legacy phase proof and database/native disagreement refuse cancellation.
+The owner cancellation now accepts an exited published origin only with explicit
+unadmitted evidence, commits its paired receipt, then publishes bounded journal
+cancellation metadata. Explicit preparation acknowledgement reconciles that metadata
+without source effects. Original intents and private preparations remain retained.
+Local native missing-intent and real-service origin-before-source-admission cuts
+are covered; the real-service cut does not assert that intent publication was absent.
+Independent checkout resource ownership, Git journaling, cleanup, complete clients
+and the remaining M8 cut/platform matrix still prevent acceptance of M2–M8 and
+parent tasks 2.4/3.2–3.4. No additional parent task is marked complete.

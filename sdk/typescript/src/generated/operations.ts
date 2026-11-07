@@ -1553,6 +1553,12 @@ export interface Operations {
     body: undefined;
     response: S.Data_Nullable_Goal;
   };
+  "v1.session.snapshotPreparationAcknowledge": {
+    path: { sessionID: string; activityID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotPreparationReceipt;
+  };
   "v1.session.snapshotPreparationConfirm": {
     path: { sessionID: string; activityID: string };
     query: Record<string, never>;
@@ -4692,6 +4698,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.snapshotPreparationAcknowledge": {
+    tag: "session",
+    name: "snapshotPreparationAcknowledge",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}/acknowledge",
+    pathParams: ["sessionID", "activityID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.snapshotPreparationConfirm": {
     tag: "session",
     name: "snapshotPreparationConfirm",
@@ -6214,7 +6232,10 @@ export function createGroups(caller: Caller) {
       /** Clear the current Goal and activate the next queued one; null when the queue was empty (`POST /api/v1/sessions/{sessionID}/goals/skip`) */
       skipGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.skipGoal"]["response"]> =>
         caller.call("v1.session.skipGoal", { path: { sessionID } }, options),
-      /** Cancel only a fingerprint-confirmed unstarted snapshot preparation without moving files or transcript (`POST /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/confirm`) */
+      /** Reconcile native metadata acknowledgement of an exact committed pre-effect cancellation without source changes (`POST /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}/acknowledge`) */
+      snapshotPreparationAcknowledge: (sessionID: string, activityID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationAcknowledge"]["response"]> =>
+        caller.call("v1.session.snapshotPreparationAcknowledge", { path: { sessionID, activityID, requestID } }, options),
+      /** Cancel only a fingerprint-confirmed pre-effect snapshot preparation without moving files or transcript (`POST /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/confirm`) */
       snapshotPreparationConfirm: (sessionID: string, activityID: string, body: Operations["v1.session.snapshotPreparationConfirm"]["body"], options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationConfirm"]["response"]> =>
         caller.call("v1.session.snapshotPreparationConfirm", { path: { sessionID, activityID }, body }, options),
       /** Look up the original durable preparation cancellation pair without native access or replay (`GET /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}`) */
@@ -6223,7 +6244,7 @@ export function createGroups(caller: Caller) {
       /** Review cancellation of an exited preparation using its exact native lifetime proof (`POST /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/review`) */
       snapshotPreparationReview: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationReview"]["response"]> =>
         caller.call("v1.session.snapshotPreparationReview", { path: { sessionID, activityID } }, options),
-      /** List retained snapshot reservations without a published origin or native access (`GET /api/v1/sessions/{sessionID}/rewind/preparations`) */
+      /** List retained preparation candidates without native access; review checks eligibility (`GET /api/v1/sessions/{sessionID}/rewind/preparations`) */
       snapshotPreparations: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparations"]["response"]> =>
         caller.call("v1.session.snapshotPreparations", { path: { sessionID } }, options),
       /** Inspect retained filesystem restore journals without acknowledging or replaying native effects (`GET /api/v1/sessions/{sessionID}/rewind/recovery`) */

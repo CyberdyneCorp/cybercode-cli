@@ -249,8 +249,8 @@ child. These operations preserve later files, including unsupported replacements
 and do not move the transcript. Historical receipts without immutable proof cannot
 authorize new journal writes.
 
-If a crash occurred before an origin or restore journal was published, list the
-retained preparations and review the selected activity:
+If a crash occurred before source effects were admitted, list the retained
+preparation candidates and review the selected activity:
 
 ```sh
 cyber api GET /sessions/<session-id>/rewind/preparations
@@ -261,18 +261,29 @@ cyber api GET /sessions/<session-id>/rewind/preparations/<activity-id>/requests/
 ```
 
 The SDK exposes `snapshotPreparations`, `snapshotPreparationReview`,
-`snapshotPreparationConfirm` and `snapshotPreparationLookup` on `client.session`.
-Review requires an exact retained lifetime lock proving that this worker exited,
-a positive unstarted reservation, and no published origin. Confirmation cancels
-only that preparation: source files and transcript remain unchanged. Live workers,
-foreign or changed evidence, published origins and legacy reservations without
-lifetime proof refuse. Checkout/process uncertainty remains independent. Cancelling
-an unstarted keep/rollback request leaves its original failed restore unresolved;
-that request's lookup reports `cancelled_before_origin`. Retrying a cancellation
-uses its original durable receipt without reopening native proof.
+`snapshotPreparationConfirm`, `snapshotPreparationLookup` and
+`snapshotPreparationAcknowledge` on `client.session`. Listing does not access native
+files; review determines eligibility. Review requires the exact retained lifetime
+lock proving that this worker exited and a version-2 native phase record proving
+that source effects were never admitted. A published origin is eligible only when
+the database also positively records no source admission. Missing journal files
+alone grant no authority. An older database backup cannot override an admitted
+native phase. Live workers, changed proof, legacy reservations and admitted source
+effects refuse cancellation.
 
-Created source directories, private payloads and lifetime preparations remain
-protected for acknowledged safe cleanup. Do not edit records or remove evidence
-to force a retry. Origin-before-intent recovery, independent managed-checkout proof,
-Git journaling, reclamation, typed recovery clients and broader native crash/platform
+Confirmation cancels only that preparation: source files and transcript remain
+unchanged. Its paired durable receipt precedes native cancellation metadata; the
+original intent is retained without fabricating a completed restore. Retry and
+lookup return the original durable pair without reopening native proof. After a
+committed receipt with missing native acknowledgement, POST
+`/sessions/<session-id>/rewind/preparations/<activity-id>/requests/<request-id>/acknowledge`
+to reconcile metadata under the exact proof. This never replays source changes.
+Checkout/process uncertainty remains independent. Cancelling an unstarted
+keep/rollback request leaves its original failed restore unresolved; its lookup
+reports `cancelled_before_origin` or `cancelled_before_effects`.
+
+Created source directories, private payloads, native phase records and lifetime
+preparations remain protected for acknowledged safe cleanup. Do not edit records
+or remove evidence to force a retry. Independent managed-checkout proof, Git
+journaling, reclamation, typed recovery clients and broader native crash/platform
 acceptance remain unfinished.

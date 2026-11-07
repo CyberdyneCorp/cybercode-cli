@@ -12,8 +12,9 @@ Implementation checkpoint: the non-Git review/confirm/lookup API and SDK now use
 durable request reservation and paired native settlement. Local real-service
 partial-restore kills exercise keep/rollback and lookup without replay. Explicit
 journal acknowledgement reconciliation is implemented for new file-copy receipts;
-reserved-before-origin cancellation is available for new lifetime-bound file-copy
-workers. Origin-before-intent and independent resource cuts, Git journaling,
+pre-effect cancellation is available for new version-2 lifetime-bound file-copy
+workers, including a published origin with no admitted source effects. Independent
+resource cuts, Git journaling,
 reclamation, complete clients and the platform matrix remain unfinished. Parent
 tasks are open; the complete recovery delivery is not merge-ready.
 
@@ -238,27 +239,44 @@ must eventually account for both complete records and orphan stages.
 This supplies lifetime evidence for the reserved-before-origin cut. It does not
 by itself admit cancellation/acknowledgement of that reservation, prove that a
 missing journal had no source effects, or acknowledge managed checkout/process
-uncertainty. The explicit pre-effect consuming protocol, origin-before-intent cut,
-Git equivalent and complete native/client acceptance remain required. Older
-reservations without this binding receive no retrospective proof.
+uncertainty. The following consuming path adds positive native phase proof and
+paired cancellation; independent resource ownership, Git equivalents and complete
+native/client acceptance remain required. Older reservations without this binding
+receive no retrospective proof.
 
 
-### Consuming a reservation that never published an origin
+### Consuming an exited preparation before source effects
 
-The pre-origin owner path reviews a specific native activity and confirms a
-fingerprint before cancelling that preparation. Eligibility requires the positive
-sequence-zero snapshot reservation, its unchanged exact lifetime binding, no
-historical published origin, and no more than its unlaunched disposal record.
+The owner path reviews a specific native activity and confirms a fingerprint
+before cancelling its preparation. Eligibility requires the positive sequence-zero
+snapshot reservation, unchanged exact version-2 lifetime binding and an unadmitted
+native source phase. A published origin additionally requires explicit false
+source-admission evidence in both reservation and launching records. Only the
+original pending record or its exact unadmitted disposal may be consumed.
 Acquiring the original lifetime file proves that the actual worker has exited;
-missing journal files are not used as proof. Historical reservations without the
-binding, generic/binary activities, launched origins and live/replaced locks refuse.
+missing journal files are not used as proof. Historical reservations without native
+phase proof, generic/binary activities, admitted effects and live/replaced locks
+refuse. Old cancellation receipts remain readable without granting new authority.
 
-Confirmation preserves all source files and transcript state. A single checked
-paired append acknowledges only that original snapshot activity and records the
-request receipt in a Session-creation/request-derived owner aggregate. The writer
-rechecks the native proof, original record, Session revision and captured recovery
-authority. Retry looks up that durable pair before native access and refuses changed
-request content or cross-activity reuse. Cancelling an unstarted recovery request
-leaves its original failed restore fenced. Checkout/process uncertainty remains
-independent; no Session lease is acknowledged by this operation. This path does
-not resolve the origin-before-intent cut or admit a rollback without source proof.
+Before the first source callback, the worker durably appends source admission to
+its native activity, then publishes admission and the exact origin in its private
+native phase record, then rechecks authority. Neither marker can be reset to false.
+A lost database commit reply prevents callback dispatch, while its durable true
+record refuses cancellation. An older database backup cannot override native true
+or missing phase evidence. The compatibility migration prevents older binaries
+from mutating a Store containing this protocol. The native phase is flushed before
+stable lifetime publication, counts toward quota and remains protected from GC.
+
+Confirmation preserves all source files and transcript state. A checked paired
+append acknowledges only that original snapshot activity and records the request
+receipt in a Session-creation/request-derived aggregate. The writer rechecks native
+proof, original record, Session revision and recovery authority. Retry looks up
+that durable pair before native access and refuses changed request content or
+cross-activity reuse. A cancellation with an origin then writes a bounded private
+`preparation.json` receipt in its exact journal directory. It never synthesizes an
+intent or marks an unapplied restore completed. Explicit request acknowledgement
+reconciles a missing native receipt after durable Store settlement, retaining exact
+worker proof and current authority. Contradictory/corrupt intents refuse; all
+original bytes remain retained. Cancelling an unstarted recovery request leaves
+its original failed restore fenced. Checkout/process uncertainty stays independent;
+no Session lease is acknowledged by this operation.
