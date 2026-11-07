@@ -1883,3 +1883,71 @@ an initial Python-only probe was not equivalent and is not claimed as a native
 resolver defect. One test initially expected only the identity-check error text; it
 was corrected to accept the earlier protected-path refusal as well. The final full
 snapshot run and three-package all-target Clippy pass include these checks.
+
+
+## Native Git namespace and rule-input validation (2026-11-07)
+
+`copy/inventory.rs` now scans the eligible Location namespace before source content
+planning. It compares all eligible leaf names with the expected image set, so new
+files, nested files and links cannot evade validation merely because they were
+absent from every prepared tree. Unknown leaf kinds are not opened and source
+directory links are not followed. Empty directories do not become Git file images.
+Known expected exclusion paths are checked for disappearance and directory/leaf
+type changes. Traversal is bounded by 65,536 nodes, depth 64 and 8 MiB of path/mark
+metadata. Directory generations are checked during scanning and again after
+content planning, before creating the intent. These marks are transient race
+checks, not native source/recovery ownership.
+
+`copy/git_rules.rs` uses bounded read-only global/info/ancestor/nested Git ignore
+inputs, including negation precedence and Git's case setting. The trusted adapter
+resolves configuration locators before dispatch; source and configuration reads
+remain in the synchronous filesystem worker, with no Git process inside it. Each
+input is limited to 1 MiB, combined inputs/path metadata to 8 MiB and bindings to
+65,536. Input hashes are revalidated at the end of planning. Source rule traversal
+uses retained worktree descriptors and no-follow descendant opens; external Git
+configuration files retain their existing read-only Git semantics. Their bytes are
+used only for matching, never source mutation authority or model instructions.
+Pattern errors use generic diagnostics rather than echoing private patterns.
+
+Testing with actual Git established that `ls-files --ignored --directory` can
+compact an all-ignored directory and omit ignored children in a mixed directory.
+Recorded exclusion paths alone therefore cannot classify current eligibility. The
+new scan uses Git rules instead of assuming every unrecorded file is eligible or
+blindly treating a compacted historical directory as permanently opaque.
+
+Prepared target/recorded images still apply the complete historical exclusion
+union. Expected images now use only their own exclusions, allowing stale-state
+checks for a currently eligible owner file that was excluded historically while
+keeping it out of the mutation plan. Shared native path validation now accepts
+literal Unix backslashes and explicitly rejects empty/dot/traversal components.
+Git Location/file-name and actual non-Git capture/restore regressions exercise this.
+
+Nine additional tests cover new leaf/nested/link refusal, mixed ignored directories,
+empty directory preservation, namespace/rule changes after inventory, historical
+exclusion preservation versus current-state validation, subdirectory ancestor and
+negation rules, global/info inputs and rule-only changes, known exclusion deletion/
+type changes, and literal backslashes. All source refusals retain current files and
+create no intent. The existing 113 snapshot tests remain included.
+
+The code-review skill was applied to all source, test and spec changes, focusing on
+no-follow input traversal, bounded parsing/inventory, readonly configuration roles,
+separate mutation/state exclusions and preservation of the admission gate. No
+critical/major issue remains in this disabled inventory scope. It does not establish
+a full current-tag proof: version-1 tags lack capture-bound rule/raw-state data,
+and ignored-inventory identity can differ from eligible-graph identity. Attributes/
+filters, gitlinks, file/directory transitions, capture-bound configuration, actual
+Git lifetime and runtime acknowledgement integration remain required. The ordinary
+Git availability/reservation gates remain disabled and parent tasks remain open.
+
+Verification on local macOS arm64: locked snapshot tests passed 122 cases with two
+ignored fixtures; the pathspec fixture is invoked by its parent. Snapshot all-target
+Clippy passed with warnings denied after handling the ignore builder's fallible
+case-policy setter. The first scan-only build's unused import was corrected. Full
+workspace tests, SDK execution, real CLI/TUI/App acceptance and Linux/Windows
+execution were not run for this increment. Final format/diff, SDK-generation and
+OpenSpec validation are recorded below. No API/schema shape changed here.
+
+Final formatting/diff checks and generated SDK consistency passed. Strict pinned
+OpenSpec passed all 117 items; spec lint reports 0 errors/25 warnings. The real-Git
+compaction probe and current tests are local evidence only; no CI or complete Git
+recovery admission is claimed.

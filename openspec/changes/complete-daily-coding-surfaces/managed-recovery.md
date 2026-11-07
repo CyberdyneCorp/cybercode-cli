@@ -497,3 +497,32 @@ bytes under the original native observation before independent intent preparatio
 New Git-desired links must stay inside the worktree and outside protected/private
 roots; rollback may reinstate an exact owned preimage without following it. This
 does not authorize broad Git admission before full state/lifetime/acceptance gates.
+
+
+### Native pre-effect Git namespace inventory
+
+The synchronous Git importer inventories the eligible Location namespace rather
+than only names present in prepared trees. Current Git rule inputs cover the global
+exclude file, shadow info/exclude, ancestor .gitignore files and nested .gitignore
+files; configuration locators come from the trusted adapter, never a recovery
+journal. These read-only configuration inputs reproduce existing Git reads and
+grant no source mutation or recovery authority. Source rule files are traversed
+without following directory/file links; Git-ignored .gitignore symlinks contribute
+no rules. Inputs and traversal are bounded, and input hashes are checked again
+before intent publication. Protected/private source namespaces remain excluded.
+
+Historical exclusions constrain target/recorded mutation separately from the
+expected snapshot's own exclusions and images. Formerly excluded files that are
+currently eligible therefore still participate in stale-state detection without
+becoming mutation targets. Known expected exclusions are checked for disappearance
+and file/directory changes. Current eligible leaf names are compared with expected
+names; empty directories do not invent Git images. Directory-generation marks are
+revalidated after content planning and before intent publication. None of these
+read-only marks grants native mutation, acknowledgement or reclamation authority.
+
+Version-1 tags do not bind all rule inputs or raw working-tree representations to
+the capture epoch. Git's directory-compacted exclusion list is not a complete
+ignore oracle, and a changed ignored inventory can change a tag without changing
+its eligible graph. Snapshot-bound policy/raw-state proof, complete exclusion
+identity parity, attribute/filter and remaining Git compatibility, lifetime and
+acceptance gates are still required before admitting ordinary Git workers.

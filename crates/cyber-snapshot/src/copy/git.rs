@@ -154,6 +154,7 @@ impl Store {
                 "Git journal path count exceeds limit".into(),
             ));
         }
+        let inventory = self.git_inventory(prepared)?;
         let mut changes = Vec::new();
         let mut conflicts = Vec::new();
         for path in paths {
@@ -215,6 +216,7 @@ impl Store {
         if !conflicts.is_empty() {
             return Err(RestoreError::Conflict(conflicts));
         }
+        inventory.verify(self)?;
         Ok((changes, context))
     }
 

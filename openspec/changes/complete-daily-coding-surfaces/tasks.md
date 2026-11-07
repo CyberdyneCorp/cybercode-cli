@@ -292,3 +292,14 @@ classification without progress/replay; these are backend fixtures, not complete
 Git runtime acceptance. Ordinary Git admission remains disabled for full expected
 state/Git compatibility, lifetime/acknowledgement, retention, clients and complete
 crash/platform gates. M2–M8 and parent tasks remain open.
+
+
+Native inventory continuation: the Git importer now compares eligible Location
+leaf names, revalidates directory namespace generations and read-only Git rule
+inputs, and rejects new/removed/type-changed state before intent publication.
+Current expected images use their own exclusions; historical exclusions still
+constrain target/recorded mutations. Native relative paths now preserve Unix
+backslashes while rejecting empty/dot/traversal components. Snapshot-bound ignore/
+raw-state proof, full Git compatibility, actual Git lifetime/acknowledgement, safe
+reclamation and full client/platform acceptance remain open. Admission remains
+disabled; no M2–M8 or parent task is accepted by these checks.

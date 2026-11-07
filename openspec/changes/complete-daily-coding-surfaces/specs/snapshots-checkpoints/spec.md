@@ -152,6 +152,13 @@
 - **AND** review SHALL identify file versus symbolic-link images, while legacy images default to files
 - **AND** link-capable journals SHALL use a distinct version/backend binding without promoting older file-only ownership or changing historical file receipt digests
 
+#### Scenario: Git namespace changes before native planning completes
+- **WHEN** a native Git restore validates its prepared expected state
+- **THEN** it SHALL compare the eligible Location leaf inventory, including newly appearing paths, without following directory links or opening unknown leaf kinds
+- **AND** namespace generations and read-only Git rule inputs SHALL be revalidated before intent publication
+- **AND** historical exclusions SHALL constrain mutation independently of the current expected-state check
+- **AND** validation marks SHALL NOT be used as source mutation, acknowledgement or reclamation ownership
+
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
 - **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents

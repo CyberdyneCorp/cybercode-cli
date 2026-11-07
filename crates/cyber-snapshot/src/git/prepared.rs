@@ -23,6 +23,12 @@ pub(crate) struct PreparedTree {
     pub images: BTreeMap<String, Image>,
 }
 
+pub(crate) struct IgnoreInputs {
+    pub info: PathBuf,
+    pub global: Option<PathBuf>,
+    pub case_insensitive: bool,
+}
+
 pub(crate) struct PreparedRestore {
     pub directory: PathBuf,
     pub worktree: PathBuf,
@@ -31,7 +37,11 @@ pub(crate) struct PreparedRestore {
     pub recorded: PreparedTree,
     pub expected: PreparedTree,
     pub exclusions: Vec<String>,
+    /// The expected snapshot's exact worktree-relative exclusions, not globs.
+    /// Historical exclusions constrain mutation, but not the current-state check.
+    pub expected_excluded: Vec<String>,
     pub allowed: Option<BTreeSet<String>>,
+    pub ignore: IgnoreInputs,
 }
 
 impl Shadow {
@@ -42,6 +52,51 @@ impl Shadow {
         max_file: u64,
         max_total: u64,
     ) -> Result<PreparedRestore, String> {
+        let default_global = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|value| !value.is_empty())
+            .map(|path| PathBuf::from(path).join("git/ignore"))
+            .unwrap_or_else(|| PathBuf::from("~/.config/git/ignore"));
+        let configured = self
+            .run_bounded(
+                &[
+                    "config",
+                    "--null",
+                    "--path",
+                    "--default",
+                    default_global
+                        .to_str()
+                        .ok_or("Invalid global ignore path")?,
+                    "--get",
+                    "core.excludesfile",
+                ],
+                8192,
+            )
+            .await?;
+        let global = std::str::from_utf8(
+            configured
+                .strip_suffix(&[0])
+                .ok_or("Invalid global ignore setting")?,
+        )
+        .map_err(|_| "Non-UTF-8 global ignore path is unsupported")?;
+        let global = (!global.is_empty()).then(|| self.worktree.join(global));
+        let ignore_case = self
+            .run_bounded(
+                &[
+                    "config",
+                    "--bool",
+                    "--default",
+                    "false",
+                    "--get",
+                    "core.ignorecase",
+                ],
+                16,
+            )
+            .await?;
+        let ignore = IgnoreInputs {
+            info: self.git_dir.join("info/exclude"),
+            global,
+            case_insensitive: ignore_case == b"true\n",
+        };
         let prefix = if self.pathspec == "." {
             ""
         } else {
@@ -56,6 +111,10 @@ impl Shadow {
         for id in ids {
             excluded.extend(self.recorded_exclusions(id).await?.unwrap_or_default());
         }
+        let expected_excluded = self
+            .recorded_exclusions(&request.expected)
+            .await?
+            .unwrap_or_default();
         let exclusions = self
             .historical_exclusions(&ids.map(|id| id.to_owned()))
             .await?;
@@ -71,10 +130,15 @@ impl Shadow {
             .transpose()?;
         let mut remaining = max_total;
         let mut trees = Vec::new();
-        for id in ids {
+        for (index, id) in ids.into_iter().enumerate() {
             let mut entries = BTreeMap::new();
             for (path, (mode, object)) in self.image_catalog(id).await?.iter() {
-                if history::excludes(&excluded, path) {
+                let omitted = if index == 2 {
+                    history::excludes(&expected_excluded, path)
+                } else {
+                    history::excludes(&excluded, path)
+                };
+                if omitted {
                     continue;
                 }
                 if !matches!(mode.as_str(), "100644" | "100755" | "120000") {
@@ -115,7 +179,9 @@ impl Shadow {
             recorded: trees.next().ok_or("Missing recorded images")?,
             expected: trees.next().ok_or("Missing expected images")?,
             exclusions,
+            expected_excluded,
             allowed,
+            ignore,
         })
     }
 }

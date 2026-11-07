@@ -11,8 +11,10 @@ use std::path::{Component, Path};
 pub(super) fn safe_path(path: &str) -> Result<()> {
     if path.is_empty()
         || path.len() > 4096
-        || path.contains('\\')
         || path.contains('\0')
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
         || Path::new(path)
             .components()
             .any(|c| !matches!(c, Component::Normal(_)))

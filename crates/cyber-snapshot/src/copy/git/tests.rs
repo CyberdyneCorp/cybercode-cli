@@ -627,3 +627,302 @@ async fn native_link_targets_cannot_use_case_aliases_of_configured_private_roots
     assert_node(&repo.root, "file");
     assert!(store.recovery().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn native_inventory_refuses_new_files_nested_files_and_links_before_journaling() {
+    for kind in ["file", "nested", "link"] {
+        let repo = Repo::new();
+        std::fs::write(repo.root.join("file"), b"before").unwrap();
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join("file"), b"after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        match kind {
+            "file" => std::fs::write(repo.root.join("appeared"), b"new owner").unwrap(),
+            "nested" => {
+                std::fs::create_dir(repo.root.join("appeared")).unwrap();
+                std::fs::write(repo.root.join("appeared/child"), b"new owner").unwrap();
+            }
+            _ => std::os::unix::fs::symlink("../never-opened", repo.root.join("appeared")).unwrap(),
+        }
+        let store = repo.store(&repo.root);
+        assert!(
+            matches!(
+                store.restore_git_worker(prepared, None),
+                Err(RestoreError::Stale)
+            ),
+            "{kind}"
+        );
+        assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+        assert!(store.recovery().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn native_inventory_respects_live_git_rules_in_mixed_directories_and_empty_directories() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join(".gitignore"), b"*.log\nignored/\n").unwrap();
+    std::fs::create_dir(repo.root.join("mixed")).unwrap();
+    std::fs::create_dir(repo.root.join("ignored")).unwrap();
+    std::fs::write(repo.root.join("mixed/owner.log"), b"ignored owner").unwrap();
+    std::fs::write(repo.root.join("mixed/kept"), b"kept owner").unwrap();
+    std::fs::write(repo.root.join("ignored/seed"), b"ignored seed").unwrap();
+    std::fs::write(repo.root.join("file"), b"before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), b"after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    std::fs::write(repo.root.join("mixed/owner.log"), b"later ignored owner").unwrap();
+    std::fs::write(repo.root.join("ignored/new"), b"later ignored owner").unwrap();
+    std::fs::create_dir_all(repo.root.join("empty/deep")).unwrap();
+    let store = repo.store(&repo.root);
+    assert_eq!(store.restore_git_worker(prepared, None).unwrap(), ["file"]);
+    assert_eq!(
+        std::fs::read(repo.root.join("mixed/owner.log")).unwrap(),
+        b"later ignored owner"
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("mixed/kept")).unwrap(),
+        b"kept owner"
+    );
+    assert!(repo.root.join("empty/deep").is_dir());
+}
+
+#[tokio::test]
+async fn namespace_and_rule_changes_after_inventory_are_stale_without_source_effects() {
+    for change in ["namespace", "rule"] {
+        let repo = Repo::new();
+        std::fs::write(repo.root.join(".gitignore"), b"*.log\n").unwrap();
+        std::fs::write(repo.root.join("file"), b"before").unwrap();
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join("file"), b"after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        let store = repo.store(&repo.root);
+        let inventory = store.git_inventory(&prepared).unwrap();
+        if change == "namespace" {
+            std::fs::write(repo.root.join("appeared"), b"new owner").unwrap();
+        } else {
+            std::fs::write(repo.root.join(".gitignore"), b"file\n").unwrap();
+        }
+        assert!(
+            matches!(inventory.verify(&store), Err(RestoreError::Stale)),
+            "{change}"
+        );
+        assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+        assert!(store.recovery().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn historical_exclusions_protect_mutation_without_hiding_current_state_changes() {
+    for owner_changes in [false, true] {
+        let repo = Repo::new();
+        std::fs::write(repo.root.join(".gitignore"), b"kept\n").unwrap();
+        std::fs::write(repo.root.join("kept"), b"owner before").unwrap();
+        std::fs::write(repo.root.join("file"), b"before").unwrap();
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join(".gitignore"), b"").unwrap();
+        std::fs::write(repo.root.join("file"), b"after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        if owner_changes {
+            std::fs::write(repo.root.join("kept"), b"later owner").unwrap();
+        }
+        let store = repo.store(&repo.root);
+        let result = store.restore_git_worker(prepared, None);
+        if owner_changes {
+            assert!(matches!(result, Err(RestoreError::Stale)));
+            assert!(store.recovery().unwrap().is_empty());
+        } else {
+            assert!(result.is_ok(), "{result:?}");
+        }
+        assert_eq!(
+            std::fs::read(repo.root.join("kept")).unwrap(),
+            if owner_changes {
+                b"later owner".as_slice()
+            } else {
+                b"owner before".as_slice()
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn native_inventory_keeps_literal_backslashes_in_locations_and_file_names() {
+    let repo = Repo::new();
+    let directory = repo.root.join("back\\slash");
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::write(directory.join("literal\\file"), b"before").unwrap();
+    let target = repo.track(&directory).await;
+    std::fs::write(directory.join("literal\\file"), b"after").unwrap();
+    let recorded = repo.track(&directory).await;
+    let prepared = repo
+        .prepare(&directory, &target, &recorded, &recorded)
+        .await;
+    let store = repo.store(&directory);
+    assert_eq!(
+        store.restore_git_worker(prepared, None).unwrap(),
+        ["literal\\file"]
+    );
+    assert_eq!(
+        std::fs::read(directory.join("literal\\file")).unwrap(),
+        b"before"
+    );
+    for invalid in ["../escape", "a//b", "a/./b", "/absolute"] {
+        assert!(super::super::tree::safe_path(invalid).is_err());
+    }
+}
+
+#[tokio::test]
+async fn native_inventory_applies_ancestor_rules_and_nested_negations_only_inside_its_location() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join(".gitignore"), b"*.tmp\n").unwrap();
+    let directory = repo.root.join("scope");
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::write(directory.join(".gitignore"), b"!keep.tmp\n").unwrap();
+    std::fs::write(directory.join("keep.tmp"), b"included owner").unwrap();
+    std::fs::write(directory.join("owner.tmp"), b"ignored owner").unwrap();
+    std::fs::write(directory.join("file"), b"before").unwrap();
+    let target = repo.track(&directory).await;
+    std::fs::write(directory.join("file"), b"after").unwrap();
+    let recorded = repo.track(&directory).await;
+    let prepared = repo
+        .prepare(&directory, &target, &recorded, &recorded)
+        .await;
+    std::fs::write(repo.root.join("sibling"), b"outside Location owner").unwrap();
+    std::fs::write(directory.join("owner.tmp"), b"later ignored owner").unwrap();
+    let store = repo.store(&directory);
+    assert_eq!(store.restore_git_worker(prepared, None).unwrap(), ["file"]);
+    assert_eq!(
+        std::fs::read(directory.join("keep.tmp")).unwrap(),
+        b"included owner"
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("sibling")).unwrap(),
+        b"outside Location owner"
+    );
+}
+
+#[tokio::test]
+async fn native_inventory_reads_git_external_ignore_inputs_and_detects_rule_only_changes() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("file"), b"before").unwrap();
+    repo.track(&repo.root).await;
+    let global = repo.root.parent().unwrap().join("global-ignore");
+    std::fs::write(&global, b"*.global\n").unwrap();
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&shadow.git_dir)
+            .args(["config", "core.excludesfile"])
+            .arg(&global)
+            .status()
+            .unwrap()
+            .success()
+    );
+    std::fs::write(repo.root.join(".git/info/exclude"), b"*.info\n").unwrap();
+    std::fs::write(repo.root.join("owner.global"), b"global ignored owner").unwrap();
+    std::fs::write(repo.root.join("owner.info"), b"info ignored owner").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), b"after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    let store = repo.store(&repo.root);
+    let inventory = store.git_inventory(&prepared).unwrap();
+    std::fs::write(&global, b"file\n").unwrap();
+    assert!(matches!(inventory.verify(&store), Err(RestoreError::Stale)));
+    std::fs::write(&global, b"*.global\n").unwrap();
+    assert_eq!(store.restore_git_worker(prepared, None).unwrap(), ["file"]);
+    assert_eq!(
+        std::fs::read(repo.root.join("owner.info")).unwrap(),
+        b"info ignored owner"
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("owner.global")).unwrap(),
+        b"global ignored owner"
+    );
+}
+
+#[tokio::test]
+async fn expected_exclusion_disappearance_and_type_changes_are_stale() {
+    for change in ["missing", "directory", "file"] {
+        let repo = Repo::new();
+        std::fs::write(repo.root.join(".gitignore"), b"ignored/\n*.log\n").unwrap();
+        std::fs::create_dir(repo.root.join("ignored")).unwrap();
+        std::fs::write(repo.root.join("ignored/seed"), b"ignored owner").unwrap();
+        std::fs::write(repo.root.join("old.log"), b"ignored owner").unwrap();
+        std::fs::write(repo.root.join("file"), b"before").unwrap();
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join("file"), b"after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        match change {
+            "missing" => std::fs::remove_file(repo.root.join("old.log")).unwrap(),
+            "directory" => {
+                std::fs::remove_file(repo.root.join("old.log")).unwrap();
+                std::fs::create_dir(repo.root.join("old.log")).unwrap();
+            }
+            _ => {
+                std::fs::remove_file(repo.root.join("ignored/seed")).unwrap();
+                std::fs::remove_dir(repo.root.join("ignored")).unwrap();
+                std::fs::write(repo.root.join("ignored"), b"owner file").unwrap();
+            }
+        }
+        let store = repo.store(&repo.root);
+        assert!(
+            matches!(
+                store.restore_git_worker(prepared, None),
+                Err(RestoreError::Stale)
+            ),
+            "{change}"
+        );
+        assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+        assert!(store.recovery().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn non_git_snapshots_capture_and_restore_literal_backslash_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    let root = base.join("work");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("literal\\name"), b"before").unwrap();
+    let snapshots =
+        crate::GitSnapshots::new(base.join("data"), Arc::new(|_| serde_json::json!({})));
+    let directory = root.to_str().unwrap();
+    let target = snapshots.track(directory).await.unwrap().unwrap().tree;
+    std::fs::write(root.join("literal\\name"), b"after").unwrap();
+    let recorded = snapshots.track(directory).await.unwrap().unwrap().tree;
+    assert_eq!(
+        snapshots
+            .restore_reviewed(
+                directory,
+                &target,
+                &recorded,
+                &recorded,
+                Arc::new(|| Ok(()))
+            )
+            .await
+            .unwrap(),
+        ["literal\\name"]
+    );
+    assert_eq!(
+        std::fs::read(root.join("literal\\name")).unwrap(),
+        b"before"
+    );
+}
