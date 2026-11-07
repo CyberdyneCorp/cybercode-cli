@@ -563,3 +563,13 @@ oversized observations retain canonical capture without native authority. Size-
 decision generation, complete user config/filter compatibility, tracked large
 files, runtime/checkout/recovery/cleanup and full crash/platform gates remain open.
 Managed Git source admission and all M2–M8/parent task acceptance remain unchanged.
+
+Generated size-exclusion continuation: retain size-excluded names from the same
+verified recipe as generated output, include them in a distinct policy frame, and
+recheck regular-file type and threshold through no-follow metadata at capture and
+native planning revalidation. The reproduced shrink-after-preparation gap now
+refuses before journal/source effects. Threshold/deletion/link/parent-link/FIFO
+cases and still-oversized/fresh-capture historical-exclusion positives are covered.
+Original classification provenance at generation, full configuration/filter/limit
+compatibility and runtime/checkout/recovery/cleanup/platform acceptance remain
+required; managed Git source admission and parent task acceptance stay disabled.

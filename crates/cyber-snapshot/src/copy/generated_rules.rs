@@ -91,11 +91,16 @@ fn publish(info: &Dir, name: &str, bytes: &[u8]) -> Result<()> {
     storage::atomic(info, name, bytes)
 }
 
+pub(crate) struct Observed {
+    pub inputs: ConfigInputs,
+    pub size_excluded: Vec<String>,
+}
+
 pub(crate) fn observe(
     git_dir: &Path,
     common: &Path,
     settings: &CaptureSettings,
-) -> Result<ConfigInputs> {
+) -> Result<Observed> {
     let root =
         Dir::open_ambient_dir(git_dir, cap_std::ambient_authority()).map_err(storage::fail)?;
     let info = storage::existing_child(&root, "info", false)?;
@@ -123,7 +128,10 @@ pub(crate) fn observe(
         return Err("Generated Git ignore recipe or output changed".into());
     }
     output.merge(source)?;
-    Ok(output)
+    Ok(Observed {
+        inputs: output,
+        size_excluded: recipe.skipped,
+    })
 }
 
 #[cfg(test)]
@@ -165,7 +173,7 @@ mod tests {
             .unwrap();
         }
         fn proof(&self) -> Result<ConfigInputs> {
-            observe(&self.shadow, &self.common, &self.settings)
+            observe(&self.shadow, &self.common, &self.settings).map(|observed| observed.inputs)
         }
     }
 

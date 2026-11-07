@@ -385,3 +385,21 @@
 - **WHEN** a checkpoint is captured
 - **THEN** ordinary canonical capture SHALL remain readable with explicit native-proof unavailability, and SHALL NOT acquire native restore authority or modify the user index
 - **AND** index binding alone SHALL NOT prove large-untracked classification, complete user configuration dependencies or managed Git runtime acceptance
+
+
+#### Scenario: Size-excluded Git file becomes eligible or changes type
+- **GIVEN** capture-bound generated rules omit a regular untracked file because it exceeds the configured size threshold
+- **WHEN** it shrinks to or below the threshold, disappears, becomes a link or unsupported type, or gains a linked parent before native planning completes
+- **THEN** capture/native inventory SHALL refuse the stale size exclusion using no-follow metadata checks without opening omitted contents or following links
+- **AND** no journal/source effect SHALL be admitted by that stale plan
+
+#### Scenario: Omitted Git file remains oversized
+- **GIVEN** a verified size exclusion still refers to a regular file exceeding the threshold
+- **WHEN** its owner changes its contents while it remains oversized
+- **THEN** native restore SHALL preserve the omitted file and may restore independently changed eligible paths after normal policy/namespace checks
+
+#### Scenario: Fresh expected capture after a size exclusion expires
+- **WHEN** a formerly size-excluded file shrinks and a new expected checkpoint is captured
+- **THEN** the current capture SHALL include its exact raw image and remove the expired generated size exclusion
+- **AND** target/recorded historical omissions SHALL continue to protect that file from fabricated deletion/restoration
+- **AND** this size revalidation SHALL NOT imply original classification provenance, complete user config dependencies or managed Git runtime acceptance

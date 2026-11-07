@@ -749,6 +749,23 @@ This binding does not by itself prove the generated large-untracked decisions,
 all user configuration dependencies, tracked-large-file compatibility or full Git
 runtime acceptance; those obligations still gate managed Git source admission.
 
+### Revalidation of generated size exclusions
+
+Native policy inputs SHALL retain the size-excluded names decoded from the same
+verified generated-rule recipe as its output. Capture and the synchronous native
+planner SHALL verify that each such name is still a regular file exceeding the
+configured untracked size threshold. These checks SHALL traverse parents without
+following links and inspect leaf metadata without reading omitted contents. A
+missing file, smaller file, link or unsupported type SHALL refuse the stale
+native plan. Changing bytes while remaining oversized SHALL not invent a conflict
+or source mutation for an omitted file. These names and the threshold SHALL be
+part of a distinct policy fingerprint frame. A new capture SHALL regenerate size
+exclusions so newly eligible files participate in expected-state validation, while
+historical omissions continue to protect restoration. This does not prove that a
+recipe's classification was derived from the same user index/configuration during
+its original generation; that separate capture-provenance requirement and full Git
+runtime acceptance remain necessary before managed Git admission.
+
 ### Typed recovery CLI dispatch
 
 `cyber sessions recovery <session>` SHALL list retained journals without inference.

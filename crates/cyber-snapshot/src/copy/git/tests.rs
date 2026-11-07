@@ -115,6 +115,135 @@ async fn changed_user_excludes_after_preparation_refuses_native_source_effects()
 }
 
 #[tokio::test]
+async fn shrinking_size_excluded_file_after_preparation_refuses_native_restore() {
+    let mut repo = Repo::new();
+    repo.snapshots = crate::GitSnapshots::new(
+        repo.data.clone(),
+        Arc::new(|_| serde_json::json!({"snapshots":{"max_file_bytes":4096}})),
+    );
+    std::fs::write(repo.root.join("large"), vec![b'x'; 5120]).unwrap();
+    std::fs::write(repo.root.join("file"), "before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), "after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    std::fs::write(repo.root.join("large"), "now eligible").unwrap();
+    let store = repo.store(&repo.root);
+    assert!(store.restore_git_worker(prepared, None).is_err());
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+    assert_eq!(
+        std::fs::read(repo.root.join("large")).unwrap(),
+        b"now eligible"
+    );
+    assert!(store.recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_git_size_exclusions_reject_late_type_and_threshold_changes() {
+    for kind in [
+        "threshold",
+        "deleted",
+        "file-link",
+        "parent-link",
+        "directory",
+        "fifo",
+    ] {
+        let (repo, target, recorded) = Repo::size_fixture().await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        let store = repo.store(&repo.root);
+        let inventory = store.git_inventory(&prepared).unwrap();
+        mutate_size_exclusion(&repo, kind);
+        assert!(inventory.verify(&store).is_err(), "{kind}");
+        assert!(store.preview_git(&prepared).is_err(), "{kind}");
+        assert!(store.restore_git_worker(prepared, None).is_err(), "{kind}");
+        assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+        assert_eq!(
+            std::fs::read(repo._temp.path().join("outside/large[1]")).unwrap(),
+            vec![b'z'; 8192]
+        );
+        assert!(store.recovery().unwrap().is_empty());
+    }
+}
+
+fn mutate_size_exclusion(repo: &Repo, kind: &str) {
+    let path = repo.root.join("nested/large[1]");
+    let outside = repo._temp.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("large[1]"), vec![b'z'; 8192]).unwrap();
+    match kind {
+        "threshold" => std::fs::write(path, vec![b'x'; 4096]).unwrap(),
+        "parent-link" => {
+            std::fs::rename(
+                repo.root.join("nested"),
+                repo._temp.path().join("old-nested"),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(outside, repo.root.join("nested")).unwrap();
+        }
+        kind => {
+            std::fs::remove_file(&path).unwrap();
+            match kind {
+                "deleted" => {}
+                "file-link" => std::os::unix::fs::symlink(outside.join("large[1]"), path).unwrap(),
+                "directory" => std::fs::create_dir(path).unwrap(),
+                "fifo" => assert!(
+                    std::process::Command::new("mkfifo")
+                        .arg(path)
+                        .status()
+                        .unwrap()
+                        .success()
+                ),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn native_git_size_exclusions_allow_still_oversized_edits_without_source_replay() {
+    let (repo, target, recorded) = Repo::size_fixture().await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    let store = repo.store(&repo.root);
+    let inventory = store.git_inventory(&prepared).unwrap();
+    std::fs::write(repo.root.join("nested/large[1]"), vec![b'y'; 8192]).unwrap();
+    inventory.verify(&store).unwrap();
+    assert_eq!(store.restore_git_worker(prepared, None).unwrap(), ["file"]);
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"before");
+    assert_eq!(
+        std::fs::read(repo.root.join("nested/large[1]")).unwrap(),
+        vec![b'y'; 8192]
+    );
+}
+
+#[tokio::test]
+async fn fresh_git_capture_includes_newly_eligible_file_and_preserves_historical_omission() {
+    let (repo, target, recorded) = Repo::size_fixture().await;
+    std::fs::write(repo.root.join("nested/large[1]"), "now eligible").unwrap();
+    let expected = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &expected)
+        .await;
+    assert_eq!(
+        prepared.expected.images["nested/large[1]"].bytes,
+        b"now eligible"
+    );
+    assert!(prepared.ignore.size_excluded.is_empty());
+    let store = repo.store(&repo.root);
+    assert_eq!(store.restore_git_worker(prepared, None).unwrap(), ["file"]);
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"before");
+    assert_eq!(
+        std::fs::read(repo.root.join("nested/large[1]")).unwrap(),
+        b"now eligible"
+    );
+}
+
+#[tokio::test]
 async fn changed_user_index_after_preparation_refuses_native_source_effects() {
     let mut repo = Repo::new();
     repo.snapshots = crate::GitSnapshots::new(
@@ -377,6 +506,20 @@ async fn native_git_config_proof_rejects_include_creation_changes_and_conditiona
 }
 
 impl Repo {
+    async fn size_fixture() -> (Self, String, String) {
+        let mut repo = Self::new();
+        repo.snapshots = crate::GitSnapshots::new(
+            repo.data.clone(),
+            Arc::new(|_| serde_json::json!({"snapshots":{"max_file_bytes":4096}})),
+        );
+        std::fs::create_dir(repo.root.join("nested")).unwrap();
+        std::fs::write(repo.root.join("nested/large[1]"), vec![b'x'; 5120]).unwrap();
+        std::fs::write(repo.root.join("file"), "before").unwrap();
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join("file"), "after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        (repo, target, recorded)
+    }
     fn git(&self, args: &[&str]) {
         assert!(
             std::process::Command::new("git")

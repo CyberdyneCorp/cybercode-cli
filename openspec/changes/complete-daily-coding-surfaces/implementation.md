@@ -3472,3 +3472,65 @@ classification, complete user config/filter compatibility, tracked-large-file
 limits, runtime/checkout/recovery/cleanup and full crash/platform acceptance still
 require implementation or proof. M2–M8, parent tasks and both issues remain open;
 there is no push/PR/merge acceptance claim.
+
+### Generated size-exclusion revalidation (2026-11-07)
+
+The new shrink-after-preparation regression failed before this change: a regular
+untracked file omitted above 4 KiB could shrink to a small eligible file while the
+native planner continued using its old literal ignore pattern and restored another
+source path. No unchanged-main attribution is made for this reproduced branch
+behavior. Generated-rule observation now returns the size-excluded names decoded
+from the exact recipe whose bytes/output/source proof is verified. IgnoreInputs
+retains those names separately from ordinary ignore patterns. A v5 policy frame
+includes the new inputs rather than upgrading older checkpoint evidence.
+
+Rules checks each size-excluded name at open and final capture/planning revalidation.
+Parents are opened component by component without following links; leaf metadata
+must still describe a regular file whose length exceeds the configured untracked
+threshold. Omitted file contents are never opened or hashed by these checks. The
+native planner rejects missing/smaller files, links, linked parents, directories
+and FIFOs before intent/source admission. Bytes can change while the file remains
+oversized; normal restoration of independent eligible paths preserves that file.
+A fresh capture regenerates rules and includes a newly eligible raw image, while
+historical target/recorded omissions continue to prevent fabricated deletion or
+restoration. This keeps current expected validation distinct from historical
+mutation restrictions.
+
+Real-repository tests cover the reproduced shrink, exact-threshold change,
+deletion, leaf/parent links to a preserved external oversized target, directory and
+FIFO substitution after an initial successful inventory. Each late inventory,
+preview and restore refuses and leaves source/history intact. Positives cover
+nested literal bracket names, a still-oversized owner edit and a fresh expected
+capture retaining the newly eligible image without rewriting it during historical
+restore. Code-review skill inspection checked recipe/input byte binding, bounded
+name/path handling, descriptor traversal, metadata-only omitted-file observation,
+fingerprint compatibility and positives rather than universal refusal. No
+critical/major finding remains in this size-revalidation scope.
+
+The full local macOS arm64 snapshot library run passed 131 tests with four
+intentionally ignored subprocess fixtures in 48.57 seconds. Strict OpenSpec passed
+117 items, spec lint reported 0 errors/25 warnings and SDK generation consistency
+passed. Complete check results for this increment follow below.
+
+This does not yet bind original size-classification generation to the exact user
+index/config inputs; collection-time state equality alone cannot manufacture that
+provenance. A temporary repository experiment also confirmed that a private admin
+copy of index/shared-index files can isolate Git's split-index timestamp refresh
+(the original shared file remained unchanged, the copy changed), but complete
+configuration/conditional-include fidelity is required before adopting such a
+classifier. That experiment is not implementation or acceptance. Tracked-large-file
+limits, full configuration/filter compatibility, managed Git runtime/checkout/
+recovery/cleanup and full crash/platform evidence still gate source admission.
+M2–M8, parent tasks and both issues remain open.
+
+Final checks for this increment: snapshot all-target Clippy with -D warnings,
+format and diff checks passed. Public integration passed 18 file-copy cases in
+1.09 seconds and 22 Git snapshot cases in 13.92 seconds (one deliberately ignored
+subprocess fixture). The Windows-only platform binary selected zero cases on this
+host; it supplies no Windows evidence. All Cargo tests/Clippy used
+CARGO_INCREMENTAL=0 and --locked. No full workspace, CLI/TUI acceptance rerun,
+SDK execution, Linux/Windows/macOS Intel or source-bound CI run was performed.
+The GitHub refresh still reports #93 and #92 open and origin/main remains
+`db9e171e`, already contained in this branch. PR #115 concerns model fallback and
+is outside this recovery increment; it was left untouched. No goal PR/push/merge
+or parent completion is claimed.

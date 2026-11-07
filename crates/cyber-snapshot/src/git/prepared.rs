@@ -72,6 +72,7 @@ pub(crate) struct IgnoreInputs {
     pub case_insensitive: bool,
     pub private_roots: Vec<PathBuf>,
     pub settings: CaptureSettings,
+    pub size_excluded: Vec<String>,
 }
 
 pub(crate) struct PreparedRestore {
@@ -122,11 +123,9 @@ impl Shadow {
             .map_or("false", |value| value.unwrap_or("true"));
         let ignore_case = self.config_boolean("core.ignorecase", raw).await?;
         self.verify_config_inputs(&config, &origins).await?;
-        config.merge(crate::copy::generated_rules::observe(
-            &self.git_dir,
-            &self.common_dir,
-            settings,
-        )?)?;
+        let generated =
+            crate::copy::generated_rules::observe(&self.git_dir, &self.common_dir, settings)?;
+        config.merge(generated.inputs)?;
         config.merge(self.user_index_inputs().await?)?;
         Ok(IgnoreInputs {
             config,
@@ -135,6 +134,7 @@ impl Shadow {
             case_insensitive: ignore_case,
             private_roots: self.private_roots.clone(),
             settings: settings.clone(),
+            size_excluded: generated.size_excluded,
         })
     }
 

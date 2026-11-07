@@ -40,6 +40,7 @@ impl Rules {
             bytes: 0,
             inputs: inputs.clone(),
         };
+        rules.verify_sizes()?;
         let mut builder = rules.builder()?;
         for path in inputs.global.iter().chain(std::iter::once(&inputs.info)) {
             if let Some(bytes) = rules.bind(path, false)? {
@@ -146,7 +147,7 @@ impl Rules {
             (left.source, &left.path, &left.hash).cmp(&(right.source, &right.path, &right.hash))
         });
         let bytes = serde_json::to_vec(&(
-            "git-policy-capture-v4",
+            "git-policy-capture-v5",
             &self.path,
             &self.inputs,
             bindings,
@@ -155,7 +156,30 @@ impl Rules {
         .map_err(failed)?;
         Ok(blake3::hash(&bytes).to_hex().to_string())
     }
+    fn verify_sizes(&self) -> Result<(), RestoreError> {
+        for path in &self.inputs.size_excluded {
+            super::tree::safe_path(path).map_err(RestoreError::Failed)?;
+            let path = Path::new(path);
+            let mut parent = self.root.try_clone().map_err(failed)?;
+            for part in path.parent().ok_or(RestoreError::Stale)?.components() {
+                parent = parent
+                    .open_dir_nofollow(part.as_os_str())
+                    .map_err(|_| RestoreError::Stale)?;
+            }
+            let metadata = parent
+                .symlink_metadata(path.file_name().ok_or(RestoreError::Stale)?)
+                .map_err(|_| RestoreError::Stale)?;
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || metadata.len() <= self.inputs.settings.max_untracked
+            {
+                return Err(RestoreError::Stale);
+            }
+        }
+        Ok(())
+    }
     pub(super) fn verify(&self) -> Result<(), RestoreError> {
+        self.verify_sizes()?;
         self.inputs
             .config
             .verify()
