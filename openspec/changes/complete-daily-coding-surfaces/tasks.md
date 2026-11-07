@@ -587,3 +587,16 @@ Supported capture/preparation/restore and mutation-during-classification positiv
 and denials are covered. Complete configuration/ABA/filter/limit compatibility,
 managed Git runtime/checkout/recovery/cleanup and source-bound platform acceptance
 remain open; managed source admission and all parent acceptance stay disabled.
+
+Runtime Git candidate continuation: add a non-default native-git-acceptance build
+that takes the same owned restore/preview/changed-path ports and actual runtime
+workers, without changing default admission. Git tracked-image reads use the raw
+reader/total bound while configured max_file_bytes remains the untracked omission
+threshold. Actual App cases cover root/scoped SHA-1 and scoped SHA-256, binary
+tracked images above that threshold, links, Store receipts, native acknowledgement,
+lookup/reconciliation and later owner edits. Root/scoped SHA-256 coordination now
+shares a read-only ancestor-marker lock domain when libgit2 cannot discover it;
+this is coordination, never source/permission authority. Add candidate jobs to the
+native matrix, keeping their evidence distinct. Default admission, complete managed
+resource/storage-root integration, keep/rollback/process-death/runtime cuts,
+compatibility/reclamation and full platform acceptance remain open with M2–M8.

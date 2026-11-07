@@ -432,3 +432,22 @@
 - **GIVEN** captured file images, effective configuration, ignores and size-excluded names are unchanged
 - **WHEN** harmless empty directories add only absent source .gitignore observations
 - **THEN** those absence checks SHALL remain available during verification without changing serialized classification provenance or checkpoint identity
+
+
+#### Scenario: Explicit owned Git runtime acceptance build
+- **GIVEN** a non-default native-git-acceptance build exercises the Git adapter
+- **WHEN** a code rewind uses actual App/runtime workers and the consuming Store
+- **THEN** ordinary restore SHALL retain exact origin/lifetime/resource proof, commit the native/Session pair and publish acknowledgement through the existing guarded path
+- **AND** committed lookup and explicit metadata reconciliation, including a reopened App, SHALL preserve later owner files/symlinks, messages and inference counts without source replay
+- **AND** this acceptance feature SHALL NOT enable default Git admission or waive incomplete compatibility, managed-resource, cleanup, process-cut or platform acceptance
+
+#### Scenario: Tracked Git images exceed the untracked omission threshold
+- **GIVEN** a tracked Git image exceeds snapshots.max_file_bytes but fits the bounded raw-image reader and combined budget
+- **WHEN** the native candidate previews or restores it
+- **THEN** the untracked omission threshold SHALL NOT reject that tracked image, and independently omitted untracked files SHALL remain preserved
+- **AND** non-Git file limits and combined image/storage caps SHALL remain enforced
+
+#### Scenario: Scoped SHA-256 worktree mutation coordination
+- **WHEN** root and scoped Locations identify a Git repository format unavailable to libgit2 discovery
+- **THEN** read-only ancestor marker discovery SHALL keep them in one conservative process-local mutation-lock domain without running Git or writing project identity caches
+- **AND** that lock domain SHALL NOT grant source, permission, recovery, acknowledgement or Git-validity authority

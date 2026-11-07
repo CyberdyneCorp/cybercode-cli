@@ -37,3 +37,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "process", "time", "sync
 
 [lints]
 workspace = true
+
+[features]
+# Exercise the real managed Git adapter before default admission acceptance.
+native-git-acceptance = []

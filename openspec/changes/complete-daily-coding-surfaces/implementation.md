@@ -3646,3 +3646,78 @@ intentionally excluded from direct top-level selection. Windows-only/doc binarie
 again selected zero. Final all-target Clippy, format/diff, strict OpenSpec (117),
 lint (0/25) and SDK generation consistency passed. No further scope or acceptance
 claim changes: source admission and parent tasks remain open as stated above.
+
+### Actual Git runtime acceptance candidate (2026-11-07)
+
+The adapter already contained a Git branch in restore_owned, but its availability
+gate made it unreachable. A non-default native-git-acceptance Cargo feature now
+exercises that same production branch through the real App, runtime-issued workers,
+Store settlement and acknowledgement. It is forwarded by cyber-app for acceptance
+invocations. Normal builds and the release workflow (which does not select all
+features) retain the existing Git gate. The marker-only candidate availability
+check creates no project identity cache and cannot substitute for later Location,
+source/image, lifecycle, original-worker or checkout validation. Private roots and
+disabled snapshots still refuse. No public API/schema or force-clear path is added.
+
+Owned Git preview and restore now use a distinct bounded raw-image limit (up to
+64 MiB and the combined budget) rather than applying max_file_bytes to tracked
+files. That setting continues to govern Git untracked omission. Non-Git options
+retain their old limit. The new App fixture uses a binary tracked image above
+2 MiB with an explicit 4 KiB omission threshold, a link and an independently omitted
+8 KiB owner file. Real prompt capture, rewind preview/confirm and native Store
+receipts restore the tracked bytes/link while preserving that omitted file and the
+user index/config. The receipt retains complete versioned lifetime/checkout proof;
+these cases use the complete empty resource set, not managed-checkout acceptance.
+
+The first App invocation reached both SHA-1 root/scoped restore/receipt/reconcile
+cases, then failed its root-vs-scope lock assertion for SHA-256. Workspace
+coordination used only libgit2 discovery and therefore chose different domains when
+that format was unavailable to libgit2. A read-only ancestor .git marker fallback
+now conservatively widens the process-local lock domain. It does not grant Git
+validity, permission or source authority and does not run Git or create identity
+caches. A dedicated default-build regression verifies one shared live lock for a
+SHA-256 root and scope and no cyber-project-id creation. The subsequent first full
+App invocation passed its three cases in 55.81 seconds; the later reopened-App
+extension and final results follow below.
+
+The runtime fixture replaces a restored file with an absolute symlink to later
+owner bytes, repeats committed lookup/explicit acknowledgement, and compares
+messages and inference counts. It then shuts down the actual runtime, constructs
+a fresh App over the same Store and repeats only lookup/metadata reconciliation.
+This is an App shutdown/reopen, not an OS process-death cut or lost writer-reply
+injection. Existing immutable receipt and native ownership gates remain in force.
+The native CI workflow now schedules both default snapshot proof and separate
+candidate-adapter/App invocations on Linux x64/ARM and macOS Intel/ARM and retains
+separate logs. That workflow edit is not evidence that those jobs ran.
+
+Clippy caught an inefficient double-ended iterator and a 24/15 test helper;
+receipt roundtrip, source preservation and reopened-runtime responsibilities were
+split without lint allowances. Code-review skill inspection checked default-vs-
+candidate behavior, release feature selection, no metadata writes from availability
+or coordination, backend image limits, complete resource proof, exact receipt
+consumption and no replay after later owner edits. Managed worktrees in the default
+application data layout still need resource-verified storage-root integration:
+copy::Store currently rejects Locations under its data root, and the shadow's broad
+data exclusion also needs reconciliation for those legitimate source trees. The
+new empty-set cases do not prove that support. Keep/rollback after actual Git
+partial replacement, all native cuts, cleanup of managed/Git payloads, complete
+configuration/filter/limit compatibility and source-bound platform acceptance
+remain required. No M2–M8 or parent task is accepted by this candidate increment.
+
+Final local macOS arm64 checks: the reopened-App acceptance test passed all three
+parameter cases in 47.32 seconds. The default snapshot package passed 138 library,
+18 file-copy and 22 Git integration cases; the candidate package passed the same
+138/18/22 cases. Their library times were 60.47 and 87.90 seconds, respectively.
+Both modes intentionally exclude six library and one integration subprocess
+fixtures from top-level selection. Windows-only/doc binaries select zero on this
+host. All three workspace tests passed in 0.04 seconds, including the dedicated
+SHA-256 regression, and all 46 snapshot-worker regressions passed in 4.70 seconds.
+A later lint-only user-message iterator change uses rfind; the App execution above
+preceded that equivalent helper change. Final candidate App/server/snapshot
+all-target Clippy, format/diff, SDK generation consistency, strict OpenSpec (117)
+and spec lint (0 errors/25 warnings) passed. Workflow YAML syntax was checked with
+Ruby's YAML library after Python PyYAML was unavailable. Every Cargo test/Clippy
+invocation used CARGO_INCREMENTAL=0 and --locked. C sandbox deprecations and a linker
+unwind warning were observed without unchanged-main attribution. No full workspace,
+CLI/TUI acceptance rerun, SDK execution or source-bound CI/other-platform run was
+performed. No push/PR/merge, default activation or parent/issue completion is claimed.

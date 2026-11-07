@@ -252,7 +252,7 @@ impl GitSnapshots {
         let shadow = self
             .shadow(&request.directory)
             .ok_or_else(|| RestoreError::Failed("Git snapshots are unavailable".into()))?;
-        let options = self.copy_options(&request.directory);
+        let options = self.git_options(&request.directory);
         let lock = cyber_server::workspace::mutation_lock(&shadow.worktree)
             .map_err(|error| RestoreError::Failed(error.to_string()))?;
         let guard = lock.lock_owned().await;
@@ -288,6 +288,14 @@ impl GitSnapshots {
             max_total,
             private_roots: self.private_roots.clone(),
         }
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn git_options(&self, directory: &str) -> copy::Options {
+        let mut options = self.copy_options(directory);
+        // The Git configured file threshold omits only untracked files. Tracked
+        // images retain the raw Git reader's separate bound and total budget.
+        options.max_file = options.max_total.min(64 * 1024 * 1024);
+        options
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn recovery_options(&self, directory: &str) -> copy::Options {
@@ -657,7 +665,16 @@ impl Snapshots for GitSnapshots {
         })
     }
     fn owned_restore_available(&self, directory: &str) -> bool {
-        cfg!(any(target_os = "macos", target_os = "linux")) && self.non_git(directory)
+        cfg!(any(target_os = "macos", target_os = "linux"))
+            && (self.non_git(directory)
+                || (cfg!(feature = "native-git-acceptance")
+                    && (self.config)(Path::new(directory)).get("snapshots")
+                        != Some(&Value::Bool(false))
+                    && !self
+                        .private_roots
+                        .iter()
+                        .any(|root| Path::new(directory).starts_with(root))
+                    && git::repository_marker(Path::new(directory))))
     }
 
     fn restore_owned(
@@ -675,8 +692,8 @@ impl Snapshots for GitSnapshots {
             }
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
-                // Keep the same admission gate for direct port callers. The Git
-                // journal bridge cannot be activated before its remaining gates.
+                // Direct callers share the runtime availability gate. Candidate
+                // Git admission is confined to the explicit acceptance build.
                 if !self.owned_restore_available(&request.directory) {
                     return Err(RestoreError::Failed(
                         "Owned snapshot restore is unavailable for this Location".into(),
@@ -693,17 +710,10 @@ impl Snapshots for GitSnapshots {
                         )
                     })?)
                 };
-                let config = (self.config)(Path::new(&request.directory));
-                let (ignore, max_file) = Self::options_value(&config);
-                let max_total = config
-                    .pointer("/snapshots/fallback_max_bytes")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(200 * 1024 * 1024);
-                let options = copy::Options {
-                    ignore,
-                    max_file: max_file.min(max_total).min(64 * 1024 * 1024),
-                    max_total,
-                    private_roots: self.private_roots.clone(),
+                let options = if shadow.is_some() {
+                    self.git_options(&request.directory)
+                } else {
+                    self.copy_options(&request.directory)
                 };
                 let prepared = match shadow {
                     Some(shadow) => Some(

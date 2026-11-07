@@ -935,10 +935,10 @@ async fn mixed_copy_git_images_keep_original_ids_scope_exclusions_and_new_journa
             .unwrap()
             .expected = ImageSource::Copy;
         assert!(mismatched.validate(&location, 6).is_err());
-        assert!(
-            !repo
-                .snapshots
-                .owned_restore_available(location.to_str().unwrap())
+        assert_eq!(
+            repo.snapshots
+                .owned_restore_available(location.to_str().unwrap()),
+            cfg!(feature = "native-git-acceptance")
         );
         assert!(!repo.root.join(".git/index").exists());
     }
@@ -1085,10 +1085,10 @@ async fn native_git_import_restores_files_modes_creations_deletions_and_retains_
     assert!(journal.completed);
     assert!(journal.ownership.is_some());
     assert_eq!(storage::read(&dir, "stage_2", 65536).unwrap(), b"after");
-    assert!(
-        !repo
-            .snapshots
-            .owned_restore_available(repo.root.to_str().unwrap())
+    assert_eq!(
+        repo.snapshots
+            .owned_restore_available(repo.root.to_str().unwrap()),
+        cfg!(feature = "native-git-acceptance")
     );
     let mut legacy_git = journal.clone();
     legacy_git.version = 4;
@@ -2140,10 +2140,10 @@ async fn native_git_raw_capture_supports_sha256_user_repositories_and_encoded_by
     let user_config = std::fs::read(repo.root.join(".git/config")).unwrap();
     let target = repo.track(&repo.root).await;
     assert_eq!(target.len(), 64);
-    assert!(
-        !repo
-            .snapshots
-            .owned_restore_available(repo.root.to_str().unwrap())
+    assert_eq!(
+        repo.snapshots
+            .owned_restore_available(repo.root.to_str().unwrap()),
+        cfg!(feature = "native-git-acceptance")
     );
     std::fs::write(repo.root.join("file.txt"), &after).unwrap();
     let recorded = repo.track(&repo.root).await;
@@ -2179,10 +2179,10 @@ async fn git_markers_refuse_non_git_admission_without_creating_identity_or_snaps
     std::fs::create_dir_all(&nested).unwrap();
     for path in [&repo.root, &nested] {
         assert!(!repo.snapshots.non_git(path.to_str().unwrap()));
-        assert!(
-            !repo
-                .snapshots
-                .owned_restore_available(path.to_str().unwrap())
+        assert_eq!(
+            repo.snapshots
+                .owned_restore_available(path.to_str().unwrap()),
+            cfg!(feature = "native-git-acceptance")
         );
     }
     assert!(!repo.root.join(".git/cyber-project-id").exists());
@@ -2353,10 +2353,10 @@ async fn sha256_linked_worktree_uses_its_common_repository_format_and_scoped_git
         common_index
     );
     assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before");
-    assert!(
-        !repo
-            .snapshots
-            .owned_restore_available(location.to_str().unwrap())
+    assert_eq!(
+        repo.snapshots
+            .owned_restore_available(location.to_str().unwrap()),
+        cfg!(feature = "native-git-acceptance")
     );
 }
 
@@ -2530,10 +2530,10 @@ async fn native_git_preview_and_path_selection_include_normalization_only_change
         shadow.changed_native(&target, &recorded).await.unwrap(),
         ["file.txt"]
     );
-    assert!(
-        !repo
-            .snapshots
-            .owned_restore_available(repo.root.to_str().unwrap())
+    assert_eq!(
+        repo.snapshots
+            .owned_restore_available(repo.root.to_str().unwrap()),
+        cfg!(feature = "native-git-acceptance")
     );
     let preview = repo
         .snapshots
@@ -2631,10 +2631,10 @@ async fn git_lifetime_port_retains_exact_owner_lock_without_enabling_source_admi
             .is_err()
     );
     assert!(repo.snapshots.lock_worker(binding.clone()).await.is_err());
-    assert!(
-        !repo
-            .snapshots
-            .owned_restore_available(repo.root.to_str().unwrap())
+    assert_eq!(
+        repo.snapshots
+            .owned_restore_available(repo.root.to_str().unwrap()),
+        cfg!(feature = "native-git-acceptance")
     );
     drop(lifetime);
     let lifetime = repo.snapshots.lock_worker(binding.clone()).await.unwrap();
@@ -2654,10 +2654,10 @@ async fn git_lifetime_port_retains_exact_owner_lock_without_enabling_source_admi
     assert_eq!(lifetime.binding(), &binding);
     assert_eq!(lifetime.checkout_bindings().unwrap(), Some(vec![]));
     assert!(repo.store(&repo.root).recovery().unwrap().is_empty());
-    assert!(
-        !repo
-            .snapshots
-            .owned_restore_available(repo.root.to_str().unwrap())
+    assert_eq!(
+        repo.snapshots
+            .owned_restore_available(repo.root.to_str().unwrap()),
+        cfg!(feature = "native-git-acceptance")
     );
 }
 
@@ -2686,10 +2686,10 @@ async fn git_lifetime_port_keeps_scoped_locations_and_managed_checkout_completen
     assert_eq!(lifetime.checkout_bindings().unwrap(), None);
     assert!(repo.store(&scope).recovery().unwrap().is_empty());
     assert_eq!(std::fs::read(scope.join("owner")).unwrap(), b"owner bytes");
-    assert!(
-        !repo
-            .snapshots
-            .owned_restore_available(scope.to_str().unwrap())
+    assert_eq!(
+        repo.snapshots
+            .owned_restore_available(scope.to_str().unwrap()),
+        cfg!(feature = "native-git-acceptance")
     );
 }
 

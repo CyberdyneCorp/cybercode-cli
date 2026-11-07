@@ -934,3 +934,27 @@ the native cancellation event. Version-3 cleanup MUST match that exact committed
 digest. Missing historical digest evidence cannot be inferred from current native
 files and grants no cleanup authority; legacy lookup/metadata acknowledgement
 retains its existing behavior. This adds no public receipt field or source replay.
+
+
+### Runtime Git acceptance build
+
+A non-default native-git-acceptance Cargo feature MAY exercise the existing owned
+Git adapter through actual App/runtime workers before normal admission is enabled.
+The candidate SHALL use the same reservation, complete resource publication,
+retained synchronous worker, consuming Store pair and metadata acknowledgement as
+ordinary file-copy restore. It SHALL NOT bypass legacy/unknown ownership fences,
+worker identity or acknowledgement checks. Default builds SHALL keep the existing
+Git admission gate until full integration/compatibility/platform acceptance.
+Feature-build results SHALL be identified separately and SHALL NOT close that gate
+or parent tasks by themselves. Git preparation/preview SHALL use its bounded raw
+image read limit for tracked images; snapshots.max_file_bytes SHALL retain its
+existing role as the Git untracked-file omission threshold. Non-Git file limits
+and combined image/storage caps SHALL remain enforced.
+
+
+Workspace coordination SHALL remain shared by root and scoped Git Locations even
+when libgit2 cannot discover the repository format. A read-only ancestor-marker
+fallback MAY conservatively widen only the process-local mutation-lock domain;
+it SHALL NOT create identity caches or grant Git validity, native source,
+permission, recovery or acknowledgement authority. Native source/Location and
+exact worker ownership checks remain independent and mandatory.
