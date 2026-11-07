@@ -217,3 +217,13 @@ unknown fences remain protected. This is local implementation progress, not full
 recovery delivery: actual managed Git source callbacks, partial construction,
 reference-aware reclamation and complete native/platform/client acceptance remain
 open. See the daily coding implementation evidence and authoritative parent tasks.
+
+The non-default Git candidate now exercises an actual ordinary owned restore in a
+managed checkout created under the default application data directory. Source
+observation is registration-bound; source intents require the runtime worker's
+complete retained native checkout proof. Admission releases the Session mutex for
+host policy lookup and fences captured revisions. The App verifies persisted
+resources, unchanged user Git metadata and reopened acknowledgement without source
+replay. Default Git admission stays off. Managed partial replacement/recovery,
+construction/reclamation and complete native/platform acceptance remain required;
+this positive does not complete recovery or either issue.

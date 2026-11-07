@@ -958,3 +958,14 @@ fallback MAY conservatively widen only the process-local mutation-lock domain;
 it SHALL NOT create identity caches or grant Git validity, native source,
 permission, recovery or acknowledgement authority. Native source/Location and
 exact worker ownership checks remain independent and mandatory.
+
+Registered managed checkouts inside application data require a narrow source
+exception: filesystem-only registration identification permits observation and
+private metadata reservation, never source mutation. Retain the ready registration
+and revalidate it with the native Location; protect the snapshot namespace, other
+application data and explicit private roots. Before constructing a source intent,
+the actual runtime-issued worker SHALL verify its complete retained native checkout
+claims against enclosing registrations and exact activity/Session creation/Location.
+Unowned callers SHALL refuse. Session policy lookup during native admission SHALL
+run without the Session projection mutex held; immutable captured revisions and
+existing per-effect/consuming writer checks SHALL fence concurrent changes.

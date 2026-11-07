@@ -2249,6 +2249,34 @@ async fn writer_snapshot_fence_rejects_input_even_when_the_callers_precheck_is_s
 }
 
 #[tokio::test]
+async fn captured_snapshot_revision_refuses_changes_before_native_reservation() {
+    let (_temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let captured = handle.state.lock().await.clone();
+    runtime
+        .rename(&session, "owner changed Session")
+        .await
+        .unwrap();
+    let count = || {
+        runtime
+            .inner
+            .store
+            .read(|db| {
+                Ok(db.query_row("SELECT count(*) FROM event", [], |row| row.get::<_, i64>(0))?)
+            })
+            .unwrap()
+    };
+    let before = count();
+    let result = runtime.snapshot_worker(&handle, &captured).await;
+    assert!(
+        matches!(result, Err(RuntimeError::Conflict(message)) if message.contains("changed before worker admission"))
+    );
+    assert!(!handle.snapshot_active.load(Ordering::SeqCst));
+    assert_eq!(count(), before);
+    runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn ordinary_snapshot_reservation_cannot_race_a_pending_generic_native_owner() {
     let (_temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
     let handle = runtime.inner.handle(&session).await.unwrap();

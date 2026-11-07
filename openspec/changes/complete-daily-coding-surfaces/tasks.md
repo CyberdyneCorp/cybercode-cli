@@ -600,3 +600,16 @@ this is coordination, never source/permission authority. Add candidate jobs to t
 native matrix, keeping their evidence distinct. Default admission, complete managed
 resource/storage-root integration, keep/rollback/process-death/runtime cuts,
 compatibility/reclamation and full platform acceptance remain open with M2–M8.
+
+Managed default-storage continuation: identify ready registered source subtrees
+within application data for observation/reservation while retaining private
+snapshot/other-data/explicit-root boundaries. Require the actual worker's complete
+native checkout claims before constructing source intents; registration alone
+cannot authorize an unowned restore. Release the Session projection mutex before
+host checkout-policy admission, retain its captured revision and refuse stale
+admission. The non-default App candidate now exercises actual default /worktrees
+creation, native resource publication, restore, unchanged user Git metadata and
+reopened metadata acknowledgement without source replay. This is an ordinary
+managed restore positive, not complete managed keep/rollback/process-death,
+construction/reclamation/platform acceptance. Default Git admission remains off;
+M2–M8 and all parent tasks remain open.

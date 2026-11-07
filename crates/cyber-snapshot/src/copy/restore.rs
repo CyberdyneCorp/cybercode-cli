@@ -530,6 +530,12 @@ impl Store {
         context: Option<RestoreContext>,
         mut resolution: Option<Resolution>,
     ) -> Result<Journal> {
+        if self.managed_source.is_some() {
+            self.verify_root()?;
+            worker
+                .ok_or("Managed private-data source requires an owned snapshot worker")?
+                .authorize_managed_location(&self.root)?;
+        }
         let origin = worker
             .map(|worker| {
                 worker.authorize()?;

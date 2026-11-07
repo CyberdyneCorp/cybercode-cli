@@ -235,6 +235,42 @@ impl SnapshotWork<'_> {
         Ok(())
     }
 
+    /// Source admission for a registered checkout within private application
+    /// data. Identification alone cannot grant this: verify the actual worker's
+    /// complete retained native claims on both sides of the registry read.
+    pub fn authorize_managed_location(&self, directory: &std::path::Path) -> Result<(), String> {
+        self.authorize()?;
+        if directory != self.owner.directory {
+            return Err("Managed source differs from snapshot worker Location".into());
+        }
+        let managed = cyber_core::worktrees::Repository::managed_locations_at(directory)
+            .map_err(|error| error.to_string())?;
+        let bindings = self.owner.location()?.bindings()?;
+        if managed.is_empty() || managed.len() != bindings.len() {
+            return Err("Managed source requires the complete native checkout set".into());
+        }
+        for (_, managed) in managed {
+            if !managed.ready
+                || !bindings.iter().any(|binding| {
+                    binding.version == 2
+                        && binding.worktree_id == managed.id
+                        && binding.name == managed.name
+                        && binding.common_dir == managed.common_dir
+                        && binding.owner_id == self.owner.scope.id()
+                        && binding.lifetime.as_ref().is_some_and(|owner| {
+                            owner.directory == directory
+                                && owner.activity_id == self.owner.scope.id()
+                                && owner.session_id == self.owner.scope.control.source
+                                && owner.session_created_id == self.owner.created_id
+                        })
+                })
+            {
+                return Err("Managed source differs from retained native checkout proof".into());
+            }
+        }
+        self.authorize()
+    }
+
     /// Keep Session changes outside the exact synchronous namespace mutation.
     /// The longer-running worker keeps a separate admission owner so Stop and
     /// read-only inspection need not wait on a held Session projection mutex.
@@ -576,6 +612,11 @@ impl Runtime {
         let admission = SnapshotAdmission(handle.clone());
         let authority =
             super::snapshot_recovery_authority::RecoveryAuthority::capture(self, &state.info.id)?;
+        if self.inner.store.aggregate_seq(&state.info.id)? != Some(state.last_seq) {
+            return Err(RuntimeError::Conflict(
+                "Recovery Session changed before worker admission".into(),
+            ));
+        }
         request.authority = Some(authority.clone());
         let id = super::snapshot_recovery::request_owner(
             &request.original.session_created_id,
@@ -710,6 +751,11 @@ impl Runtime {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| RuntimeError::Busy(state.info.id.clone()))?;
         let admission = SnapshotAdmission(handle.clone());
+        if self.inner.store.aggregate_seq(&state.info.id)? != Some(state.last_seq) {
+            return Err(RuntimeError::Conflict(
+                "Snapshot Session changed before worker admission".into(),
+            ));
+        }
         let id = cyber_core::ids::new_id("op");
         let lifetime = self.snapshot_lifetime(state, &id).await?;
         let scope = activity::Scope::reserve_snapshot_owned(

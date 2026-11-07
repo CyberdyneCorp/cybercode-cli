@@ -352,8 +352,8 @@ impl Runtime {
             .await
     }
 
-    /// Revalidate before any restore. Hold the Session projection through the owned
-    /// restore and event commit so a new prompt cannot change its branch mid-effect.
+    /// Revalidate before restore. Owned workers fence Session revisions and retain
+    /// their resource claims through filesystem work and the consuming event commit.
     pub async fn rewind_confirm(
         &self,
         session_id: &str,
@@ -414,8 +414,12 @@ impl Runtime {
                 expected: code.baseline.clone(),
                 paths,
             };
-            let worker = self.snapshot_worker(handle, &state).await?;
+            // Native checkout admission resolves policy through the runtime and
+            // may read this Session. Keep an immutable revision, not its mutex,
+            // across that host call; the worker fences stale revisions.
+            let captured = state.clone();
             drop(state);
+            let worker = self.snapshot_worker(handle, &captured).await?;
             let completed = self
                 .inner
                 .options

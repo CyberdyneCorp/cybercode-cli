@@ -3721,3 +3721,64 @@ invocation used CARGO_INCREMENTAL=0 and --locked. C sandbox deprecations and a l
 unwind warning were observed without unchanged-main attribution. No full workspace,
 CLI/TUI acceptance rerun, SDK execution or source-bound CI/other-platform run was
 performed. No push/PR/merge, default activation or parent/issue completion is claimed.
+
+### Managed checkout source within default application data (2026-11-07)
+
+Starting from b2f35a23, the actual App `/worktrees` default layout reproduced
+`Private owner state cannot be a snapshot Location` during rewind preview.
+Registration now permits only observation/private metadata reservation for its
+ready source subtree; other data, the snapshot namespace and explicit private
+roots remain protected. The native Store retains and revalidates registration.
+Source-intent construction additionally requires the actual runtime-issued worker
+and its verified complete native checkout set, matching activity, Session creation,
+Location and registration. Registration alone cannot admit an unowned restore.
+Git raw capture protects snapshot storage without silently excluding the registered
+source subtree. No default Git source gate is enabled.
+
+The first application run after that correction stalled during managed native
+admission. A live process sample showed no executing native worker; a bounded
+confirmation regression then reproduced the timeout. Checkout policy lookup needs
+the same Session mutex held by the admission caller. Ordinary restore and recovery
+now pass an immutable captured Session revision across host admission without
+retaining that mutex. Admission checks the current Store revision before reserving
+native ownership; existing worker per-effect and consuming writer checks remain.
+The stale-revision regression performs a real Session rename and proves refusal
+publishes no native events and releases the admission flag.
+
+The candidate App test now creates a real managed linked checkout through the
+public route in the default data directory, runs two scripted prompts, previews
+and restores a tracked file, and checks the actual non-empty native checkout
+resource publication against the consumed receipt digest. User index/config bytes
+remain unchanged. Repeated explicit acknowledgement, including a fresh App over
+the same Store, preserves later source symlinks/owner bytes, messages and inference
+counts. This is App reopening rather than process death. The managed case and
+three existing unmanaged root/scoped SHA-1/SHA-256 cases passed (two top-level
+tests, 56.40 seconds). The first passing managed-only run took 15.54 seconds before
+the final resource/reopen assertions were added; the final full App run includes
+those assertions.
+
+Native registration tests prove unregistered under-data roots and explicit private
+roots refuse, registered observations work, other data/link escapes remain private,
+unowned journal preparation cannot publish an intent or mutate source, and changed
+readiness invalidates the retained Location. All 47 worker tests passed in 4.69
+seconds. The default snapshot package passed 139 library, 18 file-copy and 22 Git
+cases (library 60.63 seconds, Git 16.35 seconds); six library and one integration
+subprocess fixtures were intentionally excluded from top-level selection. The
+Windows-only and doc binaries select zero on this host. App/server/snapshot
+all-target candidate Clippy passed with warnings denied. SDK generation consistency,
+format/diff, strict OpenSpec (117 items) and spec lint (0 errors/25 warnings) passed.
+Cargo test/Clippy commands used CARGO_INCREMENTAL=0 and --locked. Native sandbox
+deprecations and the linker unwind-size warning were observed without main
+attribution. The candidate snapshot package also passed 139 library, 18 file-copy
+and 22 Git cases, with the same intentional fixture exclusions and zero selections;
+its library/file-copy/Git times were 61.70/1.17/16.38 seconds. Both package runs
+include the final native registration regression.
+
+Security review followed the code-review skill over the changed runtime/native
+paths and their tests: the exception is registration-bound, source admission uses
+retained native proof rather than IDs alone, and private boundaries and exact
+metadata-only acknowledgements remain enforced. Full managed partial replacement,
+keep/rollback/process cuts, partial construction/reclamation and native platform
+acceptance remain open. No full workspace, CLI/TUI acceptance rerun, SDK execution,
+source-bound CI, other-platform execution, push/PR/merge or parent/issue acceptance
+is claimed by this increment.

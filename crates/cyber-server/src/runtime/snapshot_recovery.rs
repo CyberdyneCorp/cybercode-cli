@@ -82,7 +82,9 @@ impl Runtime {
             .origin
             .ok_or_else(|| RuntimeError::Conflict("Recovery lacks exact native origin".into()))?;
         let handle = self.inner.handle(session).await?;
-        let state = handle.state.lock().await;
+        // Managed native admission may resolve policy through this Session.
+        // The captured revision is fenced by the worker before source effects.
+        let state = handle.state.lock().await.clone();
         let directory = state.info.directory.clone();
         let worker = self
             .snapshot_recovery_worker(
@@ -95,7 +97,6 @@ impl Runtime {
                 },
             )
             .await?;
-        drop(state);
         let completed = self
             .inner
             .options

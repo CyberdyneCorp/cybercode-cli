@@ -156,7 +156,7 @@ async fn build(paths: &Paths, directory: &Path, root: &Path) -> App {
     .await
     .unwrap()
 }
-fn git(directory: &Path, args: &[&str]) {
+fn git(directory: &Path, args: &[&str]) -> String {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(directory)
@@ -168,11 +168,122 @@ fn git(directory: &Path, args: &[&str]) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 fn image(value: u8) -> Vec<u8> {
     let mut bytes = vec![value; 2 * 1024 * 1024 + 8192];
     bytes[0] = 0;
     bytes
+}
+
+#[tokio::test]
+async fn managed_worktree_in_default_data_directory_restores_through_owned_worker() {
+    let mut f = Fixture::new("sha1", false).await;
+    std::fs::write(f.project.join("tracked"), "initial").unwrap();
+    git(&f.project, &["add", "tracked"]);
+    git(
+        &f.project,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "Initial",
+        ],
+    );
+    let created = f
+        .client
+        .post(
+            "/worktrees",
+            json!({"name":"managed", "session":{"model":"test/main"}}),
+        )
+        .await
+        .unwrap();
+    f.directory = PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap());
+    f.session = created["data"]["session"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    f.client = Client::embedded(f.app.embedded()).at(f.directory.to_str().unwrap());
+    assert!(f.directory.starts_with(f.paths.data.join("worktrees")));
+    let index_path = PathBuf::from(git(
+        &f.directory,
+        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+    ));
+    let index = std::fs::read(&index_path).unwrap();
+    let config = std::fs::read(f.project.join(".git/config")).unwrap();
+    std::fs::write(f.directory.join("tracked"), "before").unwrap();
+    let first = f.prompt("before", 1).await;
+    std::fs::write(f.directory.join("tracked"), "after").unwrap();
+    f.prompt("after", 2).await;
+    let mut request = json!({"message_id":first,"target":"code","action":"commit","expected_directory":f.directory});
+    let preview = f
+        .client
+        .post(
+            &format!("/sessions/{}/rewind/preview", f.session),
+            request.clone(),
+        )
+        .await
+        .unwrap();
+    request["confirmation"] = preview["data"]["confirmation"].clone();
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        f.client
+            .post(&format!("/sessions/{}/rewind/confirm", f.session), request),
+    )
+    .await
+    .expect("managed confirmation timed out")
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(f.directory.join("tracked")).unwrap(),
+        "before"
+    );
+    let receipt = f.receipt();
+    assert_eq!(
+        serde_json::to_value(&receipt.origin).unwrap()["worktree_id"],
+        created["data"]["worktree"]["id"]
+    );
+    let checkout = receipt.checkout.as_ref().unwrap();
+    let journal = f.journal(&receipt);
+    let phase: Value = serde_json::from_slice(
+        &std::fs::read(
+            journal
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("workers")
+                .join(checkout.lifetime.source_phase.as_ref().unwrap()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let bindings: Vec<cyber_core::worktrees::CheckoutBinding> =
+        serde_json::from_value(phase["checkout_bindings"].clone()).unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(
+        bindings[0].worktree_id,
+        receipt.origin.worktree_id.as_deref().unwrap()
+    );
+    assert_eq!(
+        checkout
+            .lifetime
+            .checkout_resources_digest(&bindings)
+            .unwrap(),
+        checkout.resources_digest
+    );
+    assert_eq!(std::fs::read(&index_path).unwrap(), index);
+    assert_eq!(
+        std::fs::read(f.project.join(".git/config")).unwrap(),
+        config
+    );
+    reconcile_after_owner_edit(&f, &receipt).await;
+    f.app.runtime.shutdown().await;
 }
 
 #[tokio::test]

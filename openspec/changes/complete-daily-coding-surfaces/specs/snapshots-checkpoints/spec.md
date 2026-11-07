@@ -451,3 +451,15 @@
 - **WHEN** root and scoped Locations identify a Git repository format unavailable to libgit2 discovery
 - **THEN** read-only ancestor marker discovery SHALL keep them in one conservative process-local mutation-lock domain without running Git or writing project identity caches
 - **AND** that lock domain SHALL NOT grant source, permission, recovery, acknowledgement or Git-validity authority
+
+#### Scenario: Registered managed checkout within application data
+- **GIVEN** a ready registered linked checkout contains the exact snapshot Location within application data
+- **WHEN** snapshot images or private worker metadata are prepared
+- **THEN** that checkout's source subtree MAY be observed while the snapshot namespace, other application data and explicit private roots remain protected
+- **AND** registration alone SHALL NOT authorize source mutation; the runtime-issued worker SHALL retain and verify the complete native checkout set, exact activity/Session creation/Location and current Session revision
+- **AND** missing or changed registration, missing native claims and unowned restores SHALL refuse without source effects
+
+#### Scenario: Managed checkout policy lookup during worker admission
+- **WHEN** native checkout admission reads Session policy during an owned restore or recovery
+- **THEN** the caller SHALL release the Session projection mutex before that host call and retain an immutable captured revision
+- **AND** a changed revision SHALL refuse worker admission or subsequent source effects, preserving existing native evidence

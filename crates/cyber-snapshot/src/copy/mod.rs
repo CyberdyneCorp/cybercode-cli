@@ -10,6 +10,8 @@ mod git_images;
 pub(crate) mod git_rules;
 mod inventory;
 mod links;
+#[cfg(test)]
+mod managed_tests;
 mod ownership;
 mod preparation;
 pub(crate) mod reclamation;
@@ -76,6 +78,7 @@ pub(crate) struct Store {
     root: PathBuf,
     root_id: String,
     data_path: PathBuf,
+    managed_source: Option<cyber_core::worktrees::Managed>,
     work: Dir,
     namespace: Dir,
 
@@ -180,7 +183,8 @@ impl Store {
             std::fs::create_dir_all(data).map_err(fail)?;
         }
         let data_path = data.canonicalize().map_err(fail)?;
-        if root.starts_with(&data_path) {
+        let managed_source = crate::git::managed_data_source(&data_path, &root)?;
+        if root.starts_with(&data_path) && managed_source.is_none() {
             return Err("Private owner state cannot be a snapshot Location".into());
         }
         let work = Dir::open_ambient_dir(&root, cap_std::ambient_authority()).map_err(fail)?;
@@ -224,6 +228,7 @@ impl Store {
             root,
             root_id,
             data_path,
+            managed_source,
             work,
             namespace: dir,
             objects,
@@ -235,6 +240,11 @@ impl Store {
         })
     }
     fn verify_root(&self) -> Result<()> {
+        if self.managed_source.is_some()
+            && crate::git::managed_data_source(&self.data_path, &self.root)? != self.managed_source
+        {
+            return Err("Managed snapshot Location registration changed".into());
+        }
         if !std::fs::symlink_metadata(&self.root)
             .map_err(fail)?
             .file_type()
@@ -248,6 +258,13 @@ impl Store {
             return Err("Snapshot Location identity changed".into());
         }
         Ok(())
+    }
+    fn private_data_path(&self, path: &Path) -> bool {
+        path.starts_with(&self.data_path)
+            && !self.managed_source.as_ref().is_some_and(|managed| {
+                path.starts_with(&managed.path)
+                    && !path.starts_with(self.data_path.join("snapshot"))
+            })
     }
     pub(super) fn lock_identity(&self) -> Result<String> {
         storage::identity(

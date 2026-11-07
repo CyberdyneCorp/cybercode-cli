@@ -87,7 +87,7 @@ impl Store {
                 return Err("Snapshot path limit exceeded".into());
             }
             let metadata = dir.symlink_metadata(item.file_name()).map_err(fail)?;
-            let excluded = self.root.join(&path).starts_with(&self.data_path)
+            let excluded = self.private_data_path(&self.root.join(&path))
                 || protected(&path)
                 || self
                     .options
@@ -210,7 +210,7 @@ impl Store {
     pub(super) fn check_source_path(&self, path: &str) -> Result<()> {
         safe_path(path)?;
         if protected(Path::new(path))
-            || self.root.join(path).starts_with(&self.data_path)
+            || self.private_data_path(&self.root.join(path))
             || self
                 .options
                 .private_roots

@@ -99,6 +99,30 @@ pub(crate) fn repository_marker(location: &Path) -> bool {
     })
 }
 
+/// Identification permits reads and private metadata reservation only. The
+/// native journal additionally requires retained runtime checkout authority.
+pub(crate) fn managed_data_source(
+    data: &Path,
+    location: &Path,
+) -> Result<Option<cyber_core::worktrees::Managed>, String> {
+    if !location.starts_with(data) {
+        return Ok(None);
+    }
+    if location == data || location.starts_with(data.join("snapshot")) {
+        return Ok(None);
+    }
+    let managed = cyber_core::worktrees::Repository::managed_at(location)
+        .map_err(|error| error.to_string())?
+        .map(|(_, managed)| managed);
+    Ok(managed.filter(|managed| {
+        managed.ready
+            && !managed.id.is_empty()
+            && managed.path.starts_with(data)
+            && managed.path != data
+            && !managed.path.starts_with(data.join("snapshot"))
+    }))
+}
+
 impl Shadow {
     pub fn locate(root: &Path, location: &Path) -> Option<Self> {
         let project = cyber_core::project::identify(location);
@@ -120,7 +144,16 @@ impl Shadow {
             common_dir: git_path(&common_dir),
             pathspec: if rel.is_empty() { ".".into() } else { rel },
             catalogs: Arc::new(Mutex::new(catalog::CatalogCache::new())),
-            private_roots: vec![root.parent().unwrap_or(root).to_path_buf()],
+            private_roots: vec![
+                if managed_data_source(root.parent().unwrap_or(root), &location)
+                    .ok()?
+                    .is_some()
+                {
+                    root.to_path_buf()
+                } else {
+                    root.parent().unwrap_or(root).to_path_buf()
+                },
+            ],
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             capture_settings: prepared::CaptureSettings {
                 ignore: vec![],

@@ -266,7 +266,7 @@ impl Store {
             .strip_prefix(boundary)
             .map_err(|_| "Symbolic-link target is outside the worktree")?;
         if super::tree::protected(relative)
-            || target.starts_with(&self.data_path)
+            || self.private_data_path(target)
             || self
                 .options
                 .private_roots
