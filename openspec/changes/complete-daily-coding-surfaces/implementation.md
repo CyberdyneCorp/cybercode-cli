@@ -2108,3 +2108,37 @@ reported 0 errors/25 warnings. An initial fixture compile error assumed the requ
 was Clone; the test now constructs independent identical requests without changing
 the production API. Full workspace/SDK execution, real CLI/TUI/App, Linux/Windows
 and source-bound CI acceptance were not run for this increment.
+
+
+## Git lifetime metadata reservation (2026-11-07)
+
+The public native lifetime port no longer refuses Git Locations before reaching
+the backend-independent version-2 lifetime engine. Reservations still canonicalize
+and protect the Location, bind exact activity/Session creation/worktree ownership,
+publish complete private native records and retain the actual file lock. The
+ordinary owned Git availability check and restore-owned direct-call gate remain
+unchanged and closed. Metadata reservation does not create an intent or source
+admission, acknowledge a journal or native checkout, or authorize reclamation.
+
+Two real-Git port regressions verify exact retained lifetime ownership, live
+reserve/reacquire refusal, exited reacquisition, durable empty complete checkout
+sets for an unmanaged root, foreign Session-creation refusal, scoped Locations and
+refusal to bind an empty set for a requested managed worktree. They preserve owner
+files, assert no journal was published, and explicitly check source availability
+remains false. These port tests do not create an actual managed checkout, runtime
+Session/source callback or consuming Store receipt; full Git runtime integration
+and post-effect native checkout acknowledgement remain required.
+
+The code-review skill was applied to the source/test/spec diff, focusing on
+reservation versus source authority, canonical/private Location validation,
+unchanged native owner checks and separate admission gates. No critical/major
+finding remains in this metadata-only reservation scope. All parent recovery
+and acceptance tasks remain open.
+
+Local macOS arm64 verification: locked snapshot tests passed 137 cases with two
+ignored fixtures (the pathspec fixture is invoked by its parent). Snapshot
+all-target locked Clippy passed with warnings denied. Format/diff and generated
+SDK consistency passed. Pinned strict OpenSpec passed all 117 items; spec lint
+reported 0 errors/25 warnings. Full workspace/SDK execution, actual Git runtime
+source/receipt and CLI/TUI/App acceptance, Linux/Windows and source-bound CI were
+not run for this increment.

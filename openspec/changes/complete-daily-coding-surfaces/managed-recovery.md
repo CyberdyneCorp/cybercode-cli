@@ -562,3 +562,11 @@ and all-plan conflict refusal. Preview SHALL publish no journal or source effect
 Its client path SHALL remain behind the ordinary owned-Git availability gate;
 connecting preview alone SHALL NOT enable native source admission. Raw changed-path
 selection SHALL preserve normalization-only changes when managed Git is admitted.
+
+Git Locations MAY reserve the same exact version-2 native lifetime metadata as
+file-copy Locations before resource acquisition. Reservation SHALL validate the
+canonical Location, protect private roots, retain the live inode lock and refuse
+foreign owner/creation context. Reacquisition SHALL read the exact original record;
+a requested managed worktree SHALL NOT accept an empty checkout set. Reservation
+alone SHALL NOT grant source admission, journal acknowledgement, checkout settlement
+or reclamation authority. Ordinary owned Git availability remains separately gated.

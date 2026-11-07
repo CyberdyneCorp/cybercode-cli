@@ -336,3 +336,12 @@ preview leaves no journal/source changes and revalidates outside selected paths.
 Complete summaries/client behavior, worker lifetime/acknowledgement, reclamation,
 remaining Git compatibility and platform acceptance remain required. Ordinary Git
 admission and all M2–M8/parent task acceptance remain unchanged and incomplete.
+
+
+Git lifetime-port continuation: trusted callers may now reserve backend-independent
+version-2 native lifetime metadata in Git Locations. Exact live locks, owner/Session
+creation/Location checks and managed-checkout completeness use the shared native
+engine. This lifts only the metadata reservation refusal; ordinary owned Git
+source availability remains false. Actual Git worker/checkout consuming receipts,
+post-effect acknowledgement/reconciliation, reclamation and complete crash/client/
+platform acceptance remain required; M2–M8 and parent tasks remain open.

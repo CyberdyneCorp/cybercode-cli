@@ -328,10 +328,9 @@ impl Snapshots for GitSnapshots {
                     .directory
                     .to_str()
                     .ok_or("Invalid snapshot lifetime Location")?;
-                // Git journaling and its lifetime proof are integrated separately.
-                if cyber_core::project::worktree_root(Path::new(directory)).is_some() {
-                    return Ok(None);
-                }
+                // Reservation is metadata-only and independent of the snapshot
+                // image backend. Ordinary Git source admission remains gated by
+                // owned_restore_available, not by weakening lifetime ownership.
                 self.recovery_location(directory)?;
                 let data = self.data_dir.clone();
                 let options = self.recovery_options(directory);

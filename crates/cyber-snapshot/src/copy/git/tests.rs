@@ -1378,3 +1378,95 @@ async fn native_git_scoped_preview_matches_restore_selection_and_refuses_stale_s
     assert_eq!(std::fs::read(directory.join("one")).unwrap(), b"after one");
     assert!(repo.store(&directory).recovery().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn git_lifetime_port_retains_exact_owner_lock_without_enabling_source_admission() {
+    use cyber_server::runtime::SnapshotLifetimeRequest;
+    let repo = Repo::new();
+    let request = SnapshotLifetimeRequest {
+        activity_id: "op_git_worker".into(),
+        session_id: "ses_git_owner".into(),
+        session_created_id: "evt_git_created".into(),
+        directory: repo.root.clone(),
+        worktree_id: None,
+    };
+    let lifetime = repo
+        .snapshots
+        .reserve_worker(request.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let binding = lifetime.binding().clone();
+    assert_eq!(binding.version, 2);
+    assert_eq!(binding.owner, request);
+    lifetime.verify().unwrap();
+    lifetime.verify_preparation(None).unwrap();
+    assert_eq!(lifetime.checkout_bindings().unwrap(), None);
+    assert!(
+        repo.snapshots
+            .reserve_worker(request.clone())
+            .await
+            .is_err()
+    );
+    assert!(repo.snapshots.lock_worker(binding.clone()).await.is_err());
+    assert!(
+        !repo
+            .snapshots
+            .owned_restore_available(repo.root.to_str().unwrap())
+    );
+    drop(lifetime);
+    let lifetime = repo.snapshots.lock_worker(binding.clone()).await.unwrap();
+    assert_eq!(lifetime.binding(), &binding);
+    lifetime.bind_checkouts(&[]).unwrap();
+    assert_eq!(lifetime.checkout_bindings().unwrap(), Some(vec![]));
+    drop(lifetime);
+    let mut foreign = binding.clone();
+    foreign.owner.session_created_id = "evt_other_creation".into();
+    assert!(repo.snapshots.lock_worker(foreign).await.is_err());
+    let lifetime = repo
+        .snapshots
+        .reserve_worker(request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(lifetime.binding(), &binding);
+    assert_eq!(lifetime.checkout_bindings().unwrap(), Some(vec![]));
+    assert!(repo.store(&repo.root).recovery().unwrap().is_empty());
+    assert!(
+        !repo
+            .snapshots
+            .owned_restore_available(repo.root.to_str().unwrap())
+    );
+}
+
+#[tokio::test]
+async fn git_lifetime_port_keeps_scoped_locations_and_managed_checkout_completeness() {
+    use cyber_server::runtime::SnapshotLifetimeRequest;
+    let repo = Repo::new();
+    let scope = repo.root.join("scope");
+    std::fs::create_dir(&scope).unwrap();
+    std::fs::write(scope.join("owner"), b"owner bytes").unwrap();
+    let request = SnapshotLifetimeRequest {
+        activity_id: "op_git_scoped".into(),
+        session_id: "ses_git_owner".into(),
+        session_created_id: "evt_git_created".into(),
+        directory: scope.clone(),
+        worktree_id: Some("wt_required".into()),
+    };
+    let lifetime = repo
+        .snapshots
+        .reserve_worker(request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(lifetime.binding().owner.directory, scope);
+    assert!(lifetime.bind_checkouts(&[]).is_err());
+    assert_eq!(lifetime.checkout_bindings().unwrap(), None);
+    assert!(repo.store(&scope).recovery().unwrap().is_empty());
+    assert_eq!(std::fs::read(scope.join("owner")).unwrap(), b"owner bytes");
+    assert!(
+        !repo
+            .snapshots
+            .owned_restore_available(scope.to_str().unwrap())
+    );
+}

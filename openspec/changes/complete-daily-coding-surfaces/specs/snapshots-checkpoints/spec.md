@@ -259,6 +259,12 @@
 - **AND** Git paths and patch headers SHALL remain worktree-relative, including scoped Locations, and preview SHALL publish no journal or source mutation
 - **AND** connecting this path SHALL NOT enable ordinary owned Git admission before its remaining gates are satisfied
 
+#### Scenario: Git lifetime reservation precedes source admission
+- **WHEN** a trusted runtime reserves a native snapshot worker lifetime in a Git Location
+- **THEN** the metadata port SHALL bind the exact canonical Location, Session creation and activity to a retained version-2 native inode lock and SHALL refuse live-lock or foreign-owner reacquisition
+- **AND** a managed worktree SHALL require its complete checkout set, while reservation alone SHALL NOT admit source effects, acknowledge a journal or settle a checkout
+- **AND** ordinary owned Git availability SHALL remain separately gated until full recovery acceptance
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback
