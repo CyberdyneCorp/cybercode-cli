@@ -280,3 +280,24 @@ worker proof and current authority. Contradictory/corrupt intents refuse; all
 original bytes remain retained. Cancelling an unstarted recovery request leaves
 its original failed restore fenced. Checkout/process uncertainty stays independent;
 no Session lease is acknowledged by this operation.
+
+
+### Independent checkout claim acquisition
+
+Snapshot workers and recovery-resolution workers use a dedicated host admission
+port carrying the already-reserved native activity ID. The production CLI/App
+adapter claims each managed checkout under that activity, independently of the
+Session, binary documents, LSP and MCP owners. Retained settlement continues to
+hold every actual checkout descriptor and Location activity through worker teardown.
+A managed host that has not implemented this port refuses rather than falling back
+to ordinary Session admission. Unmanaged hosts preserve their existing Location
+activity behavior through the default adapter.
+
+An interrupted checkout acquisition may retain an unknown activity-owned lease.
+The immutable lifetime reservation precedes that acquisition, but the activity ID
+alone is not a native acknowledgement receipt. This continuation does not clear
+such records, infer missing claims from an empty directory or acknowledge another
+Session. Exact persisted checkout file/directory identity and creation/lifetime
+binding, consuming proof through Store settlement, reconciliation and real kill
+cuts across multi-checkout acquisition remain required before the complete resource
+recovery path is accepted. Older Session-owned unknown leases remain independent.

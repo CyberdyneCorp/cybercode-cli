@@ -157,3 +157,10 @@ must both permit cancellation; a database backup cannot erase native admission.
 Original intents and payloads remain retained. This is progress on the approved
 recovery protocol, with independent checkout ownership, Git journaling, safe cleanup,
 complete clients and full platform/cut acceptance still required before delivery.
+
+
+The next local ownership continuation moves snapshot and recovery checkout claims
+from Session IDs to independent native activity IDs through a dedicated host port.
+CLI/App retain those locks through settlement; unsupported managed hosts refuse.
+Unknown checkout claims remain protected. Exact interrupted-claim proof and
+reconciliation are still required before accepting managed resource recovery.

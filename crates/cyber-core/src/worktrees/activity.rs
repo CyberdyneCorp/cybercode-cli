@@ -157,6 +157,18 @@ impl Repository {
         self.claim_owner(execution, managed, document).await
     }
 
+    /// A synchronous snapshot worker owns checkout activity independently of the
+    /// Session and of every other worker. An interrupted claim remains unknown.
+    pub async fn claim_snapshot(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+        activity: &str,
+    ) -> io::Result<CheckoutLease> {
+        safe_id(activity, "op")?;
+        self.claim_owner(execution, managed, activity).await
+    }
+
     async fn claim_owner(
         &self,
         execution: &dyn GitExecution,
@@ -229,6 +241,8 @@ fn safe_owner_id(id: &str) -> io::Result<()> {
         "lsp"
     } else if crate::ids::has_prefix(id, "bin") {
         "bin"
+    } else if crate::ids::has_prefix(id, "op") {
+        "op"
     } else {
         "ses"
     };

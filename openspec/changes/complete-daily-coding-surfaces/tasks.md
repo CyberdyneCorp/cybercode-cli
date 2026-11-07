@@ -177,3 +177,15 @@ are covered; the real-service cut does not assert that intent publication was ab
 Independent checkout resource ownership, Git journaling, cleanup, complete clients
 and the remaining M8 cut/platform matrix still prevent acceptance of M2–M8 and
 parent tasks 2.4/3.2–3.4. No additional parent task is marked complete.
+
+
+Independent checkout acquisition continuation: ordinary snapshot and recovery
+workers now call a dedicated host port with their already-reserved activity ID.
+The production CLI/App adapters retain separate `op_` checkout locks alongside
+Session/binary/MCP/LSP claims. Managed hosts without explicit support refuse.
+Retained settlement still holds actual descriptors through teardown. Regression
+coverage verifies coexistence, duplicate/foreign ID refusal, removal exclusion,
+unknown claim retention and preservation of unrelated Session evidence. This is
+acquisition ownership, not native reconciliation authority: immutable persisted
+checkout route/creation/lifetime binding and interrupted-claim acknowledgement
+remain incomplete, so M2–M8 and parent tasks remain open.

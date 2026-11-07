@@ -93,6 +93,12 @@
 - **THEN** its actual native owners remain held until the synchronous worker exits, Stop and read-only Session inspection remain available between source effects, and shutdown waits for actual ownership settlement
 - **AND** uncertain effects retain their origin and admission fence across runtime reload without replay
 
+#### Scenario: Snapshot checkout claim is independent of the Session
+- **WHEN** a snapshot worker acquires a managed checkout while its Session or another worker owns a separate claim
+- **THEN** checkout admission SHALL use the exact reserved native activity ID, retain its own lock through consuming settlement, and refuse reuse of a live or unknown claim
+- **AND** settling that snapshot claim SHALL NOT acknowledge unrelated Session activity; an interrupted acquisition SHALL retain unknown evidence without a generic clearing path
+- **AND** a managed host without explicit snapshot ownership support SHALL refuse instead of reusing a Session claim
+
 #### Scenario: Lifetime proof precedes reservation
 - **WHEN** a new file-copy worker reserves runtime ownership before publishing its restore origin
 - **THEN** an immutable worker-specific native lifetime lock already binds its activity, Session creation, checkout, Location and private namespace, and remains retained through actual resource teardown

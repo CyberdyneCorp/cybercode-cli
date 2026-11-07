@@ -1353,6 +1353,15 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.claim_binary_worktree_location(info, document, cancel))
     }
 
+    fn claim_snapshot_location<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        activity: &'a str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        Box::pin(self.claim_snapshot_worktree_location(info, activity, cancel))
+    }
+
     fn prepare_child_continuation<'a>(
         &'a self,
         parent: &'a cyber_server::runtime::SessionInfo,

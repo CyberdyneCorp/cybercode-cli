@@ -2,6 +2,103 @@ use super::*;
 use cyber_core::worktrees::CheckoutActivity;
 
 #[test]
+fn snapshot_worker_owns_a_distinct_checkout_lock_through_retained_settlement() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("snapshot-worker").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let actor = block_on(repository.claim(&fixture.execution, &managed, "ses_actor")).unwrap();
+    for foreign in ["ses_actor", "bin_worker", "../op_worker"] {
+        assert!(
+            block_on(repository.claim_snapshot(&fixture.execution, &managed, foreign)).is_err()
+        );
+    }
+    assert!(block_on(repository.claim(&fixture.execution, &managed, "op_worker")).is_err());
+    assert!(block_on(repository.claim_binary(&fixture.execution, &managed, "op_worker")).is_err());
+    let worker =
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).unwrap();
+    assert_eq!(worker.owner_id(), "op_worker");
+    assert!(
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).is_err()
+    );
+    actor.settle().unwrap();
+    let proof = worker.settle_retained().unwrap();
+    let error = block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+        .unwrap_err();
+    assert!(error.to_string().contains("op_worker"), "{error}");
+    drop(proof);
+    block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false)).unwrap();
+}
+
+#[test]
+fn snapshot_claim_disposal_retains_unknown_evidence_without_reusing_a_session_claim() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("snapshot-unknown").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let worker =
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).unwrap();
+    drop(worker);
+    let record = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id)
+        .join("op_worker.lock");
+    let retained = std::fs::read(&record).unwrap();
+    assert!(
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).is_err()
+    );
+    block_on(repository.claim(&fixture.execution, &managed, "ses_actor"))
+        .unwrap()
+        .settle()
+        .unwrap();
+    let error = block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown"), "{error}");
+    assert_eq!(std::fs::read(record).unwrap(), retained);
+}
+
+#[test]
+fn settled_snapshot_worker_does_not_acknowledge_unknown_session_checkout_activity() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("snapshot-session").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    drop(block_on(repository.claim(&fixture.execution, &managed, "ses_actor")).unwrap());
+    let record = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id)
+        .join("ses_actor.lock");
+    let retained = std::fs::read(&record).unwrap();
+    block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker"))
+        .unwrap()
+        .settle()
+        .unwrap();
+    assert!(block_on(repository.claim(&fixture.execution, &managed, "ses_actor")).is_err());
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    assert_eq!(std::fs::read(record).unwrap(), retained);
+}
+
+#[test]
 fn binary_worker_retains_an_independent_checkout_lease_through_source_commit() {
     let fixture = Fixture::new();
     let repository = fixture.repository();

@@ -854,6 +854,22 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Err("Binary worker checkout ownership is unsupported".into()) })
     }
 
+    /// Retain a snapshot worker's checkout independently of any Session claim.
+    /// Managed hosts must implement this explicitly; the generic Session claim
+    /// cannot supply exact snapshot ownership.
+    fn claim_snapshot_location<'a>(
+        &'a self,
+        info: &'a SessionInfo,
+        _activity: &'a str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<LocationLease, String>> {
+        if info.worktree_id.is_some() {
+            Box::pin(async { Err("Snapshot worker checkout ownership is unsupported".into()) })
+        } else {
+            self.claim_location(info, false, cancel)
+        }
+    }
+
     /// Prepare an existing child under its exclusive owner. Opening a client view grants no bypass.
     fn prepare_child_continuation<'a>(
         &'a self,

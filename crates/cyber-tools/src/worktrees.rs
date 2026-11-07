@@ -32,6 +32,12 @@ use crate::host::{BuiltinHost, Ctx};
 use crate::permissions::Request;
 use crate::tools::process::Process;
 
+#[derive(Clone, Copy)]
+enum CheckoutWorker<'a> {
+    Binary(&'a str),
+    Snapshot(&'a str),
+}
+
 /// Inputs for creating a new Session in a managed worktree.
 pub struct WorktreeSessionRequest {
     pub session: CreateSession,
@@ -219,7 +225,24 @@ impl BuiltinHost {
             info.worktree_id.as_deref(),
             false,
             cancel,
-            Some(document),
+            Some(CheckoutWorker::Binary(document)),
+        )
+        .await
+    }
+
+    pub(crate) async fn claim_snapshot_worktree_location(
+        &self,
+        info: &SessionInfo,
+        activity: &str,
+        cancel: CancellationToken,
+    ) -> Result<cyber_server::runtime::LocationLease, String> {
+        let inv = location_invocation(info);
+        self.claim_location(
+            &inv,
+            info.worktree_id.as_deref(),
+            false,
+            cancel,
+            Some(CheckoutWorker::Snapshot(activity)),
         )
         .await
     }
@@ -259,7 +282,7 @@ impl BuiltinHost {
         bound: Option<&str>,
         creating: bool,
         cancel: CancellationToken,
-        binary: Option<&str>,
+        worker: Option<CheckoutWorker<'_>>,
     ) -> Result<cyber_server::runtime::LocationLease, String> {
         use cyber_server::runtime::LocationLease;
         let activity = self
@@ -308,14 +331,22 @@ impl BuiltinHost {
         for (repository, managed) in locations {
             leases.push(
                 retry_repository_busy(&ctx.cancel, || async {
-                    if let Some(document) = binary {
-                        repository
-                            .claim_binary(&execution, &managed, document)
-                            .await
-                    } else {
-                        repository
-                            .claim(&execution, &managed, &inv.session_id)
-                            .await
+                    match worker {
+                        Some(CheckoutWorker::Binary(document)) => {
+                            repository
+                                .claim_binary(&execution, &managed, document)
+                                .await
+                        }
+                        Some(CheckoutWorker::Snapshot(activity)) => {
+                            repository
+                                .claim_snapshot(&execution, &managed, activity)
+                                .await
+                        }
+                        None => {
+                            repository
+                                .claim(&execution, &managed, &inv.session_id)
+                                .await
+                        }
                     }
                 })
                 .await

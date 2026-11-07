@@ -379,7 +379,7 @@ impl Runtime {
         )?;
         let lease = self
             .inner
-            .claim_location(&state.info, false, scope.control.stop.clone())
+            .claim_snapshot_location(&state.info, scope.id(), scope.control.stop.clone())
             .await?;
         let directory = std::fs::canonicalize(&state.info.directory)
             .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
@@ -439,7 +439,7 @@ impl Runtime {
         .await?;
         let lease = self
             .inner
-            .claim_location(&state.info, false, scope.control.stop.clone())
+            .claim_snapshot_location(&state.info, scope.id(), scope.control.stop.clone())
             .await?;
         if lease.worktree_id != state.info.worktree_id {
             return Err(RuntimeError::Conflict(

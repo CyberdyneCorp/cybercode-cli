@@ -16,6 +16,26 @@ impl Inner {
         let claim = self
             .tools
             .claim_location(info, creating, cancel.child_token());
+        self.await_location_claim(claim, cancel).await
+    }
+
+    pub(super) async fn claim_snapshot_location(
+        &self,
+        info: &SessionInfo,
+        activity: &str,
+        cancel: CancellationToken,
+    ) -> Result<LocationLease, RuntimeError> {
+        let claim = self
+            .tools
+            .claim_snapshot_location(info, activity, cancel.child_token());
+        self.await_location_claim(claim, cancel).await
+    }
+
+    async fn await_location_claim(
+        &self,
+        claim: impl Future<Output = Result<LocationLease, String>>,
+        cancel: CancellationToken,
+    ) -> Result<LocationLease, RuntimeError> {
         tokio::pin!(claim);
         let result = tokio::select! {
             result = &mut claim => result,

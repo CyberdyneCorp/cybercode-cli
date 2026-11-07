@@ -88,6 +88,107 @@ fn runtime_with_snapshots(
     })
 }
 
+#[derive(Default)]
+struct SnapshotClaims {
+    ordinary_forbidden: std::sync::atomic::AtomicBool,
+    claimed: std::sync::Mutex<Vec<String>>,
+}
+impl super::super::ToolHost for SnapshotClaims {
+    fn definitions(&self, _: &super::super::TurnContext) -> Vec<super::super::ToolDef> {
+        vec![]
+    }
+    fn execute(
+        &self,
+        _: super::super::Invocation,
+        _: tokio_util::sync::CancellationToken,
+    ) -> futures::future::BoxFuture<'_, super::super::ToolOutcome> {
+        Box::pin(async { super::super::ToolOutcome::Failed("unused fixture tool".into()) })
+    }
+    fn claim_location<'a>(
+        &'a self,
+        _: &'a super::super::SessionInfo,
+        _: bool,
+        _: tokio_util::sync::CancellationToken,
+    ) -> futures::future::BoxFuture<'a, Result<super::super::LocationLease, String>> {
+        Box::pin(async move {
+            if self.ordinary_forbidden.load(Ordering::SeqCst) {
+                return Err("Snapshot reused the ordinary Session claim".into());
+            }
+            Ok(super::super::LocationLease::unmanaged())
+        })
+    }
+    fn claim_snapshot_location<'a>(
+        &'a self,
+        _: &'a super::super::SessionInfo,
+        activity: &'a str,
+        _: tokio_util::sync::CancellationToken,
+    ) -> futures::future::BoxFuture<'a, Result<super::super::LocationLease, String>> {
+        Box::pin(async move {
+            self.claimed.lock().unwrap().push(activity.into());
+            Ok(super::super::LocationLease::unmanaged())
+        })
+    }
+}
+
+#[tokio::test]
+async fn snapshot_location_port_receives_the_reserved_native_activity_instead_of_the_session() {
+    let (temp, base, _, _, _) = super::super::binary_documents_tests::fixture().await;
+    let host = Arc::new(SnapshotClaims::default());
+    let runtime = Runtime::new(RuntimeOptions {
+        store: base.inner.store.clone(),
+        resolver: base.inner.resolver.clone(),
+        tools: host.clone(),
+        global_config_dir: temp.path().join("config"),
+        shell: "test".into(),
+        claude_compat: false,
+        compaction: Default::default(),
+        retry: Default::default(),
+        max_steps: None,
+        today: None,
+        interactive: false,
+        snapshots: Arc::new(super::super::NoSnapshots),
+    });
+    let session = runtime
+        .create_session(super::super::CreateSession {
+            directory: temp.path().to_str().unwrap().into(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    host.ordinary_forbidden.store(true, Ordering::SeqCst);
+    let owner = worker(&runtime, &session.id).await;
+    assert_eq!(*host.claimed.lock().unwrap(), [owner.scope.id().to_owned()]);
+    let record = latest(&runtime, &session.id);
+    assert_eq!(record["snapshot_worker"], true);
+    assert_eq!(record["session_id"], session.id);
+    assert_eq!(record["phase"], "reserved");
+    drop(owner);
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
+async fn default_host_refuses_managed_snapshot_claim_without_explicit_support() {
+    use super::super::ToolHost;
+    let (_temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let mut info = runtime.session_info(&session).await.unwrap();
+    info.worktree_id = Some("wt_fixture".into());
+    let host = super::super::NoTools;
+    assert!(
+        host.claim_snapshot_location(&info, "op_fixture", Default::default())
+            .await
+            .is_err()
+    );
+    info.worktree_id = None;
+    host.claim_snapshot_location(&info, "op_fixture", Default::default())
+        .await
+        .unwrap()
+        .settle()
+        .unwrap();
+    runtime.shutdown().await;
+}
+
 struct Acknowledgements(Arc<AtomicUsize>);
 struct Lifetimes {
     inner: Acknowledgements,

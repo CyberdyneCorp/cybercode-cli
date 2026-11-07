@@ -287,3 +287,12 @@ preparations remain protected for acknowledged safe cleanup. Do not edit records
 or remove evidence to force a retry. Independent managed-checkout proof, Git
 journaling, reclamation, typed recovery clients and broader native crash/platform
 acceptance remain unfinished.
+
+
+Managed checkout snapshots use an independent claim named by the snapshot's native
+activity, so they do not reuse a Session, binary document, MCP or language-server
+claim. The native claim remains locked through worker settlement. Hosts without
+explicit support refuse managed snapshot admission. A crash while acquiring a claim
+can still leave unknown checkout evidence: preparation cancellation does not clear
+that evidence or authorize checkout removal. Exact native claim reconciliation is
+still required for that acquisition cut; retain the evidence for recovery.

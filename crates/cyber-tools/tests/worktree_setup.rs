@@ -1913,6 +1913,52 @@ async fn process_launch_failure_remains_uncertain_and_cannot_authorize_retry() {
 }
 
 #[tokio::test]
+async fn snapshot_location_claim_is_independent_of_a_live_session_and_retained_until_disposal() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::{CreateSession, NoSnapshots, ToolHost};
+    let (fixture, repository, managed) = owned().await;
+    #[cfg(windows)]
+    fixture.set_config(json!({"sandbox":{"policy":"full-access"}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let actor = flow
+        .f
+        .host
+        .claim_location(&info, false, CancellationToken::new())
+        .await
+        .unwrap();
+    let worker = flow
+        .f
+        .host
+        .claim_snapshot_location(&info, "op_snapshot", CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(worker.worktree_id.as_deref(), Some(managed.id.as_str()));
+    actor.settle().unwrap();
+    let proof = worker.settle_retained().unwrap();
+    let error = repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("op_snapshot"), "{error}");
+    drop(proof);
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn retained_native_location_proof_prevents_checkout_removal_until_disposal() {
     use cyber_core::worktrees::CheckoutActivity;
     use cyber_server::runtime::{CreateSession, NoSnapshots, ToolHost};

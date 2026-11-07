@@ -1175,3 +1175,55 @@ claimed. The next ownership gap is the managed checkout acquisition/settlement c
 its Session-owned claim must become independent exact worker evidence before an
 exited preparation can safely settle that resource. No existing unknown lease may
 be cleared merely because the snapshot worker exited.
+
+
+### Independent checkout acquisition for snapshot workers (2026-11-06, local)
+
+The prior code retained a checkout lease but acquired it under the Session ID.
+Snapshot restoration and keep/rollback workers now use a dedicated
+`claim_snapshot_location` port with their already-reserved native activity ID.
+The core repository issues a distinct `op_` checkout claim; the production tools
+adapter applies it to every enclosing managed checkout, and the App adapter
+forwards this port. The existing retained settlement holds each native lock and
+Location activity until the actual worker releases its resources. Generic Session,
+binary, MCP and LSP claim selection is unchanged. A managed host without this
+explicit port refuses; unmanaged defaults retain existing Location behavior.
+
+Core regressions run real Git checkout creation/removal: Session/snapshot claims
+coexist, duplicate snapshot ownership refuses, generic/binary/foreign IDs cannot
+substitute, retained settlement excludes removal, interrupted acquisition stays
+unknown, and snapshot settlement cannot acknowledge an unknown Session. A production
+host regression acquires a snapshot alongside a live Session, retains its exact
+activity-named lock, then permits removal only after proof disposal. Runtime tests
+verify dispatch of the actual reserved activity and the default managed-host refusal.
+
+This does not create acknowledgement authority from an activity name. Exact
+persisted checkout file/directory identity, creation/lifetime binding, multi-checkout
+acquisition proof and interrupted-claim reconciliation remain required. No unknown
+Session or operation record is force-cleared. The complete managed recovery delivery
+and both issues remain incomplete; no parent task is marked complete here.
+
+
+Local macOS arm64 verification for this continuation: all 68 core worktree repository
+cases passed, with its existing subprocess fixture listed ignored; all 418 server
+unit cases passed with one ignored fixture, plus 22 affected integrations (4 idle
+cancellation, 13 Location activity, 5 rewind preview). All 38 production worktree
+host cases and all 16 real CLI branch/recovery cases passed, including retained
+native ownership, service kills, early preparations and partial restore keep/rollback.
+All-target core/server/tools/App/CLI Clippy passed with warnings denied. Formatting
+and diff checks passed. Strict pinned OpenSpec passed all 117 items; lint reports
+0 errors/25 warnings. No HTTP payload or generated SDK contract changed. Full-workspace,
+Linux/Windows native execution and live TUI/App recovery acceptance were not run.
+Observed native sandbox deprecation and Darwin linker warnings are recorded without
+assigning their origin to main.
+
+The code-review skill was applied across all changed core/runtime/host/App/test and
+documentation files. Review confirms the port/adapters fit the existing architecture,
+typed worker claims cannot reuse Session/binary namespaces, source/worktree binding
+checks remain in the runtime, ordinary cancellation acknowledgement behavior is
+shared unchanged, and the actual retained Location resource continues to outlive
+filesystem effects and consuming commits. Tests cover the new public core and host
+ports and refusal paths. No critical/major findings remain for independent acquisition;
+immutable interrupted-claim proof and full managed recovery acceptance remain open.
+This continuation remains local and does not authorize unknown claim settlement,
+complete M2–M8 or make the full recovery increment merge-ready.
