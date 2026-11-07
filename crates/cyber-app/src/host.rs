@@ -279,6 +279,17 @@ impl ToolHost for AppHost {
         self.builtin.claim_snapshot_location(info, activity, cancel)
     }
 
+    fn claim_snapshot_location_bound<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        activity: &'a str,
+        lifetime: Option<&'a cyber_server::runtime::SnapshotLifetimeBinding>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        self.builtin
+            .claim_snapshot_location_bound(info, activity, lifetime, cancel)
+    }
+
     fn prepare_child_continuation<'a>(
         &'a self,
         parent: &'a cyber_server::runtime::SessionInfo,

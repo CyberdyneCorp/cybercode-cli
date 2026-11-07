@@ -1,7 +1,9 @@
 //! Exact checkout metadata pins. A binding alone never grants acknowledgement.
 use super::{Managed, UseRecord, invalid};
+mod publication;
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
+pub(super) use publication::publish;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -25,6 +27,48 @@ pub struct CheckoutBinding {
     pub creation_directory_identity: String,
     pub creation_file_identity: String,
     pub creation_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifetime: Option<CheckoutOwner>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckoutOwner {
+    pub activity_id: String,
+    pub session_id: String,
+    pub session_created_id: String,
+    pub directory: PathBuf,
+    pub lifetime_digest: String,
+}
+impl CheckoutOwner {
+    fn validate_fields(&self) -> io::Result<()> {
+        super::safe_id(&self.activity_id, "op")?;
+        super::safe_id(&self.session_id, "ses")?;
+        if self.session_created_id.is_empty()
+            || self.session_created_id.len() > 256
+            || !self.directory.is_absolute()
+            || self.directory.to_str().is_none()
+            || self.lifetime_digest.len() != 64
+            || !self
+                .lifetime_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(invalid("Invalid snapshot checkout lifetime context"));
+        }
+        Ok(())
+    }
+    pub(super) fn validate(&self, managed: &Managed) -> io::Result<()> {
+        self.validate_fields()?;
+        if self.directory.canonicalize()? != self.directory
+            || !self.directory.starts_with(&managed.path)
+        {
+            return Err(invalid("Snapshot checkout lifetime Location changed"));
+        }
+        Ok(())
+    }
 }
 
 pub(super) struct Pins {
@@ -152,13 +196,13 @@ impl Pins {
         })
     }
     pub(super) fn capture(
+        &self,
         managed: &Managed,
         owner: &str,
         file: &File,
-    ) -> io::Result<(CheckoutBinding, Self)> {
+    ) -> io::Result<CheckoutBinding> {
         regular(file)?;
-        let pins = Self::open(&managed.common_dir, &managed.id, &managed.name)?;
-        let raw = bytes(&pins.creation)?;
+        let raw = bytes(&self.creation)?;
         let observed: Managed = serde_json::from_slice(&raw).map_err(invalid)?;
         if observed != *managed || !observed.ready {
             return Err(invalid("Snapshot checkout creation changed"));
@@ -169,15 +213,17 @@ impl Pins {
             worktree_id: managed.id.clone(),
             name: managed.name.clone(),
             common_dir: managed.common_dir.clone(),
-            common_identity: directory_identity(&pins.common)?,
-            root_identity: directory_identity(&pins.root)?,
-            directory_identity: directory_identity(&pins.directory)?,
+            common_identity: directory_identity(&self.common)?,
+            root_identity: directory_identity(&self.root)?,
+            directory_identity: directory_identity(&self.directory)?,
             file_identity: identity(file)?,
-            creation_directory_identity: directory_identity(&pins.creations)?,
-            creation_file_identity: identity(&pins.creation)?,
+            creation_directory_identity: directory_identity(&self.creations)?,
+            creation_file_identity: identity(&self.creation)?,
             creation_digest: digest(&raw),
+            lifetime: None,
+            staging_name: None,
         };
-        Ok((binding, pins))
+        Ok(binding)
     }
     fn matches(&self, binding: &CheckoutBinding) -> io::Result<()> {
         if directory_identity(&self.common)? != binding.common_identity
@@ -193,6 +239,9 @@ impl Pins {
         Ok(())
     }
     pub(super) fn verify(&self, file: &File, record: &UseRecord) -> io::Result<()> {
+        self.verify_at(file, record, &format!("{}.lock", record.owner_id))
+    }
+    fn verify_at(&self, file: &File, record: &UseRecord, name: &str) -> io::Result<()> {
         let binding = record
             .snapshot_binding
             .as_ref()
@@ -200,11 +249,30 @@ impl Pins {
         super::safe_id(&binding.owner_id, "op")?;
         super::safe_id(&binding.worktree_id, "wt")?;
         super::super::Name::parse(&binding.name).map_err(invalid)?;
-        if binding.version != 1
-            || binding.owner_id != record.owner_id
+        if !matches!(
+            (binding.version, binding.lifetime.as_ref()),
+            (1, None) | (2, Some(_))
+        ) || binding.owner_id != record.owner_id
             || binding.worktree_id != record.worktree_id
         {
             return Err(invalid("Snapshot checkout owner changed"));
+        }
+        if let Some(owner) = &binding.lifetime {
+            owner.validate_fields()?;
+            if owner.activity_id != record.owner_id {
+                return Err(invalid("Snapshot checkout lifetime owner changed"));
+            }
+        }
+        let prefix = format!("preparing_{}_{}_", binding.owner_id.len(), binding.owner_id);
+        if binding.staging_name.as_ref().is_some_and(|stage| {
+            !stage.starts_with(&prefix)
+                || stage.len() != prefix.len() + 26
+                || !stage
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+        }) || binding.version == 2 && binding.staging_name.is_none()
+        {
+            return Err(invalid("Invalid snapshot checkout construction binding"));
         }
         regular(file)?;
         if identity(file)? != binding.file_identity {
@@ -216,8 +284,8 @@ impl Pins {
         if digest(&bytes(&current.creation)?) != binding.creation_digest {
             return Err(invalid("Snapshot checkout creation contents changed"));
         }
-        let observed_file = open_file(&current.directory, &format!("{}.lock", binding.owner_id))?;
-        let raw = contents(file, 4096)?;
+        let observed_file = open_file(&current.directory, name)?;
+        let raw = contents(file, super::record_limit(record))?;
         let observed: UseRecord = serde_json::from_slice(&raw).map_err(invalid)?;
         let exact: serde_json::Value = serde_json::from_slice(&raw).map_err(invalid)?;
         if identity(&observed_file)? != binding.file_identity

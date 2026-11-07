@@ -99,6 +99,12 @@
 - **AND** settling that snapshot claim SHALL NOT acknowledge unrelated Session activity; an interrupted acquisition SHALL retain unknown evidence without a generic clearing path
 - **AND** a managed host without explicit snapshot ownership support SHALL refuse instead of reusing a Session claim
 
+#### Scenario: Checkout claim publication is fully initialized
+- **WHEN** a lifetime-bound snapshot worker acquires a checkout claim
+- **THEN** the stable native claim SHALL be published without replacement only after its complete record is durable and binds the exact activity, Session creation, directory and immutable lifetime digest
+- **AND** runtime admission SHALL refuse returned resources with foreign or missing lifetime context
+- **AND** a construction crash SHALL preserve private evidence without granting an incomplete stable record or legacy claim new acknowledgement authority
+
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
 - **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents

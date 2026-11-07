@@ -246,6 +246,47 @@ impl SnapshotWork<'_> {
 }
 
 impl SnapshotWorker {
+    fn checkout_proof(
+        scope: &activity::Scope,
+        lease: super::LocationLease,
+        worktree: Option<&str>,
+    ) -> Result<Box<dyn super::SnapshotLocationGuard>, RuntimeError> {
+        let bindings = lease.snapshot_bindings().map_err(RuntimeError::Conflict)?;
+        let expected = scope
+            .snapshot_lifetime()
+            .map(super::SnapshotLifetimeBinding::checkout_owner)
+            .transpose()
+            .map_err(RuntimeError::Conflict)?;
+        if bindings.len() > 4096
+            || worktree.is_some_and(|id| !bindings.iter().any(|binding| binding.worktree_id == id))
+        {
+            return Err(RuntimeError::Conflict(
+                "Snapshot checkout resource proof is incomplete or exceeds limits".into(),
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for binding in &bindings {
+            if binding.version != if expected.is_some() { 2 } else { 1 }
+                || binding.owner_id != scope.id()
+                || binding.lifetime != expected
+                || !seen.insert((&binding.common_dir, &binding.worktree_id))
+            {
+                return Err(RuntimeError::Conflict(
+                    "Snapshot checkout proof has foreign lifetime or ownership".into(),
+                ));
+            }
+        }
+        let proof = lease
+            .settle_snapshot_retained()
+            .map_err(RuntimeError::Invalid)?;
+        proof.verify().map_err(RuntimeError::Conflict)?;
+        if proof.bindings().map_err(RuntimeError::Conflict)? != bindings {
+            return Err(RuntimeError::Conflict(
+                "Snapshot checkout binding changed during retained settlement".into(),
+            ));
+        }
+        Ok(proof)
+    }
     fn location(&self) -> Result<&dyn super::SnapshotLocationGuard, String> {
         self._location
             .as_deref()
@@ -405,7 +446,12 @@ impl Runtime {
         )?;
         let lease = self
             .inner
-            .claim_snapshot_location(&state.info, scope.id(), scope.control.stop.clone())
+            .claim_snapshot_location(
+                &state.info,
+                scope.id(),
+                scope.snapshot_lifetime(),
+                scope.control.stop.clone(),
+            )
             .await?;
         let directory = std::fs::canonicalize(&state.info.directory)
             .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
@@ -426,6 +472,8 @@ impl Runtime {
                 "Recovery native Location/creation binding changed".into(),
             ));
         }
+        let location =
+            SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
         Ok(SnapshotWorker {
             scope,
             admission,
@@ -434,11 +482,7 @@ impl Runtime {
             directory,
             created_id,
             worktree_id: state.info.worktree_id.clone(),
-            _location: Some(
-                lease
-                    .settle_snapshot_retained()
-                    .map_err(RuntimeError::Invalid)?,
-            ),
+            _location: Some(location),
             _lifecycle: lifecycle,
             _lifetime: lifetime,
         })
@@ -469,7 +513,12 @@ impl Runtime {
         .await?;
         let lease = self
             .inner
-            .claim_snapshot_location(&state.info, scope.id(), scope.control.stop.clone())
+            .claim_snapshot_location(
+                &state.info,
+                scope.id(),
+                scope.snapshot_lifetime(),
+                scope.control.stop.clone(),
+            )
             .await?;
         if lease.worktree_id != state.info.worktree_id {
             return Err(RuntimeError::Conflict(
@@ -488,17 +537,15 @@ impl Runtime {
             .id
             .clone();
         let worktree_id = state.info.worktree_id.clone();
+        let location =
+            SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
         Ok(SnapshotWorker {
             scope,
             runtime: self.clone(),
             directory,
             created_id,
             worktree_id,
-            _location: Some(
-                lease
-                    .settle_snapshot_retained()
-                    .map_err(RuntimeError::Invalid)?,
-            ),
+            _location: Some(location),
             _lifecycle: lifecycle,
             _lifetime: lifetime,
             admission,

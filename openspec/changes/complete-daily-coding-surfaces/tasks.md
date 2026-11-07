@@ -198,3 +198,15 @@ the Store writer through commit/reply. Changed routes/records refuse without sou
 callbacks or acknowledgement. This does not finish immutable lifetime/resource
 publication or unknown-claim reacquisition across early cuts. Those and complete
 platform/client acceptance keep M2–M8 and parent tasks open.
+
+
+Atomic lifetime-bound checkout publication continuation: new managed claims stage
+and flush complete ownership records under their native lock before no-replace
+publication. Version-2 claims carry exact Session creation/directory and immutable
+lifetime digest. Runtime checks the complete returned resource set, including
+version, foreign/missing context and duplicates, before native settlement. Read-only
+inspection precedes any acknowledgement. Real native pre-publication kill and
+collision tests retain evidence and refuse activity reuse. Unbound legacy claims
+and Windows durability limits remain distinct. Unknown-claim acknowledgement,
+full publication/recovery cuts, Git journals and reclamation remain incomplete;
+no parent M2–M8 or 2.4/3.2–3.4 task is accepted here.

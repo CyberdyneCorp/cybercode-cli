@@ -190,6 +190,118 @@ async fn default_host_refuses_managed_snapshot_claim_without_explicit_support() 
 }
 
 struct Acknowledgements(Arc<AtomicUsize>);
+
+struct BindingLease {
+    bindings: Vec<cyber_core::worktrees::CheckoutBinding>,
+    settlements: Arc<AtomicUsize>,
+}
+impl super::super::LocationGuard for BindingLease {
+    fn settle(self: Box<Self>) -> Result<(), String> {
+        self.settlements.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        Ok(self.bindings.clone())
+    }
+    fn settle_snapshot_retained(
+        self: Box<Self>,
+    ) -> Result<Box<dyn super::super::SnapshotLocationGuard>, String> {
+        self.settlements.fetch_add(1, Ordering::SeqCst);
+        Ok(self)
+    }
+}
+impl super::super::SnapshotLocationGuard for BindingLease {
+    fn verify(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        Ok(self.bindings.clone())
+    }
+}
+
+#[tokio::test]
+async fn checkout_lifetime_context_is_checked_before_any_native_settlement() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            foreign: false,
+        }),
+    );
+    let owner = worker(&runtime, &session).await;
+    let lifetime = owner.scope.snapshot_lifetime().unwrap();
+    let context = lifetime.checkout_owner().unwrap();
+    let mut changed = lifetime.clone();
+    changed.file_identity.push_str("_replacement");
+    assert_ne!(
+        changed.checkout_owner().unwrap().lifetime_digest,
+        context.lifetime_digest
+    );
+    changed.version = 1;
+    assert!(changed.checkout_owner().is_err());
+    let binding = cyber_core::worktrees::CheckoutBinding {
+        version: 2,
+        owner_id: owner.scope.id().into(),
+        worktree_id: "wt_fixture".into(),
+        name: "fixture".into(),
+        common_dir: temp.path().to_path_buf(),
+        common_identity: "fixture".into(),
+        root_identity: "fixture".into(),
+        directory_identity: "fixture".into(),
+        file_identity: "fixture".into(),
+        creation_directory_identity: "fixture".into(),
+        creation_file_identity: "fixture".into(),
+        creation_digest: "a".repeat(64),
+        lifetime: Some(context),
+        staging_name: Some("preparing_fixture".into()),
+    };
+    for case in [
+        "valid",
+        "activity",
+        "creation",
+        "digest",
+        "missing",
+        "version",
+        "duplicate",
+        "empty",
+    ] {
+        let mut bindings = vec![binding.clone()];
+        match case {
+            "activity" => bindings[0].owner_id = "op_foreign".into(),
+            "creation" => {
+                bindings[0].lifetime.as_mut().unwrap().session_created_id = "evt_foreign".into()
+            }
+            "digest" => bindings[0].lifetime.as_mut().unwrap().lifetime_digest = "b".repeat(64),
+            "missing" => bindings[0].lifetime = None,
+            "version" => bindings[0].version = 3,
+            "duplicate" => bindings.push(binding.clone()),
+            "empty" => bindings.clear(),
+            _ => {}
+        }
+        let settlements = Arc::new(AtomicUsize::new(0));
+        let lease = super::super::LocationLease::managed(
+            "wt_fixture".into(),
+            Box::new(BindingLease {
+                bindings,
+                settlements: settlements.clone(),
+            }),
+        );
+        let result = SnapshotWorker::checkout_proof(&owner.scope, lease, Some("wt_fixture"));
+        assert_eq!(result.is_ok(), case == "valid", "{case}");
+        assert_eq!(
+            settlements.load(Ordering::SeqCst),
+            usize::from(case == "valid"),
+            "{case}"
+        );
+    }
+    drop(owner);
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
 struct CheckoutProof {
     calls: Arc<AtomicUsize>,
     fail_at: Arc<AtomicUsize>,

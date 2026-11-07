@@ -332,3 +332,39 @@ receipts are still required. No old Session or operation claim is reclassified.
 The checkout-proof compatibility migration prevents earlier writer catalogs from
 opening this Store for mutation and bypassing these native verification steps.
 It performs no native evidence repair or deletion.
+
+
+### Atomic initialized checkout publication and lifetime context
+
+New lifetime-bound claims carry a version-2 native binding containing the activity,
+Session creation, canonical source directory and a domain-separated digest of the
+complete immutable snapshot lifetime binding. Runtime admission validates every
+returned managed resource against that exact context, not just an activity label.
+Legacy claims remain distinct and gain no new acknowledgement authority.
+
+Construction prepares and flushes the complete bounded record under its actual
+native lock before publishing the stable activity name without replacement. A cut
+before publication retains private construction evidence; no partially initialized
+stable record is a valid claim. Linux/macOS use no-replace native rename; the Windows
+publication path must retain an interrupted link/unlink transition as evidence and
+never treat a remaining alias as a completed acquisition. Proof still verifies
+creation/namespace identities and exact record contents after publication. This
+step does not enable interrupted-claim acknowledgement or reclaim construction
+evidence; those require consuming recovery receipts and complete reference/lease
+checks in the following implementation.
+
+
+Publication inventories are bounded to 4096 entries, including the new stable claim;
+exhaustion retains all evidence and requires acknowledged cleanup. Bound native
+records are limited to 16 KiB; unbound/generic records retain their 4 KiB limit.
+Construction prefixes include the activity length to avoid prefix collisions between
+valid activity IDs. A retained preparation refuses reuse of that activity even when
+its stable name was never published. Reconciliation/cleanup of those preparations
+is not enabled by publication alone.
+
+Lifetime-bound durable publication currently admits Linux/macOS only. Windows keeps
+legacy unbound claim compatibility through initialized no-replace link/unlink
+publication, while a retained extra link refuses verification. It does not gain
+lifetime-bound durability or recovery authority; that path refuses before creating
+claim evidence until native directory durability has been implemented and verified.
+This remains part of the explicit Windows/platform acceptance limits.

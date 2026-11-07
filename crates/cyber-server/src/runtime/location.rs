@@ -23,11 +23,15 @@ impl Inner {
         &self,
         info: &SessionInfo,
         activity: &str,
+        lifetime: Option<&super::SnapshotLifetimeBinding>,
         cancel: CancellationToken,
     ) -> Result<LocationLease, RuntimeError> {
-        let claim = self
-            .tools
-            .claim_snapshot_location(info, activity, cancel.child_token());
+        let claim = self.tools.claim_snapshot_location_bound(
+            info,
+            activity,
+            lifetime,
+            cancel.child_token(),
+        );
         self.await_location_claim(claim, cancel).await
     }
 

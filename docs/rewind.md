@@ -303,3 +303,12 @@ and worktree creation metadata before source changes and consuming commits. Alia
 or replaced claim files, changed creation contents and replaced activity directories
 refuse. These checks preserve evidence; they do not grant permission to clear an
 unknown checkout claim after interrupted acquisition.
+
+
+New Linux/macOS lifetime-bound checkout claims publish their complete native record
+before becoming visible under the activity name. A pre-publication crash retains a
+construction record and prevents reuse of that activity. Runtime validates Session
+creation, directory, lifetime digest and the whole returned resource set before
+settling native ownership. Construction evidence is retained for the pending safe
+recovery/cleanup path; it cannot be removed to force a retry. Windows does not yet
+admit the lifetime-bound durability path.

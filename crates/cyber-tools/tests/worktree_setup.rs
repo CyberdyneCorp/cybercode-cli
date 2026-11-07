@@ -1913,6 +1913,90 @@ async fn process_launch_failure_remains_uncertain_and_cannot_authorize_retry() {
 }
 
 #[tokio::test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+async fn lifetime_bound_checkout_host_preserves_context_and_refuses_foreign_requests_before_creation()
+ {
+    use cyber_server::runtime::{
+        CreateSession, NoSnapshots, SnapshotLifetimeBinding, SnapshotLifetimeRequest, ToolHost,
+    };
+    let (fixture, _, managed) = owned().await;
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let created = flow.f.store.read_events(&info.id, -1, 1).unwrap().events[0]
+        .id
+        .clone();
+    // Adapter fixture: the runtime's separate lifetime lock proof is tested in
+    // runtime/native suites. This test exercises actual managed checkout creation.
+    let lifetime = SnapshotLifetimeBinding {
+        version: 2,
+        owner: SnapshotLifetimeRequest {
+            activity_id: "op_bound".into(),
+            session_id: info.id.clone(),
+            session_created_id: created,
+            directory: managed.path.clone(),
+            worktree_id: Some(managed.id.clone()),
+        },
+        root_identity: "fixture-root".into(),
+        namespace_identity: "fixture-namespace".into(),
+        directory_identity: "fixture-directory".into(),
+        file_identity: "fixture-file".into(),
+        source_phase: Some("phase_fixture".into()),
+    };
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let before = std::fs::read_dir(&directory).unwrap().count();
+    assert!(
+        flow.f
+            .host
+            .claim_snapshot_location_bound(
+                &info,
+                "op_foreign",
+                Some(&lifetime),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before);
+    let lease = flow
+        .f
+        .host
+        .claim_snapshot_location_bound(&info, "op_bound", Some(&lifetime), CancellationToken::new())
+        .await
+        .unwrap();
+    let bindings = lease.snapshot_bindings().unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(
+        bindings[0].lifetime,
+        Some(lifetime.checkout_owner().unwrap())
+    );
+    let proof = lease.settle_snapshot_retained().unwrap();
+    proof.verify().unwrap();
+    assert_eq!(proof.bindings().unwrap(), bindings);
+    drop(proof);
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("op_bound.lock")).unwrap()).unwrap();
+    assert_eq!(
+        raw["snapshot_binding"],
+        serde_json::to_value(&bindings[0]).unwrap()
+    );
+    assert_eq!(raw["settled"], true);
+    assert_eq!(std::fs::read_dir(directory).unwrap().count(), before + 1);
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn managed_git_legacy_rewind_preserves_an_independent_native_checkout_proof() {
     use cyber_server::runtime::{CreateSession, RevertTarget, ToolHost};
     let (fixture, _, managed) = owned().await;

@@ -1,6 +1,58 @@
 use super::*;
 use cyber_core::worktrees::CheckoutActivity;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn lifetime_bound_snapshot_claim_publishes_complete_context_without_reusing_existing_owners() {
+    use cyber_core::worktrees::CheckoutOwner;
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("bound-snapshot").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let owner = CheckoutOwner {
+        activity_id: "op_bound".into(),
+        session_id: "ses_fixture".into(),
+        session_created_id: "evt_fixture".into(),
+        directory: managed.path.clone(),
+        lifetime_digest: "a".repeat(64),
+    };
+    let lease =
+        block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner)).unwrap();
+    lease.verify_snapshot().unwrap();
+    assert_eq!(lease.snapshot_binding().unwrap().version, 2);
+    assert_eq!(
+        lease.snapshot_binding().unwrap().lifetime.as_ref(),
+        Some(&owner)
+    );
+    assert!(lease.snapshot_binding().unwrap().staging_name.is_some());
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+    let bytes = std::fs::read(directory.join("op_bound.lock")).unwrap();
+    assert!(
+        block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner)).is_err()
+    );
+    let proof = lease.settle_retained().unwrap();
+    proof.verify_snapshot().unwrap();
+    drop(proof);
+    assert!(
+        block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner)).is_err()
+    );
+    let record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        record["snapshot_binding"]["lifetime"],
+        serde_json::to_value(owner).unwrap()
+    );
+    block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false)).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn snapshot_native_checkout_proof_refuses_aliases_and_an_identical_replacement_record() {

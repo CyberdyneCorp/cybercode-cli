@@ -171,3 +171,11 @@ The actual worker and consuming Store writer verify and retain that proof; alias
 replacement and changed records refuse. Binding publication before interrupted
 acquisition and recovery-owned native acknowledgement remain required. Git rewind
 still follows its legacy path; compatibility tests do not establish owned Git recovery.
+
+
+The local initialized-publication continuation adds staged no-replace checkout
+claims and exact lifetime context. Runtime verifies complete managed bindings before
+native settlement; prior writer catalogs refuse mutation. Construction kills retain
+evidence and refuse replay. Unknown-claim acknowledgement and reclamation remain
+incomplete, and Windows lifetime-bound durability is not yet admitted. This does not
+accept the complete recovery feature or either issue.

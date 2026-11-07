@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{GitExecution, Managed, Name, RemovalActivity, Repository, RepositoryLock};
 mod snapshot;
-pub use snapshot::CheckoutBinding;
+pub use snapshot::{CheckoutBinding, CheckoutOwner};
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct UseRecord {
@@ -193,24 +193,28 @@ impl Repository {
         activity: &str,
     ) -> io::Result<CheckoutLease> {
         safe_id(activity, "op")?;
-        let mut lease = self.claim_owner(execution, managed, activity).await?;
-        let (binding, pins) = snapshot::Pins::capture(managed, activity, &lease.file)?;
-        lease.record.snapshot_binding = Some(binding);
-        lease.snapshot_pins = Some(pins);
-        write_record(&mut lease.file, &lease.record)?;
-        lease.verify_snapshot()?;
-        Ok(lease)
+        let _lock = self.claim_ready(execution, managed).await?;
+        snapshot::publish(managed, activity, None)
     }
 
-    async fn claim_owner(
+    pub async fn claim_snapshot_bound(
         &self,
         execution: &dyn GitExecution,
         managed: &Managed,
-        session: &str,
+        owner: &CheckoutOwner,
     ) -> io::Result<CheckoutLease> {
-        safe_owner_id(session)?;
+        owner.validate(managed)?;
+        let _lock = self.claim_ready(execution, managed).await?;
+        snapshot::publish(managed, &owner.activity_id, Some(owner.clone()))
+    }
+
+    async fn claim_ready(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+    ) -> io::Result<RepositoryLock> {
         safe_id(&managed.id, "wt")?;
-        let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
+        let lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
         if managed.common_dir != self.common_dir {
@@ -230,19 +234,20 @@ impl Repository {
         if stored != *managed {
             return Err(invalid("Worktree creation identity changed"));
         }
+        Ok(lock)
+    }
+
+    async fn claim_owner(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+        session: &str,
+    ) -> io::Result<CheckoutLease> {
+        safe_owner_id(session)?;
+        let _lock = self.claim_ready(execution, managed).await?;
         let path = use_directory(managed, true)?.join(format!("{session}.lock"));
         let existed = path.try_exists()?;
-        let file = if crate::ids::has_prefix(session, "op") {
-            // An activity is a one-shot owner. Preserve old/future evidence even
-            // after settlement; no new operation may reset this claim.
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create_new(true)
-                .open(&path)?
-        } else {
-            open_record(&path, true)?
-        };
+        let file = open_record(&path, true)?;
         if !try_lock(&file)? {
             return Err(io::Error::other(format!("Worktree in use by {session}")));
         }
@@ -347,11 +352,24 @@ fn try_lock(file: &File) -> io::Result<bool> {
 fn read_record(file: &mut File) -> io::Result<UseRecord> {
     file.rewind()?;
     let mut bytes = Vec::new();
-    file.take(4097).read_to_end(&mut bytes)?;
-    if bytes.len() > 4096 {
-        return Err(invalid("Activity record exceeds 4 KiB"));
+    file.take(16 * 1024 + 1).read_to_end(&mut bytes)?;
+    let record = serde_json::from_slice(&bytes).map_err(invalid)?;
+    if bytes.len() > record_limit(&record) {
+        return Err(invalid("Activity record exceeds limit"));
     }
-    serde_json::from_slice(&bytes).map_err(invalid)
+    Ok(record)
+}
+
+fn record_limit(record: &UseRecord) -> usize {
+    if record
+        .snapshot_binding
+        .as_ref()
+        .is_some_and(|binding| binding.version == 2)
+    {
+        16 * 1024
+    } else {
+        4096
+    }
 }
 
 fn check_record(record: &UseRecord, managed: &Managed, session: &str) -> io::Result<()> {
@@ -363,8 +381,8 @@ fn check_record(record: &UseRecord, managed: &Managed, session: &str) -> io::Res
 
 fn write_record(file: &mut File, record: &UseRecord) -> io::Result<()> {
     let bytes = serde_json::to_vec(record).map_err(invalid)?;
-    if bytes.len() > 4096 {
-        return Err(invalid("Activity record exceeds 4 KiB"));
+    if bytes.len() > record_limit(record) {
+        return Err(invalid("Activity record exceeds limit"));
     }
     file.rewind()?;
     file.set_len(0)?;

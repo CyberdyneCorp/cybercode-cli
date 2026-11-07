@@ -25,31 +25,21 @@ pub struct SnapshotLifetimeBinding {
     pub source_phase: Option<String>,
 }
 
-/// The actual worker retains this lock through all resource acquisition and work.
-/// It conveys no authority to settle checkout, process or binary-document owners.
-pub trait SnapshotLifetime: Send {
-    fn binding(&self) -> &SnapshotLifetimeBinding;
-    /// Synchronous native metadata verification; may run inside the Store writer.
-    /// It must not call the runtime/Store, launch processes or perform source effects.
-    fn verify(&self) -> Result<(), String>;
-    /// Persist native admission before a source callback. A legacy lifetime may
-    /// never grant the new positive pre-effect cancellation proof.
-    fn admit_source(&self, _origin: &super::SnapshotOrigin) -> Result<(), String> {
-        Err("Native source admission is unavailable".into())
-    }
-    /// Positive native source-phase proof, not merely an unlocked lifetime file.
-    fn verify_preparation(&self, _origin: Option<&super::SnapshotOrigin>) -> Result<(), String> {
-        Err("Native preparation phase proof is unavailable".into())
-    }
-    /// Metadata publication only, after observed durable preparation cancellation.
-    fn acknowledge_preparation(
-        &mut self,
-        receipt: &super::SnapshotPreparationReceipt,
-    ) -> Result<(), String> {
-        if receipt.origin.is_some() {
-            return Err("Preparation journal acknowledgement is unavailable".into());
+impl SnapshotLifetimeBinding {
+    pub fn checkout_owner(&self) -> Result<cyber_core::worktrees::CheckoutOwner, String> {
+        use sha2::{Digest, Sha256};
+        if self.version != 2 || self.source_phase.is_none() {
+            return Err("Legacy lifetime has no checkout binding authority".into());
         }
-        Ok(())
+        let bytes = serde_json::to_vec(&("snapshot-checkout-lifetime-v1", self))
+            .map_err(|error| error.to_string())?;
+        Ok(cyber_core::worktrees::CheckoutOwner {
+            activity_id: self.owner.activity_id.clone(),
+            session_id: self.owner.session_id.clone(),
+            session_created_id: self.owner.session_created_id.clone(),
+            directory: self.owner.directory.clone(),
+            lifetime_digest: format!("{:x}", Sha256::digest(bytes)),
+        })
     }
 }
 
@@ -112,5 +102,61 @@ impl super::Runtime {
             lifetime.verify().map_err(super::RuntimeError::Conflict)?;
         }
         Ok(lifetime)
+    }
+}
+
+/// The actual worker retains this lock through all resource acquisition and work.
+/// It conveys no authority to settle checkout, process or binary-document owners.
+pub trait SnapshotLifetime: Send {
+    fn binding(&self) -> &SnapshotLifetimeBinding;
+    /// Synchronous native metadata verification; may run inside the Store writer.
+    /// It must not call the runtime/Store, launch processes or perform source effects.
+    fn verify(&self) -> Result<(), String>;
+    /// Persist native admission before a source callback. A legacy lifetime may
+    /// never grant the new positive pre-effect cancellation proof.
+    fn admit_source(&self, _origin: &super::SnapshotOrigin) -> Result<(), String> {
+        Err("Native source admission is unavailable".into())
+    }
+    /// Positive native source-phase proof, not merely an unlocked lifetime file.
+    fn verify_preparation(&self, _origin: Option<&super::SnapshotOrigin>) -> Result<(), String> {
+        Err("Native preparation phase proof is unavailable".into())
+    }
+    /// Metadata publication only, after observed durable preparation cancellation.
+    fn acknowledge_preparation(
+        &mut self,
+        receipt: &super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        if receipt.origin.is_some() {
+            return Err("Preparation journal acknowledgement is unavailable".into());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod checkout_encoding_tests {
+    use super::*;
+    #[test]
+    fn checkout_digest_encoding_has_a_stable_versioned_known_answer() {
+        let binding = SnapshotLifetimeBinding {
+            version: 2,
+            owner: SnapshotLifetimeRequest {
+                activity_id: "op_fixture".into(),
+                session_id: "ses_fixture".into(),
+                session_created_id: "evt_fixture".into(),
+                directory: "/work".into(),
+                worktree_id: None,
+            },
+            root_identity: "root".into(),
+            namespace_identity: "namespace".into(),
+            directory_identity: "directory".into(),
+            file_identity: "file".into(),
+            source_phase: Some("phase_fixture".into()),
+        };
+        // Pins the framed v1 encoding, rather than recomputing it with this helper.
+        assert_eq!(
+            binding.checkout_owner().unwrap().lifetime_digest,
+            "66239118d7327f0739d4e468da0b7d4c547e0a752cfd9680e6e5f7f2469af802"
+        );
     }
 }

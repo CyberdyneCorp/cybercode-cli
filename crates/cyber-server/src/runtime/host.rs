@@ -15,6 +15,9 @@ use super::model::{CallState, RetrySafety, SessionInfo};
 /// An owned Location admission. Disposal without settlement must retain recovery evidence.
 pub trait LocationGuard: Send {
     fn settle(self: Box<Self>) -> Result<(), String>;
+    fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        Err("Snapshot checkout binding inspection is unsupported".into())
+    }
 
     /// Acknowledge native settlement and retain ownership through a consuming commit.
     fn settle_retained(self: Box<Self>) -> Result<Box<dyn Send>, String> {
@@ -30,6 +33,9 @@ pub trait LocationGuard: Send {
 /// launch processes or perform source effects; disposal may run in the writer.
 pub trait SnapshotLocationGuard: Send {
     fn verify(&self) -> Result<(), String>;
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        Ok(vec![])
+    }
 }
 struct UnmanagedSnapshotLocation {
     _owner: Box<dyn Send>,
@@ -46,6 +52,15 @@ pub struct LocationLease {
 }
 
 impl LocationLease {
+    pub fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        if self.worktree_id.is_none() {
+            return Ok(vec![]);
+        }
+        self.guard
+            .as_ref()
+            .ok_or("Missing managed checkout guard")?
+            .snapshot_bindings()
+    }
     pub fn guarded(worktree_id: Option<String>, guard: Box<dyn LocationGuard>) -> Self {
         Self {
             worktree_id,
@@ -896,6 +911,22 @@ pub trait ToolHost: Send + Sync {
             Box::pin(async { Err("Snapshot worker checkout ownership is unsupported".into()) })
         } else {
             self.claim_location(info, false, cancel)
+        }
+    }
+
+    fn claim_snapshot_location_bound<'a>(
+        &'a self,
+        info: &'a SessionInfo,
+        activity: &'a str,
+        lifetime: Option<&'a super::SnapshotLifetimeBinding>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<LocationLease, String>> {
+        if lifetime.is_some() && info.worktree_id.is_some() {
+            Box::pin(async {
+                Err("Lifetime-bound snapshot checkout ownership is unsupported".into())
+            })
+        } else {
+            self.claim_snapshot_location(info, activity, cancel)
         }
     }
 

@@ -185,6 +185,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261106020000_snapshot_checkout_proof",
         sql: include_str!("../migrations/20261106020000_snapshot_checkout_proof.sql"),
     },
+    Migration {
+        id: "20261106030000_snapshot_checkout_lifetime",
+        sql: include_str!("../migrations/20261106030000_snapshot_checkout_lifetime.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -398,8 +402,47 @@ mod tests {
         let Outcome::TooNew(unknown) = migrate(&mut db, previous).unwrap() else {
             panic!("previous writers bypassed checkout proof admission");
         };
-        assert_eq!(unknown, ["20261106020000_snapshot_checkout_proof"]);
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
         assert_eq!(std::fs::read(claim).unwrap(), evidence);
+    }
+
+    #[test]
+    fn checkout_lifetime_catalog_rejects_activity_only_writers_and_preserves_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("lifetime.db");
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261106030000_snapshot_checkout_lifetime")
+            .unwrap();
+        let mut db = Connection::open(&path).unwrap();
+        assert!(matches!(
+            migrate(&mut db, &MIGRATIONS[..at]).unwrap(),
+            Outcome::Current
+        ));
+        let evidence = r#"{"session_id":"ses_retained","snapshot_worker":true,"status":"unknown","snapshot_lifetime":{"version":2}}"#;
+        db.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_context','op_retained',0,'native.activity.changed.1',?1,1)", [evidence]).unwrap();
+        assert!(matches!(
+            migrate(&mut db, MIGRATIONS).unwrap(),
+            Outcome::Current
+        ));
+        drop(db);
+        let mut db = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("activity-only writer accepted lifetime-bound checkout storage");
+        };
+        assert_eq!(unknown, ["20261106030000_snapshot_checkout_lifetime"]);
+        let retained: String = db
+            .query_row("SELECT data FROM event WHERE id='evt_context'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(retained, evidence);
     }
 
     #[test]

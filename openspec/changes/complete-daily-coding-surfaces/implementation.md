@@ -1312,3 +1312,80 @@ and no journal acknowledgement. Checked owner refusals return `Conflict` while
 schema, corruption and storage failures retain their distinct error paths. The
 final snapshot-worker suite (34 tests) and server Clippy passed after this change.
 The checkout-proof migration has a separate passing Store all-target Clippy check.
+
+
+### Initialized lifetime-bound checkout publication (2026-11-06, local)
+
+Stable checkout activity names no longer expose an initial generic record followed
+by a later binding rewrite. Construction stages and flushes the complete native
+record while retaining its actual file lock, directory pins and creation descriptor,
+then publishes without replacement and synchronizes the directory. Linux/macOS use
+native no-replace rename. A pre-publication cut leaves a private complete stage;
+that activity cannot be reused while its construction evidence remains. Prefixes
+include activity length to prevent overlapping IDs from colliding. Admission reserves
+room for the new record within a 4096-entry inventory; legacy/unbound records remain
+bounded to 4 KiB, and lifetime-bound records to 16 KiB. No construction cleanup is
+enabled here.
+
+Version-2 native claims include the exact activity, Session creation, canonical
+source directory and versioned digest of the complete immutable lifetime binding.
+The v1 digest framing has a fixed known-answer regression. Native constructors
+validate Location/context before publication. Runtime inspects the entire returned
+resource set before native settlement, rejecting foreign activity/creation/digest,
+missing context, unknown versions, duplicate or incomplete resources. It checks the
+same binding set after retaining ownership. This prevents a foreign resource from
+being acknowledged merely to inspect it. Production CLI and App adapters implement
+the bound port; unsupported managed hosts refuse rather than dropping the context.
+The new compatibility marker rejects earlier writer catalogs without changing any
+retained native/event bytes.
+
+Native regressions include actual process death while a complete stage is locked,
+no stable publication at that cut, no replay/reuse of construction evidence, a
+foreign stable-name collision, and namespace replacement immediately before
+publication. The last retains the original stage and refuses installation. Review
+keeps the original directory/creation pins through construction instead of reopening
+them after creating a stage, and rechecks routing after the preparation boundary.
+Production-host tests exercise actual managed creation, context roundtrip and refusal
+of a foreign request before namespace creation. Scope tests use an instrumented port
+to prove all context failures precede native settlement. These are acquired-resource
+and publication checks, not completed unknown-claim acknowledgement.
+
+Windows retains initialized unbound legacy publication through no-replace link/unlink;
+an interrupted extra link refuses verification. Lifetime-bound directory durability
+is explicitly unavailable there and refuses before claim creation. This does not
+claim Windows native acceptance or weaken an existing native fence. Native Windows
+execution, Linux execution, complete publication/cut coverage, exact unknown-claim
+reacquisition/acknowledgement, Git journals, reference-aware reclamation and full
+client acceptance remain required. M2–M8 and parent tasks remain open.
+
+
+Verification on local macOS arm64: all 410 core unit cases passed with two ignored
+subprocess fixtures, and all 71 core worktree repository cases passed with its child
+fixture listed ignored. After final pin/route review, all eight activity unit cases
+and six selected native snapshot integration cases passed; the new process-kill child
+is invoked by its parent test. All 422 server unit cases passed with one ignored
+fixture, plus 22 affected integrations (4 idle cancellation, 13 Location activity,
+5 rewind preview). The subsequent 40-case snapshot-focused run passed, including the
+known-answer digest and pre-settlement context refusal cases. All 40 production
+worktree host cases, all 61 Store cases and all 16 real CLI branch/recovery cases
+passed. All-target core/server/Store/tools/App/CLI Clippy passed with warnings denied
+after review fixes. Formatting, diff and generated SDK consistency checks passed;
+strict pinned OpenSpec passed 117 items and lint reports 0 errors/25 warnings.
+SDK execution tests, full-workspace tests, native Linux/Windows execution and live
+TUI/App recovery acceptance were not run for this increment. Native sandbox
+API deprecation and Darwin linker warnings were observed without attributing their
+origin to main.
+
+The code-review skill was applied to every changed native/core, runtime/port,
+Store compatibility, CLI/App adapter, test and documentation file. Review checks
+complete pre-publication records, original pin retention and no-follow routing,
+no-replace/collision behavior, locked-file durability, bounded inventory and encoding,
+context identity before acknowledgement, stable digest framing, prior-catalog refusal,
+and absence of source replay or legacy authority promotion. It adds revalidation at
+the publication boundary and a namespace-replacement regression. Initial checks found
+a borrow error in the new subprocess fixture and Clippy test placement/borrow style
+issues; those are corrected and the final checks above passed. No critical/major
+findings remain for initialized lifetime-bound publication. Full unknown-resource
+reconciliation, complete ownership/reference publication across all cuts, Git recovery,
+reclamation and platform/client acceptance remain open. This local continuation does
+not make the complete recovery increment merge-ready or complete either issue.

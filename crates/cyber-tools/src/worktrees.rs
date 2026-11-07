@@ -36,6 +36,7 @@ use crate::tools::process::Process;
 enum CheckoutWorker<'a> {
     Binary(&'a str),
     Snapshot(&'a str),
+    SnapshotBound(&'a cyber_core::worktrees::CheckoutOwner),
 }
 
 /// Inputs for creating a new Session in a managed worktree.
@@ -247,6 +248,41 @@ impl BuiltinHost {
         .await
     }
 
+    pub(crate) async fn claim_snapshot_worktree_location_bound(
+        &self,
+        info: &SessionInfo,
+        activity: &str,
+        lifetime: Option<&cyber_server::runtime::SnapshotLifetimeBinding>,
+        cancel: CancellationToken,
+    ) -> Result<cyber_server::runtime::LocationLease, String> {
+        let owner = lifetime
+            .map(|lifetime| {
+                if lifetime.owner.activity_id != activity
+                    || lifetime.owner.session_id != info.id
+                    || lifetime.owner.worktree_id != info.worktree_id
+                    || std::fs::canonicalize(&info.directory).map_err(|error| error.to_string())?
+                        != lifetime.owner.directory
+                {
+                    return Err("Foreign snapshot checkout lifetime".into());
+                }
+                lifetime.checkout_owner()
+            })
+            .transpose()?;
+        let inv = location_invocation(info);
+        let worker = owner
+            .as_ref()
+            .map(CheckoutWorker::SnapshotBound)
+            .unwrap_or(CheckoutWorker::Snapshot(activity));
+        self.claim_location(
+            &inv,
+            info.worktree_id.as_deref(),
+            false,
+            cancel,
+            Some(worker),
+        )
+        .await
+    }
+
     pub(crate) async fn claim_hook_test_location(
         &self,
         event: &cyber_core::hooks::HookEvent,
@@ -340,6 +376,11 @@ impl BuiltinHost {
                         Some(CheckoutWorker::Snapshot(activity)) => {
                             repository
                                 .claim_snapshot(&execution, &managed, activity)
+                                .await
+                        }
+                        Some(CheckoutWorker::SnapshotBound(owner)) => {
+                            repository
+                                .claim_snapshot_bound(&execution, &managed, owner)
                                 .await
                         }
                         None => {
@@ -1204,6 +1245,9 @@ struct ActiveLocation {
     activity: crate::lsp::Activity,
 }
 impl cyber_server::runtime::LocationGuard for ActiveLocation {
+    fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.lease.snapshot_bindings()
+    }
     fn settle(self: Box<Self>) -> Result<(), String> {
         self.lease.settle()
     }
@@ -1231,6 +1275,9 @@ impl cyber_server::runtime::SnapshotLocationGuard for ActiveSnapshotLocation {
     fn verify(&self) -> Result<(), String> {
         self.proof.verify()
     }
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.proof.bindings()
+    }
 }
 
 struct SnapshotWorktreeProof(Vec<cyber_core::worktrees::CheckoutLease>);
@@ -1241,9 +1288,33 @@ impl cyber_server::runtime::SnapshotLocationGuard for SnapshotWorktreeProof {
         }
         Ok(())
     }
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.0
+            .iter()
+            .map(|lease| {
+                lease.verify_snapshot().map_err(|error| error.to_string())?;
+                lease
+                    .snapshot_binding()
+                    .cloned()
+                    .map_err(|error| error.to_string())
+            })
+            .collect()
+    }
 }
 
 impl cyber_server::runtime::LocationGuard for WorktreeLease {
+    fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.0
+            .iter()
+            .map(|lease| {
+                lease.verify_snapshot().map_err(|error| error.to_string())?;
+                lease
+                    .snapshot_binding()
+                    .cloned()
+                    .map_err(|error| error.to_string())
+            })
+            .collect()
+    }
     fn settle(self: Box<Self>) -> Result<(), String> {
         for lease in self.0 {
             lease.settle().map_err(|error| error.to_string())?;
