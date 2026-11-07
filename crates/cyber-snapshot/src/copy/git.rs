@@ -20,7 +20,7 @@ impl RestoreContext {
     pub(super) fn validate(&self, location: &Path, version: u32) -> Result<()> {
         let ids = [&self.target, &self.recorded, &self.expected];
         if let Some(git) = &self.git {
-            if version != 4
+            if !matches!(version, 4 | 5)
                 || !git.worktree.is_absolute()
                 || git
                     .worktree
@@ -59,7 +59,13 @@ fn matches(entry: Option<&Entry>, image: Option<&Image>) -> bool {
         (Some(entry), Some(image)) => {
             entry.length == image.bytes.len() as u64
                 && entry.object == storage::digest(&image.bytes)
-                && (entry.mode & 0o111 != 0) == (image.mode == "100755")
+                && match entry.kind {
+                    super::ImageKind::File => {
+                        image.mode != "120000"
+                            && (entry.mode & 0o111 != 0) == (image.mode == "100755")
+                    }
+                    super::ImageKind::Symlink => image.mode == "120000",
+                }
         }
         _ => false,
     }
@@ -67,7 +73,7 @@ fn matches(entry: Option<&Entry>, image: Option<&Image>) -> bool {
 
 impl Store {
     /// Called only inside a retained synchronous worker. Ordinary Git admission
-    /// stays disabled until link import and full expected-state scanning are ready.
+    /// stays disabled until full state/lifetime and native acceptance gates are ready.
     pub(crate) fn restore_git_worker(
         &self,
         prepared: PreparedRestore,
@@ -110,16 +116,23 @@ impl Store {
             ));
         }
         self.ensure_recovered().map_err(RestoreError::Failed)?;
-        // Known image validation precedes any source effect. Link support is required
-        // before enabling the runtime gate; this import currently handles files.
+        // Known image validation precedes any source effect. Full state scanning
+        // and actual runtime lifetime integration remain required before activation.
         for tree in [&prepared.target, &prepared.recorded, &prepared.expected] {
             for (path, image) in &tree.images {
                 image.verify().map_err(RestoreError::Failed)?;
                 self.check_source_path(path).map_err(RestoreError::Failed)?;
-                if !matches!(image.mode.as_str(), "100644" | "100755") {
+                if !matches!(image.mode.as_str(), "100644" | "100755" | "120000") {
                     return Err(RestoreError::Failed(
-                        "Native Git link import is not yet available".into(),
+                        "Unsupported native Git image mode".into(),
                     ));
+                }
+                if image.mode == "120000"
+                    && (image.bytes.is_empty()
+                        || image.bytes.len() > super::links::TARGET_LIMIT
+                        || image.bytes.contains(&0))
+                {
+                    return Err(RestoreError::Failed("Invalid symbolic-link target".into()));
                 }
                 if image.bytes.len() as u64 > self.options.max_file {
                     return Err(RestoreError::Failed(
@@ -183,6 +196,16 @@ impl Store {
                     }
                 }
             };
+            if let Some(entry) = &next
+                && entry.kind == super::ImageKind::Symlink
+            {
+                self.check_link_target(
+                    &path,
+                    &self.bytes(entry).map_err(RestoreError::Failed)?,
+                    &prepared.worktree,
+                )
+                .map_err(RestoreError::Failed)?;
+            }
             changes.push(Change {
                 path,
                 before: current,
@@ -204,12 +227,23 @@ impl Store {
             .into_std_file()
             .metadata()
             .map_err(storage::fail)?;
-        entry.mode = current.map_or(0o644, |entry| entry.mode);
-        entry.mode = if image.mode == "100755" {
-            entry.mode | 0o111
+        if image.mode == "120000" {
+            entry.kind = super::ImageKind::Symlink;
+            entry.mode = current
+                .filter(|entry| entry.kind == super::ImageKind::Symlink)
+                .map_or(0o777, |entry| entry.mode);
         } else {
-            entry.mode & !0o111
-        };
+            entry.mode = current
+                .filter(|entry| entry.kind == super::ImageKind::File)
+                .map_or(0o644, |entry| entry.mode);
+        }
+        if entry.kind == super::ImageKind::File {
+            entry.mode = if image.mode == "100755" {
+                entry.mode | 0o111
+            } else {
+                entry.mode & !0o111
+            };
+        }
         entry.uid = current.map_or(owner.uid(), |entry| entry.uid);
         entry.gid = current.map_or(owner.gid(), |entry| entry.gid);
         Ok(entry)

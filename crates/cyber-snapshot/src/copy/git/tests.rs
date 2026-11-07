@@ -144,7 +144,7 @@ async fn native_git_import_restores_files_modes_creations_deletions_and_retains_
     let journals = store.recovery().unwrap();
     assert_eq!(journals.len(), 1);
     let (dir, journal) = store.journal(&journals[0].id).unwrap();
-    assert_eq!(journal.version, 4);
+    assert_eq!(journal.version, 5);
     let context = journal.context.as_ref().unwrap();
     assert_eq!(
         (&context.target, &context.recorded, &context.expected),
@@ -159,6 +159,11 @@ async fn native_git_import_restores_files_modes_creations_deletions_and_retains_
             .snapshots
             .owned_restore_available(repo.root.to_str().unwrap())
     );
+    let mut legacy_git = journal.clone();
+    legacy_git.version = 4;
+    legacy_git.backend = None;
+    Store::record(&dir, &legacy_git).unwrap();
+    assert!(store.journal(&journals[0].id).is_ok());
     let mut downgraded = journal.clone();
     downgraded.version = 3;
     Store::record(&dir, &downgraded).unwrap();
@@ -255,9 +260,9 @@ async fn native_git_import_keeps_subdirectory_and_historical_exclusion_boundarie
 }
 
 #[tokio::test]
-async fn native_git_import_refuses_link_images_before_any_journal_or_source_effect() {
+async fn native_git_import_refuses_escaping_links_before_any_journal_or_source_effect() {
     let repo = Repo::new();
-    std::os::unix::fs::symlink("destination", repo.root.join("link")).unwrap();
+    std::os::unix::fs::symlink("../destination", repo.root.join("link")).unwrap();
     let target = repo.track(&repo.root).await;
     std::fs::remove_file(repo.root.join("link")).unwrap();
     std::fs::write(repo.root.join("link"), b"current owner").unwrap();
@@ -267,7 +272,7 @@ async fn native_git_import_refuses_link_images_before_any_journal_or_source_effe
         .await;
     let store = repo.store(&repo.root);
     assert!(
-        matches!(store.restore_git_worker(prepared, None), Err(RestoreError::Failed(error)) if error.contains("link import"))
+        matches!(store.restore_git_worker(prepared, None), Err(RestoreError::Failed(error)) if error.contains("outside the worktree"))
     );
     assert!(store.recovery().unwrap().is_empty());
     assert_eq!(
@@ -341,7 +346,7 @@ async fn imported_git_preimages_support_native_keep_and_rollback_with_retained_g
             .resolve_recovery(&confirmation, &|| Ok(()), None)
             .unwrap();
         let (_, resolution) = store.journal(&receipt.resolution_id).unwrap();
-        assert_eq!(resolution.version, 4);
+        assert_eq!(resolution.version, 5);
         assert_eq!(resolution.context.as_ref().unwrap().target, target);
         assert_eq!(
             std::fs::read(repo.root.join("file")).unwrap(),
@@ -445,4 +450,180 @@ async fn git_handoff_limits_changes_to_exact_reviewed_paths_inside_the_location(
             .await
             .is_err()
     );
+}
+
+/// Synthetic native fixture only; no runtime acknowledgement authority is granted.
+fn own_native_journal(store: &Store, id: &str) {
+    use cyber_server::runtime::{SnapshotBinding, SnapshotOrigin};
+    let (dir, mut journal) = store.journal(id).unwrap();
+    journal.origin = Some(SnapshotOrigin {
+        version: 1,
+        session_id: "ses_fixture".into(),
+        session_created_id: "evt_fixture".into(),
+        activity_id: "op_fixture".into(),
+        worktree_id: None,
+        binding: SnapshotBinding {
+            directory: store.root.clone(),
+            root_identity: store.root_id.clone(),
+            namespace_identity: storage::dir_identity(&store.journals).unwrap(),
+            journal_id: id.into(),
+            journal_identity: storage::dir_identity(&dir).unwrap(),
+            lock_identity: Some(store.lock_identity().unwrap()),
+        },
+    });
+    Store::record(&dir, &journal).unwrap();
+}
+fn put_node(root: &Path, node: &str) {
+    let path = root.join("entry");
+    if std::fs::symlink_metadata(&path).is_ok() {
+        std::fs::remove_file(&path).unwrap();
+    }
+    match node {
+        "absent" => {}
+        "file" => std::fs::write(path, b"regular owner bytes").unwrap(),
+        target => std::os::unix::fs::symlink(target, path).unwrap(),
+    }
+}
+fn assert_node(root: &Path, node: &str) {
+    let path = root.join("entry");
+    match node {
+        "absent" => assert!(std::fs::symlink_metadata(path).is_err()),
+        "file" => assert_eq!(std::fs::read(path).unwrap(), b"regular owner bytes"),
+        target => assert_eq!(std::fs::read_link(path).unwrap(), Path::new(target)),
+    }
+}
+
+#[tokio::test]
+async fn native_git_link_changes_and_rollback_never_follow_target_files() {
+    use cyber_server::runtime::{SnapshotRecoveryAction as Action, SnapshotRecoveryConfirmation};
+    for (want, recorded_node) in [
+        ("one", "two"),
+        ("one", "file"),
+        ("file", "two"),
+        ("one", "absent"),
+        ("absent", "two"),
+        ("missing/child", "file"),
+    ] {
+        let repo = Repo::new();
+        std::fs::write(repo.root.join("one"), b"first target owner data").unwrap();
+        std::fs::write(repo.root.join("two"), b"second target owner data").unwrap();
+        put_node(&repo.root, want);
+        let target = repo.track(&repo.root).await;
+        put_node(&repo.root, recorded_node);
+        let recorded = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        let store = repo.store(&repo.root);
+        assert_eq!(
+            store.restore_git_worker(prepared, None).unwrap(),
+            ["entry"],
+            "{want}/{recorded_node}"
+        );
+        assert_node(&repo.root, want);
+        let id = store.recovery().unwrap()[0].id.clone();
+        own_native_journal(&store, &id);
+        let review = store.recovery_review(&id, Action::Rollback).unwrap();
+        assert!(review.conflicts.is_empty(), "{:?}", review.conflicts);
+        let desired = review
+            .paths
+            .iter()
+            .find(|path| path.path == "entry")
+            .unwrap();
+        if want != "file" && want != "absent" {
+            assert_eq!(
+                desired.current.as_ref().unwrap().kind,
+                super::super::ImageKind::Symlink
+            );
+        }
+        let confirmation = SnapshotRecoveryConfirmation {
+            journal_id: id,
+            action: Action::Rollback,
+            confirmation: review.confirmation.unwrap(),
+            request_id: "link-rollback".into(),
+        };
+        let receipt = store
+            .resolve_recovery(&confirmation, &|| Ok(()), None)
+            .unwrap();
+        assert_node(&repo.root, recorded_node);
+        assert_eq!(
+            std::fs::read(repo.root.join("one")).unwrap(),
+            b"first target owner data"
+        );
+        assert_eq!(
+            std::fs::read(repo.root.join("two")).unwrap(),
+            b"second target owner data"
+        );
+        let (_, journal) = store.journal(&receipt.resolution_id).unwrap();
+        assert_eq!(journal.version, 5);
+        std::fs::write(repo.root.join("later-owner"), b"owner after resolution").unwrap();
+        assert_eq!(
+            store
+                .resolve_recovery(&confirmation, &|| Ok(()), None)
+                .unwrap(),
+            receipt
+        );
+    }
+}
+
+#[tokio::test]
+async fn native_git_link_target_aliases_cannot_escape_or_enter_protected_namespaces() {
+    for target_name in [
+        "alias/secret",
+        "alias/../secret",
+        ".git/config",
+        ".GIT/config",
+        "../outside/secret",
+    ] {
+        let repo = Repo::new();
+        if target_name == ".GIT/config" && !repo.root.join(target_name).exists() {
+            continue;
+        }
+        let outside = repo.root.parent().unwrap().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join("secret"), b"private target data").unwrap();
+        std::fs::create_dir(outside.join("child")).unwrap();
+        std::os::unix::fs::symlink(outside.join("child"), repo.root.join("alias")).unwrap();
+        put_node(&repo.root, target_name);
+        let target = repo.track(&repo.root).await;
+        put_node(&repo.root, "file");
+        let recorded = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        let store = repo.store(&repo.root);
+        assert!(store.restore_git_worker(prepared, None).is_err());
+        assert_node(&repo.root, "file");
+        assert!(store.recovery().unwrap().is_empty());
+        assert_eq!(
+            std::fs::read(outside.join("secret")).unwrap(),
+            b"private target data"
+        );
+    }
+}
+
+#[tokio::test]
+async fn native_link_targets_cannot_use_case_aliases_of_configured_private_roots() {
+    let repo = Repo::new();
+    let private = repo.root.join("Private");
+    std::fs::create_dir(&private).unwrap();
+    if !repo.root.join("PRIVATE").exists() {
+        return;
+    }
+    put_node(&repo.root, "PRIVATE/missing");
+    let target = repo.track(&repo.root).await;
+    put_node(&repo.root, "file");
+    let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    let mut store = repo.store(&repo.root);
+    store.options.private_roots.push(private);
+    let result = store.restore_git_worker(prepared, None);
+    assert!(
+        matches!(&result, Err(RestoreError::Failed(error)) if error.contains("private root") || error.contains("protected")),
+        "{result:?}"
+    );
+    assert_node(&repo.root, "file");
+    assert!(store.recovery().unwrap().is_empty());
 }

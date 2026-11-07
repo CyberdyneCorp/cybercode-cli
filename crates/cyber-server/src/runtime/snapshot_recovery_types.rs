@@ -8,8 +8,25 @@ pub enum SnapshotRecoveryAction {
     Rollback,
 }
 
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SnapshotRecoveryImageKind {
+    #[default]
+    File,
+    Symlink,
+}
+impl SnapshotRecoveryImageKind {
+    fn is_file(&self) -> bool {
+        *self == Self::File
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SnapshotRecoveryImage {
+    #[serde(default, skip_serializing_if = "SnapshotRecoveryImageKind::is_file")]
+    pub kind: SnapshotRecoveryImageKind,
     pub hash: String,
     pub bytes: u64,
     pub mode: u32,
@@ -110,4 +127,23 @@ pub struct SnapshotRecoveryResult {
     /// Lookup does not inspect native files. None means journal acknowledgement
     /// has not been observed by this response, even if runtime settlement is durable.
     pub journal_acknowledged: Option<bool>,
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    #[test]
+    fn legacy_recovery_images_default_to_files_and_link_images_roundtrip_explicitly() {
+        let old = serde_json::json!({"hash":"fixture", "bytes":3, "mode":420, "uid":1,"gid":2,"native_identity":null});
+        let mut image: SnapshotRecoveryImage = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(image.kind, SnapshotRecoveryImageKind::File);
+        assert_eq!(serde_json::to_value(&image).unwrap(), old);
+        image.kind = SnapshotRecoveryImageKind::Symlink;
+        let encoded = serde_json::to_value(&image).unwrap();
+        assert_eq!(encoded["kind"], "symlink");
+        assert_eq!(
+            serde_json::from_value::<SnapshotRecoveryImage>(encoded).unwrap(),
+            image
+        );
+    }
 }

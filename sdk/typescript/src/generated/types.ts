@@ -4800,6 +4800,7 @@ export type SnapshotRecoveryConfirmation = {
 };
 
 export type SnapshotRecoveryImage = {
+  kind?: SnapshotRecoveryImageKind;
   hash: string;
   bytes: number;
   mode: number;
@@ -4808,6 +4809,8 @@ export type SnapshotRecoveryImage = {
   /** Expected images and proposed copies need not identify a live inode. */
   native_identity?: string | null;
 };
+
+export type SnapshotRecoveryImageKind = "file" | "symlink";
 
 export type SnapshotRecoveryPath = {
   path: string;

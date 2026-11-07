@@ -1799,3 +1799,87 @@ pinned OpenSpec passed all 117 items; spec lint reports 0 errors/25 warnings. Fu
 workspace tests, SDK execution, real CLI/TUI/App acceptance, native process-kill
 Git acceptance and Linux/Windows execution were not run for this increment. The
 backend fixture keep/rollback tests are not runtime lifecycle or crash evidence.
+
+
+## Native symbolic-link images and retained preimages (2026-11-07)
+
+`copy/links.rs` now pins symbolic-link inodes directly: macOS uses O_SYMLINK and
+Linux uses O_PATH/O_NOFOLLOW. It checks unique inode identity, generation, bounded
+target bytes (4,096 bytes), ownership/mode and supported metadata without following
+the target. macOS reuses a new additive plain-link metadata helper in core; existing
+binary regular-file behavior is unchanged. Linux's O_PATH descriptor cannot read
+xattrs directly, so metadata-only llistxattr uses the kernel proc descriptor route
+for the pinned parent, checks its identity, and checks parent/link generations
+around inspection. Missing proc routing or unsupported metadata refuses. Linux
+execution of this path remains unverified locally.
+
+Native images distinguish file content from link target bytes. Existing file
+entries omit the new field, and legacy journals omit the backend field; their
+original serialization and immutable digest framing remain intact. Version-5
+intents bind an explicit copy/Git backend and typed images in a new digest frame.
+Version-4 Git contexts remain readable with their original frame. Older journals
+cannot acquire link ownership merely by adding a kind field. Non-Git capture
+continues to report links as unsupported and legacy copy manifests remain file-only.
+
+The existing journal executor stages typed link entries, preserves displaced
+inodes, verifies prepared source/stage identity, exchanges without following links
+and revalidates the outcome. Recovery reads exact retained target bytes under
+native observations, stages independent rollback entries and preserves unrelated
+target file contents. Three-way text merging is restricted to regular files. New
+Git-desired links are checked before staging, before publication and at completion/
+consumption against the worktree and protected/private roots. Resolution rollback
+may reinstate an exact owned preimage without following its target.
+
+Review found and fixed an escape when lexical normalization cancelled an alias
+before `..`; physical checks now resolve the original component order. Positives
+cover link-to-link, file-to-link, link-to-file, create/delete and safe dangling
+targets with rollback. Negatives cover escaping/protected aliases, same-target
+foreign source and stage inodes, hardlinked links, bounds and link xattrs. Five
+actual child-process kills at parent/replace/delete/create cuts reopen the private
+store under a new owner, classify real typed inode slots without progress records,
+retain preimages and keep the recovery fence. These native fixtures do not confer
+runtime origin/acknowledgement authority and do not prove all Git service cuts.
+
+Owner API images now carry `kind: file | symlink`; omitted legacy fields default
+to file. OpenAPI and the TypeScript SDK are regenerated. The code-review skill
+covered all changed core/adapter/codec/API/test/artifact files, including no-follow
+semantics, old digest compatibility, exact private slots, quota accounting and
+source-target distinction. The additive core helper does not change binary editor
+contracts. No critical/major issue remains in this disabled bridge scope.
+
+The Git availability/reservation gates remain disabled. Complete expected-state
+scanning, file/directory transitions, literal backslash paths in the copy engine,
+complex link-target compatibility, actual Git worker lifetime/receipt integration,
+reference-aware reclamation, full clients and native platform/service-kill matrix
+remain required. No parent task is accepted by this increment.
+
+Verification on local macOS arm64: the final snapshot suite passed 113 cases with
+two ignored fixtures (the pathspec fixture is invoked by its parent), including the
+five real link kill/reopen cuts. The server unit suite passed 429 cases with one
+ignored fixture; the final file-wire compatibility refinement also passed its
+focused server regression. All five core binary-native regressions passed.
+All-target Clippy for snapshot/server/core passed with warnings denied. OpenAPI
+export and current-source consistency passed after refreshing the schema annotation
+changed by omitting ordinary file kinds. SDK typecheck passed; SDK tests passed
+134 cases with 10 configured real-server skips because CYBER_BIN was unset. The
+TypeScript output stayed unchanged through that schema-annotation refresh.
+Formatting, generated SDK and diff checks passed; strict pinned OpenSpec passed all
+117 items and spec lint reports 0 errors/25 warnings. An initial test-only ImageKind
+namespace compile error was corrected before the passing full runs. The ordinary
+file-image API encoding remains byte-compatible by omitting its default kind,
+while symlink images serialize the explicit kind.
+
+Full-workspace tests, real CLI/TUI/App Git recovery, native Linux/Windows execution
+and the full service/writer/acknowledgement/reclamation crash matrix were not run
+for this increment. The Linux proc metadata path is implemented but not claimed
+verified. Generic file-copy capture still reports links as unsupported. The complete
+Git recovery workflow and parent acceptance tasks remain open.
+
+Additional target-node checks compare protected reserved siblings and configured
+private ancestors by device/inode identity. Tests cover actual case aliases when
+the filesystem supports them, including a direct node-check test independent of
+canonical spelling. The native macOS resolver already normalizes the tested casing;
+an initial Python-only probe was not equivalent and is not claimed as a native
+resolver defect. One test initially expected only the identity-check error text; it
+was corrected to accept the earlier protected-path refusal as well. The final full
+snapshot run and three-package all-target Clippy pass include these checks.

@@ -18,12 +18,23 @@ pub(super) struct Change {
     pub(super) before: Option<Entry>,
     pub(super) after: Option<Entry>,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum JournalBackend {
+    Copy,
+    Git,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Journal {
     // Version 3 adds prepared native file/parent ownership. Version 2 binds
     // only the worker and cannot acquire that historical proof retroactively.
+    // Version 4 binds Git context. Version 5 adds explicit backend and link kinds;
+    // older records retain their original file-only encoding and digest framing.
     pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend: Option<JournalBackend>,
     pub location: std::path::PathBuf,
     pub root: String,
     pub created: u64,
@@ -88,14 +99,40 @@ impl Store {
                 .map_err(fail)?;
         if !matches!(
             (record.version, record.origin.is_some()),
-            (1, false) | (2, true) | (3, _) | (4, _)
+            (1, false) | (2, true) | (3, _) | (4, _) | (5, _)
         ) || (record.version == 4
             && !record
                 .context
                 .as_ref()
                 .is_some_and(|context| context.git.is_some()))
+            || (record.version < 5 && record.backend.is_some())
+            || (record.version == 5
+                && match &record.backend {
+                    Some(JournalBackend::Git) => !record
+                        .context
+                        .as_ref()
+                        .is_some_and(|context| context.git.is_some()),
+                    Some(JournalBackend::Copy) => record
+                        .context
+                        .as_ref()
+                        .is_some_and(|context| context.git.is_some()),
+                    None => true,
+                })
             || record.location != self.root
             || record.root != self.root_id
+            || (record.version < 5
+                && (record.changes.iter().any(|change| {
+                    [&change.before, &change.after]
+                        .into_iter()
+                        .flatten()
+                        .any(|entry| entry.kind == super::ImageKind::Symlink)
+                }) || record.resolution.as_ref().is_some_and(|resolution| {
+                    resolution.review.has_links()
+                        || resolution
+                            .outcome
+                            .as_ref()
+                            .is_some_and(|outcome| outcome.has_links())
+                })))
             || record.changes.len() > ENTRY_LIMIT
             || record.applied.len() > record.changes.len()
             || !record
@@ -281,6 +318,12 @@ impl Store {
         let (Some(current), Some(base), Some(want)) = (current, base, want) else {
             return Ok(None);
         };
+        if [current, base, want]
+            .iter()
+            .any(|entry| entry.kind != super::ImageKind::File)
+        {
+            return Ok(None);
+        }
         let (ours, base, theirs) = (self.bytes(current)?, self.bytes(base)?, self.bytes(want)?);
         let (Ok(ours), Ok(base), Ok(theirs)) = (
             std::str::from_utf8(&ours),
@@ -391,9 +434,17 @@ impl Store {
                     None => self.bytes(after),
                 }
                 .map_err(RestoreError::Failed)?;
-                let file = storage::create(&dir, &format!("stage_{i}"), &bytes)
+                if after.kind == super::ImageKind::Symlink && journal.resolution.is_none() {
+                    let boundary = journal
+                        .context
+                        .as_ref()
+                        .and_then(|context| context.git.as_ref())
+                        .map_or(self.root.as_path(), |git| git.worktree.as_path());
+                    self.check_link_target(&change.path, &bytes, boundary)
+                        .map_err(RestoreError::Failed)?;
+                }
+                self.stage_image(&dir, &format!("stage_{i}"), after, &bytes)
                     .map_err(RestoreError::Failed)?;
-                Self::stage_metadata(&file, after).map_err(RestoreError::Failed)?;
             }
         }
         storage::sync(&dir).map_err(RestoreError::Failed)?;
@@ -416,6 +467,21 @@ impl Store {
                     Ok(())
                 };
                 verify()?;
+                if journal.resolution.is_none()
+                    && let Some(after) = &journal.changes[i].after
+                    && after.kind == super::ImageKind::Symlink
+                {
+                    let boundary = journal
+                        .context
+                        .as_ref()
+                        .and_then(|context| context.git.as_ref())
+                        .map_or(self.root.as_path(), |git| git.worktree.as_path());
+                    self.check_link_target(
+                        &journal.changes[i].path,
+                        &self.bytes(after)?,
+                        boundary,
+                    )?;
+                }
                 self.install(
                     &dir,
                     i,
@@ -489,13 +555,32 @@ impl Store {
         let version = if context
             .as_ref()
             .is_some_and(|context| context.git.is_some())
+            || changes.iter().any(|change| {
+                [&change.before, &change.after]
+                    .into_iter()
+                    .flatten()
+                    .any(|entry| entry.kind == super::ImageKind::Symlink)
+            })
+            || resolution
+                .as_ref()
+                .is_some_and(|resolution| resolution.review.has_links())
         {
-            4
+            5
         } else {
             3
         };
         let mut journal = Journal {
             version,
+            backend: (version == 5).then(|| {
+                if context
+                    .as_ref()
+                    .is_some_and(|context| context.git.is_some())
+                {
+                    JournalBackend::Git
+                } else {
+                    JournalBackend::Copy
+                }
+            }),
             location: self.root.clone(),
             root: self.root_id.clone(),
             created: now(),
@@ -582,6 +667,20 @@ impl Store {
         {
             return Err("Restore filesystem completion differs from native ownership".into());
         }
+        if record.resolution.is_none() {
+            let boundary = record
+                .context
+                .as_ref()
+                .and_then(|context| context.git.as_ref())
+                .map_or(self.root.as_path(), |git| git.worktree.as_path());
+            for change in &record.changes {
+                if let Some(after) = &change.after
+                    && after.kind == super::ImageKind::Symlink
+                {
+                    self.check_link_target(&change.path, &self.bytes(after)?, boundary)?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -641,7 +740,7 @@ impl Store {
         journal.acknowledged = true;
         Self::record(&dir, &journal)
     }
-    fn stage_metadata(file: &std::fs::File, entry: &Entry) -> Result<()> {
+    pub(super) fn stage_metadata(file: &std::fs::File, entry: &Entry) -> Result<()> {
         rustix::fs::fchown(
             file,
             Some(rustix::fs::Uid::from_raw(entry.uid)),
@@ -681,6 +780,27 @@ impl Store {
             .ok_or("Invalid restore leaf")?;
         let stage = format!("stage_{index}");
         match (&change.before, &change.after) {
+            (Some(before), Some(_)) if before.kind == super::ImageKind::Symlink => {
+                let original = super::links::pin_image(&parent, leaf)?;
+                ownership.verify_original(index, &original)?;
+                if ownership.inspect_change(self, dir, index, change)? != Effect::Unapplied {
+                    return Err("Symbolic-link source changed before exchange".into());
+                }
+                self.authorize_restore_effect(dir, ownership, &change.path, &parent_id, authorize)?;
+                rustix::fs::renameat_with(
+                    dir,
+                    &stage,
+                    &parent,
+                    leaf,
+                    rustix::fs::RenameFlags::EXCHANGE,
+                )
+                .map_err(fail)?;
+                if self.inspect_entry(dir, std::ffi::OsStr::new(&stage))? != *before {
+                    return Err(
+                        "Displaced symbolic-link preimage changed; recovery required".into(),
+                    );
+                }
+            }
             (Some(before), Some(_)) => {
                 let target = cyber_core::binary::native::Target::capture(
                     &self.root,
@@ -801,6 +921,7 @@ mod tests {
             path,
             before: None,
             after: Some(Entry {
+                kind: crate::copy::ImageKind::File,
                 object: blake3::hash(b"").to_hex().to_string(),
                 length: 0,
                 mode: 0o644,
@@ -866,6 +987,7 @@ mod tests {
         Store::record(
             &dir,
             &Journal {
+                backend: None,
                 version: 2,
                 location: store.root.clone(),
                 root: store.root_id.clone(),

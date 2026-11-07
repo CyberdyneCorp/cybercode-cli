@@ -43,6 +43,13 @@ struct DirectoryObservation {
 }
 
 impl Observations {
+    pub(super) fn has_links(&self) -> bool {
+        self.files
+            .iter()
+            .flat_map(|slots| [&slots.source, &slots.stage])
+            .flatten()
+            .any(|image| image.entry.kind == super::ImageKind::Symlink)
+    }
     pub fn validate(&self) -> Result<()> {
         if self.files.len() > ENTRY_LIMIT || self.parents.len() > ENTRY_LIMIT + 1 {
             return Err("Recovery observation limit exceeded".into());
@@ -77,6 +84,7 @@ impl Observations {
             identity: "0".repeat(storage::IDENTITY_MAX_BYTES),
             generation: "0".repeat(64),
             entry: Entry {
+                kind: super::ImageKind::File,
                 object: "0".repeat(64),
                 length: u64::MAX,
                 mode: u32::MAX,
@@ -85,8 +93,16 @@ impl Observations {
             },
         };
         for slots in &mut value.files {
-            slots.source = Some(image.clone());
-            slots.stage = Some(image.clone());
+            let mut bound = image.clone();
+            if [&slots.source, &slots.stage]
+                .into_iter()
+                .flatten()
+                .any(|image| image.entry.kind == super::ImageKind::Symlink)
+            {
+                bound.entry.kind = super::ImageKind::Symlink;
+            }
+            slots.source = Some(bound.clone());
+            slots.stage = Some(bound);
         }
         for parent in &mut value.parents {
             let bound = DirectoryObservation {
@@ -100,7 +116,7 @@ impl Observations {
     }
 }
 
-fn generation(file: &std::fs::File) -> Result<String> {
+pub(super) fn generation(file: &std::fs::File) -> Result<String> {
     use std::os::unix::fs::MetadataExt;
     let m = file.metadata().map_err(fail)?;
     let value = (
@@ -132,11 +148,11 @@ pub(super) fn observe_image(
         Err(error) => return Err(fail(error)),
         Ok(_) => {}
     }
-    let pin = storage::open(parent, Path::new(name))?;
+    let pin = super::links::pin_image(parent, name)?;
     let before = generation(&pin)?;
     let (identity, entry) =
         observed(store, Some(parent), name)?.ok_or("Recovery image disappeared")?;
-    let current = storage::open(parent, Path::new(name))?;
+    let current = super::links::pin_image(parent, name)?;
     if storage::identity(&pin)? != identity
         || storage::identity(&current)? != identity
         || generation(&pin)? != before
@@ -294,10 +310,10 @@ fn observed(
         Ok(_) => {}
     }
     // Keep the first inode pinned through hashing and the second route lookup.
-    let pin = storage::open(dir, Path::new(name))?;
+    let pin = super::links::pin_image(dir, name)?;
     let identity = storage::identity(&pin)?;
     let entry = store.inspect_entry(dir, name)?;
-    let current = storage::open(dir, Path::new(name))?;
+    let current = super::links::pin_image(dir, name)?;
     if storage::identity(&current)? != identity {
         return Err("Restore file identity changed while inspecting".into());
     }
@@ -320,7 +336,12 @@ fn valid_entry(entry: &Entry) -> bool {
     storage::valid_digest(&entry.object)
         && entry.length <= 64 * 1024 * 1024
         && entry.mode & !0o777 == 0
-        && entry.mode & 0o222 != 0
+        && match entry.kind {
+            super::ImageKind::File => entry.mode & 0o222 != 0,
+            super::ImageKind::Symlink => {
+                entry.length > 0 && entry.length <= super::links::TARGET_LIMIT as u64
+            }
+        }
 }
 
 impl File {
@@ -346,13 +367,17 @@ impl File {
             return Err("Restore source/stage changed before ownership preparation".into());
         }
         if let (Some((identity, _)), Some(parent)) = (&source, parent) {
-            let pin = storage::open(parent, Path::new(leaf))?;
+            let pin = super::links::pin_image(parent, leaf)?;
             if storage::identity(&pin)? != *identity {
                 return Err("Restore original inode changed".into());
             }
             // Make the actual displaced preimage durable before any source rename.
             // Read-only inspection deliberately never performs this preparation.
-            storage::sync_file(&pin)?;
+            if pin.metadata().map_err(fail)?.file_type().is_symlink() {
+                storage::sync(parent)?;
+            } else {
+                storage::sync_file(&pin)?;
+            }
         }
         Ok(Self {
             source: source.map(|(id, _)| id),

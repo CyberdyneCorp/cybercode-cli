@@ -117,7 +117,11 @@ impl Preimages<'_> {
         {
             return Err("Original native preimage changed before preparation".into());
         }
-        let bytes = storage::read(&self.dir, &name, expected.length)?;
+        let bytes = if expected.kind == super::ImageKind::Symlink {
+            super::links::read(&self.dir, std::ffi::OsStr::new(&name), expected.length)?.1
+        } else {
+            storage::read(&self.dir, &name, expected.length)?
+        };
         if bytes.len() as u64 != expected.length
             || storage::digest(&bytes) != expected.object
             || observe_image(store, Some(&self.dir), std::ffi::OsStr::new(&name))?.as_ref()
@@ -134,6 +138,7 @@ fn image(value: &ImageObservation) -> Image {
 }
 fn expected_image(entry: &super::Entry, native_identity: Option<String>) -> Image {
     Image {
+        kind: entry.kind,
         hash: entry.object.clone(),
         bytes: entry.length,
         mode: entry.mode,
@@ -153,7 +158,7 @@ fn resolution_id(original: &SnapshotOrigin, request: &str) -> Result<String> {
     Ok(format!("restore_resolution_{}", storage::digest(&key)))
 }
 fn immutable_digest(record: &Journal) -> Result<String> {
-    Ok(storage::digest(
+    let legacy = storage::digest(
         &serde_json::to_vec(&(
             record.version,
             &record.location,
@@ -166,7 +171,14 @@ fn immutable_digest(record: &Journal) -> Result<String> {
             &record.resolution,
         ))
         .map_err(fail)?,
-    ))
+    );
+    // Existing writer receipts keep exactly their original digest framing.
+    match &record.backend {
+        None => Ok(legacy),
+        Some(backend) => Ok(storage::digest(
+            &serde_json::to_vec(&("snapshot-journal-v5", backend, legacy)).map_err(fail)?,
+        )),
+    }
 }
 
 fn fingerprint(
@@ -722,4 +734,36 @@ fn receipt(id: &str, record: &Journal) -> Result<Receipt> {
         filesystem_complete: true,
         resolution_digest: Some(immutable_digest(record)?),
     })
+}
+
+#[cfg(test)]
+mod digest_tests {
+    use super::*;
+    #[test]
+    fn historical_file_receipts_keep_their_original_wire_digest_and_new_kinds_are_bound() {
+        let entry = format!(
+            r#"{{"object":"{}","length":1,"mode":420,"uid":1,"gid":2}}"#,
+            "a".repeat(64)
+        );
+        let change = format!(r#"{{"path":"file","before":{entry},"after":null}}"#);
+        let encoded = format!(
+            r#"{{"version":3,"location":"/fixture","root":"fixture","created":0,"completed":false,"changes":[{change}],"applied":[]}}"#
+        );
+        let mut record: Journal = serde_json::from_str(&encoded).unwrap();
+        // Historical writer framing, independently pinned as JSON bytes.
+        let legacy_frame = format!(r#"[3,"/fixture","fixture",0,[{change}],null,null,null,null]"#);
+        assert_eq!(
+            immutable_digest(&record).unwrap(),
+            storage::digest(legacy_frame.as_bytes())
+        );
+        assert_eq!(serde_json::to_string(&record).unwrap(), encoded);
+        record.version = 5;
+        record.backend = Some(super::super::restore::JournalBackend::Copy);
+        let file = immutable_digest(&record).unwrap();
+        record.changes[0].before.as_mut().unwrap().kind = super::super::ImageKind::Symlink;
+        let link = immutable_digest(&record).unwrap();
+        assert_ne!(file, link);
+        record.backend = Some(super::super::restore::JournalBackend::Git);
+        assert_ne!(link, immutable_digest(&record).unwrap());
+    }
 }

@@ -144,8 +144,9 @@ pub use rewind_preview::{
 };
 pub use snapshot_recovery_types::{
     SnapshotRecoveryAction, SnapshotRecoveryConfirmation, SnapshotRecoveryImage,
-    SnapshotRecoveryPath, SnapshotRecoveryReceipt, SnapshotRecoveryResult, SnapshotRecoveryReview,
-    SnapshotRecoverySelection, SnapshotRecoveryState,
+    SnapshotRecoveryImageKind, SnapshotRecoveryPath, SnapshotRecoveryReceipt,
+    SnapshotRecoveryResult, SnapshotRecoveryReview, SnapshotRecoverySelection,
+    SnapshotRecoveryState,
 };
 pub use snapshot_work::{
     SnapshotBinding, SnapshotCompletion, SnapshotNativeGuard, SnapshotNativeResult, SnapshotOrigin,

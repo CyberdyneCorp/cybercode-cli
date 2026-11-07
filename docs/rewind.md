@@ -331,3 +331,12 @@ Git restore resolves file paths literally and verifies each blob image against i
 Git object ID. Corrupt blob data or ambiguous image listings refuse before source
 replacement. Retain the snapshot data for diagnosis; this check does not provide
 the still-unfinished owned Git crash-recovery workflow.
+
+
+Recovery image views distinguish `kind: "file"` from `kind: "symlink"`; a missing
+kind means file, including in legacy responses. A link image's hash and byte length describe
+the link target text, not the contents of its target file. Native recovery never
+follows that target while staging, exchanging or reading retained preimages.
+The local Git journal bridge supports typed native link fixtures, but ordinary
+owned Git recovery remains unavailable until its remaining lifecycle, full-state
+and platform acceptance gates are complete.

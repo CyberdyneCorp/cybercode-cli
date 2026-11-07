@@ -481,3 +481,19 @@ version binds Git identity and Location. Legacy copy contexts keep their existin
 encoded identity. Git admission remains disabled until symbolic links, full expected
 state revalidation and all native recovery/acknowledgement paths are integrated;
 regular-file import tests alone do not authorize that switch.
+
+
+### Native symbolic-link images
+
+Native Git journals distinguish regular file bytes from symbolic-link target bytes.
+Link observation pins the link inode itself without following its target, binds
+identity/generation, owner/mode and bounded target bytes, and refuses hardlinked or
+unsupported metadata. Source and private slots use the same typed observations;
+regular-file legacy encodings retain their original identity. New link-capable
+intents are versioned separately and cannot be read as legacy file-only proof.
+Staging and exchange operate on the link namespace entry, never the target file.
+Recovery review identifies the image kind. Rollback reads exact retained target
+bytes under the original native observation before independent intent preparation.
+New Git-desired links must stay inside the worktree and outside protected/private
+roots; rollback may reinstate an exact owned preimage without following it. This
+does not authorize broad Git admission before full state/lifetime/acceptance gates.

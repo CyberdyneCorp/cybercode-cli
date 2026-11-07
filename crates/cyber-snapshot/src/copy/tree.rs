@@ -140,6 +140,14 @@ impl Store {
         self.entry(dir, name, false)
     }
     fn entry(&self, dir: &Dir, name: &std::ffi::OsStr, save: bool) -> Result<Entry> {
+        if dir
+            .symlink_metadata(name)
+            .map_err(fail)?
+            .file_type()
+            .is_symlink()
+        {
+            return self.link_entry(dir, name, save);
+        }
         let mut file = storage::open(dir, Path::new(name))?;
         let before = file.metadata().map_err(fail)?;
         let metadata = cyber_core::binary::native::plain_snapshot_metadata(&file)
@@ -171,6 +179,7 @@ impl Store {
             self.object(&bytes)?
         } else {
             Entry {
+                kind: super::ImageKind::File,
                 object: storage::digest(&bytes),
                 length: bytes.len() as u64,
                 mode: 0,

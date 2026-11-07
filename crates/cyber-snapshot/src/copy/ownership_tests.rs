@@ -15,11 +15,19 @@ struct Prepared {
 
 impl Prepared {
     fn new() -> Self {
+        Self::with_links(false)
+    }
+    fn with_links(links: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("work");
         std::fs::create_dir_all(root.join("existing")).unwrap();
-        std::fs::write(root.join("existing/replace"), b"before").unwrap();
-        std::fs::write(root.join("existing/delete"), b"deleted").unwrap();
+        if links {
+            std::os::unix::fs::symlink("before", root.join("existing/replace")).unwrap();
+            std::os::unix::fs::symlink("deleted", root.join("existing/delete")).unwrap();
+        } else {
+            std::fs::write(root.join("existing/replace"), b"before").unwrap();
+            std::fs::write(root.join("existing/delete"), b"deleted").unwrap();
+        }
         let store = Store::open(
             &temp.path().join("data"),
             &root.to_string_lossy(),
@@ -33,6 +41,10 @@ impl Prepared {
         .unwrap();
         let original = store.current("existing/replace").unwrap().unwrap();
         let mut after = store.object(b"after").unwrap();
+        if links {
+            after.kind = super::super::ImageKind::Symlink;
+            after.mode = original.mode;
+        }
         after.uid = original.uid;
         after.gid = original.gid;
         let changes = vec![
@@ -59,13 +71,14 @@ impl Prepared {
         Store::record(&dir, &record).unwrap();
         for (index, change) in record.changes.iter().enumerate() {
             if let Some(after) = &change.after {
-                let file = storage::create(
-                    &dir,
-                    &format!("stage_{index}"),
-                    &store.bytes(after).unwrap(),
-                )
-                .unwrap();
-                Store::stage_metadata(&file, after).unwrap();
+                store
+                    .stage_image(
+                        &dir,
+                        &format!("stage_{index}"),
+                        after,
+                        &store.bytes(after).unwrap(),
+                    )
+                    .unwrap();
             }
         }
         record.ownership = Some(Ownership::prepare(&store, &dir, &record.changes).unwrap());
@@ -521,12 +534,19 @@ impl Drop for ChildGuard {
 #[test]
 fn process_kill_at_parent_and_file_cuts_recovers_ownership_without_progress_or_replay() {
     for cut in 0..5 {
-        verify_killed_cut(cut);
+        verify_killed_cut(cut, false);
     }
 }
 
-fn verify_killed_cut(cut: usize) {
-    let mut p = Prepared::new();
+#[test]
+fn process_kill_at_link_parent_and_exchange_cuts_preserves_typed_inode_evidence() {
+    for cut in 0..5 {
+        verify_killed_cut(cut, true);
+    }
+}
+
+fn verify_killed_cut(cut: usize, links: bool) {
+    let mut p = Prepared::with_links(links);
     let base = p._temp.path().to_owned();
     drop(p.store);
     drop(p.dir);
@@ -555,7 +575,11 @@ fn verify_killed_cut(cut: usize) {
         );
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert_live_cut(&p.root, cut);
+    if links {
+        assert_live_link_cut(&p.root, cut);
+    } else {
+        assert_live_cut(&p.root, cut);
+    }
     child.0.kill().unwrap();
     child.0.wait().unwrap();
     p.store = Store::open(
@@ -571,6 +595,25 @@ fn verify_killed_cut(cut: usize) {
     .unwrap();
     (p.dir, p.record) = p.store.journal("restore_fixture").unwrap();
     assert_recovered_cut(&p, cut);
+}
+
+fn assert_live_link_cut(root: &Path, cut: usize) {
+    assert_eq!(root.join("new/deep").exists(), cut >= 1);
+    assert_eq!(
+        std::fs::read_link(root.join("existing/replace")).unwrap(),
+        Path::new(if cut >= 2 { "after" } else { "before" })
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(root.join("existing/delete")).is_ok(),
+        cut < 3
+    );
+    assert_eq!(
+        std::fs::symlink_metadata(root.join("new/deep/file")).is_ok(),
+        cut >= 4
+    );
+    for target in ["before", "after", "deleted"] {
+        assert!(!root.join("existing").join(target).exists());
+    }
 }
 
 fn assert_live_cut(root: &Path, cut: usize) {
@@ -604,9 +647,51 @@ fn assert_recovered_cut(p: &Prepared, cut: usize) {
     }
     assert!(p.store.ensure_recovered().is_err());
     if cut >= 2 {
-        assert_eq!(storage::read(&p.dir, "stage_0", 65536).unwrap(), b"before");
+        assert_eq!(read_cut_preimage(p, "stage_0"), b"before");
     }
     if cut >= 3 {
-        assert_eq!(storage::read(&p.dir, "stage_1", 65536).unwrap(), b"deleted");
+        assert_eq!(read_cut_preimage(p, "stage_1"), b"deleted");
     }
+}
+
+fn read_cut_preimage(p: &Prepared, name: &str) -> Vec<u8> {
+    if p.record.changes[0].before.as_ref().unwrap().kind == super::super::ImageKind::Symlink {
+        super::super::links::read(&p.dir, std::ffi::OsStr::new(name), 65536)
+            .unwrap()
+            .1
+    } else {
+        storage::read(&p.dir, name, 65536).unwrap()
+    }
+}
+
+#[test]
+fn same_target_foreign_link_never_acquires_original_source_or_stage_ownership() {
+    for applied in [false, true] {
+        let p = Prepared::with_links(true);
+        if applied {
+            p.apply(0);
+        }
+        let path = p.root.join("existing/replace");
+        let target = std::fs::read_link(&path).unwrap();
+        std::fs::rename(&path, p.root.join("owner-retained-link")).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(p.inspect().is_err());
+        assert!(
+            p.store
+                .install(&p.dir, 0, &p.record.changes[0], p.proof(), &|| Ok(()))
+                .is_err()
+        );
+        assert_eq!(std::fs::read_link(&path).unwrap(), target);
+        assert!(p.store.ensure_recovered().is_err());
+    }
+    let p = Prepared::with_links(true);
+    let stage = p.private_path("stage_0");
+    let target = std::fs::read_link(&stage).unwrap();
+    std::fs::rename(&stage, p.private_path("owner-retained-stage")).unwrap();
+    std::os::unix::fs::symlink(&target, &stage).unwrap();
+    assert!(p.inspect().is_err());
+    assert_eq!(
+        std::fs::read_link(p.root.join("existing/replace")).unwrap(),
+        Path::new("before")
+    );
 }

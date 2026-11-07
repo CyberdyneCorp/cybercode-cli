@@ -121,6 +121,16 @@ pub fn plain_snapshot_directory(file: &File) -> Result<Metadata, Error> {
     plain_snapshot(file, metadata_fields(file, &m)?)
 }
 
+/// Plain metadata from a descriptor opened on the link itself, never its target.
+#[cfg(target_os = "macos")]
+pub fn plain_snapshot_symlink(file: &File) -> Result<Metadata, Error> {
+    let m = file.metadata().map_err(|_| Error::Io)?;
+    if !m.file_type().is_symlink() || m.nlink() != 1 || m.mode() & 0o7000 != 0 {
+        return Err(Error::File);
+    }
+    plain_snapshot(file, metadata_fields(file, &m)?)
+}
+
 fn plain_snapshot(file: &File, value: Metadata) -> Result<Metadata, Error> {
     if !attributes(file)?.is_empty() {
         return Err(Error::File);

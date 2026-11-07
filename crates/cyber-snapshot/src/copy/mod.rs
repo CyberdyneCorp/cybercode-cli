@@ -1,5 +1,6 @@
-//! Private BLAKE3 snapshots for exact non-Git Locations; no user repository required.
+//! Location-bound native recovery journals and private non-Git BLAKE3 snapshots.
 mod git;
+mod links;
 mod ownership;
 mod preparation;
 mod resolution;
@@ -9,7 +10,7 @@ mod tree;
 use cap_fs_ext::DirExt;
 use cap_std::fs::Dir;
 pub use cyber_server::runtime::SnapshotRecovery as Recovery;
-use cyber_server::runtime::{FileDiff, Snapshot};
+use cyber_server::runtime::{FileDiff, Snapshot, SnapshotRecoveryImageKind as ImageKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -27,12 +28,18 @@ pub(crate) struct Options {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
+    #[serde(default, skip_serializing_if = "is_regular")]
+    kind: ImageKind,
     object: String,
     length: u64,
     mode: u32,
     uid: u32,
     gid: u32,
 }
+fn is_regular(kind: &ImageKind) -> bool {
+    *kind == ImageKind::File
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Tree {
@@ -282,10 +289,14 @@ impl Store {
                 }
                 size = size
                     .checked_add(
-                        storage::open(&journal, Path::new(&file))?
-                            .metadata()
-                            .map_err(fail)?
-                            .len(),
+                        (if file.starts_with("stage_") {
+                            links::pin_image(&journal, std::ffi::OsStr::new(&file))?
+                        } else {
+                            storage::open(&journal, Path::new(&file))?
+                        })
+                        .metadata()
+                        .map_err(fail)?
+                        .len(),
                     )
                     .ok_or("Snapshot storage overflow")?;
             }
@@ -340,6 +351,7 @@ impl Store {
             }
         }
         Ok(Entry {
+            kind: ImageKind::File,
             object,
             length: bytes.len() as u64,
             mode: 0o644,
@@ -395,6 +407,10 @@ impl Store {
             || tree.location != self.root
             || tree.root != self.root_id
             || tree.files.len() > ENTRY_LIMIT
+            || tree
+                .files
+                .values()
+                .any(|entry| entry.kind != ImageKind::File)
             || storage::digest(&serde_json::to_vec(&tree).map_err(fail)?) != digest
         {
             return Err("Snapshot belongs to a different Location or is corrupt".into());
@@ -552,6 +568,11 @@ fn gc_location(
             serde_json::from_slice(&storage::read(&manifests, &name, RECORD_LIMIT)?)
                 .map_err(fail)?;
         if manifest.tree.version != 1
+            || manifest
+                .tree
+                .files
+                .values()
+                .any(|entry| entry.kind != ImageKind::File)
             || storage::digest(&serde_json::to_vec(&manifest.tree).map_err(fail)?) != name
         {
             return Err("Corrupt snapshot manifest".into());

@@ -144,6 +144,14 @@
 - **AND** native source changes SHALL retain displaced preimages and use the same ownership, recovery review and retry-lookup rules as file-copy journals
 - **AND** legacy copy contexts SHALL preserve their encoded identity and SHALL NOT be reinterpreted as Git contexts
 
+#### Scenario: Native symbolic-link recovery images
+- **WHEN** a Git symbolic-link image enters a native restore or owner recovery plan
+- **THEN** the implementation SHALL pin the link inode without following its target and bind typed target bytes, native identity/generation and supported metadata
+- **AND** native staging, replacement and retained-preimage reads SHALL operate on the link namespace entry without reading or writing target file data
+- **AND** new desired links SHALL refuse escaping or protected targets, including escapes through an existing alias followed by `..`
+- **AND** review SHALL identify file versus symbolic-link images, while legacy images default to files
+- **AND** link-capable journals SHALL use a distinct version/backend binding without promoting older file-only ownership or changing historical file receipt digests
+
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
 - **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents

@@ -280,3 +280,15 @@ Git worker reservation/admission is still disabled. Symbolic links, full expecte
 state scanning (including newly appearing paths), exact runtime Git lifetime/
 receipt acknowledgement, retention and complete crash/client/platform acceptance
 remain required; M2–M8 and parent tasks remain open.
+
+
+Native link continuation: version-5 intents now bind backend and typed regular/link
+images while preserving earlier file encodings and digest frames. Link observations
+pin the link inode, reject aliases/unsupported metadata and read bounded target
+bytes without following them. Shared native staging/exchange and exact-preimage
+rollback support link/file transitions. Review and generated SDK expose image kind.
+Local macOS native positives and five real link process-kill cuts cover inode
+classification without progress/replay; these are backend fixtures, not complete
+Git runtime acceptance. Ordinary Git admission remains disabled for full expected
+state/Git compatibility, lifetime/acknowledgement, retention, clients and complete
+crash/platform gates. M2–M8 and parent tasks remain open.
