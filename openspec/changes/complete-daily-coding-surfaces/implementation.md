@@ -2142,3 +2142,59 @@ SDK consistency passed. Pinned strict OpenSpec passed all 117 items; spec lint
 reported 0 errors/25 warnings. Full workspace/SDK execution, actual Git runtime
 source/receipt and CLI/TUI/App acceptance, Linux/Windows and source-bound CI were
 not run for this increment.
+
+
+## Ordinary restore checkout evidence in consuming receipts (2026-11-07)
+
+New ordinary restore receipts optionally carry a version-1 checkout section with
+the exact version-2 native lifetime and complete retained checkout-set digest. The
+section is captured from the worker's original lifetime and native Location proof,
+with exact activity/Session creation/worktree/Location/root/namespace checks.
+The completion first verifies the retained lifetime and its original published
+checkout set. The paired writer reads the retained resource set again before
+admitting the Session/native append. Lost, changed or incomplete proof refuses that pair before
+native acknowledgement. Lookup compares the receipt's lifetime with attested
+original native history, alongside existing exact journal and Session-batch proof.
+
+A versioned SHA-256 acknowledgement frame covers the complete receipt, validates
+its checkout owner and basic batch/digest bounds, and refuses historical receipts
+without checkout evidence. The optional field is omitted for legacy receipts;
+reading or hashing older receipts never invents resource proof. Existing journal
+reconciliation behavior is unchanged: this increment does not publish post-effect
+checkout acknowledgements or authorize cleanup. Native lifetime/checkout pins and
+consuming receipts still need full actual-Git runtime and reconciliation acceptance.
+
+A new runtime test uses instrumented lifetime/Location guards to commit and look up
+the exact checkout evidence, to lose the original resource publication before
+commit, and to lose the complete resource proof between initial capture and the
+paired writer. The refusal leaves Session state unchanged, records
+unknown native outcome, performs no native acknowledgement and publishes no restore
+receipt. Positive assertions cover original lifetime/digest identity, invalid batch
+or hash frames, foreign Session creation, changed resource digest and legacy wire
+omission/no hash authority. These guards are instrumented; no real managed checkout
+or actual Git source callback is claimed by this test. An existing fixture namespace
+was aligned with the native origin so the new exact namespace comparison remains
+meaningful. The backend's manually constructed legacy receipt explicitly uses None.
+
+The code-review skill was applied to source, tests, schema artifacts and spec deltas,
+focusing on additive historical encoding, complete-set capture versus writer
+revalidation, original native-history attestation, no source/Store reentry from
+native verification, bounded hash frames and preservation of ordinary admission
+and unknown fences. This receipt evidence is not complete native acknowledgement
+acceptance. All parent recovery and delivery tasks remain open.
+
+Final local macOS arm64 verification: locked server library tests passed 430 cases
+with one ignored fixture; locked snapshot tests passed 137 cases with two ignored
+fixtures (the pathspec fixture is invoked by its parent). Generated OpenAPI was
+regenerated and its current-document test passed. SDK tests passed 134 cases with
+10 CYBER_BIN-dependent end-to-end skips. Three-package all-target locked Clippy
+(server/snapshot/tools) passed with Rust warnings denied; native C compilation
+reported sandbox_init/sandbox_free_error deprecation warnings. Their origin was
+not compared with main, and no pre-existing attribution is made. An earlier
+Clippy run caught the enlarged acknowledgement enum; boxing the optional checkout
+section corrected its in-memory size while preserving JSON shape. Final format/
+diff and SDK generation consistency passed. Strict pinned OpenSpec passed all
+117 items; spec lint reported 0 errors/25 warnings. Real Git source/managed-checkout
+publication, CLI/TUI/App, Linux/Windows, full workspace and source-bound CI
+acceptance were not run here. No post-effect native checkout marker is published
+by this increment and no parent recovery task is accepted.

@@ -570,3 +570,11 @@ foreign owner/creation context. Reacquisition SHALL read the exact original reco
 a requested managed worktree SHALL NOT accept an empty checkout set. Reservation
 alone SHALL NOT grant source admission, journal acknowledgement, checkout settlement
 or reclamation authority. Ordinary owned Git availability remains separately gated.
+
+New ordinary restore consuming receipts SHALL bind the exact version-2 lifetime
+and a versioned digest of the complete retained checkout set when native lifetime
+proof exists. The paired writer SHALL revalidate that complete set before commit;
+lookup SHALL verify the receipt's lifetime against the original native history.
+Historical receipts without this field remain readable without gaining checkout
+acknowledgement authority. The receipt field is evidence for subsequent exact
+native acknowledgement, not publication or reclamation authority by itself.

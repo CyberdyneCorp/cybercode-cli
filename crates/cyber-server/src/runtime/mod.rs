@@ -150,7 +150,8 @@ pub use snapshot_recovery_types::{
 };
 pub use snapshot_work::{
     SnapshotBinding, SnapshotCompletion, SnapshotNativeGuard, SnapshotNativeResult, SnapshotOrigin,
-    SnapshotRestoreReceipt, SnapshotRestoreRequest, SnapshotWork, SnapshotWorker,
+    SnapshotRestoreCheckout, SnapshotRestoreReceipt, SnapshotRestoreRequest, SnapshotWork,
+    SnapshotWorker,
 };
 mod routing;
 mod sandbox_events;

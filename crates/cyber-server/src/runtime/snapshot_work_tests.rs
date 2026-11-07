@@ -690,7 +690,7 @@ impl Snapshots for Lifetimes {
                     version: 2,
                     owner: request,
                     root_identity: "instrumented_root".into(),
-                    namespace_identity: "fixture-namespace".into(),
+                    namespace_identity: "instrumented_namespace".into(),
                     directory_identity: "fixture-directory".into(),
                     file_identity: "fixture-file".into(),
                     source_phase: Some("phase_fixture".into()),
@@ -2994,4 +2994,144 @@ async fn rejected_runtime_commit_keeps_origin_unknown_and_never_acknowledges_the
             .has_location_uncertainty()
     );
     restarted.shutdown().await;
+}
+
+struct LostRestoreResources(AtomicUsize);
+impl super::super::SnapshotLocationGuard for LostRestoreResources {
+    fn verify(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        if self.0.fetch_add(1, Ordering::SeqCst) < 2 {
+            Ok(vec![])
+        } else {
+            Err("fixture lost the complete retained checkout set".into())
+        }
+    }
+}
+
+#[tokio::test]
+async fn ordinary_restore_receipt_binds_native_lifetime_and_rechecks_resources_at_writer() {
+    for case in ["valid", "writer", "publication"] {
+        let lost = case != "valid";
+        let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let resources = Arc::new(std::sync::Mutex::new(None));
+        let runtime = runtime_with_snapshots(
+            &base,
+            base.inner.store.clone(),
+            temp.path(),
+            Arc::new(Lifetimes {
+                inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+                permits: Arc::new(tokio::sync::Semaphore::new(1)),
+                foreign: false,
+                reject_resources: false,
+                resources: resources.clone(),
+            }),
+        );
+        let mut owner = worker(&runtime, &session).await;
+        let id = owner.scope.id().to_owned();
+        let lifetime = owner.scope.snapshot_lifetime().unwrap().clone();
+        if case == "writer" {
+            owner._location = Some(Box::new(LostRestoreResources(AtomicUsize::new(0))));
+        }
+        let native_binding = binding(temp.path().canonicalize().unwrap());
+        let acks = Arc::new(AtomicUsize::new(0));
+        let seen = acks.clone();
+        let completed = owner
+            .run(move |work| {
+                let origin = work.begin(native_binding).unwrap();
+                work.effect(|| Ok(())).unwrap();
+                Ok(SnapshotNativeResult::new(
+                    vec![],
+                    Box::new(Guard {
+                        origin: Some(origin),
+                        acknowledgements: seen,
+                    }),
+                ))
+            })
+            .await
+            .unwrap();
+        if case == "publication" {
+            *resources.lock().unwrap() = None;
+        }
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let mut state = handle.state.lock().await;
+        let before = state.last_seq;
+        let result = completed.commit(
+            &mut state,
+            vec![events::event(
+                events::TITLE_GENERATED,
+                &events::Titled {
+                    title: "checkout bound".into(),
+                    usage: None,
+                    cost: None,
+                    model: None,
+                },
+            )],
+        );
+        if lost {
+            assert!(result.is_err());
+            assert_eq!(state.last_seq, before);
+            assert_ne!(state.info.title, "checkout bound");
+            assert_eq!(acks.load(Ordering::SeqCst), 0);
+            drop(state);
+            assert!(
+                runtime
+                    .snapshot_restore_lookup(&session, &id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(latest(&runtime, &session)["status"], "unknown");
+        } else {
+            result.unwrap();
+            assert_eq!(state.info.title, "checkout bound");
+            drop(state);
+            let receipt = runtime
+                .snapshot_restore_lookup(&session, &id)
+                .await
+                .unwrap()
+                .unwrap();
+            let checkout = receipt.checkout.as_ref().unwrap();
+            assert_eq!(checkout.lifetime, lifetime);
+            assert_eq!(
+                checkout.resources_digest,
+                lifetime.checkout_resources_digest(&[]).unwrap()
+            );
+            let hash = receipt.checkout_acknowledgement_digest().unwrap();
+            let mut invalid = receipt.clone();
+            invalid.events_digest = "invalid".into();
+            assert!(invalid.checkout_acknowledgement_digest().is_err());
+            let mut invalid = receipt.clone();
+            invalid.session_after = invalid.session_before - 1;
+            assert!(invalid.checkout_acknowledgement_digest().is_err());
+            let mut changed = receipt.clone();
+            changed
+                .checkout
+                .as_mut()
+                .unwrap()
+                .lifetime
+                .owner
+                .session_created_id = "evt_foreign".into();
+            assert!(changed.checkout_acknowledgement_digest().is_err());
+            let mut changed = receipt.clone();
+            changed.checkout.as_mut().unwrap().resources_digest = "f".repeat(64);
+            assert_ne!(changed.checkout_acknowledgement_digest().unwrap(), hash);
+            assert!(
+                runtime
+                    .inner
+                    .store
+                    .read(move |db| super::super::snapshot_restore_receipt::verify(db, &changed))
+                    .is_err()
+            );
+            let mut legacy = receipt;
+            legacy.checkout = None;
+            let bytes = serde_json::to_value(&legacy).unwrap();
+            assert!(bytes.get("checkout").is_none());
+            let legacy: SnapshotRestoreReceipt = serde_json::from_value(bytes).unwrap();
+            assert!(legacy.checkout_acknowledgement_digest().is_err());
+            assert_eq!(acks.load(Ordering::SeqCst), 1);
+        }
+        runtime.shutdown().await;
+    }
 }

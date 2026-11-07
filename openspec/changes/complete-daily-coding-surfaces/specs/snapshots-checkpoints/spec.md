@@ -265,6 +265,12 @@
 - **AND** a managed worktree SHALL require its complete checkout set, while reservation alone SHALL NOT admit source effects, acknowledge a journal or settle a checkout
 - **AND** ordinary owned Git availability SHALL remain separately gated until full recovery acceptance
 
+#### Scenario: Ordinary restore receipt retains complete checkout evidence
+- **WHEN** an ordinary snapshot restore with a native version-2 lifetime commits its consuming Session/native owner pair
+- **THEN** its immutable receipt SHALL bind the exact lifetime and complete retained checkout-set digest, rechecking the set at the paired writer before commit
+- **AND** lost or changed resource proof SHALL refuse the complete consuming pair and native acknowledgement, while lookup SHALL verify the bound lifetime against original native history
+- **AND** historical receipts without checkout evidence SHALL remain readable without acquiring checkout acknowledgement or reclamation authority
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

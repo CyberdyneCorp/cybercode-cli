@@ -4876,6 +4876,12 @@ export type SnapshotRecoverySelection = {
 
 export type SnapshotRecoveryState = "pending" | "unknown" | "acknowledged" | "resolved_by_another_request" | "cancelled_before_origin" | "cancelled_before_effects";
 
+export type SnapshotRestoreCheckout = {
+  version: number;
+  lifetime: SnapshotLifetimeBinding;
+  resources_digest: string;
+};
+
 /**
  * Exact native intent and Session batch consumed by an ordinary restore.
  * This is durable acknowledgement evidence, never authority to replay files.
@@ -4886,6 +4892,8 @@ export type SnapshotRestoreReceipt = {
   session_before: number;
   session_after: number;
   events_digest: string;
+  /** Missing on historical receipts; absence never authorizes checkout acknowledgement. */
+  checkout?: SnapshotRestoreCheckout | null;
 };
 
 export type SolveCandidateEvidence = {

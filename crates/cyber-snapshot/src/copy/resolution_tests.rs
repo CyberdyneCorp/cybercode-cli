@@ -76,6 +76,7 @@ fn ordinary_reconciliation_requires_completed_immutable_intent_and_current_autho
         session_before: 0,
         session_after: 1,
         events_digest: "a".repeat(64),
+        checkout: None,
     };
     assert!(
         p.store

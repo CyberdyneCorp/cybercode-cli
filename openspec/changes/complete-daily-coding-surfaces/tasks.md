@@ -345,3 +345,13 @@ engine. This lifts only the metadata reservation refusal; ordinary owned Git
 source availability remains false. Actual Git worker/checkout consuming receipts,
 post-effect acknowledgement/reconciliation, reclamation and complete crash/client/
 platform acceptance remain required; M2–M8 and parent tasks remain open.
+
+
+Ordinary consuming-receipt continuation: new restore receipts now bind exact
+version-2 lifetime and complete checkout-set digest when native lifetime proof
+exists. The paired writer rechecks the retained set and lookup verifies original
+native lifetime history. Legacy receipt encoding remains unchanged without the
+optional field and cannot generate new checkout acknowledgement evidence. This
+adds receipt evidence only; exact post-effect native checkout publication and
+reconciliation, actual Git runtime acceptance, reclamation and remaining M2–M8 /
+parent obligations remain open. Git source availability stays disabled.

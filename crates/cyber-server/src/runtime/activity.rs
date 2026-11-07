@@ -368,9 +368,15 @@ impl Scope {
                     digest,
                     sequence,
                     &events,
+                    self.snapshot_lifetime(),
+                    &location.bindings().map_err(RuntimeError::Conflict)?,
                 )
             })
             .transpose()?;
+        let checkout = settled
+            .snapshot_restore_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.checkout.clone());
         let bindings = authority.bindings.clone();
         let acknowledgement = change(&settled);
         let owners = [
@@ -384,6 +390,21 @@ impl Scope {
                 location
                     .verify()
                     .map_err(cyber_store::StoreError::InvalidAppend)?;
+                if let Some(checkout) = &checkout {
+                    let resources = location
+                        .bindings()
+                        .map_err(cyber_store::StoreError::InvalidAppend)?;
+                    if checkout
+                        .lifetime
+                        .checkout_resources_digest(&resources)
+                        .map_err(cyber_store::StoreError::InvalidAppend)?
+                        != checkout.resources_digest
+                    {
+                        return Err(cyber_store::StoreError::InvalidAppend(
+                            "Snapshot consuming checkout resources changed".into(),
+                        ));
+                    }
+                }
                 if stop.is_cancelled() {
                     return Err(cyber_store::StoreError::InvalidAppend(
                         "Snapshot consuming acknowledgement was cancelled".into(),

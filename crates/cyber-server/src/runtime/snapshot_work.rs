@@ -43,6 +43,17 @@ pub struct SnapshotRestoreReceipt {
     pub session_before: i64,
     pub session_after: i64,
     pub events_digest: String,
+    /// Missing on historical receipts; absence never authorizes checkout acknowledgement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout: Option<Box<SnapshotRestoreCheckout>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotRestoreCheckout {
+    pub version: u32,
+    pub lifetime: super::SnapshotLifetimeBinding,
+    pub resources_digest: String,
 }
 
 pub(super) fn restore_events_digest(events: &[NewEvent]) -> Result<String, String> {
@@ -382,6 +393,27 @@ impl SnapshotCompletion {
             .guard
             .verify(self.worker.scope.snapshot_origin())
             .map_err(RuntimeError::Conflict)?;
+        if let Some(lifetime) = &self.worker._lifetime {
+            lifetime.verify().map_err(RuntimeError::Conflict)?;
+            let published = lifetime
+                .checkout_bindings()
+                .map_err(RuntimeError::Conflict)?
+                .ok_or_else(|| {
+                    RuntimeError::Conflict("Restore checkout publication is missing".into())
+                })?;
+            if self
+                .worker
+                .location()
+                .map_err(RuntimeError::Conflict)?
+                .bindings()
+                .map_err(RuntimeError::Conflict)?
+                != published
+            {
+                return Err(RuntimeError::Conflict(
+                    "Restore checkout publication differs".into(),
+                ));
+            }
+        }
         let location = self
             .worker
             ._location

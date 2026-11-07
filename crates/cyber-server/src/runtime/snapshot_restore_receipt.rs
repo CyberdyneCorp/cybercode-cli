@@ -5,6 +5,57 @@ use rusqlite::Connection;
 
 const MAX_EVENTS: i64 = 4096;
 
+impl SnapshotRestoreReceipt {
+    /// Bind native disposition metadata to an already observed durable receipt.
+    /// This digest alone grants no claim acquisition, acknowledgement or replay authority.
+    pub fn checkout_acknowledgement_digest(&self) -> Result<String, String> {
+        use sha2::{Digest, Sha256};
+        if self.session_before < 0
+            || self.session_after < self.session_before
+            || self.session_after - self.session_before > MAX_EVENTS
+            || [&self.intent_digest, &self.events_digest]
+                .iter()
+                .any(|hash| hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err("Invalid restore receipt acknowledgement frame".into());
+        }
+        let checkout = self
+            .checkout
+            .as_ref()
+            .ok_or("Legacy restore receipt lacks checkout proof")?;
+        checkout.validate(&self.origin)?;
+        let bytes = serde_json::to_vec(&("snapshot-restore-checkout-ack-v1", self))
+            .map_err(|error| error.to_string())?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
+}
+
+impl super::SnapshotRestoreCheckout {
+    pub(super) fn validate(&self, origin: &SnapshotOrigin) -> Result<(), String> {
+        let owner = &self.lifetime.owner;
+        if self.version != 1
+            || self.lifetime.version != 2
+            || self.lifetime.source_phase.is_none()
+            || origin.version != 1
+            || owner.activity_id != origin.activity_id
+            || owner.session_id != origin.session_id
+            || owner.session_created_id != origin.session_created_id
+            || owner.worktree_id != origin.worktree_id
+            || owner.directory != origin.binding.directory
+            || self.lifetime.root_identity != origin.binding.root_identity
+            || self.lifetime.namespace_identity != origin.binding.namespace_identity
+            || self.resources_digest.len() != 64
+            || !self
+                .resources_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("Restore receipt checkout ownership differs".into());
+        }
+        self.lifetime.checkout_owner().map(drop)
+    }
+}
+
 impl Runtime {
     /// Lookup only; legacy settlements without an immutable receipt return None.
     pub async fn snapshot_restore_lookup(
@@ -76,6 +127,8 @@ pub(super) fn capture(
     digest: &str,
     sequence: i64,
     events: &[NewEvent],
+    lifetime: Option<&super::SnapshotLifetimeBinding>,
+    resources: &[cyber_core::worktrees::CheckoutBinding],
 ) -> Result<SnapshotRestoreReceipt, RuntimeError> {
     let origin = origin.ok_or_else(|| {
         RuntimeError::Conflict("Immutable snapshot receipt lacks its native origin".into())
@@ -91,6 +144,18 @@ pub(super) fn capture(
             "Invalid immutable snapshot receipt".into(),
         ));
     }
+    let checkout = lifetime
+        .map(|lifetime| {
+            let checkout = super::SnapshotRestoreCheckout {
+                version: 1,
+                lifetime: lifetime.clone(),
+                resources_digest: lifetime.checkout_resources_digest(resources)?,
+            };
+            checkout.validate(origin)?;
+            Ok::<_, String>(Box::new(checkout))
+        })
+        .transpose()
+        .map_err(RuntimeError::Conflict)?;
     Ok(SnapshotRestoreReceipt {
         origin: origin.clone(),
         intent_digest: digest.to_owned(),
@@ -100,6 +165,7 @@ pub(super) fn capture(
             .ok_or_else(|| RuntimeError::Invalid("Snapshot Session sequence overflow".into()))?,
         events_digest: snapshot_work::restore_events_digest(events)
             .map_err(RuntimeError::Invalid)?,
+        checkout,
     })
 }
 
@@ -107,6 +173,12 @@ pub(super) fn capture(
 pub(super) fn verify(db: &Connection, receipt: &SnapshotRestoreReceipt) -> Result<(), StoreError> {
     let (_, native) = super::snapshot_recovery_record::attest(db, &receipt.origin)?;
     let invalid = || StoreError::InvalidAppend("Ordinary restore settlement proof differs".into());
+    if let Some(checkout) = &receipt.checkout {
+        checkout.validate(&receipt.origin).map_err(|_| invalid())?;
+        if native.snapshot_lifetime.as_ref() != Some(&checkout.lifetime) {
+            return Err(invalid());
+        }
+    }
     if native.status != "settled"
         || native.phase != "snapshot_restore_committed"
         || native.snapshot_restore_receipt.as_ref() != Some(receipt)

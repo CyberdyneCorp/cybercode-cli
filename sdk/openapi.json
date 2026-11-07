@@ -7528,6 +7528,17 @@
           },
           "events_digest": {
             "type": "string"
+          },
+          "checkout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRestoreCheckout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Missing on historical receipts; absence never authorizes checkout acknowledgement."
           }
         },
         "required": [
@@ -7538,6 +7549,98 @@
           "events_digest"
         ],
         "description": "Exact native intent and Session batch consumed by an ordinary restore.\nThis is durable acknowledgement evidence, never authority to replay files."
+      },
+      "SnapshotRestoreCheckout": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "lifetime": {
+            "$ref": "#/components/schemas/SnapshotLifetimeBinding"
+          },
+          "resources_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "lifetime",
+          "resources_digest"
+        ]
+      },
+      "SnapshotLifetimeBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "owner": {
+            "$ref": "#/components/schemas/SnapshotLifetimeRequest"
+          },
+          "root_identity": {
+            "type": "string"
+          },
+          "namespace_identity": {
+            "type": "string"
+          },
+          "directory_identity": {
+            "type": "string"
+          },
+          "file_identity": {
+            "type": "string"
+          },
+          "source_phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "owner",
+          "root_identity",
+          "namespace_identity",
+          "directory_identity",
+          "file_identity"
+        ]
+      },
+      "SnapshotLifetimeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "activity_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "session_created_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "worktree_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "activity_id",
+          "session_id",
+          "session_created_id",
+          "directory"
+        ]
       },
       "Data_Array_of_SnapshotPreparation": {
         "type": "object",
@@ -7630,76 +7733,6 @@
           "session_sequence",
           "confirmation",
           "warning"
-        ]
-      },
-      "SnapshotLifetimeBinding": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "version": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0
-          },
-          "owner": {
-            "$ref": "#/components/schemas/SnapshotLifetimeRequest"
-          },
-          "root_identity": {
-            "type": "string"
-          },
-          "namespace_identity": {
-            "type": "string"
-          },
-          "directory_identity": {
-            "type": "string"
-          },
-          "file_identity": {
-            "type": "string"
-          },
-          "source_phase": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "version",
-          "owner",
-          "root_identity",
-          "namespace_identity",
-          "directory_identity",
-          "file_identity"
-        ]
-      },
-      "SnapshotLifetimeRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "activity_id": {
-            "type": "string"
-          },
-          "session_id": {
-            "type": "string"
-          },
-          "session_created_id": {
-            "type": "string"
-          },
-          "directory": {
-            "type": "string"
-          },
-          "worktree_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "activity_id",
-          "session_id",
-          "session_created_id",
-          "directory"
         ]
       },
       "SnapshotPreparationConfirmation": {
