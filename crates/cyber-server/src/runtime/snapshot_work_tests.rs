@@ -103,6 +103,8 @@ struct SnapshotClaims {
     claimed: std::sync::Mutex<Vec<String>>,
     reacquisition: Option<(Arc<AtomicUsize>, Arc<AtomicUsize>)>,
     reacquire_stop: bool,
+    native_ack: Option<Arc<NativeAckFixture>>,
+    acquired_settlements: Option<Arc<AtomicUsize>>,
     reacquire_inner: std::sync::Mutex<std::sync::Weak<super::super::Inner>>,
 }
 impl super::super::ToolHost for SnapshotClaims {
@@ -143,10 +145,17 @@ impl super::super::ToolHost for SnapshotClaims {
                 stop,
             }));
         }
-        Ok(Box::new(CheckoutProof {
+        let proof = CheckoutProof {
             calls: calls.clone(),
             fail_at: fail_at.clone(),
-        }))
+        };
+        match &self.native_ack {
+            Some(state) => Ok(Box::new(ReceiptCheckoutProof {
+                proof,
+                state: state.clone(),
+            })),
+            None => Ok(Box::new(proof)),
+        }
     }
     fn claim_location<'a>(
         &'a self,
@@ -169,7 +178,16 @@ impl super::super::ToolHost for SnapshotClaims {
     ) -> futures::future::BoxFuture<'a, Result<super::super::LocationLease, String>> {
         Box::pin(async move {
             self.claimed.lock().unwrap().push(activity.into());
-            Ok(super::super::LocationLease::unmanaged())
+            match &self.acquired_settlements {
+                Some(settlements) => Ok(super::super::LocationLease::guarded(
+                    None,
+                    Box::new(BindingLease {
+                        bindings: vec![],
+                        settlements: settlements.clone(),
+                    }),
+                )),
+                None => Ok(super::super::LocationLease::unmanaged()),
+            }
         })
     }
 }
@@ -243,6 +261,10 @@ impl super::super::LocationGuard for BindingLease {
     fn settle(self: Box<Self>) -> Result<(), String> {
         self.settlements.fetch_add(1, Ordering::SeqCst);
         Ok(())
+    }
+    fn settle_retained(self: Box<Self>) -> Result<Box<dyn Send>, String> {
+        self.settlements.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::new(()))
     }
     fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
         Ok(self.bindings.clone())
@@ -351,6 +373,43 @@ async fn checkout_lifetime_context_is_checked_before_any_native_settlement() {
 struct CheckoutProof {
     calls: Arc<AtomicUsize>,
     fail_at: Arc<AtomicUsize>,
+}
+
+#[derive(Default)]
+struct NativeAckFixture {
+    attempts: AtomicUsize,
+    refuse_prepare: std::sync::atomic::AtomicBool,
+    refuse_publish: std::sync::atomic::AtomicBool,
+}
+struct ReceiptCheckoutProof {
+    proof: CheckoutProof,
+    state: Arc<NativeAckFixture>,
+}
+impl super::super::SnapshotLocationGuard for ReceiptCheckoutProof {
+    fn verify(&self) -> Result<(), String> {
+        self.proof.verify()
+    }
+    fn prepare_preparation_acknowledgement(
+        &mut self,
+        receipt: &super::super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        if self.state.refuse_prepare.load(Ordering::SeqCst) {
+            return Err("foreign existing native receipt".into());
+        }
+        Ok(())
+    }
+    fn acknowledge_preparation(
+        &mut self,
+        receipt: &super::super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        self.state.attempts.fetch_add(1, Ordering::SeqCst);
+        if self.state.refuse_publish.load(Ordering::SeqCst) {
+            return Err("native acknowledgement publication cut".into());
+        }
+        Ok(())
+    }
 }
 
 struct StopCheckoutProof {
@@ -575,6 +634,12 @@ impl super::super::SnapshotLifetime for LifetimePermit {
     }
     fn verify_preparation(&self, _: Option<&SnapshotOrigin>) -> Result<(), String> {
         Ok(())
+    }
+    fn prepare_preparation_acknowledgement(
+        &self,
+        _: &super::super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        Ok(()) // Instrumented journal ownership; actual native receipts are tested in the backend.
     }
     fn acknowledge_preparation(
         &mut self,
@@ -1323,6 +1388,100 @@ async fn preparation_consuming_writer_revalidates_original_checkout_proof_and_ro
 }
 
 #[tokio::test]
+async fn preparation_native_ack_is_post_commit_and_only_explicit_reconciliation_retries_publication()
+ {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let native = Arc::new(NativeAckFixture::default());
+    let host = Arc::new(SnapshotClaims {
+        reacquisition: Some((
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(usize::MAX)),
+        )),
+        native_ack: Some(native.clone()),
+        ..Default::default()
+    });
+    let runtime = runtime_with_snapshot_tools(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            foreign: false,
+            reject_resources: false,
+            resources: Default::default(),
+        }),
+        host,
+    );
+    let id = crash_unstarted(worker(&runtime, &session).await);
+    let review = runtime
+        .snapshot_preparation_review(&session, &id)
+        .await
+        .unwrap();
+    let confirmation = super::super::SnapshotPreparationConfirmation {
+        confirmation: review.confirmation,
+        request_id: "native-ack-cut".into(),
+    };
+    native.refuse_prepare.store(true, Ordering::SeqCst);
+    assert!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .is_err()
+    );
+    assert!(
+        runtime
+            .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(native.attempts.load(Ordering::SeqCst), 0);
+    native.refuse_prepare.store(false, Ordering::SeqCst);
+    native.refuse_publish.store(true, Ordering::SeqCst);
+    assert!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .is_err()
+    );
+    let receipt = runtime
+        .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(latest(&runtime, &session)["status"], "settled");
+    assert_eq!(native.attempts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(native.attempts.load(Ordering::SeqCst), 1);
+    native.refuse_publish.store(false, Ordering::SeqCst);
+    assert_eq!(
+        runtime
+            .snapshot_preparation_acknowledge(&session, &id, &confirmation.request_id)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(native.attempts.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        runtime
+            .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+            .await
+            .unwrap(),
+        Some(receipt)
+    );
+    assert_eq!(native.attempts.load(Ordering::SeqCst), 2);
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
 async fn preparation_receipt_binds_resources_and_lookup_never_reopens_changed_native_evidence() {
     let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
     let resources = Arc::new(std::sync::Mutex::new(None));
@@ -1385,6 +1544,39 @@ async fn preparation_receipt_binds_resources_and_lookup_never_reopens_changed_na
     );
     runtime.shutdown().await;
     base.shutdown().await;
+}
+
+#[tokio::test]
+async fn complete_resource_publication_precedes_any_checkout_admission_settlement() {
+    for reject in [false, true] {
+        let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let settlements = Arc::new(AtomicUsize::new(0));
+        let runtime = runtime_with_snapshot_tools(
+            &base,
+            base.inner.store.clone(),
+            temp.path(),
+            Arc::new(Lifetimes {
+                inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+                permits: Arc::new(tokio::sync::Semaphore::new(1)),
+                foreign: false,
+                reject_resources: reject,
+                resources: Default::default(),
+            }),
+            Arc::new(SnapshotClaims {
+                acquired_settlements: Some(settlements.clone()),
+                ..Default::default()
+            }),
+        );
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let state = handle.state.lock().await;
+        let result = runtime.snapshot_worker(&handle, &state).await;
+        assert_eq!(result.is_err(), reject);
+        assert_eq!(settlements.load(Ordering::SeqCst), usize::from(!reject));
+        drop(result);
+        drop(state);
+        runtime.shutdown().await;
+        base.shutdown().await;
+    }
 }
 
 #[tokio::test]

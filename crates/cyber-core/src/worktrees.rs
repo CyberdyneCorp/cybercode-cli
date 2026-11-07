@@ -9,7 +9,8 @@ mod removal;
 pub(crate) mod repository;
 mod setup;
 pub use activity::{
-    CheckoutActivity, CheckoutBinding, CheckoutLease, CheckoutOwner, SnapshotClaim,
+    CheckoutAcknowledgement, CheckoutActivity, CheckoutBinding, CheckoutLease, CheckoutOwner,
+    SnapshotClaim,
 };
 pub use changes::{ChangedFile, Changes};
 pub use includes::IncludedFile;

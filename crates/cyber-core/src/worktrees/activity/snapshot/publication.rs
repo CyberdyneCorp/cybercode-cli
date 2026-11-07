@@ -101,13 +101,13 @@ fn publish_before(
     Ok(lease)
 }
 
-fn sync_file(file: &File) -> io::Result<()> {
+pub(super) fn sync_file(file: &File) -> io::Result<()> {
     file.sync_all()?;
     #[cfg(target_os = "macos")]
     rustix::fs::fcntl_fullfsync(file)?;
     Ok(())
 }
-fn sync_directory(directory: &Dir) -> io::Result<()> {
+pub(super) fn sync_directory(directory: &Dir) -> io::Result<()> {
     #[cfg(unix)]
     {
         let file = rustix::fs::openat(
@@ -125,7 +125,7 @@ fn sync_directory(directory: &Dir) -> io::Result<()> {
     let _ = directory;
     Ok(())
 }
-fn publish_name(directory: &Dir, stage: &str, stable: &str) -> io::Result<()> {
+pub(super) fn publish_name(directory: &Dir, stage: &str, stable: &str) -> io::Result<()> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         rustix::fs::renameat_with(

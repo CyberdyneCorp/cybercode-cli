@@ -169,6 +169,14 @@ pub trait SnapshotLifetime: Send {
     fn verify_preparation(&self, _origin: Option<&super::SnapshotOrigin>) -> Result<(), String> {
         Err("Native preparation phase proof is unavailable".into())
     }
+    /// Read-only candidate check against retained native preparation receipts.
+    /// Called at the primary writer; no primary Store reentry or metadata writes.
+    fn prepare_preparation_acknowledgement(
+        &self,
+        _receipt: &super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        Err("Native preparation receipt verification is unavailable".into())
+    }
     /// Metadata publication only, after observed durable preparation cancellation.
     fn acknowledge_preparation(
         &mut self,
@@ -210,6 +218,26 @@ mod checkout_encoding_tests {
             binding.checkout_resources_digest(&[]).unwrap(),
             "a36ba5baced567a6dde73bc41c6e83c49017ba049b43fd59a5607b6204b5c5e7"
         );
+        let mut receipt = super::super::SnapshotPreparationReceipt {
+            activity_id: "op_fixture".into(),
+            request_id: "cancel".into(),
+            confirmation: "a".repeat(64),
+            lifetime: binding.clone(),
+            native_sequence: 0,
+            session_sequence: 3,
+            origin: None,
+            source_admitted: Some(false),
+            checkout_resources_digest: Some(binding.checkout_resources_digest(&[]).unwrap()),
+        };
+        assert_eq!(
+            receipt.checkout_acknowledgement_digest().unwrap(),
+            "9d475e87059bfef3f53d128c9be8029e36b8815289ad5a0cde8f7d5614938a4e"
+        );
+        receipt.source_admitted = None;
+        assert!(receipt.checkout_acknowledgement_digest().is_err());
+        receipt.source_admitted = Some(false);
+        receipt.checkout_resources_digest = None;
+        assert!(receipt.checkout_acknowledgement_digest().is_err());
         let mut changed = binding.clone();
         changed.file_identity.push_str("_replacement");
         assert_ne!(

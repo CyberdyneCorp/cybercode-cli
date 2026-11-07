@@ -52,6 +52,20 @@ pub struct SnapshotPreparationReceipt {
 
 impl SnapshotPreparationReceipt {
     pub const MAX_ENCODED_BYTES: u64 = 64 * 1024;
+    /// Issued by trusted adapters only after observing this exact committed pair.
+    pub fn checkout_acknowledgement_digest(&self) -> Result<String, String> {
+        use sha2::{Digest, Sha256};
+        validate_receipt(self).map_err(|error| error.to_string())?;
+        if self.checkout_resources_digest.is_none() || self.source_admitted != Some(false) {
+            return Err(
+                "Preparation receipt has no positive checkout acknowledgement authority".into(),
+            );
+        }
+        self.lifetime.checkout_owner()?;
+        let bytes = serde_json::to_vec(&("snapshot-preparation-checkout-ack-v1", self))
+            .map_err(|error| error.to_string())?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
 }
 
 struct Target {
@@ -85,6 +99,7 @@ fn validate_receipt(receipt: &SnapshotPreparationReceipt) -> Result<(), StoreErr
             .is_some_and(|digest| {
                 receipt.lifetime.version != 2
                     || receipt.lifetime.source_phase.is_none()
+                    || receipt.source_admitted != Some(false)
                     || digest.len() != 64
                     || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
             })
@@ -373,6 +388,17 @@ impl Worker {
         }
         Ok(())
     }
+    fn acknowledge_native(&mut self, receipt: &SnapshotPreparationReceipt) -> Result<(), String> {
+        self.proof.acknowledge_preparation(receipt)?;
+        if receipt.checkout_resources_digest.is_some() {
+            self.verify_resources()?;
+            self.checkouts
+                .as_mut()
+                .ok_or("Missing original checkout acknowledgement proof")?
+                .acknowledge_preparation(receipt)?;
+        }
+        Ok(())
+    }
     fn fingerprint(&self) -> Result<String, RuntimeError> {
         use sha2::{Digest, Sha256};
         let bytes = serde_json::to_vec(&(
@@ -466,15 +492,28 @@ impl Worker {
             // and its observed reply, rather than dropping them after the decision.
             let (_, (worker, receipt)) = store
                 .append_pair_checked(owners, move |tx| {
-                    self.authorize(tx)?;
-                    Ok((events, (self, receipt)))
+                    let mut worker = self;
+                    if receipt.checkout_resources_digest.is_some() {
+                        worker
+                            .proof
+                            .prepare_preparation_acknowledgement(&receipt)
+                            .map_err(|error| invalid(&error))?;
+                        worker
+                            .checkouts
+                            .as_mut()
+                            .ok_or_else(|| invalid("Missing checkout receipt proof"))?
+                            .prepare_preparation_acknowledgement(&receipt)
+                            .map_err(|error| invalid(&error))?;
+                    }
+                    worker.authorize(tx)?;
+                    Ok((events, (worker, receipt)))
                 })
                 .map_err(preparation_error)?;
             let mut worker = worker;
             worker
                 .handle
                 .acknowledge_snapshot_uncertainty(&receipt.activity_id);
-            worker.proof.acknowledge_preparation(&receipt).map_err(|error| RuntimeError::Conflict(format!("Preparation cancellation committed; native journal acknowledgement requires reconciliation: {error}")))?;
+            worker.acknowledge_native(&receipt).map_err(|error| RuntimeError::Conflict(format!("Preparation cancellation committed; native journal or checkout acknowledgement requires reconciliation: {error}")))?;
             Ok::<_, RuntimeError>(receipt)
         });
         let result = joined.await.map_err(|_| {
@@ -703,8 +742,7 @@ impl Runtime {
                 })
                 .map_err(preparation_error)?;
             worker
-                .proof
-                .acknowledge_preparation(&receipt)
+                .acknowledge_native(&receipt)
                 .map_err(RuntimeError::Conflict)?;
             Ok(receipt)
         })

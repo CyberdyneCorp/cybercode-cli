@@ -36,6 +36,33 @@ pub trait SnapshotLocationGuard: Send {
     fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
         Ok(vec![])
     }
+    /// Read-only verification of a proposed receipt against existing native
+    /// acknowledgements. Retain any existing marker through the consuming commit.
+    fn prepare_preparation_acknowledgement(
+        &mut self,
+        receipt: &super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        let resources = self.bindings()?;
+        if receipt.lifetime.owner.worktree_id.is_some() || !resources.is_empty() {
+            return Err("Native snapshot checkout acknowledgement is unsupported".into());
+        }
+        if receipt.checkout_resources_digest.as_ref()
+            != Some(&receipt.lifetime.checkout_resources_digest(&resources)?)
+        {
+            return Err("Receipt differs from retained snapshot resources".into());
+        }
+        Ok(())
+    }
+
+    /// Explicit native metadata publication after the exact consuming commit.
+    /// This must never reenter the primary Store or dispatch source effects.
+    fn acknowledge_preparation(
+        &mut self,
+        receipt: &super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        self.prepare_preparation_acknowledgement(receipt)
+    }
 }
 struct UnmanagedSnapshotLocation {
     _owner: Box<dyn Send>,

@@ -1546,3 +1546,106 @@ Stop fix and assertion-helper extraction, including pre-origin and published-ori
 service kills, restart/lookup, and partial keep/rollback. Their successful receipt
 assertions require review/commit resource agreement and the exact complete empty-set
 digest after published origins. No additional parent acceptance is claimed.
+
+
+## Native acknowledgement of exact pre-effect checkout claims (2026-11-07)
+
+The production retained checkout proof can now publish a separate native
+acknowledgement after observed durable preparation cancellation. The marker binds
+the exact version-2 claim, the complete acquired-resource digest and a versioned
+SHA256 digest of the entire committed receipt. The fixed known-answer encoding
+refuses digest-less or non-positive pre-effect receipts. No original claim bytes
+are reset, rewritten or deleted. `SnapshotClaim` still exposes read-only proof;
+the separate `CheckoutAcknowledgement` adapter authority performs this specific
+metadata publication and cannot operate on a different or legacy claim.
+
+Publication retains the original claim lock and pins. A complete bounded record
+with its own native file identity and construction name is staged, flushed,
+published without replacement and directory-synchronized. Existing matching markers
+are revalidated, retained and synchronized on retry. Replaced/aliased markers,
+foreign contexts and different receipts refuse. Marker encoding is bounded to
+32 KiB and shares the 4096-entry activity inventory. Native bound publication is
+admitted only on Linux/macOS; unsupported durability refuses before creating
+metadata. All construction evidence remains retained for the pending cleanup path.
+
+Before paired commit the actual worker checks existing native journal cancellation
+metadata and retains any existing checkout marker against the proposed receipt.
+This prevents a database backup from producing a conflicting receipt even if a
+prior acknowledgement stopped between journal and checkout publication. The writer
+then rechecks native resources, current authority and Stop. Only the observed commit
+reply permits journal/checkout publication. A native publication error keeps the
+committed pair and reports reconciliation. Confirm/lookup retries remain database-
+only; explicit acknowledgement reacquires and attests the same proof before retrying
+metadata. Source and transcript are never replayed by those operations.
+
+Complete resource publication now precedes checkout admission settlement. Publication
+failure does not settle any acquired checkout. A cut after complete publication and
+before settlement retains the positive resource set needed for exact pre-effect
+claim reconciliation. Partial acquisition, incomplete publication and corrupt claim
+records still refuse; this step does not invent missing provenance or complete all
+constructor cuts. Normal admitted-source/Git recovery and their consuming native
+checkout integration remain separate required work.
+
+Removal checks every independent activity record under its original lock. An exact
+validated native acknowledgement can discharge only its snapshot claim; legacy or
+independent unknown Session/process records remain fenced even with --force. Only
+acknowledgement-construction names tied to that exact acknowledged owner are pinned
+as retained metadata; they cannot authorize anything alone and are not deleted.
+Creation records referenced by native acknowledgement are archived by a no-replace
+rename in their original creation directory during an authorized worktree removal.
+Their native file identity and bytes survive removal retry/recreation. Removal-only
+verification may use that exact archived record when the live route is absent;
+ordinary snapshot worker reacquisition still requires the live creation route. A
+new incarnation's live creation never falls back to old archived proof.
+
+Actual core regressions exercise marker idempotence, original/independent unknown
+byte preservation, native replacement and hard-link refusal, foreign/unacknowledged
+stages and a changed Managed context. A real process is killed after durable stage
+preparation and before publication; retry completes without rewriting the claim or
+deleting the retained stage, which remains locked during later removal admission.
+Namespace replacement immediately before publication retains the original stage and
+installs no marker in the replacement. Real Git tests prove removal after exact
+acknowledgement, independent unknown refusal, durable creation archive, repeated
+removal, clean recreation and refusal to affect the new incarnation. Production-host
+coverage exercises actual native claims with an explicitly instrumented lifetime/
+receipt: it is adapter evidence, not a full owned-Git runtime acceptance claim.
+
+Runtime instrumentation refuses an existing foreign native receipt before commit,
+then fails publication after the commit. Lookup and confirm retries return the
+committed pair without another attempt; explicit acknowledgement alone retries.
+It also proves publication failure precedes any checkout admission settlement.
+Native backend coverage refuses a different journal receipt before consuming commit
+and preserves identical retry, resource-digest and legacy journal-only behavior.
+
+The code-review skill is applied across every changed core/native, runtime/port,
+Store compatibility, production adapter, test and documentation file. Review checks
+no source/process work in metadata callbacks, no primary Store reentry, candidate
+receipt checks before commit, lifetime/claim/marker lock retention, exact native
+route/content checks, bounded no-replace publication, retry durability, orphan/alias
+refusal, independent unknown preservation and removal/recreation compatibility.
+Review identified the creation-record lifetime and publication-before-settlement
+ordering gaps, both addressed with regression coverage. Partial/corrupt constructor
+cuts, post-effect/owned Git integration, reference/reader/lease-aware reclamation,
+complete clients and full native/platform acceptance remain required with M2–M8 and
+2.4/3.2–3.4. No parent task is accepted and the full recovery increment is not yet
+ready for delivery.
+
+
+Verification on local macOS arm64: all 415 core unit tests passed with three ignored
+tests, including the new acknowledgement subprocess fixture invoked by its parent
+kill test. All 73 core worktree integration cases passed with one ignored fixture;
+the native acknowledgement case includes real removal/retry/recreation. All 428
+server unit tests passed with one ignored fixture after the publication-ordering
+fix; the earlier focused snapshot run passed 44 cases. All 85 snapshot cases passed
+with one ignored fixture, all 64 Store tests passed, and all 40 production-host
+worktree cases passed. All 16 real CLI branch/recovery cases passed again after the
+final runtime ordering change. All-target Clippy for core/server/tools/Store/
+snapshot/App/CLI passed with warnings denied. Formatting, diff and generated SDK
+consistency passed. Strict pinned OpenSpec passed all 117 items and spec lint reports
+0 errors/25 warnings. SDK execution tests, full-workspace tests, native Linux/Windows
+execution and live TUI/App recovery acceptance were not run for this increment.
+Native sandbox deprecation and Darwin linker warnings were observed without an
+unchanged-main comparison or origin attribution. An initial integration compile
+used the async listing API incorrectly; it was corrected before the passing full
+worktree run. No critical/major review issue remains in this pre-effect native
+acknowledgement scope. The broader unfinished obligations above remain required.

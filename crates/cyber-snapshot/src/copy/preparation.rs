@@ -221,7 +221,20 @@ mod tests {
         assert!(directory.symlink_metadata(FILE).is_err());
         receipt.checkout_resources_digest =
             Some(receipt.lifetime.checkout_resources_digest(&[]).unwrap());
+        lifetime
+            .prepare_preparation_acknowledgement(&receipt)
+            .unwrap();
         lifetime.acknowledge_preparation(&receipt).unwrap();
+        let mut different = receipt.clone();
+        different.request_id.push_str("_foreign");
+        assert!(
+            lifetime
+                .prepare_preparation_acknowledgement(&different)
+                .is_err()
+        );
+        lifetime
+            .prepare_preparation_acknowledgement(&receipt)
+            .unwrap();
         let recorded: SnapshotPreparationReceipt =
             serde_json::from_slice(&storage::read(&directory, FILE, LIMIT).unwrap()).unwrap();
         assert_eq!(recorded, receipt);

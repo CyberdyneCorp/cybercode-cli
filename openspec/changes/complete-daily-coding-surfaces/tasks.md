@@ -234,3 +234,18 @@ of native evidence; explicit journal metadata acknowledgement verifies the commi
 digest. Historical digest-less receipts retain only their existing journal authority.
 Native unknown-claim acknowledgement is still required: this continuation does not
 settle a checkout claim, delete construction evidence or accept any parent task.
+
+
+Pre-effect native checkout acknowledgement continuation: observed paired receipts
+with complete version-2 resource bindings now publish separate exact native markers
+under retained original locks. Original claim bytes and independent unknown claims
+are preserved. Read-only candidate checks at the writer reject conflicting existing
+journal or checkout receipts; lookup never retries metadata. Explicit acknowledgement
+reconciles interrupted journal/checkout publication without source replay. Verified
+markers may admit later removal while pinning retained acknowledgement stages;
+original creation records are archived without replacement when needed for removal
+retry/recreation proof. Complete resource publication precedes checkout admission
+settlement. Actual native pre-publication kill/namespace replacement and real Git
+removal/recreation cases cover this step. M2–M8 and parent tasks remain open for
+partial acquisition/corrupt construction, post-effect/owned Git integration, safe
+reclamation, complete clients and full crash/platform acceptance.

@@ -3,6 +3,106 @@ use cyber_core::worktrees::CheckoutActivity;
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
+fn exact_native_snapshot_acknowledgement_admits_removal_without_clearing_another_unknown_session() {
+    use cyber_core::worktrees::{CheckoutAcknowledgement, CheckoutOwner};
+    for independent in [false, true] {
+        let fixture = Fixture::new();
+        let repository = fixture.repository();
+        let managed = fixture
+            .create(
+                &repository,
+                &Name::parse("ack-snapshot").unwrap(),
+                &Settings::default(),
+            )
+            .unwrap();
+        let owner = CheckoutOwner {
+            activity_id: "op_bound".into(),
+            session_id: "ses_fixture".into(),
+            session_created_id: "evt_fixture".into(),
+            directory: managed.path.clone(),
+            lifetime_digest: "a".repeat(64),
+        };
+        if independent {
+            drop(
+                block_on(repository.claim(&fixture.execution, &managed, "ses_independent"))
+                    .unwrap(),
+            );
+        }
+        let lease = block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner))
+            .unwrap();
+        let binding = lease.snapshot_binding().unwrap().clone();
+        drop(lease);
+        let path = managed
+            .common_dir
+            .join("cyber-worktree-activity")
+            .join(&managed.id)
+            .join("op_bound.lock");
+        let original = std::fs::read(&path).unwrap();
+        let creation = managed
+            .common_dir
+            .join("cyber-worktrees")
+            .join(format!("{}.json", managed.name));
+        let creation_bytes = std::fs::read(&creation).unwrap();
+        assert!(
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+                .is_err()
+        );
+        let mut proof = repository
+            .reacquire_snapshot(&managed, &binding, &owner)
+            .unwrap();
+        CheckoutAcknowledgement::new(&binding, &"a".repeat(64), &"b".repeat(64))
+            .unwrap()
+            .publish(&mut proof)
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+                .is_err()
+        );
+        drop(proof);
+        let result = block_on(repository.remove(
+            &fixture.execution,
+            &CheckoutActivity,
+            &managed,
+            independent,
+        ));
+        assert_eq!(result.is_err(), independent);
+        if !independent {
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+                .unwrap();
+            let archived = creation.with_file_name(format!("{}.removed", managed.id));
+            assert_eq!(std::fs::read(&archived).unwrap(), creation_bytes);
+            assert!(
+                block_on(repository.list(&fixture.execution))
+                    .unwrap()
+                    .is_empty()
+            );
+            let fresh = block_on(repository.recreate_removed(
+                &fixture.execution,
+                &CheckoutActivity,
+                &Settings::default(),
+                &fixture.data,
+                "prj_test",
+                &managed,
+            ))
+            .unwrap();
+            assert_ne!(fresh.id, managed.id);
+            assert!(
+                block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+                    .is_err()
+            );
+            assert_eq!(
+                std::fs::read_to_string(fresh.path.join("tracked.txt")).unwrap(),
+                "base"
+            );
+            assert_eq!(std::fs::read(archived).unwrap(), creation_bytes);
+        }
+        assert_eq!(std::fs::read(path).unwrap(), original);
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
 fn exact_snapshot_reacquisition_preserves_unknown_state_and_refuses_live_foreign_and_replaced_evidence()
  {
     use cyber_core::worktrees::CheckoutOwner;

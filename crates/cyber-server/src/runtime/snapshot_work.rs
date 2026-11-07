@@ -247,11 +247,11 @@ impl SnapshotWork<'_> {
 }
 
 impl SnapshotWorker {
-    fn checkout_proof(
+    fn checkout_resources(
         scope: &activity::Scope,
-        lease: super::LocationLease,
+        lease: &super::LocationLease,
         worktree: Option<&str>,
-    ) -> Result<Box<dyn super::SnapshotLocationGuard>, RuntimeError> {
+    ) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, RuntimeError> {
         let bindings = lease.snapshot_bindings().map_err(RuntimeError::Conflict)?;
         let expected = scope
             .snapshot_lifetime()
@@ -277,6 +277,14 @@ impl SnapshotWorker {
                 ));
             }
         }
+        Ok(bindings)
+    }
+    fn checkout_proof(
+        scope: &activity::Scope,
+        lease: super::LocationLease,
+        worktree: Option<&str>,
+    ) -> Result<Box<dyn super::SnapshotLocationGuard>, RuntimeError> {
+        let bindings = Self::checkout_resources(scope, &lease, worktree)?;
         let proof = lease
             .settle_snapshot_retained()
             .map_err(RuntimeError::Invalid)?;
@@ -473,13 +481,15 @@ impl Runtime {
                 "Recovery native Location/creation binding changed".into(),
             ));
         }
-        let location =
-            SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
+        let bindings =
+            SnapshotWorker::checkout_resources(&scope, &lease, state.info.worktree_id.as_deref())?;
         if let Some(lifetime) = &lifetime {
             lifetime
-                .bind_checkouts(&location.bindings().map_err(RuntimeError::Conflict)?)
+                .bind_checkouts(&bindings)
                 .map_err(RuntimeError::Conflict)?;
         }
+        let location =
+            SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
         Ok(SnapshotWorker {
             scope,
             admission,
@@ -543,13 +553,15 @@ impl Runtime {
             .id
             .clone();
         let worktree_id = state.info.worktree_id.clone();
-        let location =
-            SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
+        let bindings =
+            SnapshotWorker::checkout_resources(&scope, &lease, state.info.worktree_id.as_deref())?;
         if let Some(lifetime) = &lifetime {
             lifetime
-                .bind_checkouts(&location.bindings().map_err(RuntimeError::Conflict)?)
+                .bind_checkouts(&bindings)
                 .map_err(RuntimeError::Conflict)?;
         }
+        let location =
+            SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
         Ok(SnapshotWorker {
             scope,
             runtime: self.clone(),

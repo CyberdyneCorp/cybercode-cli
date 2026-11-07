@@ -197,6 +197,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261107010000_snapshot_consumed_resources",
         sql: include_str!("../migrations/20261107010000_snapshot_consumed_resources.sql"),
     },
+    Migration {
+        id: "20261107020000_snapshot_checkout_acknowledgements",
+        sql: include_str!("../migrations/20261107020000_snapshot_checkout_acknowledgements.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -508,7 +512,13 @@ mod tests {
         let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
             panic!("previous writer accepted consumed checkout evidence");
         };
-        assert_eq!(unknown, ["20261107010000_snapshot_consumed_resources"]);
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
         let retained: String = db
             .query_row(
                 "SELECT data FROM event WHERE id='evt_resources'",
@@ -517,6 +527,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(retained, evidence);
+    }
+
+    #[test]
+    fn native_acknowledgement_catalog_preserves_unknown_claim_and_disposition_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let claim = temp.path().join("op_original.lock");
+        let marker = temp.path().join("op_original.snapshot-ack");
+        std::fs::write(&claim, b"retained unknown claim").unwrap();
+        std::fs::write(&marker, b"retained exact receipt metadata").unwrap();
+        let mut db = Connection::open_in_memory().unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| {
+                migration.id == "20261107020000_snapshot_checkout_acknowledgements"
+            })
+            .unwrap();
+        migrate(&mut db, &MIGRATIONS[..at]).unwrap();
+        migrate(&mut db, MIGRATIONS).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted native checkout disposition");
+        };
+        assert_eq!(
+            unknown,
+            ["20261107020000_snapshot_checkout_acknowledgements"]
+        );
+        assert_eq!(std::fs::read(claim).unwrap(), b"retained unknown claim");
+        assert_eq!(
+            std::fs::read(marker).unwrap(),
+            b"retained exact receipt metadata"
+        );
     }
 
     #[test]

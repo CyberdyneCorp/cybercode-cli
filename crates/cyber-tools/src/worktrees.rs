@@ -1323,6 +1323,48 @@ impl cyber_server::runtime::SnapshotLocationGuard for ReacquiredSnapshotProof {
         self.verify()?;
         Ok(self.0.iter().map(|claim| claim.binding().clone()).collect())
     }
+    fn prepare_preparation_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        let resources = self.bindings()?;
+        let digest = receipt.lifetime.checkout_resources_digest(&resources)?;
+        if receipt.checkout_resources_digest.as_ref() != Some(&digest) {
+            return Err("Committed receipt differs from original checkout resources".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .and_then(|ack| ack.retain_existing(claim))
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
+    }
+    fn acknowledge_preparation(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        let resources = self.bindings()?;
+        let digest = receipt.lifetime.checkout_resources_digest(&resources)?;
+        if receipt.checkout_resources_digest.as_ref() != Some(&digest) {
+            return Err("Committed receipt differs from original checkout resources".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .and_then(|ack| ack.publish(claim))
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
+    }
 }
 
 struct SnapshotWorktreeProof(Vec<cyber_core::worktrees::CheckoutLease>);

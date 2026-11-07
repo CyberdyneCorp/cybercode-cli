@@ -122,6 +122,14 @@
 - **AND** original claim locks and pins SHALL remain held through consuming commit and observed reply, with changed or live evidence refusing
 - **AND** historical receipts without this binding SHALL gain no new checkout acknowledgement authority, while request lookup SHALL remain database-only
 
+#### Scenario: Durable preparation receipt acknowledges only its native checkout claims
+- **WHEN** the consuming preparation commit is observed durably acknowledged under retained original locks
+- **THEN** native checkout acknowledgement SHALL bind the exact version-2 claim, complete-resource digest and committed receipt digest without rewriting original claim bytes
+- **AND** no-replace durable publication and exact native marker identity SHALL reject changed, aliased, foreign or different-receipt evidence
+- **AND** removal SHALL continue to refuse independent unknown claims and incomplete or foreign construction evidence
+- **AND** a retained acknowledgement stage SHALL grant no authority by itself and SHALL be preserved until separate acknowledged reference-aware reclamation
+- **AND** only explicit metadata reconciliation after committed receipt attestation SHALL resume interrupted acknowledgements without source replay
+
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
 - **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents

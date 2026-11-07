@@ -278,13 +278,14 @@ lookup return the original durable pair without reopening native proof. After a
 committed receipt with missing native acknowledgement, POST
 `/sessions/<session-id>/rewind/preparations/<activity-id>/requests/<request-id>/acknowledge`
 to reconcile metadata under the exact proof. This never replays source changes.
-Checkout/process uncertainty remains independent. Cancelling an unstarted
-keep/rollback request leaves its original failed restore unresolved; its lookup
+A receipt with a complete acquired checkout binding can reconcile only that
+preparation's exact exited checkout claims. Independent checkout and process
+uncertainty remains fenced. Cancelling an unstarted keep/rollback request leaves its original failed restore unresolved; its lookup
 reports `cancelled_before_origin` or `cancelled_before_effects`.
 
 Created source directories, private payloads, native phase records and lifetime
 preparations remain protected for acknowledged safe cleanup. Do not edit records
-or remove evidence to force a retry. Independent managed-checkout proof, Git
+or remove evidence to force a retry. Partial acquisition recovery, owned Git
 journaling, reclamation, typed recovery clients and broader native crash/platform
 acceptance remain unfinished.
 
@@ -293,22 +294,35 @@ Managed checkout snapshots use an independent claim named by the snapshot's nati
 activity, so they do not reuse a Session, binary document, MCP or language-server
 claim. The native claim remains locked through worker settlement. Hosts without
 explicit support refuse managed snapshot admission. A crash while acquiring a claim
-can still leave unknown checkout evidence: preparation cancellation does not clear
-that evidence or authorize checkout removal. Exact native claim reconciliation is
-still required for that acquisition cut; retain the evidence for recovery.
+can still leave unknown checkout evidence. When the complete acquired set was
+published before checkout settlement, its committed preparation receipt can
+acknowledge those exact claims while retaining their original bytes. Missing or
+incomplete publication and legacy claims keep their fences; retain that evidence
+for the remaining recovery path.
 
 
 While a managed snapshot is running, the worker verifies its pinned checkout claim
 and worktree creation metadata before source changes and consuming commits. Aliased
 or replaced claim files, changed creation contents and replaced activity directories
-refuse. These checks preserve evidence; they do not grant permission to clear an
-unknown checkout claim after interrupted acquisition.
+refuse. These checks preserve evidence. New checkout acknowledgement also requires
+the exact committed preparation receipt and complete acquired-resource binding;
+verification alone cannot clear an unknown claim.
 
 
 New Linux/macOS lifetime-bound checkout claims publish their complete native record
 before becoming visible under the activity name. A pre-publication crash retains a
 construction record and prevents reuse of that activity. Runtime validates Session
-creation, directory, lifetime digest and the whole returned resource set before
-settling native ownership. Construction evidence is retained for the pending safe
+creation, directory, lifetime digest and the whole returned resource set, then
+persists that set before settling checkout admission. Construction evidence is retained for the pending safe
 recovery/cleanup path; it cannot be removed to force a retry. Windows does not yet
 admit the lifetime-bound durability path.
+
+Native preparation acknowledgement publishes separate metadata after the consuming
+commit. It never rewrites an original checkout claim or clears another Session's
+unknown activity. If acknowledgement is interrupted, look up the committed request
+and use its explicit acknowledgement endpoint; confirming again only returns the
+receipt. Existing native journal or checkout receipts must match before a new
+consuming commit, so a database backup cannot replace a different native receipt.
+An authorized later worktree removal retains referenced creation metadata for
+retry/recreation. Payloads, construction records and archived creation evidence
+remain protected until reference-aware cleanup is implemented.

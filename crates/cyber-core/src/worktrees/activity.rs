@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{GitExecution, Managed, Name, RemovalActivity, Repository, RepositoryLock};
 mod snapshot;
-pub use snapshot::{CheckoutBinding, CheckoutOwner, SnapshotClaim};
+pub use snapshot::{CheckoutAcknowledgement, CheckoutBinding, CheckoutOwner, SnapshotClaim};
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct UseRecord {
@@ -99,19 +99,26 @@ pub struct CheckoutActivity;
 
 struct RemovalFence {
     _files: Vec<LockedRecord>,
+    _snapshots: Vec<Box<dyn Send>>,
 }
 
 impl RemovalActivity for CheckoutActivity {
     fn reserve(&self, managed: &Managed) -> io::Result<Box<dyn Send>> {
         let directory = use_directory(managed, false)?;
         if !directory.exists() {
-            return Ok(Box::new(RemovalFence { _files: Vec::new() }));
+            return Ok(Box::new(RemovalFence {
+                _files: Vec::new(),
+                _snapshots: vec![],
+            }));
         }
         let mut paths = std::fs::read_dir(&directory)?
             .map(|entry| entry.map(|entry| entry.path()))
             .collect::<io::Result<Vec<_>>>()?;
         paths.sort();
+        let (paths, inventory) = snapshot::acknowledgement::Inventory::split(paths)?;
         let mut files = Vec::with_capacity(paths.len());
+        let mut snapshots = vec![];
+        let mut acknowledged = std::collections::HashMap::new();
         for path in paths {
             let session = path
                 .file_stem()
@@ -128,12 +135,21 @@ impl RemovalActivity for CheckoutActivity {
             let mut file = LockedRecord(file);
             let record = read_record(&mut file)?;
             check_record(&record, managed, session)?;
-            if !record.settled {
+            let proof = snapshot::acknowledgement::for_removal(managed, &record, &file)?;
+            if !record.settled && proof.is_none() {
                 return Err(unknown(session));
+            }
+            if let Some((binding, proof)) = proof {
+                acknowledged.insert(session.to_owned(), binding);
+                snapshots.push(proof);
             }
             files.push(file);
         }
-        Ok(Box::new(RemovalFence { _files: files }))
+        files.extend(inventory.retain(managed, &acknowledged)?);
+        Ok(Box::new(RemovalFence {
+            _files: files,
+            _snapshots: snapshots,
+        }))
     }
 }
 
@@ -288,7 +304,7 @@ impl Repository {
     }
 }
 
-fn safe_id(id: &str, prefix: &str) -> io::Result<()> {
+pub(super) fn safe_id(id: &str, prefix: &str) -> io::Result<()> {
     if !crate::ids::has_prefix(id, prefix)
         || id.len() > 128
         || !id

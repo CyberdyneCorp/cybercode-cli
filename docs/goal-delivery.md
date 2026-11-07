@@ -196,3 +196,14 @@ journal metadata reconciliation checks the committed resource binding. Original
 native checkout acknowledgement, partial-constructor recovery, Git journaling and
 reference-aware cleanup remain required before the complete recovery increment is
 reviewable for delivery.
+
+
+The pre-effect native checkout acknowledgement continuation publishes an exact
+receipt-bound disposition while preserving original claim bytes and independent
+unknown fences. Complete resource publication now precedes checkout admission
+settlement. Candidate journal/checkout receipts are checked before the paired
+commit, and interrupted publication resumes only through explicit metadata
+reconciliation. Acknowledged creation metadata is retained across authorized
+worktree removal/recreation. Partial acquisition/corrupt construction recovery,
+post-effect/owned Git integration, reference-aware reclamation and full native/
+client acceptance remain open; this does not complete the recovery delivery increment.

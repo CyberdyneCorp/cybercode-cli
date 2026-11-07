@@ -13,8 +13,9 @@ durable request reservation and paired native settlement. Local real-service
 partial-restore kills exercise keep/rollback and lookup without replay. Explicit
 journal acknowledgement reconciliation is implemented for new file-copy receipts;
 pre-effect cancellation is available for new version-2 lifetime-bound file-copy
-workers, including a published origin with no admitted source effects. Independent
-resource cuts, Git journaling,
+workers, including a published origin with no admitted source effects. Complete
+acquired version-2 checkout sets now support separate receipt-bound native
+acknowledgement. Partial/corrupt constructor cuts, post-effect/owned Git integration,
 reclamation, complete clients and the platform matrix remain unfinished. Parent
 tasks are open; the complete recovery delivery is not merge-ready.
 
@@ -402,3 +403,48 @@ receipts lacking the digest remain readable but cannot acquire new checkout
 acknowledgement authority. Request lookup remains database-only. Explicit metadata
 reconciliation must match the committed digest before accessing original claims.
 This binding does not by itself acknowledge an unknown native checkout claim.
+
+
+### Native acknowledgement of consumed checkout claims
+
+After observed durable preparation cancellation, the retained original checkout
+proof may publish a separate bounded acknowledgement record. It binds the exact
+version-2 claim, the consumed complete-resource digest and a versioned digest of
+the complete committed preparation receipt. Original claim bytes are never reset
+or rewritten. Publication holds the original lock, stages and flushes a complete
+private record, publishes without replacement and synchronizes the directory.
+The writer also checks existing journal cancellation metadata and retains any
+existing checkout marker against the proposed receipt
+before commit; a database backup cannot replace a different native receipt.
+The acknowledgement retains its own native file identity and construction name;
+a replacement, alias, changed context or different receipt refuses.
+
+Removal admission may recognize that exact acknowledged claim while holding its
+original lock and native pins. It still checks every independent Session/process/
+checkout record. A partial acknowledgement stage never supplies authority. A
+retained stage with the exact new acknowledgement-construction name is metadata
+only after a matching stable acknowledgement exists; removal pins it without
+deleting it. Orphan/foreign stages, unacknowledged claim construction, legacy claims
+and unknown records retain their fences. All payload and construction reclamation
+remains subject to the separate reference/reader/lease-aware cleanup protocol.
+Retry lookup never publishes metadata. Explicit acknowledgement reconciliation
+reacquires the original lifetime/claims, attests the committed pair and resource
+digest, then idempotently completes journal and checkout metadata. A crash during
+one resource acknowledgement leaves completed markers and retained stages, and the
+same receipt can resume without repeating source effects. Unsupported lifetime-bound
+native directory durability refuses before metadata creation.
+
+A later authorized managed-worktree removal retains the original creation record
+under its creation ID when native checkout acknowledgements reference it. The
+no-replace archival rename preserves its native file identity and bytes. Removal
+retries may verify that archived record through the same retained creation-directory
+identity; ordinary worker reacquisition still requires the live creation route.
+This preserves acknowledgement proof across removal completion/recreation without
+relaxing any independent unknown claim or reclaiming referenced creation evidence.
+
+Complete resource publication precedes checkout admission settlement as well as
+origin/source dispatch. A publication failure leaves every acquired claim
+unsettled. A cut after complete publication and before checkout settlement has
+positive exited-lifetime/resource evidence for the new metadata acknowledgement;
+partial acquisition and corrupt/incomplete records remain fenced until their
+separate exact recovery proof is implemented.

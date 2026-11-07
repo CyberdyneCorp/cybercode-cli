@@ -119,6 +119,32 @@ impl SnapshotLifetime for Lifetime {
         .ok_or("Missing source-admission namespace")?;
         store.record_source_admission(&self.binding, origin)
     }
+    fn prepare_preparation_acknowledgement(
+        &self,
+        receipt: &cyber_server::runtime::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        if receipt.lifetime != self.binding {
+            return Err("Foreign preparation receipt candidate".into());
+        }
+        self.verify_preparation(receipt.origin.as_ref())?;
+        if let Some(origin) = &receipt.origin {
+            let store = Store::existing(
+                &self.data,
+                &self.binding.owner.directory.to_string_lossy(),
+                self.options.clone(),
+            )?
+            .ok_or("Missing preparation receipt namespace")?;
+            if store
+                .preparation_cancellation(&origin.binding.journal_id)?
+                .as_ref()
+                .is_some_and(|existing| existing != receipt)
+            {
+                return Err("Journal already has another preparation cancellation receipt".into());
+            }
+        }
+        Ok(())
+    }
     fn acknowledge_preparation(
         &mut self,
         receipt: &cyber_server::runtime::SnapshotPreparationReceipt,

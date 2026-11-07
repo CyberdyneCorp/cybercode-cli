@@ -2014,7 +2014,7 @@ async fn lifetime_bound_checkout_host_preserves_context_and_refuses_foreign_requ
         serde_json::from_slice::<serde_json::Value>(&retained).unwrap()["settled"],
         false
     );
-    let proof = flow
+    let mut proof = flow
         .f
         .host
         .reacquire_snapshot_location(&info, &exited, &acquired)
@@ -2041,6 +2041,40 @@ async fn lifetime_bound_checkout_host_preserves_context_and_refuses_foreign_requ
             .reacquire_snapshot_location(&info, &foreign, &acquired)
             .is_err()
     );
+    // Adapter fixture: the runtime suites attest the actual committed pair.
+    let receipt = cyber_server::runtime::SnapshotPreparationReceipt {
+        activity_id: exited.owner.activity_id.clone(),
+        request_id: "fixture-cancel".into(),
+        confirmation: "a".repeat(64),
+        lifetime: exited.clone(),
+        native_sequence: 0,
+        session_sequence: 8,
+        origin: None,
+        source_admitted: Some(false),
+        checkout_resources_digest: Some(exited.checkout_resources_digest(&acquired).unwrap()),
+    };
+    let marker = directory.join("op_exited.snapshot-ack");
+    proof.prepare_preparation_acknowledgement(&receipt).unwrap();
+    assert!(!marker.exists());
+    proof.acknowledge_preparation(&receipt).unwrap();
+    let acknowledged = std::fs::read(&marker).unwrap();
+    proof.acknowledge_preparation(&receipt).unwrap();
+    assert_eq!(std::fs::read(&marker).unwrap(), acknowledged);
+    let native: serde_json::Value = serde_json::from_slice(&acknowledged).unwrap();
+    assert_eq!(
+        native["receipt_digest"],
+        receipt.checkout_acknowledgement_digest().unwrap()
+    );
+    let mut different = receipt.clone();
+    different.request_id = "different-request".into();
+    assert!(
+        proof
+            .prepare_preparation_acknowledgement(&different)
+            .is_err()
+    );
+    let mut legacy = receipt.clone();
+    legacy.checkout_resources_digest = None;
+    assert!(proof.acknowledge_preparation(&legacy).is_err());
     drop(proof);
     assert_eq!(
         std::fs::read(directory.join("op_exited.lock")).unwrap(),

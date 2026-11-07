@@ -1,6 +1,8 @@
 //! Exact checkout metadata pins. A binding alone never grants acknowledgement.
 use super::{Managed, UseRecord, invalid};
+pub(super) mod acknowledgement;
 mod publication;
+pub use acknowledgement::CheckoutAcknowledgement;
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
 pub(super) use publication::publish;
@@ -47,6 +49,7 @@ pub struct CheckoutOwner {
 /// No generic settlement, creation or source mutation capability is exposed.
 pub struct SnapshotClaim {
     lease: super::CheckoutLease,
+    acknowledgement: Option<acknowledgement::Acknowledged>,
 }
 impl SnapshotClaim {
     pub fn binding(&self) -> &CheckoutBinding {
@@ -57,7 +60,14 @@ impl SnapshotClaim {
             .expect("reacquired binding")
     }
     pub fn verify(&self) -> io::Result<()> {
-        self.lease.verify_snapshot()
+        self.lease.verify_snapshot()?;
+        if let Some(acknowledged) = &self.acknowledgement {
+            acknowledged.verify(
+                self.lease.snapshot_pins.as_ref().expect("retained pins"),
+                self.binding(),
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -103,7 +113,10 @@ pub(super) fn reacquire(
         snapshot_pins: Some(pins),
     };
     lease.verify_snapshot()?;
-    Ok(SnapshotClaim { lease })
+    Ok(SnapshotClaim {
+        lease,
+        acknowledgement: None,
+    })
 }
 impl CheckoutOwner {
     fn validate_fields(&self) -> io::Result<()> {
@@ -140,6 +153,7 @@ pub(super) struct Pins {
     directory: Dir,
     creations: Dir,
     creation: File,
+    archived: bool,
 }
 
 fn open_file(directory: &Dir, name: &str) -> io::Result<File> {
@@ -239,6 +253,17 @@ fn digest(bytes: &[u8]) -> String {
 
 impl Pins {
     fn open(common_dir: &Path, worktree: &str, name: &str) -> io::Result<Self> {
+        Self::open_creation(common_dir, worktree, name, false)
+    }
+    fn open_for_removal(common_dir: &Path, worktree: &str, name: &str) -> io::Result<Self> {
+        Self::open_creation(common_dir, worktree, name, true)
+    }
+    fn open_creation(
+        common_dir: &Path,
+        worktree: &str,
+        name: &str,
+        allow_archived: bool,
+    ) -> io::Result<Self> {
         if std::fs::symlink_metadata(common_dir)?
             .file_type()
             .is_symlink()
@@ -249,13 +274,20 @@ impl Pins {
         let root = common.open_dir_nofollow("cyber-worktree-activity")?;
         let directory = root.open_dir_nofollow(worktree)?;
         let creations = common.open_dir_nofollow("cyber-worktrees")?;
-        let creation = open_file(&creations, &format!("{name}.json"))?;
+        let (creation, archived) = match open_file(&creations, &format!("{name}.json")) {
+            Ok(file) => (file, false),
+            Err(error) if allow_archived && error.kind() == io::ErrorKind::NotFound => {
+                (open_file(&creations, &format!("{worktree}.removed"))?, true)
+            }
+            Err(error) => return Err(error),
+        };
         Ok(Self {
             common,
             root,
             directory,
             creations,
             creation,
+            archived,
         })
     }
     pub(super) fn capture(
@@ -342,7 +374,11 @@ impl Pins {
             return Err(invalid("Snapshot checkout descriptor changed"));
         }
         self.matches(binding)?;
-        let current = Self::open(&binding.common_dir, &binding.worktree_id, &binding.name)?;
+        let current = if self.archived {
+            Self::open_for_removal(&binding.common_dir, &binding.worktree_id, &binding.name)?
+        } else {
+            Self::open(&binding.common_dir, &binding.worktree_id, &binding.name)?
+        };
         current.matches(binding)?;
         if digest(&bytes(&current.creation)?) != binding.creation_digest {
             return Err(invalid("Snapshot checkout creation contents changed"));
