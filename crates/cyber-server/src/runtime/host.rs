@@ -767,6 +767,12 @@ pub trait ToolHost: Send + Sync {
         super::context::Observed::Absent
     }
 
+    /// `fallback_models` and `fallback` of the Location (`provider-catalog` → Model
+    /// fallback chain); hosts without configuration have no chain.
+    fn fallback(&self, _directory: &str) -> cyber_core::model_fallback::FallbackSettings {
+        cyber_core::model_fallback::FallbackSettings::default()
+    }
+
     /// The Location's configured `language`; `None` for `auto` or when unset, so the
     /// model answers in the language it is written to (`localization` → Reply language).
     fn language(&self, _directory: &str) -> Option<cyber_core::locale::Locale> {

@@ -49,6 +49,9 @@ pub(crate) enum TurnEnd {
     },
     /// A usage limit the Session waits out (`session-runtime` → Usage limit wait).
     UsageLimit,
+    /// The failed Turn runs again on a fallback model (`provider-catalog` → Model
+    /// fallback chain).
+    Fallback,
 }
 
 struct PreparedModel {
@@ -281,6 +284,7 @@ async fn pass_owned(
                 failed(inner, handle, &kind, &message, cancel).await;
                 return Ok(());
             }
+            TurnEnd::Fallback => first = true,
             TurnEnd::UsageLimit => match resume_after_wait(inner, handle, cancel).await? {
                 Some(false) => return Ok(()),
                 _ => first = true,
@@ -550,9 +554,10 @@ async fn boundary(
     inner.config_change(handle).await;
     // The profile-derived model switch runs its observational hooks unlocked.
     inner.automatic_model_switch(handle).await?;
+    let now = inner.now_ms();
     let mut prepared = {
         let state = handle.state.lock().await;
-        let mut selected = inner.resolve_selection(&state.info, &state.model_selection)?;
+        let mut selected = inner.resolve_selection(&state.info, &state.effective_selection(now))?;
         if let Some(model) = state.boundary_command_model(continue_tools) {
             selected = inner.resolve_selection(
                 &state.info,
@@ -571,11 +576,9 @@ async fn boundary(
         let state = handle.state.lock().await;
         let selection = state
             .command_model()
-            .map(|model| super::selection::ModelSelection::explicit(model.into()));
-        let selected = inner.resolve_selection(
-            &state.info,
-            selection.as_ref().unwrap_or(&state.model_selection),
-        )?;
+            .map(|model| super::selection::ModelSelection::explicit(model.into()))
+            .unwrap_or_else(|| state.effective_selection(now));
+        let selected = inner.resolve_selection(&state.info, &selection)?;
         prepared.model = selected.model;
         prepared.steps = selected.steps;
     }
@@ -1495,6 +1498,11 @@ impl Inner {
         message_id: &str,
         mut e: LlmError,
     ) -> Result<TurnEnd, RuntimeError> {
+        // The fallback chain comes before a usage limit wait (`session-runtime` → Usage
+        // limit wait).
+        if let Some(fallback) = self.next_fallback(handle, &e).await {
+            return self.fall_back(handle, message_id, &e, &fallback).await;
+        }
         let limit = if e.kind == ErrorKind::QuotaExceeded {
             self.usage_limit_outcome(handle, message_id, &e).await?
         } else {
@@ -1505,20 +1513,7 @@ impl Inner {
         }
         let session_id = {
             let mut state = handle.state.lock().await;
-            let payload = StepFailed {
-                message_id: message_id.into(),
-                kind: kind_name(e.kind).into(),
-                message: e.message.clone(),
-                origin: state.step_origin.clone(),
-                resets_at_ms: e.resets_at.map(|seconds| seconds.saturating_mul(1000)),
-            };
-            let mut failed = event(STEP_FAILED, &payload);
-            super::reservations::mark_for_call(
-                &self.store,
-                &state.info.id,
-                message_id,
-                &mut failed,
-            )?;
+            let failed = self.failed_step(&state, message_id, &e)?;
             let events = std::iter::once(failed)
                 .chain(limit.waiting_event())
                 .collect();
@@ -1542,6 +1537,40 @@ impl Inner {
             message: message.clone(),
         });
         Ok(TurnEnd::Failed { kind, message })
+    }
+
+    /// `session.step.failed.1` for a provider failure before any output.
+    fn failed_step(
+        &self,
+        state: &super::model::SessionState,
+        message_id: &str,
+        e: &LlmError,
+    ) -> Result<cyber_store::NewEvent, RuntimeError> {
+        let payload = StepFailed {
+            message_id: message_id.into(),
+            kind: kind_name(e.kind).into(),
+            message: e.message.clone(),
+            origin: state.step_origin.clone(),
+            resets_at_ms: e.resets_at.map(|seconds| seconds.saturating_mul(1000)),
+        };
+        let mut failed = event(STEP_FAILED, &payload);
+        super::reservations::mark_for_call(&self.store, &state.info.id, message_id, &mut failed)?;
+        Ok(failed)
+    }
+
+    /// Fail the step and record the fallback its Turn is re-sent on, in one commit.
+    async fn fall_back(
+        &self,
+        handle: &Handle,
+        message_id: &str,
+        e: &LlmError,
+        fallback: &super::fallback::ModelFallback,
+    ) -> Result<TurnEnd, RuntimeError> {
+        let mut state = handle.state.lock().await;
+        let failed = self.failed_step(&state, message_id, e)?;
+        let switched = event(super::fallback::FALLBACK, fallback);
+        self.commit_locked(&mut state, vec![failed, switched])?;
+        Ok(TurnEnd::Fallback)
     }
 
     /// Keep partial output, fail the step, and settle calls that never ran as interrupted.
@@ -2563,7 +2592,7 @@ fn invalid_arguments(arguments: &str) -> String {
     format!("The arguments provided to the tool are invalid: {error}")
 }
 
-fn kind_name(kind: ErrorKind) -> &'static str {
+pub(crate) fn kind_name(kind: ErrorKind) -> &'static str {
     match kind {
         ErrorKind::Authentication => "authentication",
         ErrorKind::RateLimit => "rate_limit",

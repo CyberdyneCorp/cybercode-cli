@@ -78,6 +78,8 @@ mod screens_explorer;
 #[cfg(test)]
 mod screens_export;
 #[cfg(test)]
+mod screens_fallback;
+#[cfg(test)]
 mod screens_goals;
 #[cfg(test)]
 mod screens_history_search;

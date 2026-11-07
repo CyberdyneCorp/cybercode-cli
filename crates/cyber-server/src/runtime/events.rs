@@ -560,6 +560,7 @@ pub fn registry() -> EventRegistry {
     super::teams::records::register(&mut registry);
     super::goals::records::register(&mut registry);
     super::usage_wait::register(&mut registry);
+    super::fallback::register(&mut registry);
     super::workflows::register(&mut registry);
     registry.projector(project);
     registry.projector(super::messaging::records::project);

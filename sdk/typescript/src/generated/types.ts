@@ -3302,6 +3302,20 @@ export type ModelBody = {
   model: string;
 };
 
+/** `session.model.fallback.1`, and the active fallback of the Session view. */
+export type ModelFallback = {
+  /** The model whose request failed. */
+  from: string;
+  /** The model the request is re-sent on. */
+  to: string;
+  /** The error kind, such as `provider_internal` or `quota_exceeded`. */
+  kind: string;
+  reason: string;
+  started_ms: number;
+  /** When the Session returns to its configured model. */
+  until_ms: number;
+};
+
 /** A model offered to clients. */
 export type ModelInfo = {
   /** `provider/model`. */
@@ -4389,6 +4403,8 @@ export type Session = {
    * Session is not waiting for a limit to reset.
    */
   usage_limit?: UsageLimitWait | null;
+  /** The model fallback in effect (`provider-catalog` → Model fallback chain). */
+  fallback?: ModelFallback | null;
 };
 
 export type SessionContext = {

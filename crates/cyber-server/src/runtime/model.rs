@@ -567,6 +567,9 @@ pub struct SessionState {
     /// `session.usage_limit.*` and step events.
     #[serde(skip)]
     pub(crate) usage_wait: super::usage_wait::UsageWaitState,
+    /// The last model fallback; [`SessionState::active_fallback`] says whether it holds.
+    #[serde(skip)]
+    pub(crate) fallback: Option<super::fallback::ModelFallback>,
     /// Every projected message with its parent; `entries` is its active path.
     #[serde(skip)]
     pub(super) branches: super::branches::BranchTree,
@@ -771,6 +774,7 @@ impl SessionState {
             loop_coalesced: BTreeSet::new(),
             goals: Default::default(),
             usage_wait: Default::default(),
+            fallback: None,
             branches: Default::default(),
             taint: Default::default(),
         }
@@ -1164,8 +1168,10 @@ impl SessionState {
                 self.info.messaging = decode::<super::events::MessagingUpdated>(e)?.messaging;
             }
             "session.agent.switched" => self.info.agent = decode::<Switched>(e)?.to,
+            "session.model.fallback" => super::fallback::fold(&mut self.fallback, e)?,
             "session.model.switched" => {
                 let switched: Switched = decode(e)?;
+                super::fallback::switched(&mut self.fallback, &switched);
                 self.info.model = switched.to.clone();
                 if !switched.automatic {
                     self.model_selection = super::selection::ModelSelection::explicit(switched.to);
