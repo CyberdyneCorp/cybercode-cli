@@ -386,6 +386,7 @@ impl Outgoing {
             delivery,
             source: "session".into(),
             resume: true,
+            output_schema: None,
         }
     }
 

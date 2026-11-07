@@ -141,6 +141,7 @@ impl Inner {
             hook_stop: None,
             resources: Vec::new(),
             untrusted: None,
+            output_schema: None,
         };
         self.commit(handle, vec![event(ADMITTED, &admitted)])
             .await?;

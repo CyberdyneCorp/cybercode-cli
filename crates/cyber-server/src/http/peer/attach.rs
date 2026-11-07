@@ -375,6 +375,7 @@ pub(super) async fn prompt(
         delivery: body.delivery.unwrap_or(Delivery::Steer),
         resume: true,
         source: None,
+        format: None,
     };
     crate::http::sessions::submit_prompt(&peer.app, &id, prompt).await
 }
