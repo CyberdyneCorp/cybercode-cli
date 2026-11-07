@@ -290,6 +290,16 @@ impl ToolHost for AppHost {
             .claim_snapshot_location_bound(info, activity, lifetime, cancel)
     }
 
+    fn reacquire_snapshot_location(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        lifetime: &cyber_server::runtime::SnapshotLifetimeBinding,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        self.builtin
+            .reacquire_snapshot_location(info, lifetime, bindings)
+    }
+
     fn prepare_child_continuation<'a>(
         &'a self,
         parent: &'a cyber_server::runtime::SessionInfo,

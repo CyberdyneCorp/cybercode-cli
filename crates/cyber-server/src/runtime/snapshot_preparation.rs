@@ -30,6 +30,8 @@ pub struct SnapshotPreparationReview {
     pub confirmation: String,
     pub warning: String,
     pub origin: Option<super::SnapshotOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout_resources_digest: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +46,8 @@ pub struct SnapshotPreparationReceipt {
     pub origin: Option<super::SnapshotOrigin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_admitted: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout_resources_digest: Option<String>,
 }
 
 impl SnapshotPreparationReceipt {
@@ -75,6 +79,15 @@ pub(super) fn validate_event(data: &serde_json::Value) -> Result<(), String> {
 }
 fn validate_receipt(receipt: &SnapshotPreparationReceipt) -> Result<(), StoreError> {
     if !(0..=2).contains(&receipt.native_sequence)
+        || receipt
+            .checkout_resources_digest
+            .as_ref()
+            .is_some_and(|digest| {
+                receipt.lifetime.version != 2
+                    || receipt.lifetime.source_phase.is_none()
+                    || digest.len() != 64
+                    || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
         || receipt.session_sequence < 0
         || !matches!(receipt.lifetime.version, 1 | 2)
         || receipt.lifetime.owner.activity_id != receipt.activity_id
@@ -313,20 +326,62 @@ struct Worker {
     sequence: i64,
     target: Target,
     control: Arc<activity::Control>,
+    resources: Option<Vec<cyber_core::worktrees::CheckoutBinding>>,
+    checkouts: Option<Box<dyn super::SnapshotLocationGuard>>,
     proof: Box<dyn SnapshotLifetime>,
     _lifecycle: tokio::sync::OwnedRwLockReadGuard<()>,
     _admission: Admission,
     _completion: Completion,
 }
 impl Worker {
+    fn resources_digest(&self) -> Result<Option<String>, RuntimeError> {
+        self.resources
+            .as_ref()
+            .map(|resources| {
+                self.target
+                    .binding
+                    .checkout_resources_digest(resources)
+                    .map_err(RuntimeError::Conflict)
+            })
+            .transpose()
+    }
+    fn verify_resources(&self) -> Result<(), String> {
+        if self.proof.checkout_bindings()? != self.resources {
+            return Err("Snapshot preparation resource publication changed".into());
+        }
+        match (&self.resources, &self.checkouts) {
+            (Some(resources), Some(checkouts)) => {
+                checkouts.verify()?;
+                if checkouts.bindings()? != *resources {
+                    return Err("Retained snapshot preparation resources changed".into());
+                }
+            }
+            (None, None) => {}
+            _ => return Err("Snapshot preparation resource proof is incomplete".into()),
+        }
+        if let Some(expected) = self
+            .target
+            .record
+            .snapshot_preparation_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.checkout_resources_digest.as_ref())
+        {
+            let observed = self.resources_digest().map_err(|error| error.to_string())?;
+            if observed.as_ref() != Some(expected) {
+                return Err("Committed preparation resource binding differs".into());
+            }
+        }
+        Ok(())
+    }
     fn fingerprint(&self) -> Result<String, RuntimeError> {
         use sha2::{Digest, Sha256};
         let bytes = serde_json::to_vec(&(
-            "snapshot-preparation-review-v1",
+            "snapshot-preparation-review-v2",
             self.sequence,
             &self.authority,
             self.target.sequence,
             &self.target.raw,
+            self.resources_digest()?,
         ))
         .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
         Ok(format!("{:x}", Sha256::digest(bytes)))
@@ -338,6 +393,7 @@ impl Worker {
         self.proof
             .verify_preparation(self.target.record.snapshot_origin.as_ref())
             .map_err(|error| invalid(&error))?;
+        self.verify_resources().map_err(|error| invalid(&error))?;
         let owner = &self.target.binding.owner;
         let current = match self.target.record.snapshot_preparation_receipt.as_ref() {
             Some(receipt) => acknowledged_target(db, receipt)?,
@@ -352,6 +408,7 @@ impl Worker {
             || current.sequence != self.target.sequence
             || sequence != self.sequence
             || !self.authority.current(db)?
+            || self.control.stop.is_cancelled()
         {
             return Err(invalid("Snapshot preparation authority or owner changed"));
         }
@@ -377,6 +434,7 @@ impl Worker {
                 session_sequence: self.sequence,
                 origin: self.target.record.snapshot_origin.clone(),
                 source_admitted: self.target.record.snapshot_source_admitted,
+                checkout_resources_digest: self.resources_digest()?,
             };
             let mut record = self.target.record.clone();
             record.status = "settled".into();
@@ -497,6 +555,7 @@ impl Runtime {
         }
         let authority = RecoveryAuthority::capture(self, session)?;
         let sequence = state.last_seq;
+        let info = state.info.clone();
         handle
             .snapshot_active
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -534,18 +593,36 @@ impl Runtime {
                 "Foreign preparation lifetime proof".into(),
             ));
         }
-        Ok(Worker {
+        let resources = proof.checkout_bindings().map_err(RuntimeError::Conflict)?;
+        let checkouts = resources
+            .as_ref()
+            .map(|resources| {
+                target
+                    .binding
+                    .checkout_resources_digest(resources)
+                    .map_err(RuntimeError::Conflict)?;
+                self.inner
+                    .tools
+                    .reacquire_snapshot_location(&info, &target.binding, resources)
+                    .map_err(RuntimeError::Conflict)
+            })
+            .transpose()?;
+        let worker = Worker {
             runtime: self.clone(),
             handle,
             authority,
             sequence,
             target,
             control,
+            resources,
+            checkouts,
             proof,
             _lifecycle: lifecycle,
             _admission: admission,
             _completion: completion,
-        })
+        };
+        worker.verify_resources().map_err(RuntimeError::Conflict)?;
+        Ok(worker)
     }
     pub async fn snapshot_preparation_review(
         &self,
@@ -558,6 +635,7 @@ impl Runtime {
             let worker = store.read(move |db| { let tx = db.unchecked_transaction()?; worker.authorize(&tx)?; tx.commit()?; Ok(worker) }).map_err(preparation_error)?;
             Ok(SnapshotPreparationReview { activity_id: worker.target.binding.owner.activity_id.clone(), lifetime: worker.target.binding.clone(),
                 native_sequence: worker.target.sequence, session_sequence: worker.sequence, confirmation: worker.fingerprint()?,
+                checkout_resources_digest: worker.resources_digest()?,
                 origin: worker.target.record.snapshot_origin.clone(),
                 warning: "Cancels only this pre-effect snapshot preparation. Files and transcript are preserved; checkout and process uncertainty remain independent.".into() })
         }).await.map_err(|_| RuntimeError::Conflict("Snapshot preparation review interrupted".into()))?
@@ -607,7 +685,7 @@ impl Runtime {
             .ok_or_else(|| {
                 RuntimeError::Conflict("No committed preparation cancellation receipt".into())
             })?;
-        if receipt.origin.is_none() {
+        if receipt.origin.is_none() && receipt.checkout_resources_digest.is_none() {
             return Ok(receipt);
         }
         let worker = self

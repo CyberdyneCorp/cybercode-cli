@@ -34,6 +34,7 @@ impl Store {
         receipt: &SnapshotPreparationReceipt,
     ) -> Result<(), String> {
         self.verify_native_preparation(&receipt.lifetime)?;
+        self.verify_consumed_resources(receipt)?;
         let origin = receipt
             .origin
             .as_ref()
@@ -84,6 +85,7 @@ impl Store {
             serde_json::from_slice(&storage::read(&directory, FILE, LIMIT)?)
                 .map_err(storage::fail)?;
         self.verify_native_preparation(&receipt.lifetime)?;
+        self.verify_consumed_resources(&receipt)?;
         let origin = receipt
             .origin
             .as_ref()
@@ -160,6 +162,7 @@ mod tests {
             session_sequence: 8,
             origin: Some(origin),
             source_admitted: Some(false),
+            checkout_resources_digest: None,
         };
         (temp, store, lifetime, receipt)
     }
@@ -171,6 +174,10 @@ mod tests {
         std::os::unix::fs::symlink(&target, store.root.join("source")).unwrap();
         assert!(store.ensure_recovered().is_err());
         drop(store);
+        // A historical receipt still reconciles its original journal metadata;
+        // publishing resources does not promote it to checkout acknowledgement.
+        lifetime.bind_checkouts(&[]).unwrap();
+        assert!(receipt.checkout_resources_digest.is_none());
         lifetime.acknowledge_preparation(&receipt).unwrap();
         lifetime.acknowledge_preparation(&receipt).unwrap();
         let store = Store::recover_existing(
@@ -198,6 +205,45 @@ mod tests {
         );
         assert_eq!(std::fs::read(target).unwrap(), b"later owner bytes");
     }
+    #[test]
+    fn resource_digest_must_match_native_publication_before_metadata_acknowledgement() {
+        let (temp, store, mut lifetime, mut receipt) = setup();
+        let root = store.root.clone();
+        let options = store.options.clone();
+        let directory = store
+            .journals
+            .open_dir_nofollow("restore_preparation")
+            .unwrap();
+        drop(store);
+        lifetime.bind_checkouts(&[]).unwrap();
+        receipt.checkout_resources_digest = Some("0".repeat(64));
+        assert!(lifetime.acknowledge_preparation(&receipt).is_err());
+        assert!(directory.symlink_metadata(FILE).is_err());
+        receipt.checkout_resources_digest =
+            Some(receipt.lifetime.checkout_resources_digest(&[]).unwrap());
+        lifetime.acknowledge_preparation(&receipt).unwrap();
+        let recorded: SnapshotPreparationReceipt =
+            serde_json::from_slice(&storage::read(&directory, FILE, LIMIT).unwrap()).unwrap();
+        assert_eq!(recorded, receipt);
+        let store =
+            Store::recover_existing(&temp.path().join("data"), root.to_str().unwrap(), options)
+                .unwrap();
+        assert_eq!(
+            store
+                .preparation_cancellation("restore_preparation")
+                .unwrap(),
+            Some(receipt)
+        );
+        let mut corrupt = recorded;
+        corrupt.checkout_resources_digest = Some("0".repeat(64));
+        storage::atomic(&directory, FILE, &serde_json::to_vec(&corrupt).unwrap()).unwrap();
+        assert!(
+            store
+                .preparation_cancellation("restore_preparation")
+                .is_err()
+        );
+    }
+
     #[test]
     fn contradictory_intent_and_admitted_receipt_never_publish_cancellation_metadata() {
         let (_temp, store, _lifetime, mut receipt) = setup();

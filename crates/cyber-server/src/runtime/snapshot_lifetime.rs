@@ -26,6 +26,40 @@ pub struct SnapshotLifetimeBinding {
 }
 
 impl SnapshotLifetimeBinding {
+    /// Versioned digest of the complete ordered acquisition, bound to this lifetime.
+    pub fn checkout_resources_digest(
+        &self,
+        resources: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<String, String> {
+        use sha2::{Digest, Sha256};
+        let owner = self.checkout_owner()?;
+        if resources.len() > 4096
+            || self
+                .owner
+                .worktree_id
+                .as_ref()
+                .is_some_and(|id| !resources.iter().any(|resource| &resource.worktree_id == id))
+            || self.owner.worktree_id.is_none() && !resources.is_empty()
+        {
+            return Err("Snapshot checkout resource set is incomplete or exceeds limits".into());
+        }
+        let mut seen = std::collections::HashSet::new();
+        for resource in resources {
+            if resource.version != 2
+                || resource.owner_id != self.owner.activity_id
+                || resource.lifetime.as_ref() != Some(&owner)
+                || !seen.insert((&resource.common_dir, &resource.worktree_id))
+            {
+                return Err(
+                    "Snapshot checkout resource set has foreign ownership or duplicates".into(),
+                );
+            }
+        }
+        let bytes = serde_json::to_vec(&("snapshot-checkout-resources-v1", self, resources))
+            .map_err(|error| error.to_string())?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
+
     pub fn checkout_owner(&self) -> Result<cyber_core::worktrees::CheckoutOwner, String> {
         use sha2::{Digest, Sha256};
         if self.version != 2 || self.source_phase.is_none() {
@@ -172,5 +206,17 @@ mod checkout_encoding_tests {
             binding.checkout_owner().unwrap().lifetime_digest,
             "66239118d7327f0739d4e468da0b7d4c547e0a752cfd9680e6e5f7f2469af802"
         );
+        assert_eq!(
+            binding.checkout_resources_digest(&[]).unwrap(),
+            "a36ba5baced567a6dde73bc41c6e83c49017ba049b43fd59a5607b6204b5c5e7"
+        );
+        let mut changed = binding.clone();
+        changed.file_identity.push_str("_replacement");
+        assert_ne!(
+            changed.checkout_resources_digest(&[]).unwrap(),
+            binding.checkout_resources_digest(&[]).unwrap()
+        );
+        changed.version = 1;
+        assert!(changed.checkout_resources_digest(&[]).is_err());
     }
 }

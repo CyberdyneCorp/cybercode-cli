@@ -7605,6 +7605,12 @@
                 "type": "null"
               }
             ]
+          },
+          "checkout_resources_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -7750,6 +7756,12 @@
           "source_admitted": {
             "type": [
               "boolean",
+              "null"
+            ]
+          },
+          "checkout_resources_digest": {
+            "type": [
+              "string",
               "null"
             ]
           }

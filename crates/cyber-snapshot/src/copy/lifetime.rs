@@ -23,30 +23,7 @@ fn validate_checkouts(
     binding: &SnapshotLifetimeBinding,
     resources: &[cyber_core::worktrees::CheckoutBinding],
 ) -> Result<(), String> {
-    let owner = binding.checkout_owner()?;
-    if resources.len() > 4096
-        || binding
-            .owner
-            .worktree_id
-            .as_ref()
-            .is_some_and(|id| !resources.iter().any(|resource| &resource.worktree_id == id))
-        || binding.owner.worktree_id.is_none() && !resources.is_empty()
-    {
-        return Err("Snapshot checkout resource set is incomplete or exceeds limits".into());
-    }
-    let mut seen = std::collections::HashSet::new();
-    for resource in resources {
-        if resource.version != 2
-            || resource.owner_id != binding.owner.activity_id
-            || resource.lifetime.as_ref() != Some(&owner)
-            || !seen.insert((&resource.common_dir, &resource.worktree_id))
-        {
-            return Err(
-                "Snapshot checkout resource set has foreign ownership or duplicates".into(),
-            );
-        }
-    }
-    Ok(())
+    binding.checkout_resources_digest(resources).map(drop)
 }
 
 pub(crate) struct Lifetime {
@@ -150,6 +127,14 @@ impl SnapshotLifetime for Lifetime {
             return Err("Foreign preparation receipt".into());
         }
         self.verify_preparation(receipt.origin.as_ref())?;
+        if let Some(expected) = &receipt.checkout_resources_digest {
+            let resources = self
+                .checkout_bindings()?
+                .ok_or("Missing consumed checkout resources")?;
+            if self.binding.checkout_resources_digest(&resources)? != *expected {
+                return Err("Preparation receipt checkout resources changed".into());
+            }
+        }
         if receipt.origin.is_some() {
             let store = Store::recover_existing(
                 &self.data,
@@ -414,6 +399,21 @@ impl Store {
             validate_checkouts(binding, resources)?;
         }
         Ok(phase)
+    }
+    pub(super) fn verify_consumed_resources(
+        &self,
+        receipt: &cyber_server::runtime::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        if let Some(expected) = &receipt.checkout_resources_digest {
+            let phase = self.read_source_phase(&receipt.lifetime)?;
+            let resources = phase
+                .checkout_bindings
+                .ok_or("Missing consumed checkout resources")?;
+            if receipt.lifetime.checkout_resources_digest(&resources)? != *expected {
+                return Err("Preparation receipt checkout resources changed".into());
+            }
+        }
+        Ok(())
     }
     pub(super) fn verify_native_preparation(
         &self,

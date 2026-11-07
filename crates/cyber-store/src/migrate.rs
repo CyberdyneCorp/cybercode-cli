@@ -193,6 +193,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261107000000_snapshot_checkout_resources",
         sql: include_str!("../migrations/20261107000000_snapshot_checkout_resources.sql"),
     },
+    Migration {
+        id: "20261107010000_snapshot_consumed_resources",
+        sql: include_str!("../migrations/20261107010000_snapshot_consumed_resources.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -480,8 +484,39 @@ mod tests {
         let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
             panic!("previous writer accepted native resource publication");
         };
-        assert_eq!(unknown, ["20261107000000_snapshot_checkout_resources"]);
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
         assert_eq!(std::fs::read(phase).unwrap(), evidence);
+    }
+
+    #[test]
+    fn consumed_resource_receipts_reject_previous_writers_and_preserve_event_bytes() {
+        let mut db = Connection::open_in_memory().unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261107010000_snapshot_consumed_resources")
+            .unwrap();
+        migrate(&mut db, &MIGRATIONS[..at]).unwrap();
+        let evidence = r#"{"checkout_resources_digest":"retained","activity_id":"op_original"}"#;
+        db.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_resources','op_receipt',0,'snapshot.preparation.cancelled.1',?1,1)", [evidence]).unwrap();
+        migrate(&mut db, MIGRATIONS).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted consumed checkout evidence");
+        };
+        assert_eq!(unknown, ["20261107010000_snapshot_consumed_resources"]);
+        let retained: String = db
+            .query_row(
+                "SELECT data FROM event WHERE id='evt_resources'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, evidence);
     }
 
     #[test]

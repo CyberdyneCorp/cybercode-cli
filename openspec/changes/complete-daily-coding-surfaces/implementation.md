@@ -1463,3 +1463,86 @@ the disposal fix, including both pre-origin/pre-source service kills and partial
 keep/rollback restart cases. Final formatting/diff checks passed. Review found no
 remaining critical/major issue within this increment; the broader recovery and
 platform/client acceptance gaps above remain required before delivery.
+
+
+## Consuming original acquired checkout evidence (2026-11-07)
+
+Preparation workers now load the complete native source-phase resource set under
+the original exited worker lifetime lock. The explicit production host port
+reacquires the exact existing claims as read-only `SnapshotClaim` values, matching
+current managed creation/context and the complete ordered persisted resource set.
+It performs no Git/process launch, claim creation, generic settlement or source
+mutation. The returned native proof retains original lock descriptors and metadata
+pins. CLI and App implement the same host port; a host without managed support
+refuses rather than replacing original evidence with a fresh claim.
+
+A versioned SHA256 digest binds the immutable lifetime and complete acquired set.
+Validation checks version, owner/context, nearest checkout presence, empty unmanaged
+sets, inventory bound and duplicates. The native publication validator shares this
+encoding/validation. Fixed known-answer coverage pins both lifetime and resource
+encodings, including the empty complete set; changed lifetime identities change the
+digest and legacy lifetimes cannot authorize it. The review fingerprint includes
+the resource digest, and the paired original/request cancellation receipt stores
+it. Runtime rechecks the published set and actual retained proof inside the Store
+writer, returning the worker through COMMIT and observed reply. Original native
+locks remain held until that worker unwinds.
+
+Explicit journal metadata acknowledgement verifies the committed resource digest
+against native publication. Native tombstone creation and loading both validate
+that binding, so internal Store entry points cannot bypass it. Historical receipts
+without a resource digest retain their existing journal-only authority and gain no
+checkout acknowledgement capability. Lost-reply/request lookup remains database-only
+and never reacquires native resources or replays source work. A compatibility catalog
+marker prevents older writers from discarding consumed-resource evidence; OpenAPI
+and generated TypeScript types include the optional review/receipt digest.
+
+Regression coverage uses the actual managed production host to retain and reacquire
+an unknown original claim, refuse active/foreign/incomplete evidence and preserve
+claim bytes. Runtime instrumentation changes native publication after review,
+verifies failed confirmation and absent receipt, restores the exact set for positive
+confirmation, then changes evidence again while database lookup still succeeds and
+explicit metadata reconciliation refuses. Separate changed-proof and Stop arrivals at the consuming
+writer's retained-checkout verification roll back both owners; the final Stop check
+follows all native proof verification. The same unchanged review succeeds after
+valid proof returns under a fresh preparation owner. Native tests refuse a mismatched digest
+before publishing journal metadata and preserve old journal reconciliation without
+promoting its receipt. Real CLI kill/restart tests compare review/receipt resource
+binding and require the exact empty-set digest after published origins.
+
+The code-review skill is applied to all changed runtime/native/Store/adapter,
+API/SDK, test and specification files. Review checks native-only writer callbacks,
+original evidence rather than fresh claims, lifetime/resource ownership, bounded
+encoding, immutable digest framing, held descriptors through commit/reply, both
+native tombstone entry points, legacy journal compatibility and absence of native
+claim acknowledgement or cleanup authority. Native unknown-claim settlement,
+partial-construction resource completion, Git recovery, reclamation and complete
+platform/client acceptance remain open with M2–M8 and parent tasks 2.4/3.2–3.4.
+
+
+Verification on local macOS arm64: final server unit tests passed 426 cases with
+one ignored fixture, including changed original proof and Stop during consuming
+verification. The 43-case focused snapshot run also passed. All 85 snapshot tests
+passed with one ignored subprocess fixture; after adding the native reader
+corruption assertion, its focused digest/tombstone regression passed again. All
+63 Store tests passed, including prior-catalog refusal and exact retained event
+bytes. The selected production-host managed lifetime/reacquisition integration
+passed (39 unrelated cases filtered). OpenAPI regeneration/current-document check
+passed; SDK typechecking and 134 SDK tests passed, with 10 real-process SDK tests
+skipped because CYBER_BIN was not set. Generated SDK consistency passed. Strict
+pinned OpenSpec passed all 117 items and spec lint reports 0 errors/25 warnings.
+Final all-target Clippy for server/Store/snapshot/tools/App/CLI passed with warnings
+denied. An initial Clippy run found 18/15 complexity in the expanded CLI fixture;
+extracting its receipt assertions into a helper resolved it without an allowance.
+The initial compile's missing review field was fixed before successful validation.
+Formatting and diff checks passed. Native sandbox deprecation and Darwin linker
+warnings were observed without assigning their origin to main. Full-workspace
+tests, native Linux/Windows execution, and live TUI/App recovery acceptance were
+not run for this increment. The code/security review found no remaining critical
+or major issue within this consuming-proof scope; native checkout acknowledgement
+and the broader recovery acceptance obligations remain incomplete.
+
+Final real CLI verification passed all 16 branch/recovery cases after the consuming
+Stop fix and assertion-helper extraction, including pre-origin and published-origin
+service kills, restart/lookup, and partial keep/rollback. Their successful receipt
+assertions require review/commit resource agreement and the exact complete empty-set
+digest after published origins. No additional parent acceptance is claimed.

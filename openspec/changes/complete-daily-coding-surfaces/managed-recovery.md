@@ -388,3 +388,17 @@ This resource set is retained alongside source admission/origin and remains prot
 for later consuming receipt reconciliation. The current step does not acknowledge
 unknown claims or infer completeness from missing files; pre-publication construction
 cuts and complete reference/cleanup acceptance remain required.
+
+
+### Consuming acquired-resource evidence
+
+Preparation review and its committed cancellation receipt bind a versioned digest
+of the complete persisted checkout set, including the exact immutable lifetime.
+Recovery reacquires those original claims read-only and retains their actual locks
+and native metadata pins through the consuming Store commit and observed reply.
+The writer revalidates both the retained set and native publication. Missing,
+foreign, live or changed evidence refuses without a consuming receipt. Historical
+receipts lacking the digest remain readable but cannot acquire new checkout
+acknowledgement authority. Request lookup remains database-only. Explicit metadata
+reconciliation must match the committed digest before accessing original claims.
+This binding does not by itself acknowledge an unknown native checkout claim.

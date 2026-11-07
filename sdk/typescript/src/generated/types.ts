@@ -4766,6 +4766,7 @@ export type SnapshotPreparationReceipt = {
   session_sequence: number;
   origin?: SnapshotOrigin | null;
   source_admitted?: boolean | null;
+  checkout_resources_digest?: string | null;
 };
 
 export type SnapshotPreparationReview = {
@@ -4776,6 +4777,7 @@ export type SnapshotPreparationReview = {
   confirmation: string;
   warning: string;
   origin?: SnapshotOrigin | null;
+  checkout_resources_digest?: string | null;
 };
 
 /** Retained filesystem evidence; completion does not acknowledge a Session/native receipt. */

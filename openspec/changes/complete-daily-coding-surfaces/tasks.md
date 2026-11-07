@@ -222,3 +222,15 @@ retains references and refuses missing managed sets. Explicit empty unmanaged se
 remain distinct from absent constructor evidence. Unknown-claim acknowledgement,
 partial acquisition/publication cuts, Git journals, reclamation and full native/client
 acceptance remain open; no parent task is marked complete.
+
+
+Consuming acquired-resource proof continuation: preparation review and cancellation
+receipts now bind a versioned digest of the exact lifetime and complete acquired
+checkout set. The production CLI/App host port reacquires original claims read-only;
+recovery retains and revalidates those locks/pins and native reference publication
+through the paired Store commit and observed reply. Missing/changed/live/foreign
+proof refuses without a consuming receipt. Database-only lookup remains independent
+of native evidence; explicit journal metadata acknowledgement verifies the committed
+digest. Historical digest-less receipts retain only their existing journal authority.
+Native unknown-claim acknowledgement is still required: this continuation does not
+settle a checkout claim, delete construction evidence or accept any parent task.

@@ -187,3 +187,12 @@ Publication failure preserves the unknown reservation; no new native acknowledge
 or cleanup authority is granted. Interrupted-claim consuming receipts and native
 reconciliation remain the next recovery work, alongside the existing Git,
 reclamation and platform/client acceptance obligations.
+
+
+Preparation receipts now consume a digest of the complete acquired checkout set,
+with actual original claim locks retained through paired commit/reply. CLI/App
+reacquire via an explicit read-only host port; lookup remains database-only and
+journal metadata reconciliation checks the committed resource binding. Original
+native checkout acknowledgement, partial-constructor recovery, Git journaling and
+reference-aware cleanup remain required before the complete recovery increment is
+reviewable for delivery.

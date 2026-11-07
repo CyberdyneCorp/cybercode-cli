@@ -72,10 +72,19 @@ fn runtime_with_snapshots(
     root: &std::path::Path,
     snapshots: Arc<dyn Snapshots>,
 ) -> Runtime {
+    runtime_with_snapshot_tools(runtime, store, root, snapshots, runtime.inner.tools.clone())
+}
+fn runtime_with_snapshot_tools(
+    runtime: &Runtime,
+    store: Arc<cyber_store::Store>,
+    root: &std::path::Path,
+    snapshots: Arc<dyn Snapshots>,
+    tools: Arc<dyn super::super::ToolHost>,
+) -> Runtime {
     Runtime::new(RuntimeOptions {
         store,
         resolver: runtime.inner.resolver.clone(),
-        tools: runtime.inner.tools.clone(),
+        tools,
         global_config_dir: root.join("config"),
         shell: "test".into(),
         claude_compat: false,
@@ -92,6 +101,9 @@ fn runtime_with_snapshots(
 struct SnapshotClaims {
     ordinary_forbidden: std::sync::atomic::AtomicBool,
     claimed: std::sync::Mutex<Vec<String>>,
+    reacquisition: Option<(Arc<AtomicUsize>, Arc<AtomicUsize>)>,
+    reacquire_stop: bool,
+    reacquire_inner: std::sync::Mutex<std::sync::Weak<super::super::Inner>>,
 }
 impl super::super::ToolHost for SnapshotClaims {
     fn definitions(&self, _: &super::super::TurnContext) -> Vec<super::super::ToolDef> {
@@ -103,6 +115,38 @@ impl super::super::ToolHost for SnapshotClaims {
         _: tokio_util::sync::CancellationToken,
     ) -> futures::future::BoxFuture<'_, super::super::ToolOutcome> {
         Box::pin(async { super::super::ToolOutcome::Failed("unused fixture tool".into()) })
+    }
+    fn reacquire_snapshot_location(
+        &self,
+        info: &super::super::SessionInfo,
+        _: &super::super::SnapshotLifetimeBinding,
+        _: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn super::super::SnapshotLocationGuard>, String> {
+        let (calls, fail_at) = self
+            .reacquisition
+            .as_ref()
+            .ok_or("no reacquisition fixture")?;
+        if self.reacquire_stop {
+            let inner = self.reacquire_inner.lock().unwrap().upgrade().unwrap();
+            let stop = inner
+                .activities
+                .lock()
+                .unwrap()
+                .values()
+                .find(|control| control.source == info.id && control.snapshot_worker)
+                .unwrap()
+                .stop
+                .clone();
+            return Ok(Box::new(StopCheckoutProof {
+                calls: calls.clone(),
+                stop_at: fail_at.clone(),
+                stop,
+            }));
+        }
+        Ok(Box::new(CheckoutProof {
+            calls: calls.clone(),
+            fail_at: fail_at.clone(),
+        }))
     }
     fn claim_location<'a>(
         &'a self,
@@ -231,6 +275,7 @@ async fn checkout_lifetime_context_is_checked_before_any_native_settlement() {
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let owner = worker(&runtime, &session).await;
@@ -491,11 +536,13 @@ struct Lifetimes {
     permits: Arc<tokio::sync::Semaphore>,
     foreign: bool,
     reject_resources: bool,
+    resources: Arc<std::sync::Mutex<Option<Vec<cyber_core::worktrees::CheckoutBinding>>>>,
 }
 struct LifetimePermit {
     binding: super::super::SnapshotLifetimeBinding,
     _permit: tokio::sync::OwnedSemaphorePermit,
     reject_resources: bool,
+    resources: Arc<std::sync::Mutex<Option<Vec<cyber_core::worktrees::CheckoutBinding>>>>,
 }
 impl super::super::SnapshotLifetime for LifetimePermit {
     fn bind_checkouts(
@@ -506,10 +553,16 @@ impl super::super::SnapshotLifetime for LifetimePermit {
             return Err("injected resource publication failure".into());
         }
         if bindings.is_empty() {
+            *self.resources.lock().unwrap() = Some(vec![]);
             Ok(())
         } else {
             Err("instrumented lifetime supports unmanaged resource fixtures only".into())
         }
+    }
+    fn checkout_bindings(
+        &self,
+    ) -> Result<Option<Vec<cyber_core::worktrees::CheckoutBinding>>, String> {
+        Ok(self.resources.lock().unwrap().clone())
     }
     fn admit_source(&self, _: &SnapshotOrigin) -> Result<(), String> {
         Ok(())
@@ -545,6 +598,7 @@ impl Snapshots for Lifetimes {
             Ok(Box::new(LifetimePermit {
                 binding,
                 reject_resources: self.reject_resources,
+                resources: self.resources.clone(),
                 _permit: permit,
             }) as Box<dyn super::super::SnapshotLifetime>)
         })
@@ -577,6 +631,7 @@ impl Snapshots for Lifetimes {
                     source_phase: Some("phase_fixture".into()),
                 },
                 reject_resources: self.reject_resources,
+                resources: self.resources.clone(),
                 _permit: permit,
             })
                 as Box<dyn super::super::SnapshotLifetime>))
@@ -645,6 +700,7 @@ async fn published_origin_with_positive_false_admission_can_cancel_but_admitted_
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let native_binding = binding(temp.path().canonicalize().unwrap());
@@ -702,6 +758,7 @@ async fn rejected_source_admission_prevents_the_callback_and_retains_positive_pr
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let owner = worker(&runtime, &session).await;
@@ -766,6 +823,7 @@ async fn lost_source_admission_reply_never_calls_the_source_and_never_becomes_fa
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let session = runtime
@@ -845,6 +903,7 @@ async fn preparation_lost_commit_reply_is_lookup_only_after_reopening_the_real_s
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let session = runtime
@@ -919,6 +978,7 @@ async fn preparation_cancellation_is_paired_and_retry_never_reopens_native_proof
             permits: permits.clone(),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let owner = worker(&runtime, &session).await;
@@ -1009,6 +1069,7 @@ async fn preparation_writer_failure_rolls_back_both_owners_and_changed_session_r
             permits: permits.clone(),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let id = crash_unstarted(worker(&runtime, &session).await);
@@ -1086,6 +1147,7 @@ async fn cancelling_an_unstarted_resolution_keeps_its_original_failed_restore_fe
             permits: Arc::new(tokio::sync::Semaphore::new(1)),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
@@ -1151,6 +1213,7 @@ async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_re
             permits: permits.clone(),
             foreign: false,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let owner = worker(&runtime, &session).await;
@@ -1194,6 +1257,137 @@ async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_re
 }
 
 #[tokio::test]
+async fn preparation_consuming_writer_revalidates_original_checkout_proof_and_rolls_back_both_owners()
+ {
+    for stop in [false, true] {
+        let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fail_at = Arc::new(AtomicUsize::new(usize::MAX));
+        let host = Arc::new(SnapshotClaims {
+            reacquisition: Some((calls.clone(), fail_at.clone())),
+            reacquire_stop: stop,
+            ..Default::default()
+        });
+        let runtime = runtime_with_snapshot_tools(
+            &base,
+            base.inner.store.clone(),
+            temp.path(),
+            Arc::new(Lifetimes {
+                inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+                permits: Arc::new(tokio::sync::Semaphore::new(1)),
+                foreign: false,
+                reject_resources: false,
+                resources: Default::default(),
+            }),
+            host.clone(),
+        );
+        *host.reacquire_inner.lock().unwrap() = Arc::downgrade(&runtime.inner);
+        let id = crash_unstarted(worker(&runtime, &session).await);
+        let review = runtime
+            .snapshot_preparation_review(&session, &id)
+            .await
+            .unwrap();
+        let before = calls.load(Ordering::SeqCst);
+        fail_at.store(before + 2, Ordering::SeqCst); // factory succeeds; consuming writer refuses.
+        let confirmation = super::super::SnapshotPreparationConfirmation {
+            confirmation: review.confirmation,
+            request_id: "checkout-writer-proof".into(),
+        };
+        assert!(
+            runtime
+                .snapshot_preparation_confirm(&session, &id, &confirmation)
+                .await
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), before + 2);
+        assert!(
+            runtime
+                .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_ne!(latest(&runtime, &session)["status"], "settled");
+        fail_at.store(usize::MAX, Ordering::SeqCst);
+        let receipt = runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .unwrap();
+        assert_eq!(
+            receipt.checkout_resources_digest,
+            review.checkout_resources_digest
+        );
+        runtime.shutdown().await;
+        base.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn preparation_receipt_binds_resources_and_lookup_never_reopens_changed_native_evidence() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let resources = Arc::new(std::sync::Mutex::new(None));
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            foreign: false,
+            reject_resources: false,
+            resources: resources.clone(),
+        }),
+    );
+    let id = crash_unstarted(worker(&runtime, &session).await);
+    let review = runtime
+        .snapshot_preparation_review(&session, &id)
+        .await
+        .unwrap();
+    let digest = review.lifetime.checkout_resources_digest(&[]).unwrap();
+    assert_eq!(review.checkout_resources_digest.as_ref(), Some(&digest));
+    let confirmation = super::super::SnapshotPreparationConfirmation {
+        confirmation: review.confirmation,
+        request_id: "resource-bound-cancel".into(),
+    };
+    *resources.lock().unwrap() = None;
+    assert!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .is_err()
+    );
+    assert!(
+        runtime
+            .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    *resources.lock().unwrap() = Some(vec![]);
+    let receipt = runtime
+        .snapshot_preparation_confirm(&session, &id, &confirmation)
+        .await
+        .unwrap();
+    assert_eq!(receipt.checkout_resources_digest, Some(digest));
+    *resources.lock().unwrap() = None;
+    assert_eq!(
+        runtime
+            .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+            .await
+            .unwrap(),
+        Some(receipt)
+    );
+    assert!(
+        runtime
+            .snapshot_preparation_acknowledge(&session, &id, &confirmation.request_id)
+            .await
+            .is_err()
+    );
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
 async fn resource_publication_failure_retains_unknown_reservation_without_origin_or_source_work() {
     let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
     let permits = Arc::new(tokio::sync::Semaphore::new(1));
@@ -1207,6 +1401,7 @@ async fn resource_publication_failure_retains_unknown_reservation_without_origin
             permits: permits.clone(),
             foreign: false,
             reject_resources: true,
+            resources: Default::default(),
         }),
     );
     let handle = runtime.inner.handle(&session).await.unwrap();
@@ -1245,6 +1440,7 @@ async fn foreign_lifetime_proof_is_rejected_before_any_native_reservation() {
             permits: permits.clone(),
             foreign: true,
             reject_resources: false,
+            resources: Default::default(),
         }),
     );
     let handle = runtime.inner.handle(&session).await.unwrap();

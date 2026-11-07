@@ -134,6 +134,7 @@ impl SnapshotWork<'_> {
             session_sequence: i64::MAX,
             origin: Some(origin.clone()),
             source_admitted: Some(false),
+            checkout_resources_digest: Some("0".repeat(64)),
         };
         let bytes = serde_json::to_vec(&receipt)
             .map_err(|error| error.to_string())?

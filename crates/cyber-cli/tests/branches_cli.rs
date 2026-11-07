@@ -841,6 +841,7 @@ fn cancelled_pre_effect_preparation(published: bool) {
     let receipt =
         json(&env.cyber(&["api", "POST", &format!("{route}/confirm"), "-d", &body]))["data"]
             .clone();
+    assert_preparation_resource_digest(&review, &receipt, published);
     let acknowledge = format!("{route}/requests/before-origin/acknowledge");
     assert_eq!(
         json(&env.cyber(&["api", "POST", &acknowledge]))["data"],
@@ -876,6 +877,22 @@ fn cancelled_pre_effect_preparation(published: bool) {
     assert_eq!(env.messages(&id), messages);
     assert_eq!(model.requests().len(), requests);
     env.exec(Some(&id), "after preparation cancellation");
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_preparation_resource_digest(review: &Value, receipt: &Value, published: bool) {
+    assert_eq!(
+        receipt["checkout_resources_digest"],
+        review["checkout_resources_digest"]
+    );
+    if published {
+        let lifetime: cyber_server::runtime::SnapshotLifetimeBinding =
+            serde_json::from_value(review["lifetime"].clone()).unwrap();
+        assert_eq!(
+            receipt["checkout_resources_digest"],
+            lifetime.checkout_resources_digest(&[]).unwrap()
+        );
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

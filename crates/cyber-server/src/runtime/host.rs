@@ -930,6 +930,23 @@ pub trait ToolHost: Send + Sync {
         }
     }
 
+    /// Reacquire only original snapshot evidence, without creating or settling claims.
+    /// The caller retains the matching lifetime lock independently.
+    fn reacquire_snapshot_location(
+        &self,
+        info: &SessionInfo,
+        _lifetime: &super::SnapshotLifetimeBinding,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn SnapshotLocationGuard>, String> {
+        if info.worktree_id.is_none() && bindings.is_empty() {
+            Ok(Box::new(UnmanagedSnapshotLocation {
+                _owner: Box::new(()),
+            }))
+        } else {
+            Err("Exact snapshot checkout reacquisition is unsupported".into())
+        }
+    }
+
     /// Prepare an existing child under its exclusive owner. Opening a client view grants no bypass.
     fn prepare_child_continuation<'a>(
         &'a self,

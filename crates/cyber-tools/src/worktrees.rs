@@ -283,6 +283,38 @@ impl BuiltinHost {
         .await
     }
 
+    pub(crate) fn reacquire_snapshot_worktree_location(
+        &self,
+        info: &SessionInfo,
+        lifetime: &cyber_server::runtime::SnapshotLifetimeBinding,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        lifetime.checkout_resources_digest(bindings)?;
+        if lifetime.owner.session_id != info.id
+            || lifetime.owner.worktree_id != info.worktree_id
+            || std::fs::canonicalize(&info.directory).map_err(|error| error.to_string())?
+                != lifetime.owner.directory
+        {
+            return Err("Foreign snapshot checkout reacquisition context".into());
+        }
+        let locations = Repository::managed_locations_at(Path::new(&info.directory))
+            .map_err(|error| error.to_string())?;
+        if locations.len() != bindings.len() {
+            return Err("Snapshot checkout resource inventory changed".into());
+        }
+        let owner = lifetime.checkout_owner()?;
+        let claims = locations
+            .iter()
+            .zip(bindings)
+            .map(|((repository, managed), binding)| {
+                repository
+                    .reacquire_snapshot(managed, binding, &owner)
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Box::new(ReacquiredSnapshotProof(claims)))
+    }
+
     pub(crate) async fn claim_hook_test_location(
         &self,
         event: &cyber_core::hooks::HookEvent,
@@ -1277,6 +1309,19 @@ impl cyber_server::runtime::SnapshotLocationGuard for ActiveSnapshotLocation {
     }
     fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
         self.proof.bindings()
+    }
+}
+
+struct ReacquiredSnapshotProof(Vec<cyber_core::worktrees::SnapshotClaim>);
+impl cyber_server::runtime::SnapshotLocationGuard for ReacquiredSnapshotProof {
+    fn verify(&self) -> Result<(), String> {
+        self.0
+            .iter()
+            .try_for_each(|claim| claim.verify().map_err(|error| error.to_string()))
+    }
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.verify()?;
+        Ok(self.0.iter().map(|claim| claim.binding().clone()).collect())
     }
 }
 

@@ -1372,6 +1372,15 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.claim_snapshot_worktree_location_bound(info, activity, lifetime, cancel))
     }
 
+    fn reacquire_snapshot_location(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        lifetime: &cyber_server::runtime::SnapshotLifetimeBinding,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        self.reacquire_snapshot_worktree_location(info, lifetime, bindings)
+    }
+
     fn prepare_child_continuation<'a>(
         &'a self,
         parent: &'a cyber_server::runtime::SessionInfo,

@@ -116,6 +116,12 @@
 - **AND** a changed set or post-admission addition SHALL refuse, source admission SHALL retain the published set, and incomplete evidence SHALL NOT gain reference-completeness authority
 - **AND** disposal before origin publication SHALL retain a lifetime-bound reservation as unknown until explicit exact-owner reconciliation
 
+#### Scenario: Preparation receipt consumes exact acquired resources
+- **WHEN** recovery cancels an exited preparation with a complete published checkout set
+- **THEN** review and its durable receipt SHALL bind the exact lifetime and resource-set digest
+- **AND** original claim locks and pins SHALL remain held through consuming commit and observed reply, with changed or live evidence refusing
+- **AND** historical receipts without this binding SHALL gain no new checkout acknowledgement authority, while request lookup SHALL remain database-only
+
 #### Scenario: Retained native checkout routes change
 - **WHEN** a snapshot worker's retained checkout claim, activity namespace or worktree creation record changes after acquisition
 - **THEN** the worker SHALL refuse source callbacks and consuming acknowledgement after verifying exact native file/directory identities and creation contents

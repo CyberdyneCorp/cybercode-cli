@@ -1992,7 +1992,60 @@ async fn lifetime_bound_checkout_host_preserves_context_and_refuses_foreign_requ
         serde_json::to_value(&bindings[0]).unwrap()
     );
     assert_eq!(raw["settled"], true);
-    assert_eq!(std::fs::read_dir(directory).unwrap().count(), before + 1);
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before + 1);
+    let mut exited = lifetime.clone();
+    exited.owner.activity_id = "op_exited".into();
+    let lease = flow
+        .f
+        .host
+        .claim_snapshot_location_bound(&info, "op_exited", Some(&exited), CancellationToken::new())
+        .await
+        .unwrap();
+    let acquired = lease.snapshot_bindings().unwrap();
+    assert!(
+        flow.f
+            .host
+            .reacquire_snapshot_location(&info, &exited, &acquired)
+            .is_err()
+    );
+    drop(lease);
+    let retained = std::fs::read(directory.join("op_exited.lock")).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&retained).unwrap()["settled"],
+        false
+    );
+    let proof = flow
+        .f
+        .host
+        .reacquire_snapshot_location(&info, &exited, &acquired)
+        .unwrap();
+    proof.verify().unwrap();
+    assert_eq!(proof.bindings().unwrap(), acquired);
+    assert!(
+        flow.f
+            .host
+            .reacquire_snapshot_location(&info, &exited, &acquired)
+            .is_err()
+    );
+    assert!(
+        flow.f
+            .host
+            .reacquire_snapshot_location(&info, &exited, &[])
+            .is_err()
+    );
+    let mut foreign = exited.clone();
+    foreign.owner.session_created_id.push_str("_foreign");
+    assert!(
+        flow.f
+            .host
+            .reacquire_snapshot_location(&info, &foreign, &acquired)
+            .is_err()
+    );
+    drop(proof);
+    assert_eq!(
+        std::fs::read(directory.join("op_exited.lock")).unwrap(),
+        retained
+    );
     flow.runtime.shutdown().await;
 }
 
