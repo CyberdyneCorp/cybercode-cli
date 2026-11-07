@@ -286,7 +286,7 @@ reports `cancelled_before_origin` or `cancelled_before_effects`.
 Created source directories, private payloads, native phase records and lifetime
 preparations remain protected for acknowledged safe cleanup. Do not edit records
 or remove evidence to force a retry. Partial acquisition recovery, owned Git
-journaling, reclamation, typed recovery clients and broader native crash/platform
+journaling, reclamation, preparation/TUI recovery clients and broader native crash/platform
 acceptance remain unfinished.
 
 
@@ -340,3 +340,69 @@ follows that target while staging, exchanging or reading retained preimages.
 The local Git journal bridge supports typed native link fixtures, but ordinary
 owned Git recovery remains unavailable until its remaining lifecycle, full-state
 and platform acceptance gates are complete.
+
+
+## Recovering an interrupted restore from the CLI
+
+List retained journals, then review an exact journal and action:
+
+```sh
+cyber sessions recovery ses_example
+cyber sessions recovery ses_example restore_example --action keep
+cyber sessions recovery ses_example restore_example --action rollback --format json
+```
+
+Review does not change files or move the conversation. Text quotes paths and request IDs, escaping terminal controls without collapsing
+distinct names. It shows original worker identity,
+current/before/after/retained/proposed images, historical exclusions,
+protected created parents, conflicts and acknowledgement status. Unavailable
+historical evidence is shown explicitly. `keep` preserves the reviewed live files;
+`rollback` reverses only effects proven to belong to that restore. Neither resumes
+the failed rewind or undoes external tool effects. Conflicted or unverifiable
+reviews have no confirmation fingerprint.
+
+Apply only a reviewed fingerprint, using a request ID you retain:
+
+```sh
+cyber sessions recovery ses_example restore_example --action rollback \
+  --confirm <review-fingerprint> --request-id recovery-one
+```
+
+Malformed fingerprints and incomplete option combinations fail before service
+startup. Request IDs contain 1–256 bytes without NUL; the CLI also refuses exact
+`.` and `..`, which URL clients normalize as path segments. Other spaces, slashes
+and URL punctuation are encoded without changing the request identity. Quote such
+IDs in your shell. For a lookup ID beginning with `-`, use
+`recovery-request <session> -- <request-id>` so it is parsed as an ID.
+
+If interrupted or unsure whether the reply arrived, look up the same request:
+
+```sh
+cyber sessions recovery-request ses_example recovery-one
+cyber sessions recovery-request ses_example recovery-one --format json
+```
+
+Lookup reads the durable request without replaying files. Repeating the original
+confirmation with the same request ID and identical content also performs lookup;
+changed content refuses. Never choose a new ID to retry an uncertain outcome.
+A successful lookup can report a pending or unknown outcome; inspect `state`.
+Runtime `acknowledged` and native journal acknowledgement are separate fields.
+`journal_acknowledged: null` means this lookup has not observed native metadata,
+not that the metadata is absent. To explicitly reconcile an acknowledged durable
+request whose native acknowledgement was interrupted:
+
+```sh
+cyber sessions recovery-request ses_example recovery-one --acknowledge
+```
+
+This verifies the exact retained worker/checkout receipts and writes only native
+acknowledgement metadata; it does not reinstall source files or change the
+conversation. Confirmation/reconciliation exits 1 if the returned state does not
+establish the requested acknowledgement. Lookup itself can return an unresolved
+state with exit 0 because the read succeeded. Both commands support `--format json`.
+
+These commands expose the implemented managed file-copy recovery path on admitted
+Linux/macOS hosts. Ordinary managed Git source recovery remains disabled pending
+its remaining compatibility and runtime acceptance gates. Preparation cancellation
+is still available through its existing API; typed preparation/TUI recovery,
+reference-aware reclamation and complete native/platform acceptance remain open.

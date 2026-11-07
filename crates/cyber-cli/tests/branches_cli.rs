@@ -752,26 +752,16 @@ fn recovery_review_binds_the_session_discloses_acknowledgement_and_starts_no_inf
     let requests = model.requests().len();
     let original_messages = env.messages(&id);
     for action in ["keep", "rollback"] {
-        let body = json!({"journal_id":journal,"action":action}).to_string();
-        let response = json(&env.cyber(&[
-            "api",
-            "POST",
-            &format!("/sessions/{id}/rewind/recovery/review"),
-            "-d",
-            &body,
+        let review = json(&env.cyber(&[
+            "sessions", "recovery", &id, journal, "--action", action, "--format", "json",
         ]));
-        let review = &response["data"];
         assert_eq!(review["origin"]["session_id"], id);
         assert_eq!(review["acknowledged"], true);
         assert!(review["confirmation"].is_null());
         assert!(!review["conflicts"].as_array().unwrap().is_empty());
         assert!(review["exclusions"].is_array());
         let foreign = env.cyber(&[
-            "api",
-            "POST",
-            &format!("/sessions/{other}/rewind/recovery/review"),
-            "-d",
-            &body,
+            "sessions", "recovery", &other, journal, "--action", action, "--format", "json",
         ]);
         assert!(!foreign.status.success());
         assert!(
@@ -979,6 +969,83 @@ fn kill_before_source_admission(env: &Env, id: &str, first: &str, published: boo
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+fn recovery_confirm_cli(env: &Env, id: &str, request: &Value) -> Output {
+    env.cyber(&[
+        "sessions",
+        "recovery",
+        id,
+        request["journal_id"].as_str().unwrap(),
+        "--action",
+        request["action"].as_str().unwrap(),
+        "--confirm",
+        request["confirmation"].as_str().unwrap(),
+        "--request-id",
+        request["request_id"].as_str().unwrap(),
+        "--format",
+        "json",
+    ])
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reviewed_recovery_cli(env: &Env, id: &str, action: &str) -> (String, Value) {
+    let catalog = json(&env.cyber(&["sessions", "recovery", id, "--format", "json"]));
+    let journals = catalog.as_array().unwrap();
+    assert_eq!(journals.len(), 1);
+    assert_eq!(journals[0]["filesystem_complete"], false);
+    let journal = journals[0]["id"].as_str().unwrap().to_owned();
+    let review = json(&env.cyber(&[
+        "sessions", "recovery", id, &journal, "--action", action, "--format", "json",
+    ]));
+    let text = env.cyber(&["sessions", "recovery", id, &journal, "--action", action]);
+    let text = exits(&text, 0);
+    assert!(
+        text.contains("Recovery review:")
+            && text.contains("retained:")
+            && text.contains("proposed:")
+            && text.contains("Location:"),
+        "{text}"
+    );
+    assert!(
+        review["conflicts"].as_array().unwrap().is_empty(),
+        "{review}"
+    );
+    assert!(
+        text.contains("\"zz\\nfixture\""),
+        "review lost the literal newline path"
+    );
+    (journal, review)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_foreign_recovery_request_refused(env: &Env, request: &Value) {
+    let foreign = json(&env.cyber(&[
+        "api",
+        "POST",
+        "/sessions",
+        "-d",
+        "{\"title\":\"foreign recovery request\"}",
+    ]));
+    let foreign_id = foreign["data"]["id"].as_str().unwrap();
+    assert!(
+        !env.cyber(&[
+            "sessions",
+            "recovery-request",
+            foreign_id,
+            request["request_id"].as_str().unwrap(),
+            "--format",
+            "json"
+        ])
+        .status
+        .success()
+    );
+    assert!(
+        !recovery_confirm_cli(env, foreign_id, request)
+            .status
+            .success()
+    );
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn managed_native_recovery_after_partial_kill(action: &str) {
     let model = scripted_model::ScriptedModel::start(reply);
     let env = Env::new(&model);
@@ -989,11 +1056,13 @@ fn managed_native_recovery_after_partial_kill(action: &str) {
     for index in 0..1280 {
         std::fs::write(repo.join(format!("bulk_{index:04}")), "before").unwrap();
     }
+    std::fs::write(repo.join("zz\nfixture"), "before").unwrap();
     let id = env.exec(None, "before snapshot");
     let first = env.user_ids(&id)[0].clone();
     for index in 0..1280 {
         std::fs::write(repo.join(format!("bulk_{index:04}")), "after").unwrap();
     }
+    std::fs::write(repo.join("zz\nfixture"), "after").unwrap();
     env.exec(Some(&id), "after snapshot");
     let messages = kill_partial_restore(&env, &id, &first);
     let requests = model.requests().len();
@@ -1001,31 +1070,19 @@ fn managed_native_recovery_after_partial_kill(action: &str) {
     if action == "keep" {
         std::fs::write(repo.join("bulk_1279"), "later owner image").unwrap();
     }
-    let catalog = json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/recovery")]));
-    let journals = catalog["data"].as_array().unwrap();
-    assert_eq!(journals.len(), 1);
-    assert_eq!(journals[0]["filesystem_complete"], false);
-    let journal = journals[0]["id"].as_str().unwrap();
-    let review = json(&env.cyber(&[
-        "api",
-        "POST",
-        &format!("/sessions/{id}/rewind/recovery/review"),
-        "-d",
-        &json!({"journal_id":journal,"action":action}).to_string(),
-    ]))["data"]
-        .clone();
-    assert!(
-        review["conflicts"].as_array().unwrap().is_empty(),
-        "{review}"
-    );
-    let request_id = format!("real-kill-{action}");
+    let (journal, review) = reviewed_recovery_cli(&env, &id, action);
+    let request_id = format!("real-kill-{action}/ owner #?%");
     let request = json!({"journal_id":journal,"action":action,"confirmation":review["confirmation"],"request_id":request_id});
-    let confirm_path = format!("/sessions/{id}/rewind/recovery/confirm");
-    let result =
-        json(&env.cyber(&["api", "POST", &confirm_path, "-d", &request.to_string()]))["data"]
-            .clone();
+    let mut stale = request.clone();
+    stale["confirmation"] = "0".repeat(64).into();
+    let refused = recovery_confirm_cli(&env, &id, &stale);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("stale"));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("recovery-request"));
+    let result = json(&recovery_confirm_cli(&env, &id, &request));
     assert_eq!(result["state"], "acknowledged");
     assert_eq!(result["journal_acknowledged"], true);
+    assert_foreign_recovery_request_refused(&env, &request);
     assert_eq!(env.file("unrelated-owner").as_deref(), Some("owner data"));
     let expected = if action == "rollback" {
         "after"
@@ -1039,7 +1096,7 @@ fn managed_native_recovery_after_partial_kill(action: &str) {
         requests,
         "recovery started inference"
     );
-    assert_native_settlement_link(&env, journal, &result);
+    assert_native_settlement_link(&env, &journal, &result);
     assert_recovery_lookup_does_not_replay(&env, &id, &request_id, &request, &result, &messages);
     assert_eq!(model.requests().len(), requests);
 }
@@ -1162,11 +1219,8 @@ fn assert_recovery_lookup_does_not_replay(
     messages: &[Value],
 ) {
     let repo = env.root.join("repo");
-    let confirm_path = format!("/sessions/{id}/rewind/recovery/confirm");
     std::fs::write(repo.join("bulk_0000"), "new owner edit after recovery").unwrap();
-    let retry =
-        json(&env.cyber(&["api", "POST", &confirm_path, "-d", &request.to_string()]))["data"]
-            .clone();
+    let retry = json(&recovery_confirm_cli(env, id, request));
     assert_eq!(retry["state"], "acknowledged");
     assert!(
         retry["journal_acknowledged"].is_null(),
@@ -1179,18 +1233,19 @@ fn assert_recovery_lookup_does_not_replay(
     let mut changed = request.clone();
     changed["confirmation"] = "b".repeat(64).into();
     assert!(
-        !env.cyber(&["api", "POST", &confirm_path, "-d", &changed.to_string()])
-            .status
-            .success(),
+        !recovery_confirm_cli(env, id, &changed).status.success(),
         "changed request content reused an existing owner"
     );
     kill_registered_service(env);
     let lookup = json(&env.cyber(&[
-        "api",
-        "GET",
-        &format!("/sessions/{id}/rewind/recovery/requests/{request_id}"),
-    ]))["data"]
-        .clone();
+        "sessions",
+        "recovery-request",
+        id,
+        request_id,
+        "--format",
+        "json",
+    ]));
+    assert!(lookup["journal_acknowledged"].is_null());
     assert_eq!(lookup["receipt"], result["receipt"]);
     assert_eq!(
         env.file("bulk_0000").as_deref(),
@@ -1234,8 +1289,15 @@ fn reconcile_missing_journal_acknowledgement(
     let source = env.root.join("repo/bulk_0000");
     std::fs::remove_file(&source).unwrap();
     std::os::unix::fs::symlink(&target, &source).unwrap();
-    let path = format!("/sessions/{id}/rewind/recovery/requests/{request_id}/acknowledge");
-    let reconciled = json(&env.cyber(&["api", "POST", &path, "-d", "{}"]))["data"].clone();
+    let reconciled = json(&env.cyber(&[
+        "sessions",
+        "recovery-request",
+        id,
+        request_id,
+        "--acknowledge",
+        "--format",
+        "json",
+    ]));
     assert_eq!(reconciled["receipt"], result["receipt"]);
     assert_eq!(reconciled["journal_acknowledged"], true);
     assert!(

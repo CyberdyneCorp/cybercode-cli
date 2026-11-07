@@ -30,6 +30,7 @@ pub mod plugin_config;
 pub mod plugins;
 pub mod pr;
 pub mod providers;
+mod recovery;
 pub mod review;
 mod rewind;
 pub mod sandbox;

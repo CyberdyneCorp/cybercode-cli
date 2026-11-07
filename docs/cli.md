@@ -318,6 +318,8 @@ cyber sessions [OPTIONS] <COMMAND>
 - [`tree`](#cyber-sessions-tree): The Session's user-message tree: `*` marks the active path
 - [`checkout`](#cyber-sessions-checkout): Make another branch active; the Session must be idle
 - [`rewind`](#cyber-sessions-rewind): Preview a rewind before a user message; apply only with its reviewed fingerprint
+- [`recovery`](#cyber-sessions-recovery): List retained restore journals, review keep/rollback, or confirm a reviewed recovery
+- [`recovery-request`](#cyber-sessions-recovery-request): Look up a retained recovery request; optionally reconcile its native acknowledgement
 - [`label`](#cyber-sessions-label): Set or remove a branch label
 - [`export`](#cyber-sessions-export): Write a Session as JSON (default), Markdown (--format md) or one self-contained HTML page (--format html): its info, messages, tool calls, goals and workflow runs
 - [`import`](#cyber-sessions-import): Import a JSON export (`cyber sessions export`) as a new Session in this Location, with fresh IDs and its attachments, which are verified before anything is written
@@ -422,6 +424,42 @@ cyber sessions rewind [OPTIONS] --to <TO> <SESSION>
 - `--to <TO>`: Exact active user-message ID; the boundary itself is excluded on conversation rewind.
 - `--target <TARGET>`: Values: `code`, `conversation`, `both`. Default: `both`.
 - `--confirm <CONFIRM>`: Apply the exact previously reviewed preview; changed context requires a new preview.
+
+## `cyber sessions recovery`
+
+List retained restore journals, review keep/rollback, or confirm a reviewed recovery
+
+```text
+cyber sessions recovery [OPTIONS] <SESSION> [JOURNAL]
+```
+
+**Arguments:**
+
+- `<SESSION>`: Session ID, exact title or unique ID prefix.
+- `[JOURNAL]`: Exact retained restore journal ID; omit to list journals.
+
+**Options:**
+
+- `--action <ACTION>`: Keep reviewed live files or roll back only proven restore effects. Values: `keep`, `rollback`.
+- `--confirm <CONFIRM>`: Apply the exact previously reviewed recovery fingerprint.
+- `--request-id <REQUEST_ID>`: Stable request identity; retain it for lookup after interruption or a lost reply.
+
+## `cyber sessions recovery-request`
+
+Look up a retained recovery request; optionally reconcile its native acknowledgement
+
+```text
+cyber sessions recovery-request [OPTIONS] <SESSION> <REQUEST_ID>
+```
+
+**Arguments:**
+
+- `<SESSION>`: Session ID, exact title or unique ID prefix.
+- `<REQUEST_ID>`: Exact retained request ID from recovery confirmation.
+
+**Options:**
+
+- `--acknowledge`: Reconcile native acknowledgement of the committed request; never replay source work.
 
 ## `cyber sessions label`
 

@@ -352,3 +352,9 @@
 - **THEN** native planning SHALL refuse before new journal/source effects, including for linked worktrees and scoped Locations
 - **AND** bounded recipe validation SHALL derive source locators from trusted context, preserve unchanged generation observations, and publish output without following existing file or parent links
 - **AND** this proof SHALL NOT imply user-index/large-untracked eligibility or activate managed Git admission
+
+#### Scenario: Typed recovery commands preserve reviewed ownership and retry identity
+- **WHEN** the owner lists journals, reviews a selected keep/rollback action and confirms through `sessions recovery`
+- **THEN** confirmation SHALL require the exact fingerprint and an explicit stable request ID, and incomplete or malformed combinations SHALL fail before service startup
+- **AND** `sessions recovery-request` SHALL look up the exact retained request without replay; only explicit `--acknowledge` SHALL invoke metadata reconciliation
+- **AND** text/JSON SHALL distinguish current images, historical evidence availability, conflicts, durable state and observed native acknowledgement; stale/foreign responses or requests SHALL NOT authorize another Session/journal operation

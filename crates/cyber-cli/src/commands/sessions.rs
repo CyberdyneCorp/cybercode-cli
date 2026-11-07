@@ -76,6 +76,10 @@ pub enum SessionsCmd {
         #[arg(long, value_parser = super::rewind::fingerprint)]
         confirm: Option<String>,
     },
+    /// List retained restore journals, review keep/rollback, or confirm a reviewed recovery.
+    Recovery(super::recovery::RecoveryArgs),
+    /// Look up a retained recovery request; optionally reconcile its native acknowledgement.
+    RecoveryRequest(super::recovery::RequestArgs),
     /// Set or remove a branch label.
     Label {
         /// ID, exact title or unique ID prefix.
@@ -199,6 +203,8 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
             target,
             confirm,
         } => super::rewind::run(client, &session, &to, target, confirm, global).await,
+        SessionsCmd::Recovery(args) => super::recovery::run(client, args, global).await,
+        SessionsCmd::RecoveryRequest(args) => super::recovery::request(client, args, global).await,
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
         branch => dispatch_branch(client, branch, global).await,
     }
@@ -406,7 +412,7 @@ async fn import(
     Ok(())
 }
 
-async fn session_id(client: &Client, wanted: &str) -> Result<String, CliError> {
+pub(super) async fn session_id(client: &Client, wanted: &str) -> Result<String, CliError> {
     let found = resolve(client, wanted).await?;
     Ok(found["id"].as_str().unwrap_or_default().to_owned())
 }

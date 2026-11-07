@@ -460,3 +460,15 @@ configuration/filter compatibility or actual runtime ownership. Managed Git sour
 admission, M2–M8 and parent tasks remain open. The next client milestone is typed
 recovery review/confirm/lookup/acknowledgement on the implemented non-Git API, with
 real restart/retry acceptance; it does not waive remaining Git/GC/platform gates.
+
+Typed recovery CLI continuation: `sessions recovery` lists retained journals,
+reviews an exact keep/rollback selection, and requires both fingerprint and stable
+request ID for confirmation. `sessions recovery-request` performs lookup only;
+explicit `--acknowledge` invokes the existing metadata-only reconciliation route.
+Responses are typed and checked against the selected Session/journal/request;
+missing legacy evidence and unobserved native acknowledgement remain explicit.
+CLI reference and operator documentation are updated. Real-service kill/restart,
+stale/foreign request, repeat lookup and later owner-edit coverage now exercise
+these typed commands. This advances the restore-journal client portion of M7;
+preparation/TUI clients, actual managed Git integration, safe cleanup and full
+native/platform/client acceptance remain open. No parent task is closed.

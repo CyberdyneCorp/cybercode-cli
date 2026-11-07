@@ -734,3 +734,17 @@ Unchanged generation SHALL preserve file observations and checkpoint identity;
 publication SHALL use descriptor-relative replacement without following output
 links. This does not prove user-index or large-untracked eligibility changes;
 those and full configuration/filter compatibility still gate managed Git admission.
+
+### Typed recovery CLI dispatch
+
+`cyber sessions recovery <session>` SHALL list retained journals without inference.
+Providing `<journal> --action keep|rollback` SHALL review only; `--confirm` SHALL
+require `--request-id` and the exact reviewed fingerprint. The parser SHALL refuse
+incomplete/invalid confirmation combinations before service startup. The separate
+`cyber sessions recovery-request <session> <request-id>` SHALL perform lookup only;
+`--acknowledge` SHALL explicitly reconcile that committed request's native metadata
+through the existing route. Errors after confirmation SHALL retain a lookup hint
+for the exact request. Text and JSON SHALL distinguish filesystem completion,
+durable runtime state and observed native acknowledgement, including unavailable
+historical evidence, conflicts and retained created parents. These clients SHALL
+NOT manufacture origin proof or bypass unavailable backend/runtime admission.

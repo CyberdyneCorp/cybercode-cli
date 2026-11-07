@@ -2815,3 +2815,80 @@ unwind table warning; no origin attribution is made. This continuation did not r
 native Linux/Windows, separate SDK runtime suites, full workspace, TUI/App or
 source-bound CI. GitHub refresh found #93 open and no open PRs; fetched origin/main
 remains db9e171e. No PR/push or parent-task acceptance is made by this local fix.
+
+## Typed restore recovery CLI (2026-11-07)
+
+The approved `sessions recovery` command now lists retained journals without a
+journal argument, reviews an exact journal/action, and confirms only with both the
+reviewed lowercase fingerprint and caller-retained stable request ID. Clap refuses
+malformed and incomplete combinations before server startup. The separate
+`sessions recovery-request` command performs durable lookup; explicit
+`--acknowledge` uses the existing metadata-only native reconciliation route.
+No snapshot worker, journal format, permission boundary or backend availability
+guard is changed. Existing API/SDK operations remain the source of recovery logic.
+
+Replies deserialize into the shared runtime contract. Reviews must match selected
+Session/journal/action, and a confirmable review cannot lack original-worker proof.
+Results must match Session, request ID and original journal; confirmation must
+match its full request content. Missing legacy evidence remains readable without
+confirmation authority. Text shows image kinds, hashes, modes, ownership and native
+identity, historical exclusions/created parents and conflicts. Runtime state is
+reported separately from observed journal acknowledgement. Confirmation exits 1
+unless runtime settlement is acknowledged; explicit reconciliation additionally
+requires an observed native acknowledgement. Read-only lookup may successfully
+report a pending/unknown state. Repeated confirmation remains server-side lookup,
+including after later owner edits; no client automatically chooses another ID.
+
+Error hints retain the exact request with shell quoting and an end-of-options
+marker, or JSON-escaped identities when controls prevent safe literal display.
+The CLI rejects exact `.`/`..` request IDs because URL clients normalize those path
+segments; this is documented rather than silently looking up a different route.
+Other spaces, slashes and URL punctuation are percent-encoded with their original
+identity retained. Source paths and displayed request IDs use escaped quoted
+literals so newline/control characters cannot collapse distinct names or affect
+the terminal. The operator guide and generated command reference are updated.
+
+Real service-kill tests now execute typed CLI listing/review/confirmation for both
+keep and rollback after a proven partial namespace replacement. They verify stale
+fingerprint and foreign Session/request refusal, unchanged transcript/inference
+count, original/resolution native receipts, later owner edits, repeated
+confirmation and request lookup after another service restart. Explicit typed
+reconciliation restores missing journal acknowledgement metadata while retaining a
+later source symlink and its target bytes. The final fixture additionally includes
+a real newline-containing source filename and checks its unambiguous text display.
+API preparation tests remain separate; they are not typed preparation-client proof.
+
+The code-review skill was applied to command admission, scope correlation,
+transport ambiguity/retry identity, terminal escaping, exact URL segments, response
+state/acknowledgement semantics and all changed tests/docs. Review corrected the
+initial lossy path display and retained unavailable legacy/native proof explicitly.
+No unresolved critical/major finding remains for this restore-journal CLI scope.
+The cognitive-complexity skill was consulted; its analyzer does not support Rust.
+Native Clippy reported the expanded integration fixture at 21 against 15. Extracted
+review and foreign-request assertions keep responsibilities clear and satisfy the
+native threshold without allowances. An initial sibling-helper visibility error
+was also corrected before verification.
+
+This advances M7 without accepting it: preparation/TUI recovery, actual managed
+Git source/runtime integration, partial-constructor recovery, reference-aware
+cleanup/cap/retention and full native/platform/client acceptance remain required.
+No parent task or issue closes, and no PR/push or source-bound CI is claimed.
+
+Local macOS arm64 verification: the full serial real CLI branch/recovery suite
+passed all 17 cases in 201.36 seconds. After the display correction and fixture
+helper extraction, the focused process-kill case passed both keep and rollback
+in 51.67 seconds, including the real newline filename, punctuation-bearing request
+IDs, foreign/stale refusal, restart lookup and metadata-only acknowledgement.
+Final-source CLI unit tests passed all 84 cases, including argument validation,
+response scope, escaped labels/hints and generated-reference consistency. Final
+all-target locked CLI Clippy passed with Rust warnings denied. All Cargo builds,
+checks, tests and Clippy used CARGO_INCREMENTAL=0 and --locked.
+
+Final format/diff, generated SDK consistency and pinned strict OpenSpec checks
+passed (117 items). Spec lint reported 0 errors/25 warnings, with no unchanged-main
+origin attribution. Native C deprecation warnings for sandbox_init/
+sandbox_free_error and the CLI oversized unwind-table linker warning were
+observed without origin attribution. No separate full snapshot/workspace suite,
+SDK runtime suite, TUI/App acceptance, native Linux/Windows execution or
+source-bound CI ran for this command-only continuation. Managed Git source
+availability remains disabled and all broader completion gates remain open.
