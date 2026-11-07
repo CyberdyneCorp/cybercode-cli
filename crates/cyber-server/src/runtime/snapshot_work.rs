@@ -135,7 +135,7 @@ pub struct SnapshotCompletion {
 
 struct OriginalResources {
     origin: SnapshotOrigin,
-    claims: Box<dyn super::SnapshotLocationGuard>,
+    claims: Option<Box<dyn super::SnapshotLocationGuard>>,
     bindings: Vec<cyber_core::worktrees::CheckoutBinding>,
     // Last: keep the exited original's lock through all native claim disposal.
     lifetime: Box<dyn super::SnapshotLifetime>,
@@ -146,8 +146,12 @@ impl OriginalResources {
         if self.lifetime.checkout_bindings()?.as_ref() != Some(&self.bindings) {
             return Err("Original recovery checkout publication changed".into());
         }
-        self.claims.verify()?;
-        if self.claims.bindings()? != self.bindings {
+        let claims = self
+            .claims
+            .as_ref()
+            .ok_or("Original recovery claims are not retained")?;
+        claims.verify()?;
+        if claims.bindings()? != self.bindings {
             return Err("Original recovery checkout ownership changed".into());
         }
         super::SnapshotRestoreCheckout {
@@ -386,7 +390,7 @@ impl SnapshotCompletion {
         mut self,
         state: &SessionState,
     ) -> Result<super::SnapshotRecoveryReceipt, RuntimeError> {
-        let receipt = self
+        let mut receipt = self
             .native
             .recovery
             .as_ref()
@@ -399,18 +403,82 @@ impl SnapshotCompletion {
         if let Some(original) = &self.worker._original {
             original.verify().map_err(RuntimeError::Conflict)?;
         }
+        if let Some(lifetime) = &self.worker._lifetime {
+            lifetime.verify().map_err(RuntimeError::Conflict)?;
+            let published = lifetime
+                .checkout_bindings()
+                .map_err(RuntimeError::Conflict)?
+                .ok_or_else(|| {
+                    RuntimeError::Conflict("Resolution resources are unpublished".into())
+                })?;
+            let claims = self.worker.location().map_err(RuntimeError::Conflict)?;
+            if claims.bindings().map_err(RuntimeError::Conflict)? != published {
+                return Err(RuntimeError::Conflict(
+                    "Resolution checkout publication differs".into(),
+                ));
+            }
+            let resolution = super::SnapshotRestoreCheckout {
+                version: 1,
+                lifetime: lifetime.binding().clone(),
+                resources_digest: lifetime
+                    .binding()
+                    .checkout_resources_digest(&published)
+                    .map_err(RuntimeError::Conflict)?,
+            };
+            let original = self
+                .worker
+                ._original
+                .as_ref()
+                .map(|original| {
+                    Ok::<_, RuntimeError>(Box::new(super::SnapshotRestoreCheckout {
+                        version: 1,
+                        lifetime: original.lifetime.binding().clone(),
+                        resources_digest: original
+                            .lifetime
+                            .binding()
+                            .checkout_resources_digest(&original.bindings)
+                            .map_err(RuntimeError::Conflict)?,
+                    }))
+                })
+                .transpose()?;
+            let resolution_origin = self
+                .worker
+                .scope
+                .snapshot_origin()
+                .cloned()
+                .ok_or_else(|| RuntimeError::Conflict("Resolution has no native origin".into()))?;
+            receipt.checkout = Some(Box::new(super::SnapshotRecoveryCheckout {
+                version: 1,
+                resolution_origin: resolution_origin.clone(),
+                original,
+                resolution: Box::new(resolution),
+            }));
+            receipt
+                .validate_checkout(&resolution_origin)
+                .map_err(RuntimeError::Conflict)?;
+        }
         let location = self
             .worker
             ._location
             .take()
             .ok_or_else(|| RuntimeError::Conflict("Missing snapshot checkout proof".into()))?;
         location.verify().map_err(RuntimeError::Conflict)?;
-        self.worker._location = Some(self.worker.scope.commit_recovery(
-            state,
-            self.worker.sequence,
-            &receipt,
-            location,
-        )?);
+        let claims = super::snapshot_recovery_checkout::RecoveryClaims {
+            resolution: location,
+            original: self
+                .worker
+                ._original
+                .as_mut()
+                .and_then(|original| original.claims.take()),
+        };
+        let claims =
+            self.worker
+                .scope
+                .commit_recovery(state, self.worker.sequence, &receipt, claims)?;
+        self.worker._location = Some(claims.resolution);
+        if let Some(original) = &mut self.worker._original {
+            original.claims = claims.original;
+        }
         self.native.guard.acknowledge(self.worker.scope.snapshot_origin()).map_err(|error| RuntimeError::Conflict(format!(
             "Recovery runtime acknowledgement committed; native journal acknowledgement requires reconciliation: {error}"
         )))?;
@@ -553,7 +621,7 @@ impl Runtime {
                 .map_err(RuntimeError::Conflict)?;
             let original = OriginalResources {
                 origin: request.original.clone(),
-                claims,
+                claims: Some(claims),
                 bindings,
                 lifetime,
             };
@@ -563,6 +631,11 @@ impl Runtime {
             None
         };
         let lifetime = self.snapshot_lifetime(state, &id).await?;
+        if original.is_some() && lifetime.is_none() {
+            return Err(RuntimeError::Conflict(
+                "Resolution lifetime proof is unavailable".into(),
+            ));
+        }
         let scope = activity::Scope::reserve_recovery(
             self,
             handle.clone(),

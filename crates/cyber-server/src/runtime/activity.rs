@@ -471,8 +471,8 @@ impl Scope {
         state: &super::SessionState,
         sequence: i64,
         receipt: &super::SnapshotRecoveryReceipt,
-        location: Box<dyn super::SnapshotLocationGuard>,
-    ) -> Result<Box<dyn super::SnapshotLocationGuard>, RuntimeError> {
+        mut location: super::snapshot_recovery_checkout::RecoveryClaims,
+    ) -> Result<super::snapshot_recovery_checkout::RecoveryClaims, RuntimeError> {
         self.verify_authority()?;
         let Authority::Recovery(authority) = &self.authority else {
             return Err(RuntimeError::Conflict(
@@ -521,6 +521,7 @@ impl Scope {
         settled.snapshot_receipt = Some(receipt.clone());
         let resolution_event = change(&settled);
         let authority = authority.clone();
+        let published_receipt = receipt.clone();
         let receipt = receipt.clone();
         let expected_request = request.clone();
         let stop = self.control.stop.clone();
@@ -528,15 +529,47 @@ impl Scope {
             (original.activity_id.clone(), original_sequence),
             (self.id.clone(), self.sequence()),
         ];
-        let (_, location) = self
+        let (_, mut location) = self
             .store
             .append_pair_checked(owners, move |tx| {
                 location
-                    .verify()
+                    .prepare(&receipt)
                     .map_err(cyber_store::StoreError::InvalidAppend)?;
                 let (_, mut original_record) =
                     super::snapshot_recovery_record::attest(tx, &original)?;
                 let (_, resolution_record) = super::snapshot_recovery_record::attest(tx, &origin)?;
+                if let Some(checkout) = &receipt.checkout {
+                    receipt
+                        .validate_checkout(&origin)
+                        .map_err(cyber_store::StoreError::InvalidAppend)?;
+                    if resolution_record.snapshot_lifetime.as_ref()
+                        != Some(&checkout.resolution.lifetime)
+                        || original_record
+                            .snapshot_lifetime
+                            .as_ref()
+                            .filter(|life| life.version == 2)
+                            != checkout
+                                .original
+                                .as_ref()
+                                .map(|original| &original.lifetime)
+                    {
+                        return Err(cyber_store::StoreError::InvalidAppend(
+                            "Recovery receipt lifetime history differs".into(),
+                        ));
+                    }
+                } else if original_record
+                    .snapshot_lifetime
+                    .as_ref()
+                    .is_some_and(|life| life.version == 2)
+                    || resolution_record
+                        .snapshot_lifetime
+                        .as_ref()
+                        .is_some_and(|life| life.version == 2)
+                {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        "Recovery receipt is missing lifetime evidence".into(),
+                    ));
+                }
                 let current: i64 = tx.query_row(
                     "SELECT COALESCE(MAX(seq),-1) FROM event WHERE aggregate_id=?1",
                     [&original.session_id],
@@ -573,6 +606,9 @@ impl Scope {
             .acknowledge_snapshot_uncertainty(&request.original.activity_id);
         self.record = settled;
         self.settled = true;
+        location.acknowledge(&published_receipt).map_err(|error| RuntimeError::Conflict(format!(
+            "Recovery runtime acknowledgement committed; checkout acknowledgement requires reconciliation: {error}"
+        )))?;
         Ok(location)
     }
     pub async fn run<T>(&self, future: impl std::future::Future<Output = T>) -> T {

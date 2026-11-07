@@ -96,6 +96,25 @@ pub struct SnapshotRecoveryReceipt {
     /// Missing on older receipts; those cannot authorize new journal writes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution_digest: Option<String>,
+    /// Runtime-attested original and resolution resources; absent on legacy receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkout: Option<Box<SnapshotRecoveryCheckout>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotRecoveryCheckout {
+    pub version: u32,
+    pub resolution_origin: super::SnapshotOrigin,
+    /// None preserves missing legacy proof, rather than claiming an empty set.
+    pub original: Option<Box<super::SnapshotRestoreCheckout>>,
+    pub resolution: Box<super::SnapshotRestoreCheckout>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotRecoveryCheckoutRole {
+    Original,
+    Resolution,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

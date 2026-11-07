@@ -16,9 +16,43 @@ pub struct SnapshotAcknowledgementWorker {
     // Actual resources are released before ordinary admission or Stop waiters.
     _location: Option<Box<dyn Send>>,
     checkouts: Option<RestoreResources>,
+    recovery: Option<RecoveryResources>,
     _lifecycle: OwnedRwLockReadGuard<()>,
     _admission: Admission,
     _completion: Completion,
+}
+struct RecoveryResources {
+    claims: super::snapshot_recovery_checkout::RecoveryClaims,
+    original: Option<Box<dyn super::SnapshotLifetime>>,
+    resolution: Box<dyn super::SnapshotLifetime>,
+}
+impl RecoveryResources {
+    fn verify(&self, receipt: &SnapshotRecoveryReceipt) -> Result<(), String> {
+        use super::SnapshotRecoveryCheckoutRole as Role;
+        for role in [Role::Resolution, Role::Original] {
+            let lifetime = match role {
+                Role::Resolution => Some(self.resolution.as_ref()),
+                Role::Original => self.original.as_deref(),
+            };
+            match (lifetime, receipt.checkout_evidence(role)) {
+                (Some(lifetime), Some(evidence)) => {
+                    lifetime.verify()?;
+                    let resources = lifetime
+                        .checkout_bindings()?
+                        .ok_or("Recovery checkout publication is missing")?;
+                    if lifetime.binding() != &evidence.lifetime
+                        || evidence.lifetime.checkout_resources_digest(&resources)?
+                            != evidence.resources_digest
+                    {
+                        return Err("Recovery acknowledgement resource history changed".into());
+                    }
+                }
+                (None, None) => {}
+                _ => return Err("Recovery acknowledgement resource role is incomplete".into()),
+            }
+        }
+        self.claims.verify(receipt)
+    }
 }
 struct RestoreResources {
     claims: Box<dyn super::SnapshotLocationGuard>,
@@ -121,6 +155,11 @@ impl SnapshotAcknowledgementWork<'_> {
         {
             resources.verify(receipt)?;
         }
+        if let (Some(resources), Acknowledgement::Recovery(receipt)) =
+            (&self.0.recovery, &self.0.receipt)
+        {
+            resources.verify(receipt)?;
+        }
         let authority = self.0.authority.clone();
         let receipt = self.0.receipt.clone();
         let origin = self.0.origin.clone();
@@ -157,7 +196,7 @@ impl SnapshotAcknowledgementWorker {
         let cancelled = self.control.stop.clone().drop_guard();
         let joined = tokio::task::spawn_blocking(move || {
             work(&SnapshotAcknowledgementWork(&self))?;
-            if self.checkouts.is_some() {
+            if self.checkouts.is_some() || self.recovery.is_some() {
                 SnapshotAcknowledgementWork(&self).authorize()?;
             }
             if let (Some(resources), Acknowledgement::Restore(receipt)) =
@@ -165,6 +204,12 @@ impl SnapshotAcknowledgementWorker {
             {
                 resources.verify(receipt)?;
                 resources.claims.acknowledge_restore(receipt)?;
+            }
+            if let (Some(resources), Acknowledgement::Recovery(receipt)) =
+                (&mut self.recovery, &self.receipt)
+            {
+                resources.verify(receipt)?;
+                resources.claims.acknowledge(receipt)?;
             }
             Ok(())
         });
@@ -178,6 +223,72 @@ impl SnapshotAcknowledgementWorker {
 }
 
 impl Runtime {
+    async fn lock_checkout_resources(
+        &self,
+        info: &super::SessionInfo,
+        evidence: &super::SnapshotRestoreCheckout,
+    ) -> Result<RestoreResources, RuntimeError> {
+        let lifetime = self
+            .inner
+            .options
+            .snapshots
+            .lock_worker(evidence.lifetime.clone())
+            .await
+            .map_err(RuntimeError::Conflict)?;
+        let published = lifetime
+            .checkout_bindings()
+            .map_err(RuntimeError::Conflict)?
+            .ok_or_else(|| {
+                RuntimeError::Conflict("Original checkout publication is missing".into())
+            })?;
+        let claims = self
+            .inner
+            .tools
+            .reacquire_snapshot_location(info, &evidence.lifetime, &published)
+            .map_err(RuntimeError::Conflict)?;
+        let resources = RestoreResources { claims, lifetime };
+        if resources.lifetime.binding() != &evidence.lifetime {
+            return Err(RuntimeError::Conflict(
+                "Original checkout lifetime differs".into(),
+            ));
+        }
+        Ok(resources)
+    }
+    async fn lock_recovery_resources(
+        &self,
+        info: &super::SessionInfo,
+        receipt: &SnapshotRecoveryReceipt,
+    ) -> Result<RecoveryResources, RuntimeError> {
+        let checkout = receipt
+            .checkout
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Conflict("Missing recovery checkout evidence".into()))?;
+        let original = match &checkout.original {
+            Some(original) => Some(self.lock_checkout_resources(info, original).await?),
+            None => None,
+        };
+        let resolution = self
+            .lock_checkout_resources(info, &checkout.resolution)
+            .await?;
+        let (original_claims, original_lifetime) = match original {
+            Some(original) => (Some(original.claims), Some(original.lifetime)),
+            None => (None, None),
+        };
+        let mut resources = RecoveryResources {
+            claims: super::snapshot_recovery_checkout::RecoveryClaims {
+                resolution: resolution.claims,
+                original: original_claims,
+            },
+            original: original_lifetime,
+            resolution: resolution.lifetime,
+        };
+        resources.verify(receipt).map_err(RuntimeError::Conflict)?;
+        resources
+            .claims
+            .prepare(receipt)
+            .map_err(RuntimeError::Conflict)?;
+        Ok(resources)
+    }
     pub(super) async fn snapshot_acknowledgement_worker(
         &self,
         handle: &Arc<Handle>,
@@ -260,7 +371,13 @@ impl Runtime {
             id,
             control: control.clone(),
         };
-        let (location, checkouts) = if let Acknowledgement::Restore(restore) = &receipt
+        let mut recovery = None;
+        let (location, checkouts) = if let Acknowledgement::Recovery(receipt) = &receipt
+            && receipt.checkout.is_some()
+        {
+            recovery = Some(self.lock_recovery_resources(&state.info, receipt).await?);
+            (None, None)
+        } else if let Acknowledgement::Restore(restore) = &receipt
             && let Some(checkout) = &restore.checkout
         {
             let lifetime = self
@@ -312,6 +429,7 @@ impl Runtime {
             control,
             _location: location,
             checkouts,
+            recovery,
             _lifecycle: lifecycle,
             _admission: admission,
             _completion: completion,
@@ -321,7 +439,7 @@ impl Runtime {
 
 /// Observe both durable owner records in one read snapshot, including after a
 /// committed-but-lost writer reply. Filesystem completion alone never passes.
-fn verify_pair(
+pub(super) fn verify_pair(
     db: &rusqlite::Connection,
     receipt: &SnapshotRecoveryReceipt,
     origin: &SnapshotOrigin,
@@ -359,5 +477,48 @@ fn verify_pair(
             "Journal acknowledgement requires the exact committed native pair".into(),
         ));
     }
+    if let Some(checkout) = &receipt.checkout {
+        receipt
+            .validate_checkout(origin)
+            .map_err(cyber_store::StoreError::InvalidAppend)?;
+        if resolution.snapshot_lifetime.as_ref() != Some(&checkout.resolution.lifetime)
+            || original
+                .snapshot_lifetime
+                .as_ref()
+                .filter(|life| life.version == 2)
+                != checkout
+                    .original
+                    .as_ref()
+                    .map(|evidence| &evidence.lifetime)
+        {
+            return Err(cyber_store::StoreError::InvalidAppend(
+                "Recovery checkout lifetime history differs".into(),
+            ));
+        }
+    }
     Ok(())
+}
+
+pub(super) fn verify_committed(
+    db: &rusqlite::Connection,
+    receipt: &SnapshotRecoveryReceipt,
+) -> Result<(), cyber_store::StoreError> {
+    let owner = super::snapshot_recovery::request_owner(
+        &receipt.original.session_created_id,
+        &receipt.request_id,
+    );
+    let data: String = db.query_row(
+        "SELECT data FROM event WHERE aggregate_id=?1 AND type=?2 ORDER BY seq DESC LIMIT 1",
+        [&owner, activity::CHANGED],
+        |row| row.get(0),
+    )?;
+    let record: activity::Record = serde_json::from_str(&data)
+        .map_err(|error| cyber_store::StoreError::InvalidAppend(error.to_string()))?;
+    verify_pair(
+        db,
+        receipt,
+        record.snapshot_origin.as_ref().ok_or_else(|| {
+            cyber_store::StoreError::InvalidAppend("Recovery resolution origin is missing".into())
+        })?,
+    )
 }

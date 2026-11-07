@@ -243,7 +243,11 @@ impl Store {
         if expected.resolution_digest.is_none() {
             observed.resolution_digest = None;
         }
-        if observed != *expected {
+        // Checkout evidence is consumed and attested by the runtime writer, not
+        // fabricated from native journal bytes. This compares native intent only.
+        let mut expected = expected.clone();
+        expected.checkout = None;
+        if observed != expected {
             return Err("Native resolution receipt changed".into());
         }
         Ok(())
@@ -733,6 +737,7 @@ fn receipt(id: &str, record: &Journal) -> Result<Receipt> {
         original: resolution.original.clone(),
         filesystem_complete: true,
         resolution_digest: Some(immutable_digest(record)?),
+        checkout: None,
     })
 }
 

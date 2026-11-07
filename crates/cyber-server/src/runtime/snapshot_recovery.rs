@@ -208,6 +208,15 @@ impl Runtime {
                 ));
             }
         };
+        if let Some(receipt) = &record.snapshot_receipt {
+            let receipt = receipt.clone();
+            self.inner.store.read(move |db| {
+                let tx = db.unchecked_transaction()?;
+                super::snapshot_acknowledgement::verify_committed(&tx, &receipt)?;
+                tx.commit()?;
+                Ok(())
+            })?;
+        }
         Ok(Some(super::SnapshotRecoveryResult {
             request: request.confirmation,
             original: request.original,

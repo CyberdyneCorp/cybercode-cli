@@ -298,6 +298,17 @@
 - **AND** source authorization and consuming completion SHALL revalidate original resources; legacy owners SHALL gain no retrospective proof and unknown lifetime versions SHALL refuse
 - **AND** retaining owners alone SHALL NOT acknowledge either native activity, and native result guard disposal SHALL precede worker lifetime release
 
+#### Scenario: Recovery consumes both checkout owners before native disposition
+- **WHEN** recovery finishes with an exact version-2 resolution lifetime and an attested version-2 original lifetime
+- **THEN** its consuming receipt SHALL bind the resolution origin and both complete checkout-set digests, with both retained claim sets checked read-only and both lifetime histories checked at the paired writer
+- **AND** observing the durable pair SHALL precede resolution checkout acknowledgement followed by original checkout acknowledgement, preserving original claim bytes and binding markers to the complete recovery receipt
+- **AND** an original without version-2 lifetime proof SHALL remain explicitly absent rather than being adopted or inferred as an empty checkout set
+
+#### Scenario: Recovery checkout acknowledgement resumes after an uncertain reply
+- **WHEN** a consuming recovery pair commits but its reply or subsequent native marker publication fails
+- **THEN** lookup SHALL verify the exact durable pair without replaying source work, and explicit reconciliation SHALL reacquire the original and resolution lifetimes and complete published checkout sets before bounded metadata acknowledgement
+- **AND** changed, missing or live resource proof SHALL refuse reconciliation, matching markers SHALL be idempotent, and receipts without checkout evidence SHALL gain no new native claim acknowledgement authority
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

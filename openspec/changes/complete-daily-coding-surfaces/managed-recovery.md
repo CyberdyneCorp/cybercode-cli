@@ -616,3 +616,13 @@ foreign or changed proof refuses before resolution dispatch. Legacy owners SHALL
 NOT acquire retrospective checkout proof. Completion disposal SHALL release native
 result guards before the worker's lifetime locks so guard cleanup cannot outlive
 the native ownership proof. Retention alone grants no checkout acknowledgement.
+
+New consuming recovery receipts SHALL bind the resolution origin and its complete
+version-2 checkout evidence, plus original evidence whenever the interrupted owner
+has version-2 proof. Both native claim sets SHALL be verified at the paired writer.
+Only an observed durable pair may publish matching resolution markers followed by
+original markers. The checksum SHALL cover both roles and the immutable native
+resolution digest. Native journal verification remains responsible for its own
+immutable intent; runtime checkout evidence is additionally attested by the writer.
+Legacy receipts omit the section and gain no marker authority. Missing original
+version-2 proof cannot be silently downgraded to legacy evidence.

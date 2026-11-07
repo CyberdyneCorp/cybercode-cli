@@ -2039,6 +2039,7 @@ async fn finish_recovery(
                 original: request.original,
                 filesystem_complete: true,
                 resolution_digest: Some("d".repeat(64)),
+                checkout: None,
             });
             Ok(native)
         })
@@ -2589,6 +2590,7 @@ async fn ordinary_restore_commit_cannot_consume_a_recovery_receipt_or_acknowledg
                 original: origin,
                 filesystem_complete: true,
                 resolution_digest: Some("d".repeat(64)),
+                checkout: None,
             });
             Ok(result)
         })
@@ -3529,4 +3531,251 @@ async fn native_result_cleanup_precedes_worker_lifetime_exit() {
     assert!(disposed.load(Ordering::SeqCst));
     assert_eq!(permits.available_permits(), 1);
     runtime.shutdown().await;
+}
+
+struct RecoveryRoleAck {
+    role: super::super::SnapshotRecoveryCheckoutRole,
+    fail: &'static str,
+    order: Arc<std::sync::Mutex<Vec<String>>>,
+}
+impl super::super::SnapshotLocationGuard for RecoveryRoleAck {
+    fn verify(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn prepare_recovery_acknowledgement(
+        &mut self,
+        receipt: &super::super::SnapshotRecoveryReceipt,
+        role: super::super::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        assert_eq!(role, self.role);
+        receipt.checkout_acknowledgement_digest()?;
+        self.order.lock().unwrap().push(format!("prepare {role:?}"));
+        if self.fail == "candidate" && role == super::super::SnapshotRecoveryCheckoutRole::Original
+        {
+            Err("fixture rejected original candidate".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn acknowledge_recovery(
+        &mut self,
+        receipt: &super::super::SnapshotRecoveryReceipt,
+        role: super::super::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        assert_eq!(role, self.role);
+        receipt.checkout_acknowledgement_digest()?;
+        self.order.lock().unwrap().push(format!("publish {role:?}"));
+        if self.fail == "publication"
+            && role == super::super::SnapshotRecoveryCheckoutRole::Original
+        {
+            Err("fixture interrupted original publication".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test]
+async fn recovery_checkout_pair_binds_both_roles_and_reconciles_without_replaying_source() {
+    use super::super::SnapshotRecoveryCheckoutRole as Role;
+    fn lost_reply(_: &rusqlite::hooks::Wal, _: i32) -> rusqlite::Result<()> {
+        Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("recovery checkout pair reply lost".into()),
+        ))
+    }
+    for fail in ["valid", "candidate", "publication", "reply"] {
+        let (temp, base, _, _, _) = super::super::binary_documents_tests::fixture().await;
+        let store = cyber_store::Store::open(cyber_store::StoreOptions::new(
+            cyber_core::paths::DatabaseLocation::File(temp.path().join("checkout-pair.db")),
+            Runtime::registry(),
+        ))
+        .unwrap();
+        let permits = Arc::new(tokio::sync::Semaphore::new(2));
+        let resources = Arc::new(std::sync::Mutex::new(None));
+        let metadata = Arc::new(AtomicUsize::new(0));
+        let runtime = runtime_with_snapshots(
+            &base,
+            Arc::new(store),
+            temp.path(),
+            Arc::new(Lifetimes {
+                inner: Acknowledgements(metadata.clone()),
+                permits: permits.clone(),
+                foreign: false,
+                reject_resources: false,
+                resources: resources.clone(),
+            }),
+        );
+        let session = runtime
+            .create_session(super::super::CreateSession {
+                directory: temp.path().to_str().unwrap().into(),
+                model: "test/main".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap()
+            .id;
+        let original =
+            failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+        let request = recovery_request(original.clone());
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let state = handle.state.lock().await;
+        let mut owner = runtime
+            .snapshot_recovery_worker(&handle, &state, request.clone())
+            .await
+            .unwrap();
+        drop(state);
+        let resolution_activity = owner.scope.id().to_owned();
+        let order = Arc::new(std::sync::Mutex::new(vec![]));
+        owner._location = Some(Box::new(RecoveryRoleAck {
+            role: Role::Resolution,
+            fail,
+            order: order.clone(),
+        }));
+        owner._original.as_mut().unwrap().claims = Some(Box::new(RecoveryRoleAck {
+            role: Role::Original,
+            fail,
+            order: order.clone(),
+        }));
+        let journal_acks = Arc::new(AtomicUsize::new(0));
+        let completed = finish_recovery(owner, request.clone(), journal_acks.clone()).await;
+        if fail == "reply" {
+            runtime
+                .inner
+                .store
+                .transaction(|tx| {
+                    tx.wal_hook(Some(lost_reply));
+                    Ok(())
+                })
+                .unwrap();
+        }
+        let state = handle.state.lock().await;
+        let result = completed.commit_recovery(&state);
+        drop(state);
+        assert_eq!(permits.available_permits(), 2);
+        let lookup = runtime
+            .snapshot_recovery_lookup(&session, &request.confirmation.request_id)
+            .await
+            .unwrap()
+            .unwrap();
+        if fail == "candidate" {
+            assert!(result.is_err());
+            assert!(lookup.receipt.is_none());
+            assert_eq!(
+                *order.lock().unwrap(),
+                ["prepare Resolution", "prepare Original"]
+            );
+            assert_eq!(journal_acks.load(Ordering::SeqCst), 0);
+        } else {
+            if fail == "reply" {
+                assert!(result.is_err());
+            } else if fail == "publication" {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("runtime acknowledgement committed")
+                );
+            } else {
+                result.unwrap();
+            }
+            let receipt = lookup.receipt.unwrap();
+            let checkout = receipt.checkout.as_ref().unwrap();
+            assert_eq!(
+                checkout
+                    .original
+                    .as_ref()
+                    .unwrap()
+                    .lifetime
+                    .owner
+                    .activity_id,
+                original.activity_id
+            );
+            assert_eq!(
+                checkout.resolution.lifetime.owner.activity_id,
+                resolution_activity
+            );
+            assert_eq!(checkout.resolution_origin.activity_id, resolution_activity);
+            let mut expected_order = vec!["prepare Resolution", "prepare Original"];
+            if fail != "reply" {
+                expected_order.extend(["publish Resolution", "publish Original"]);
+            }
+            assert_eq!(*order.lock().unwrap(), expected_order);
+            let hash = receipt.checkout_acknowledgement_digest().unwrap();
+            let mut changed = receipt.clone();
+            changed
+                .checkout
+                .as_mut()
+                .unwrap()
+                .original
+                .as_mut()
+                .unwrap()
+                .resources_digest = "f".repeat(64);
+            assert_ne!(changed.checkout_acknowledgement_digest().unwrap(), hash);
+            assert!(
+                runtime
+                    .inner
+                    .store
+                    .read(
+                        move |db| super::super::snapshot_acknowledgement::verify_committed(
+                            db, &changed
+                        )
+                    )
+                    .is_err()
+            );
+            if fail == "publication" || fail == "reply" {
+                *resources.lock().unwrap() = None;
+                assert!(
+                    runtime
+                        .snapshot_recovery_acknowledge(&session, &request.confirmation.request_id)
+                        .await
+                        .is_err()
+                );
+                assert_eq!(metadata.load(Ordering::SeqCst), 0);
+                *resources.lock().unwrap() = Some(vec![]);
+                for _ in 0..2 {
+                    let reconciled = runtime
+                        .snapshot_recovery_acknowledge(&session, &request.confirmation.request_id)
+                        .await
+                        .unwrap();
+                    assert_eq!(reconciled.receipt.as_ref(), Some(&receipt));
+                    assert_eq!(reconciled.journal_acknowledged, Some(true));
+                }
+                assert_eq!(metadata.load(Ordering::SeqCst), 2);
+                assert_eq!(journal_acks.load(Ordering::SeqCst), 0);
+            }
+            if fail == "reply" {
+                runtime.shutdown().await;
+                let reopened = cyber_store::Store::open(cyber_store::StoreOptions::new(
+                    cyber_core::paths::DatabaseLocation::File(temp.path().join("checkout-pair.db")),
+                    Runtime::registry(),
+                ))
+                .unwrap();
+                let reloaded = runtime_with_snapshots(
+                    &base,
+                    Arc::new(reopened),
+                    temp.path(),
+                    runtime.inner.options.snapshots.clone(),
+                );
+                let observed = reloaded
+                    .snapshot_recovery_acknowledge(&session, &request.confirmation.request_id)
+                    .await
+                    .unwrap();
+                assert_eq!(observed.receipt.as_ref(), Some(&receipt));
+                assert_eq!(metadata.load(Ordering::SeqCst), 3);
+                assert_eq!(journal_acks.load(Ordering::SeqCst), 0);
+                reloaded.shutdown().await;
+            }
+            let mut legacy = receipt;
+            legacy.checkout = None;
+            assert!(
+                serde_json::to_value(&legacy)
+                    .unwrap()
+                    .get("checkout")
+                    .is_none()
+            );
+            assert!(legacy.checkout_acknowledgement_digest().is_err());
+        }
+        runtime.shutdown().await;
+    }
 }

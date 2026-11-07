@@ -1322,9 +1322,58 @@ impl cyber_server::runtime::SnapshotLocationGuard for ActiveSnapshotLocation {
     ) -> Result<(), String> {
         self.proof.acknowledge_restore(receipt)
     }
+    fn prepare_recovery_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.proof.prepare_recovery_acknowledgement(receipt, role)
+    }
+    fn acknowledge_recovery(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.proof.acknowledge_recovery(receipt, role)
+    }
 }
 
 struct RetainedSnapshotProof(Vec<cyber_core::worktrees::SnapshotClaim>);
+impl RetainedSnapshotProof {
+    fn recovery_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+        publish: bool,
+    ) -> Result<(), String> {
+        use cyber_server::runtime::SnapshotLocationGuard;
+        let evidence = receipt
+            .checkout_evidence(role)
+            .ok_or("Legacy recovery receipt lacks resource role")?;
+        let digest = evidence
+            .lifetime
+            .checkout_resources_digest(&self.bindings()?)?;
+        if digest != evidence.resources_digest {
+            return Err("Recovery resource set differs".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            let ack = cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .map_err(|error| error.to_string())?;
+            if publish {
+                ack.publish(claim)
+            } else {
+                ack.retain_existing(claim)
+            }
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
+    }
+}
 impl cyber_server::runtime::SnapshotLocationGuard for RetainedSnapshotProof {
     fn verify(&self) -> Result<(), String> {
         self.0
@@ -1428,6 +1477,20 @@ impl cyber_server::runtime::SnapshotLocationGuard for RetainedSnapshotProof {
             .map_err(|error| error.to_string())?;
         }
         self.verify()
+    }
+    fn prepare_recovery_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.recovery_acknowledgement(receipt, role, false)
+    }
+    fn acknowledge_recovery(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.recovery_acknowledgement(receipt, role, true)
     }
 }
 

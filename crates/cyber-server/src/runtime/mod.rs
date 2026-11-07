@@ -134,6 +134,7 @@ pub use snapshot_preparation::{
     SnapshotPreparationReview,
 };
 mod snapshot_recovery;
+mod snapshot_recovery_checkout;
 mod snapshot_recovery_types;
 mod snapshot_restore_receipt;
 pub use snapshot_lifetime::{SnapshotLifetime, SnapshotLifetimeBinding, SnapshotLifetimeRequest};
@@ -143,10 +144,10 @@ pub use rewind_preview::{
     RewindSelection,
 };
 pub use snapshot_recovery_types::{
-    SnapshotRecoveryAction, SnapshotRecoveryConfirmation, SnapshotRecoveryImage,
-    SnapshotRecoveryImageKind, SnapshotRecoveryPath, SnapshotRecoveryReceipt,
-    SnapshotRecoveryResult, SnapshotRecoveryReview, SnapshotRecoverySelection,
-    SnapshotRecoveryState,
+    SnapshotRecoveryAction, SnapshotRecoveryCheckout, SnapshotRecoveryCheckoutRole,
+    SnapshotRecoveryConfirmation, SnapshotRecoveryImage, SnapshotRecoveryImageKind,
+    SnapshotRecoveryPath, SnapshotRecoveryReceipt, SnapshotRecoveryResult, SnapshotRecoveryReview,
+    SnapshotRecoverySelection, SnapshotRecoveryState,
 };
 pub use snapshot_work::{
     SnapshotBinding, SnapshotCompletion, SnapshotNativeGuard, SnapshotNativeResult, SnapshotOrigin,

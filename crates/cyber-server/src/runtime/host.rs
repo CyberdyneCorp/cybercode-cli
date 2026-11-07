@@ -91,6 +91,31 @@ pub trait SnapshotLocationGuard: Send {
     ) -> Result<(), String> {
         self.prepare_restore_acknowledgement(receipt)
     }
+    fn prepare_recovery_acknowledgement(
+        &mut self,
+        receipt: &super::SnapshotRecoveryReceipt,
+        role: super::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        let evidence = receipt
+            .checkout_evidence(role)
+            .ok_or("Missing recovery resource role")?;
+        let resources = self.bindings()?;
+        if evidence.lifetime.owner.worktree_id.is_some() || !resources.is_empty() {
+            return Err("Native recovery checkout acknowledgement is unsupported".into());
+        }
+        if evidence.lifetime.checkout_resources_digest(&resources)? != evidence.resources_digest {
+            return Err("Recovery resource role differs from retained claims".into());
+        }
+        Ok(())
+    }
+    fn acknowledge_recovery(
+        &mut self,
+        receipt: &super::SnapshotRecoveryReceipt,
+        role: super::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.prepare_recovery_acknowledgement(receipt, role)
+    }
 }
 struct UnmanagedSnapshotLocation {
     _owner: Box<dyn Send>,

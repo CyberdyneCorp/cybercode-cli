@@ -1107,6 +1107,49 @@ fn assert_native_settlement_link(env: &Env, journal: &str, result: &Value) {
     assert_eq!(old["completed"], false);
     assert_eq!(old["acknowledged"], true);
     assert_eq!(old["settled_by"], result["receipt"]["resolution_id"]);
+    assert_recovery_checkout_lifetimes(&namespace, &result["receipt"]);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_recovery_checkout_lifetimes(namespace: &std::path::Path, receipt: &Value) {
+    let checkout = &receipt["checkout"];
+    assert_eq!(checkout["version"], 1);
+    assert_ne!(
+        checkout["original"]["lifetime"]["owner"]["activity_id"],
+        checkout["resolution"]["lifetime"]["owner"]["activity_id"]
+    );
+    for (role, origin) in [
+        ("original", &receipt["original"]),
+        ("resolution", &checkout["resolution_origin"]),
+    ] {
+        let evidence = &checkout[role];
+        let lifetime: cyber_server::runtime::SnapshotLifetimeBinding =
+            serde_json::from_value(evidence["lifetime"].clone()).unwrap();
+        assert_eq!(
+            lifetime.owner.activity_id,
+            origin["activity_id"].as_str().unwrap()
+        );
+        let recorded: Value = serde_json::from_slice(
+            &std::fs::read(namespace.join("workers").join(&lifetime.owner.activity_id)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(recorded, evidence["lifetime"]);
+        let phase: Value = serde_json::from_slice(
+            &std::fs::read(
+                namespace
+                    .join("workers")
+                    .join(lifetime.source_phase.as_ref().unwrap()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(phase["lifetime"], evidence["lifetime"]);
+        assert_eq!(phase["checkout_bindings"], serde_json::json!([]));
+        assert_eq!(
+            evidence["resources_digest"],
+            lifetime.checkout_resources_digest(&[]).unwrap()
+        );
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

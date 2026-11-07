@@ -391,3 +391,17 @@ worker lifetime locks. This is retention, not original/resolution checkout marke
 authority: binding both sets into consuming recovery receipts and publishing/
 reconciling their exact acknowledgements remain required. M2–M8 and parent tasks
 stay open; ordinary Git source admission is unchanged and disabled.
+
+
+Recovery checkout consuming-receipt continuation: new recovery receipts bind the
+exact resolution origin, resolution lifetime/resource digest, and the original
+version-2 lifetime/resource digest when available. Both retained claim sets are
+checked read-only at the consuming paired writer, which checks both attested
+lifetime histories and refuses a missing version-2 proof. Only an observed durable
+pair admits exact resolution-then-original native checkout markers. Original
+claim bytes stay immutable. Lookup verifies both committed owners, and explicit
+metadata reconciliation reacquires both original resource sets rather than
+substituting a fresh Session lease or replaying source work. Legacy receipts gain
+no new claim authority. This continuation does not close M2–M8 or parent tasks:
+partial acquisition, actual managed Git source integration, reference-aware
+reclamation and full native/platform/client acceptance remain required.

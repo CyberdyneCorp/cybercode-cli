@@ -207,3 +207,13 @@ reconciliation. Acknowledged creation metadata is retained across authorized
 worktree removal/recreation. Partial acquisition/corrupt construction recovery,
 post-effect/owned Git integration, reference-aware reclamation and full native/
 client acceptance remain open; this does not complete the recovery delivery increment.
+
+
+The recovery consuming-receipt continuation binds both retained checkout owners to
+the durable pair and publishes exact resolution-then-original native disposition
+markers only after observing commit. Explicit reconciliation reacquires both
+published resource sets without source replay; original claim bytes and legacy
+unknown fences remain protected. This is local implementation progress, not full
+recovery delivery: actual managed Git source callbacks, partial construction,
+reference-aware reclamation and complete native/platform/client acceptance remain
+open. See the daily coding implementation evidence and authoritative parent tasks.

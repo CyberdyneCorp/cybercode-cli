@@ -3208,3 +3208,181 @@ async fn cwd_changed_hook_shutdown_releases_outer_worktree_admission() {
     assert_eq!(events.len(), 1);
     assert_cwd_transition(&flow, &id, &events[0]);
 }
+
+#[tokio::test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+async fn recovery_checkout_roles_publish_exact_markers_without_rewriting_original_claims() {
+    use cyber_server::runtime::{
+        CreateSession, NoSnapshots, SnapshotBinding, SnapshotLifetimeBinding,
+        SnapshotLifetimeRequest, SnapshotOrigin, SnapshotRecoveryAction, SnapshotRecoveryCheckout,
+        SnapshotRecoveryCheckoutRole as Role, SnapshotRecoveryReceipt, SnapshotRestoreCheckout,
+        ToolHost,
+    };
+    use sha2::{Digest, Sha256};
+    let (fixture, _, managed) = owned().await;
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let created = flow.f.store.read_events(&info.id, -1, 1).unwrap().events[0]
+        .id
+        .clone();
+    let request = "fixture-recovery-roles";
+    // Construct the protocol-owned fixture ID; runtime tests attest the actual pair.
+    let mut hash = Sha256::new();
+    hash.update(b"snapshot-recovery-request-v1");
+    hash.update((created.len() as u64).to_be_bytes());
+    hash.update(created.as_bytes());
+    hash.update((request.len() as u64).to_be_bytes());
+    hash.update(request.as_bytes());
+    let resolution_owner = format!("op_snapshot_recovery_{:x}", hash.finalize());
+    let lifetime = |activity: &str| SnapshotLifetimeBinding {
+        version: 2,
+        owner: SnapshotLifetimeRequest {
+            activity_id: activity.into(),
+            session_id: info.id.clone(),
+            session_created_id: created.clone(),
+            directory: managed.path.clone(),
+            worktree_id: Some(managed.id.clone()),
+        },
+        root_identity: "fixture-root".into(),
+        namespace_identity: "fixture-location-namespace".into(),
+        directory_identity: "fixture-workers".into(),
+        file_identity: format!("fixture-{activity}"),
+        source_phase: Some(format!("phase_{activity}")),
+    };
+    let original_lifetime = lifetime("op_original_roles");
+    let resolution_lifetime = lifetime(&resolution_owner);
+    let origin = |life: &SnapshotLifetimeBinding, journal: &str| SnapshotOrigin {
+        version: 1,
+        session_id: info.id.clone(),
+        session_created_id: created.clone(),
+        activity_id: life.owner.activity_id.clone(),
+        worktree_id: Some(managed.id.clone()),
+        binding: SnapshotBinding {
+            directory: managed.path.clone(),
+            root_identity: life.root_identity.clone(),
+            namespace_identity: "fixture-journals".into(),
+            journal_id: journal.into(),
+            journal_identity: format!("fixture-{journal}"),
+            lock_identity: Some("fixture-lock".into()),
+        },
+    };
+    let original = flow
+        .f
+        .host
+        .claim_snapshot_location_bound(
+            &info,
+            "op_original_roles",
+            Some(&original_lifetime),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let resolution = flow
+        .f
+        .host
+        .claim_snapshot_location_bound(
+            &info,
+            &resolution_owner,
+            Some(&resolution_lifetime),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let original_set = original.snapshot_bindings().unwrap();
+    let resolution_set = resolution.snapshot_bindings().unwrap();
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let original_path = directory.join("op_original_roles.lock");
+    let resolution_path = directory.join(format!("{resolution_owner}.lock"));
+    let original_bytes = std::fs::read(&original_path).unwrap();
+    let resolution_bytes = std::fs::read(&resolution_path).unwrap();
+    let mut original = original.settle_snapshot_retained().unwrap();
+    let mut resolution = resolution.settle_snapshot_retained().unwrap();
+    let receipt = SnapshotRecoveryReceipt {
+        journal_id: "restore_original_roles".into(),
+        resolution_id: "restore_resolution_roles".into(),
+        request_id: request.into(),
+        action: SnapshotRecoveryAction::Rollback,
+        confirmation: "a".repeat(64),
+        original: origin(&original_lifetime, "restore_original_roles"),
+        filesystem_complete: true,
+        resolution_digest: Some("b".repeat(64)),
+        checkout: Some(Box::new(SnapshotRecoveryCheckout {
+            version: 1,
+            resolution_origin: origin(&resolution_lifetime, "restore_resolution_roles"),
+            original: Some(Box::new(SnapshotRestoreCheckout {
+                version: 1,
+                lifetime: original_lifetime.clone(),
+                resources_digest: original_lifetime
+                    .checkout_resources_digest(&original_set)
+                    .unwrap(),
+            })),
+            resolution: Box::new(SnapshotRestoreCheckout {
+                version: 1,
+                lifetime: resolution_lifetime.clone(),
+                resources_digest: resolution_lifetime
+                    .checkout_resources_digest(&resolution_set)
+                    .unwrap(),
+            }),
+        })),
+    };
+    original
+        .prepare_recovery_acknowledgement(&receipt, Role::Original)
+        .unwrap();
+    resolution
+        .prepare_recovery_acknowledgement(&receipt, Role::Resolution)
+        .unwrap();
+    assert!(!directory.join("op_original_roles.snapshot-ack").exists());
+    assert!(
+        original
+            .acknowledge_recovery(&receipt, Role::Resolution)
+            .is_err()
+    );
+    resolution
+        .acknowledge_recovery(&receipt, Role::Resolution)
+        .unwrap();
+    original
+        .acknowledge_recovery(&receipt, Role::Original)
+        .unwrap();
+    let marker = directory.join("op_original_roles.snapshot-ack");
+    let before = std::fs::read(&marker).unwrap();
+    original
+        .acknowledge_recovery(&receipt, Role::Original)
+        .unwrap();
+    assert_eq!(std::fs::read(&marker).unwrap(), before);
+    let data: serde_json::Value = serde_json::from_slice(&before).unwrap();
+    assert_eq!(
+        data["receipt_digest"],
+        receipt.checkout_acknowledgement_digest().unwrap()
+    );
+    let mut foreign = receipt.clone();
+    foreign.action = SnapshotRecoveryAction::Keep;
+    assert!(
+        original
+            .prepare_recovery_acknowledgement(&foreign, Role::Original)
+            .is_err()
+    );
+    let mut legacy = receipt;
+    legacy.checkout = None;
+    assert!(
+        original
+            .acknowledge_recovery(&legacy, Role::Original)
+            .is_err()
+    );
+    drop(original);
+    drop(resolution);
+    assert_eq!(std::fs::read(original_path).unwrap(), original_bytes);
+    assert_eq!(std::fs::read(resolution_path).unwrap(), resolution_bytes);
+    flow.runtime.shutdown().await;
+}

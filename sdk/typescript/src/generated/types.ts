@@ -4792,6 +4792,14 @@ export type SnapshotRecovery = {
 
 export type SnapshotRecoveryAction = "keep" | "rollback";
 
+export type SnapshotRecoveryCheckout = {
+  version: number;
+  resolution_origin: SnapshotOrigin;
+  /** None preserves missing legacy proof, rather than claiming an empty set. */
+  original?: SnapshotRestoreCheckout | null;
+  resolution: SnapshotRestoreCheckout;
+};
+
 export type SnapshotRecoveryConfirmation = {
   journal_id: string;
   action: SnapshotRecoveryAction;
@@ -4838,6 +4846,8 @@ export type SnapshotRecoveryReceipt = {
    * Missing on older receipts; those cannot authorize new journal writes.
    */
   resolution_digest?: string | null;
+  /** Runtime-attested original and resolution resources; absent on legacy receipts. */
+  checkout?: SnapshotRecoveryCheckout | null;
 };
 
 export type SnapshotRecoveryResult = {

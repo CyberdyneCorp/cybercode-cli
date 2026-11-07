@@ -7485,6 +7485,17 @@
               "null"
             ],
             "description": "Immutable native resolution data, excluding acknowledgement/progress.\nMissing on older receipts; those cannot authorize new journal writes."
+          },
+          "checkout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryCheckout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Runtime-attested original and resolution resources; absent on legacy receipts."
           }
         },
         "required": [
@@ -7497,39 +7508,19 @@
           "filesystem_complete"
         ]
       },
-      "Data_SnapshotRestoreReceipt": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/SnapshotRestoreReceipt"
-          }
-        },
-        "required": [
-          "data"
-        ]
-      },
-      "SnapshotRestoreReceipt": {
+      "SnapshotRecoveryCheckout": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "origin": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "resolution_origin": {
             "$ref": "#/components/schemas/SnapshotOrigin"
           },
-          "intent_digest": {
-            "type": "string"
-          },
-          "session_before": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "session_after": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "events_digest": {
-            "type": "string"
-          },
-          "checkout": {
+          "original": {
             "anyOf": [
               {
                 "$ref": "#/components/schemas/SnapshotRestoreCheckout"
@@ -7538,17 +7529,17 @@
                 "type": "null"
               }
             ],
-            "description": "Missing on historical receipts; absence never authorizes checkout acknowledgement."
+            "description": "None preserves missing legacy proof, rather than claiming an empty set."
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/SnapshotRestoreCheckout"
           }
         },
         "required": [
-          "origin",
-          "intent_digest",
-          "session_before",
-          "session_after",
-          "events_digest"
-        ],
-        "description": "Exact native intent and Session batch consumed by an ordinary restore.\nThis is durable acknowledgement evidence, never authority to replay files."
+          "version",
+          "resolution_origin",
+          "resolution"
+        ]
       },
       "SnapshotRestoreCheckout": {
         "type": "object",
@@ -7641,6 +7632,59 @@
           "session_created_id",
           "directory"
         ]
+      },
+      "Data_SnapshotRestoreReceipt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotRestoreReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotRestoreReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "intent_digest": {
+            "type": "string"
+          },
+          "session_before": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_after": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "events_digest": {
+            "type": "string"
+          },
+          "checkout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRestoreCheckout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Missing on historical receipts; absence never authorizes checkout acknowledgement."
+          }
+        },
+        "required": [
+          "origin",
+          "intent_digest",
+          "session_before",
+          "session_after",
+          "events_digest"
+        ],
+        "description": "Exact native intent and Session batch consumed by an ordinary restore.\nThis is durable acknowledgement evidence, never authority to replay files."
       },
       "Data_Array_of_SnapshotPreparation": {
         "type": "object",

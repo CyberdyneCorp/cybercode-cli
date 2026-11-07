@@ -2386,3 +2386,91 @@ passed. Pinned strict OpenSpec passed all 117 items; spec lint reported 0 errors
 cross-process retention, real TUI/App, Linux/Windows and source-bound CI were not
 run for this increment. Consuming recovery resource evidence, exact native marker
 publication/reconciliation and reference-aware cleanup remain open.
+
+
+## Recovery checkout receipt and native disposition continuation (2026-11-07)
+
+Recovery now enriches the native resolution receipt with runtime-attested checkout
+evidence: exact resolution origin, its version-2 lifetime and complete resource-set
+digest, plus the original version-2 lifetime/resource-set digest when available.
+Missing legacy original proof remains absent. The runtime verifies the immutable
+native receipt before enrichment; native journal verification compares native
+intent fields only, while Store verification attests the added runtime evidence.
+The receipt checksum covers both kinds of evidence. It is a disposition binding,
+not independent acknowledgement or source admission authority.
+
+The consuming paired writer verifies both retained claim sets and proposed markers
+read-only, checks exact original/resolution lifetime history, and refuses missing
+version-2 evidence. After observing the durable pair, it publishes resolution
+markers before original markers. Exact original claim bytes remain unchanged.
+Failure after commit leaves the durable pair available to lookup and explicit
+reconciliation. Reconciliation first verifies the committed pair, locks the exact
+original and resolution lifetimes, reacquires their complete published resource
+sets, and performs bounded metadata work without invoking source restore. Resource
+or marker changes refuse. Existing matching markers are idempotent.
+
+The code-review skill was applied across runtime ports/writer, native journal and
+host adapters, tests, schema/SDK and spec changes. Review covered independent
+owner identity, no legacy adoption, original-before-resolution lock acquisition,
+claim-before-lifetime disposal, read-only candidate verification before the atomic
+pair, publication ordering, exact committed-pair lookup, and retry without source
+replay. The runtime regression uses actual Store operations with instrumented
+lifetime/Location ports; the native host regression uses actual managed checkout
+claims/pins/markers with fixture lifetime/receipt context. Neither alone proves
+the full managed Git runtime path. Real CLI recovery fixtures use unmanaged
+Locations and verify receipt/native lifetime correspondence.
+
+Actual managed Git source admission remains disabled. Partial-constructor
+recovery, reference/reader/lease-aware reclamation, complete native cuts and
+platform/client acceptance remain required. No parent task or either issue is
+completed by this continuation.
+
+
+Local macOS arm64 verification for this continuation:
+
+- Locked server library tests: 435 passed, 1 ignored. The new recovery case
+  covers candidate refusal, successful paired disposition, interrupted original
+  marker publication, committed-but-lost WAL reply, read-only lookup, missing
+  publication refusal, repeated metadata reconciliation and reopened Store retry.
+  The lost-reply test initially attempted a prohibited mutation through the
+  failed Store; it now uses read-only lookup/reconciliation and explicitly opens
+  the same database again, preserving production Store failure semantics.
+- Locked snapshot suite: 137 passed, 2 ignored across unit/integration binaries;
+  doc-test binaries had no tests. Native intent comparison and legacy receipts
+  retain their existing behavior without treating runtime checkout context as
+  journal-supplied evidence.
+- Locked complete native worktree suite: 41 passed. The added managed-claim test
+  checks read-only candidate preparation, wrong-role refusal, exact two-role
+  marker publication, idempotence, changed receipt refusal, legacy refusal and
+  byte-for-byte preservation of both original claim files.
+- Locked real CLI branch/recovery suite: all 17 passed with new assertions for
+  both receipt owners and actual worker lifetime/source-phase publications.
+  Existing partial restore kills, keep/rollback, restart/retry, code/conversation
+  stage/clear and no-op cases executed. These Locations are unmanaged; this does
+  not accept managed Git source integration.
+- OpenAPI regeneration test passed. Generated TypeScript consistency and separate
+  SDK typechecking passed. SDK tests with CYBER_BIN pointing at the freshly built
+  CLI passed 142 cases, with 2 Linux-only protected-file/vault cases skipped on
+  macOS. The earlier run without CYBER_BIN passed 134 with 10 skipped.
+- Formatting and diff checks passed. Pinned strict OpenSpec passed 117 items;
+  spec lint reported 0 errors and 25 warnings, without baseline attribution.
+
+Native C compilation emitted sandbox_init/sandbox_free_error deprecation warnings;
+no unchanged-main comparison or pre-existing attribution was made. Full workspace
+execution, Linux/Windows native runs, real TUI/App acceptance and source-bound CI
+were not performed for this continuation. Full recovery/cleanup and both issues
+remain open.
+
+
+Four-package all-target locked Clippy (server/snapshot/tools/CLI) passed with Rust
+warnings denied after correcting an Option source-phase path in the CLI assertion
+helper. Server all-target locked Clippy passed again after the lost-reply test was
+corrected. No warning allowances or production Store recovery changes were added.
+
+Review verdict: approve this local consuming-receipt continuation. Critical: 0;
+major: 0; minor: 0; nits: 0 unresolved findings. The changes preserve the existing
+runtime/host port boundary and native adapter ownership. Executable Cargo unit,
+integration/native and real CLI tests cover the added behavior; generated SDK
+checks and real-client tests pass as recorded above. This review does not approve
+the full recovery delivery increment or close the explicitly retained managed Git,
+partial-construction, reclamation, crash/platform/client and CI acceptance gaps.
