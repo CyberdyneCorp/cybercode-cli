@@ -186,6 +186,13 @@ interrupted cleanup resumes only through its durable plan. Both intents and look
 receipts remain usable afterward. Managed Git, preparation-construction, metadata/
 CAS and legacy payload reclamation remain unfinished.
 
+Cancelled pre-effect preparations can reclaim fully prepared regular target images
+after retention when their recorded inode identities and committed intent proof
+still match. Cleanup preserves the intent and cancellation records and permits
+later receipt acknowledgement without reading or restoring source files. Older
+cancellations lacking committed intent proof and incomplete constructions remain
+protected; their payloads are not inferred from filenames or matching bytes.
+
 Before file changes, restore durably publishes an intent and prepares private
 stages. Replacements retain displaced inodes; progress and completion are flushed
 independently. Admission and content/route identities are rechecked. A failure or

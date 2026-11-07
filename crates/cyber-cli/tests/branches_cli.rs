@@ -806,6 +806,26 @@ fn terminal_preparation_recovery_survives_client_kill_with_a_committed_reply_wit
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn cancelled_pre_effect_preparation(published: bool, terminal: bool) {
+    cancelled_preparation(published, terminal, false);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn fully_prepared_pre_effect_cancellation_reclaims_only_persisted_target_inodes() {
+    cancelled_preparation(true, false, true);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct PreparationFixture {
+    model: scripted_model::ScriptedModel,
+    env: Env,
+    id: String,
+    first: String,
+    messages: Vec<Value>,
+    after: String,
+}
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn preparation_fixture(prepared: bool) -> PreparationFixture {
     let model = scripted_model::ScriptedModel::start(reply);
     let env = Env::new(&model);
     let repo = env.root.join("repo");
@@ -820,9 +840,37 @@ fn cancelled_pre_effect_preparation(published: bool, terminal: bool) {
     for index in 0..1280 {
         std::fs::write(repo.join(format!("bulk_{index:04}")), &after).unwrap();
     }
+    if prepared {
+        std::fs::write(repo.join("aa_removed"), "after-only source").unwrap();
+    }
     env.exec(Some(&id), "after snapshot");
     let messages = env.messages(&id);
-    let activity = kill_before_source_admission(&env, &id, &first, published);
+    PreparationFixture {
+        model,
+        env,
+        id,
+        first,
+        messages,
+        after,
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn cancelled_preparation(published: bool, terminal: bool, prepared: bool) {
+    let PreparationFixture {
+        model,
+        env,
+        id,
+        first,
+        messages,
+        after,
+    } = preparation_fixture(prepared);
+    let repo = env.root.join("repo");
+    let activity = if prepared {
+        kill_after_prepared_images(&env, &id, &first)
+    } else {
+        kill_before_source_admission(&env, &id, &first, published)
+    };
     let requests = model.requests().len();
     let target = env.root.join("preparation-owner-target");
     std::fs::write(&target, "later owner bytes").unwrap();
@@ -842,6 +890,9 @@ fn cancelled_pre_effect_preparation(published: bool, terminal: bool) {
     let request_id = "before-origin/ owner #?%";
     let body = json!({"confirmation":review["confirmation"],"request_id":request_id});
     assert_preparation_client_refusals(&env, &id, &activity, &body);
+    if prepared {
+        assert_prepared_review_digest(&env, &id, &activity, &review, &body);
+    }
     let receipt = preparation_with_client(&env, &id, &activity, &body, terminal);
     let request_id = receipt["request_id"].as_str().unwrap();
     let body = json!({"confirmation":receipt["confirmation"],"request_id":request_id});
@@ -855,24 +906,7 @@ fn cancelled_pre_effect_preparation(published: bool, terminal: bool) {
     if published {
         assert_preparation_tombstone(&env, &receipt);
     }
-    kill_registered_service(&env);
-    assert_preparation_history(&env, &id, &activity, &receipt);
-    assert_eq!(
-        json(&preparation_confirm_cli(&env, &id, &activity, &body)),
-        receipt
-    );
-    assert_eq!(
-        json(&preparation_request_cli(
-            &env, &id, &activity, request_id, false
-        )),
-        receipt
-    );
-    assert_eq!(
-        json(&preparation_request_cli(
-            &env, &id, &activity, request_id, true
-        )),
-        receipt
-    );
+    assert_preparation_receipt_restart(&env, &receipt, &body);
     assert!(
         std::fs::symlink_metadata(repo.join("bulk_0000"))
             .unwrap()
@@ -886,7 +920,37 @@ fn cancelled_pre_effect_preparation(published: bool, terminal: bool) {
     assert_eq!(env.file("bulk_1279"), Some(after));
     assert_eq!(env.messages(&id), messages);
     assert_eq!(model.requests().len(), requests);
+    if prepared {
+        assert_preparation_cleanup_lookup(&env, &receipt);
+    }
+    assert_eq!(env.messages(&id), messages);
+    assert_eq!(model.requests().len(), requests);
     env.exec(Some(&id), "after preparation cancellation");
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_preparation_receipt_restart(env: &Env, receipt: &Value, body: &Value) {
+    let session = receipt["lifetime"]["owner"]["session_id"].as_str().unwrap();
+    let activity = receipt["activity_id"].as_str().unwrap();
+    let request_id = receipt["request_id"].as_str().unwrap();
+    kill_registered_service(env);
+    assert_preparation_history(env, session, activity, receipt);
+    assert_eq!(
+        json(&preparation_confirm_cli(env, session, activity, body)),
+        *receipt
+    );
+    assert_eq!(
+        json(&preparation_request_cli(
+            env, session, activity, request_id, false
+        )),
+        *receipt
+    );
+    assert_eq!(
+        json(&preparation_request_cli(
+            env, session, activity, request_id, true
+        )),
+        *receipt
+    );
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -902,6 +966,190 @@ fn preparation_with_client(
     } else {
         json(&preparation_confirm_cli(env, session, activity, body))
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_preparation_cleanup_lookup(env: &Env, receipt: &Value) {
+    assert_prepared_payload_cleanup(env, receipt);
+    let session = receipt["lifetime"]["owner"]["session_id"].as_str().unwrap();
+    assert_eq!(
+        json(&preparation_request_cli(
+            env,
+            session,
+            receipt["activity_id"].as_str().unwrap(),
+            receipt["request_id"].as_str().unwrap(),
+            true
+        )),
+        *receipt
+    );
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_prepared_review_digest(
+    env: &Env,
+    session: &str,
+    activity: &str,
+    review: &Value,
+    body: &Value,
+) {
+    let journal = review["origin"]["binding"]["journal_id"].as_str().unwrap();
+    let path = std::fs::read_dir(env.root.join("cyber-home/data/snapshot/global"))
+        .unwrap()
+        .map(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .join("journals")
+                .join(journal)
+                .join("intent.json")
+        })
+        .find(|path| path.exists())
+        .unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let mut changed: Value = serde_json::from_slice(&bytes).unwrap();
+    changed["created"] = (changed["created"].as_u64().unwrap() + 1).into();
+    std::fs::write(&path, changed.to_string()).unwrap();
+    let refused = preparation_confirm_cli(env, session, activity, body);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("review changed"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_prepared_payload_cleanup(env: &Env, reply: &Value) {
+    use cyber_server::runtime::{SnapshotPreparationReceipt, snapshot_reclamation::Receipt};
+    exits(&env.cyber(&["service", "stop"]), 0);
+    let maintenance = reclamation_support::Maintenance::open(&env.root.join("cyber-home"));
+    let receipt: SnapshotPreparationReceipt = serde_json::from_value(reply.clone()).unwrap();
+    let journal = maintenance
+        .namespace
+        .join("journals")
+        .join(&receipt.origin.as_ref().unwrap().binding.journal_id);
+    let intent = std::fs::read(journal.join("intent.json")).unwrap();
+    let cancellation = std::fs::read(journal.join("preparation.json")).unwrap();
+    let source = env.root.join("repo");
+    assert_eq!(maintenance.reclaim(&source).unwrap(), 0);
+    maintenance.age(receipt.activity_id.clone());
+    let receipt = Receipt::Preparation(Box::new(receipt));
+    assert_prepared_inode_and_lifetime_guards(&maintenance, &source, &journal, &receipt);
+    assert_prepared_store_receipt_binding(&maintenance, &source, &journal, &receipt);
+    assert_prepared_interrupted_plan(&maintenance, &source, &journal, &receipt);
+    assert!(maintenance.reclaim(&source).unwrap() > 0);
+    assert!(
+        maintenance
+            .policy
+            .record(&receipt)
+            .unwrap()
+            .unwrap()
+            .completed
+    );
+    assert_eq!(maintenance.reclaim(&source).unwrap(), 0);
+    assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
+    assert_eq!(
+        std::fs::read(journal.join("preparation.json")).unwrap(),
+        cancellation
+    );
+    assert_eq!(std::fs::read_dir(&journal).unwrap().count(), 2);
+    assert!(
+        std::fs::symlink_metadata(source.join("bulk_0000"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(env.root.join("preparation-owner-target")).unwrap(),
+        "later owner bytes"
+    );
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_prepared_interrupted_plan(
+    maintenance: &reclamation_support::Maintenance,
+    source: &std::path::Path,
+    journal: &std::path::Path,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+) {
+    assert!(maintenance.plan_only(source).is_err());
+    let pending = maintenance.policy.record(receipt).unwrap().unwrap();
+    assert!(!pending.completed);
+    assert_eq!(pending.plan.version, 3);
+    assert!(pending.plan.intent_digest.is_some());
+    let unknown = journal.join("foreign-evidence");
+    std::fs::write(&unknown, b"owner bytes").unwrap();
+    assert!(maintenance.reclaim(source).is_err());
+    let first = journal.join(&pending.plan.files[0].name);
+    assert!(first.exists());
+    std::fs::remove_file(unknown).unwrap();
+    // Synthetic progress of one planned private unlink, following a real kill.
+    std::fs::remove_file(first).unwrap();
+    std::fs::File::open(journal).unwrap().sync_all().unwrap();
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_prepared_store_receipt_binding(
+    maintenance: &reclamation_support::Maintenance,
+    source: &std::path::Path,
+    journal: &std::path::Path,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+) {
+    let owner = receipt.origin().unwrap().activity_id.clone();
+    let restored_owner = owner.clone();
+    let original = maintenance.store.transaction(move |db| {
+        let raw: String = db.query_row("SELECT data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1", [&owner], |row|row.get(0))?;
+        let mut legacy: Value = serde_json::from_str(&raw).unwrap();
+        assert!(legacy.as_object_mut().unwrap().remove("snapshot_preparation_intent_digest").is_some());
+        db.execute("UPDATE event SET data=?1 WHERE aggregate_id=?2 AND seq=(SELECT MAX(seq) FROM event WHERE aggregate_id=?2)", rusqlite::params![legacy.to_string(), owner])?;
+        Ok(raw)
+    }).unwrap();
+    let error = maintenance.reclaim(source).unwrap_err();
+    assert!(error.contains("committed native intent digest"), "{error}");
+    maintenance.store.transaction(move |db| {
+        db.execute("UPDATE event SET data=?1 WHERE aggregate_id=?2 AND seq=(SELECT MAX(seq) FROM event WHERE aggregate_id=?2)", rusqlite::params![original,restored_owner])?;
+        Ok(())
+    }).unwrap();
+    let path = journal.join("intent.json");
+    let bytes = std::fs::read(&path).unwrap();
+    let mut changed: Value = serde_json::from_slice(&bytes).unwrap();
+    changed["created"] = (changed["created"].as_u64().unwrap() + 1).into();
+    std::fs::write(&path, changed.to_string()).unwrap();
+    let error = maintenance.reclaim(source).unwrap_err();
+    assert!(error.contains("committed native intent digest"), "{error}");
+    assert!(maintenance.policy.record(receipt).unwrap().is_none());
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_prepared_inode_and_lifetime_guards(
+    maintenance: &reclamation_support::Maintenance,
+    source: &std::path::Path,
+    journal: &std::path::Path,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+) {
+    let proof = receipt.owners().unwrap().remove(0);
+    let held = std::fs::File::open(
+        maintenance
+            .namespace
+            .join("workers")
+            .join(&proof.origin.activity_id),
+    )
+    .unwrap();
+    held.try_lock().unwrap();
+    assert!(maintenance.reclaim(source).is_err());
+    drop(held);
+    let stage = journal.join("stage_1");
+    let retained = journal.join("retained-original");
+    let bytes = std::fs::read(&stage).unwrap();
+    std::fs::rename(&stage, &retained).unwrap();
+    std::fs::write(&stage, bytes).unwrap();
+    let error = maintenance.reclaim(source).unwrap_err();
+    assert!(error.contains("persisted ownership"), "{error}");
+    assert!(maintenance.policy.record(receipt).unwrap().is_none());
+    std::fs::remove_file(&stage).unwrap();
+    std::fs::rename(retained, stage).unwrap();
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1087,7 +1335,12 @@ fn assert_preparation_tombstone(env: &Env, receipt: &Value) {
     if let Ok(bytes) = std::fs::read(journal.join("intent.json")) {
         let intent: Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(intent["completed"], false);
-        assert_eq!(intent["acknowledged"], false);
+        assert!(
+            !intent
+                .get("acknowledged")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        );
         assert!(intent["applied"].as_array().unwrap().is_empty());
     }
 }
@@ -1149,6 +1402,94 @@ fn kill_before_source_admission(env: &Env, id: &str, first: &str, published: boo
         record["snapshot_source_admitted"], false,
         "kill missed the pre-effect boundary"
     );
+    activity
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn kill_after_prepared_images(env: &Env, id: &str, first: &str) -> String {
+    use rusqlite::OptionalExtension;
+    let selection = reviewed_selection(env, first, "both", "commit");
+    let preview = reviewed_preview(env, id, &selection);
+    let mut body = selection;
+    body["confirmation"] = preview["confirmation"].clone();
+    let mut pending = env
+        .command(&[
+            "api",
+            "POST",
+            &format!("/sessions/{id}/rewind/confirm"),
+            "-d",
+            &body.to_string(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let data = env.root.join("cyber-home/data");
+    let database = std::fs::read_dir(&data)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "db"))
+        .unwrap();
+    let db = rusqlite::Connection::open(database).unwrap();
+    db.busy_timeout(Duration::from_secs(5)).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    let activity = loop {
+        let activity: Option<String> = db.query_row("SELECT aggregate_id FROM event e WHERE type='native.activity.changed.1' AND seq=1 AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_origin') IS NOT NULL AND json_extract(data,'$.snapshot_source_admitted')=0 AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)", [id], |row|row.get(0)).optional().unwrap();
+        if let Some(activity) = activity {
+            break activity;
+        }
+        assert!(
+            pending.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline,
+            "preparation origin was not observed"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    // Real SQLite writer contention holds source admission, not preparation I/O.
+    // No row is edited and no native acknowledgement or effect hook is replaced.
+    db.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let raw: String = db
+        .query_row(
+            "SELECT data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+            [&activity],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let record: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(record["snapshot_source_admitted"], false);
+    let journal_id = record["snapshot_origin"]["binding"]["journal_id"]
+        .as_str()
+        .unwrap();
+    let namespace = std::fs::read_dir(data.join("snapshot/global"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.join("journals").join(journal_id).exists())
+        .unwrap();
+    let intent = namespace
+        .join("journals")
+        .join(journal_id)
+        .join("intent.json");
+    loop {
+        let prepared = std::fs::read(&intent)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|intent| {
+                intent["ownership"].is_object()
+                    && intent["applied"].as_array().is_some_and(Vec::is_empty)
+            });
+        if prepared {
+            break;
+        }
+        assert!(
+            pending.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline,
+            "prepared identities were not published"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    kill_registered_service(env);
+    assert!(!pending.wait_with_output().unwrap().status.success());
+    db.execute_batch("ROLLBACK").unwrap();
+    let admitted: bool = db.query_row("SELECT json_extract(data,'$.snapshot_source_admitted') FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1", [&activity], |row|row.get(0)).unwrap();
+    assert!(!admitted, "kill crossed the source-admission boundary");
     activity
 }
 
@@ -1573,7 +1914,8 @@ fn assert_paired_live_owners_refuse(
     namespace: &std::path::Path,
     receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
 ) {
-    for (origin, _) in receipt.owners().unwrap() {
+    for proof in receipt.owners().unwrap() {
+        let origin = proof.origin;
         let held =
             std::fs::File::open(namespace.join("workers").join(&origin.activity_id)).unwrap();
         held.try_lock().unwrap();

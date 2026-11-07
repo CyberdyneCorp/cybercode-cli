@@ -183,6 +183,7 @@ fn prepare(
     )?);
     let plan = Plan {
         version: 2,
+        intent_digest: None,
         receipt: settlement.receipt,
         files,
     };

@@ -1,5 +1,6 @@
 //! A worker-specific native lock precedes every durable runtime reservation.
 use super::{Options, Store, storage};
+use cap_fs_ext::DirExt;
 use cyber_server::runtime::{SnapshotLifetime, SnapshotLifetimeBinding, SnapshotLifetimeRequest};
 use std::{
     fs::File,
@@ -118,6 +119,39 @@ impl SnapshotLifetime for Lifetime {
         )?
         .ok_or("Missing source-admission namespace")?;
         store.record_source_admission(&self.binding, origin)
+    }
+    fn preparation_intent_digest(
+        &self,
+        origin: Option<&cyber_server::runtime::SnapshotOrigin>,
+    ) -> Result<Option<String>, String> {
+        self.verify_preparation(origin)?;
+        let Some(origin) = origin else {
+            return Ok(None);
+        };
+        let store = Store::existing(
+            &self.data,
+            &self.binding.owner.directory.to_string_lossy(),
+            self.options.clone(),
+        )?
+        .ok_or("Missing preparation namespace")?;
+        let directory = store
+            .journals
+            .open_dir_nofollow(&origin.binding.journal_id)
+            .map_err(storage::fail)?;
+        match directory.symlink_metadata("intent.json") {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(storage::fail(error)),
+            _ => {}
+        }
+        if store
+            .journal(&origin.binding.journal_id)?
+            .1
+            .ownership
+            .is_none()
+        {
+            return Ok(None);
+        }
+        store.worker_digest(Some(origin))
     }
     fn prepare_preparation_acknowledgement(
         &self,

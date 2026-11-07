@@ -51,3 +51,10 @@
 - **AND** both exited lifetimes and complete inventories SHALL be checked before any unlink
 - **AND** interrupted deletion SHALL resume only from that durable plan without reading or replaying source
 - **AND** original version-1 restore plan serialization and IDs SHALL remain unchanged
+
+#### Scenario: Cancelled prepared target cleanup
+- **GIVEN** a positive pre-effect cancellation binds fully prepared native target identities and an immutable intent digest
+- **WHEN** its cancellation is durably committed and eligible private payloads are reclaimed
+- **THEN** the native cancellation event SHALL retain the reviewed intent digest and a version-3 reclamation plan SHALL match it
+- **AND** missing historical digest evidence or changed target inodes SHALL refuse cleanup without creating new acknowledgement authority
+- **AND** cancellation, intent and request lookup metadata SHALL remain after payload deletion without source admission or source replay

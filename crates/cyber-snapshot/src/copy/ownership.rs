@@ -482,6 +482,9 @@ impl Ownership {
         store.verify_root()?;
         Ok(Observations { files, parents })
     }
+    pub(super) fn prepared_identity(&self, index: usize) -> Option<&str> {
+        self.files.get(index).and_then(|file| file.stage.as_deref())
+    }
     pub(super) fn original_identity(&self, index: usize) -> Option<&str> {
         self.files
             .get(index)

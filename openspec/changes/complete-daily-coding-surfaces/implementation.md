@@ -3340,3 +3340,75 @@ without unchanged-main attribution. All Cargo tests/checks/Clippy used
 CARGO_INCREMENTAL=0 and --locked. No unresolved critical/major code-review finding
 remains within this paired regular-payload scope; the broader acceptance obligations
 listed above remain open and neither issue is complete.
+
+## Cancelled prepared-target reclamation (2026-11-07, local)
+
+The third M6 payload path handles positively cancelled pre-effect preparations
+with a published origin, fully persisted prepared target inode identities, a
+non-admitted version-2 native phase and an empty complete checkout set. It removes
+only regular private target images. Intent, cancellation, lifetime/phase and request
+metadata remain; source routes/images are never consulted for cleanup. Missing
+intent/ownership, partial constructors, legacy proof, managed resources and Git
+are not promoted into this admission and remain required/protected classes.
+
+New cancellation review fingerprints bind the immutable prepared intent digest
+from a metadata-only native lifetime port. The consuming writer rechecks it and
+persists snapshot_preparation_intent_digest on the exact cancelled native activity.
+A version-3 reclamation plan freezes that digest and every prepared target leaf's
+original inode, current generation, BLAKE3 identity and length. The maintenance
+writer matches the committed digest before unlinks, while namespace/Location/
+lifetime guards and intent/cancellation/phase metadata pins remain retained. A
+historical cancellation without this committed digest keeps its existing lookup
+and acknowledgement path and cannot gain cleanup authority from current files.
+Public preparation receipt/HTTP/SDK shapes are unchanged. Version-1/2 plans omit
+the new optional plan digest field; their serialization and IDs remain stable.
+Borrowed owner evidence avoids inventing ordinary-restore checkout receipts for
+preparations. The larger preparation carrier is boxed without serialization change.
+
+The actual CLI fixture holds a real SQLite IMMEDIATE transaction after observing
+origin publication. It edits no row: writer contention prevents source admission
+while the real worker writes all target images and persists prepared ownership.
+The fixture observes that publication, kills the real service and verifies the
+Store still positively records no source admission. Real reviewed cancellation
+and explicit native acknowledgement then precede maintenance over the reopened
+actual Store. The later source symlink/target, other bytes, transcript and inference
+remain unchanged, and a new prompt still succeeds after cleanup.
+
+Regression checks cover stale review after changing native intent, young retention,
+a live original lifetime, replacement with identical bytes but a different inode,
+a historical missing committed digest, changed intent after cancellation, unknown
+entries, a committed plan cut before deletion, synthetic progress of one planned
+unlink, retry/accounting and preserved intent/cancellation records. The latter two
+cuts are synthetic cleanup states; the preparation service kill itself is real.
+Lookup and metadata acknowledgement are exercised again after cleanup/restart.
+
+Code-review skill inspection found that inode identity alone needed an intent
+anchor in the committed cancellation pair. The native metadata port, version-3
+review fingerprint and writer-bound digest check address that finding; current
+native bytes never manufacture historical proof. Initial fixture assertions also
+incorrectly required an explicitly serialized false acknowledgement flag; the
+production serializer omits false and the fixture now respects that default.
+Clippy identified test complexity 21/15 and 16/15; fixture setup, restart lookup,
+plan interruption and digest checks were split by responsibility, with no lint
+allowances. The Rust cognitive-complexity check uses workspace Clippy's threshold
+15; the cognitive-complexity skill has no Rust analyzer. Existing project snapshot
+ports and the application Store adapter keep filesystem and database ownership
+separate. Full M6, native platform/cut/lease acceptance and both issues remain open.
+
+Final local macOS arm64 checks: the complete 19-case serial CLI branch/recovery
+invocation passed in 405.81 seconds, including prepared cancellation cleanup,
+paired keep/rollback, original pre-effect cuts and terminal process-death recovery.
+The focused digest-bound preparation case passed in 74.80 seconds before its final
+test-helper refactor. All 15 shared App cleanup cases passed in 41.88 seconds and
+all 46 runtime snapshot-worker tests passed in 4.85 seconds. HTTP passed all 80
+cases in 4.09 seconds. Two initial library name filters selected zero tests; the
+correct snapshot_work::tests filter produced the 46-case result above. All-target
+App/server/snapshot/CLI Clippy, format/diff, generated SDK consistency, strict
+OpenSpec (117 passed) and spec lint (0 errors/25 warnings) passed. All Cargo tests,
+checks and Clippy used CARGO_INCREMENTAL=0 and --locked. C sandbox deprecations
+and linker unwind warnings were observed without unchanged-main attribution.
+No full workspace/snapshot-library/SDK test run, separate native platform or CI
+execution ran for this increment. No unresolved critical/major review finding
+remains in this fully prepared regular-target scope; raw construction, managed/Git,
+metadata/CAS and full acceptance remain required. No PR/push or parent completion
+is claimed.

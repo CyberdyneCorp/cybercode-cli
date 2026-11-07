@@ -1,4 +1,5 @@
 //! Reclaim only exact acknowledged displaced images; keep intent/lifetime receipts.
+mod cancelled;
 mod paired;
 use super::{
     Store, ownership,
@@ -22,6 +23,7 @@ struct Prepared {
     store: Store,
     journal: Dir,
     intent: MetadataPin,
+    cancellation: Option<MetadataPin>,
     phase: MetadataPin,
     workers: Dir,
     plan: Plan,
@@ -130,7 +132,7 @@ pub(crate) fn locations(data: &Path) -> Result<BTreeSet<String>, String> {
                 )?)
                 .map_err(storage::fail)?,
             };
-            if ordinary(&record) || paired::eligible(&record) {
+            if ordinary(&record) || paired::eligible(&record) || cancelled::eligible(&record) {
                 result.insert(
                     record
                         .location
@@ -151,8 +153,8 @@ pub(crate) fn reclaim(
     policy: Arc<dyn Policy>,
     id: &str,
 ) -> Result<u64, String> {
-    if store.preparation_cancellation(id)?.is_some() {
-        return Ok(0);
+    if let Some(receipt) = store.preparation_cancellation(id)? {
+        return cancelled::reclaim(store, workspace, config, policy, receipt);
     }
     let (directory, record) = store.journal(id)?;
     if paired::eligible(&record) {
@@ -280,6 +282,7 @@ fn prepare(
     let intent_digest = restore.intent_digest.clone();
     let plan = Plan {
         version: 1,
+        intent_digest: None,
         receipt,
         files,
     };
@@ -298,9 +301,7 @@ fn prepare(
     store.verify_reclamation_phase(
         binding,
         plan.receipt.origin().map_err(storage::fail)?,
-        &plan.receipt.owners().map_err(storage::fail)?[0]
-            .1
-            .resources_digest,
+        plan.receipt.owners().map_err(storage::fail)?[0].resources_digest,
     )?;
     phase.verify(&workers, name)?;
     storage::existing_child(
@@ -317,6 +318,7 @@ fn prepare(
         store,
         journal,
         intent,
+        cancellation: None,
         phase,
         workers,
         plan,
@@ -346,6 +348,9 @@ impl Prepared {
             return Err("Snapshot retention no longer permits reclamation".into());
         }
         self.intent.verify(&self.journal, "intent.json")?;
+        if let Some(pin) = &self.cancellation {
+            pin.verify(&self.journal, super::preparation::FILE)?;
+        }
         self.phase.verify(
             &self.workers,
             self.lifetime
@@ -367,7 +372,13 @@ impl Prepared {
                 .binding
                 .journal_id,
         )?;
-        if !ordinary(&record)
+        let eligible = match &self.plan.receipt {
+            cyber_server::runtime::snapshot_reclamation::Receipt::Preparation(receipt) => {
+                cancelled::verify(&self.store, receipt, &record)?
+            }
+            _ => ordinary(&record),
+        };
+        if !eligible
             || self
                 .store
                 .worker_digest(Some(self.plan.receipt.origin().map_err(storage::fail)?))?
@@ -382,6 +393,7 @@ impl Prepared {
             .iter()
             .map(|file| file.name.as_str())
             .chain(std::iter::once("intent.json"))
+            .chain(self.cancellation.iter().map(|_| super::preparation::FILE))
             .collect::<BTreeSet<_>>();
         if storage::names(&self.journal, super::ENTRY_LIMIT * 3)?
             .iter()

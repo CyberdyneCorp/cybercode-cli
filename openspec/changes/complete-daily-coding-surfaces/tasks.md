@@ -541,3 +541,14 @@ Exercise the real partial-restore kill fixture for keep and rollback, both live
 worker locks, young retention, unknown entries and planned partial progress.
 Construction/preparation payloads, managed resources/Git, CAS/metadata reclamation
 and the complete native cut/platform matrix remain required; M6 stays open.
+
+M6 prepared-cancellation continuation: bind the immutable prepared intent into
+review and the durable cancellation activity, and admit version-3 target cleanup
+only with persisted prepared inode identities, exact native cancellation and a
+positive non-admitted phase. Retain all intent/cancellation/phase/request metadata;
+unknown/incomplete construction and historical missing digest evidence cannot be
+promoted into cleanup proof. Exercise an actual service kill with prepared images
+while SQLite writer contention prevents source admission, then verify changed
+inodes/digests, historical missing proof and durable partial cleanup. Raw partial
+construction, managed/Git resources, metadata/CAS and full platform/cut acceptance
+remain required; all parent tasks stay open.

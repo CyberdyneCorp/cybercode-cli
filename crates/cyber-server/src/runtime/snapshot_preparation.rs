@@ -305,6 +305,30 @@ fn acknowledged_target(
     })
 }
 
+pub(super) fn verify_committed(
+    db: &Connection,
+    receipt: &SnapshotPreparationReceipt,
+) -> Result<(), StoreError> {
+    acknowledged_target(db, receipt).map(|_| ())
+}
+
+pub(super) fn verify_reclamation(
+    db: &Connection,
+    receipt: &SnapshotPreparationReceipt,
+    intent_digest: &str,
+) -> Result<(), StoreError> {
+    let target = acknowledged_target(db, receipt)?;
+    if intent_digest.len() != 64
+        || !intent_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || target.record.snapshot_preparation_intent_digest.as_deref() != Some(intent_digest)
+    {
+        return Err(invalid(
+            "Preparation cleanup lacks its committed native intent digest",
+        ));
+    }
+    Ok(())
+}
+
 fn request_owner(created: &str, request: &str) -> String {
     use sha2::{Digest, Sha256};
     let bytes = serde_json::to_vec(&("snapshot-preparation-request-v1", created, request))
@@ -344,6 +368,7 @@ struct Worker {
     resources: Option<Vec<cyber_core::worktrees::CheckoutBinding>>,
     checkouts: Option<Box<dyn super::SnapshotLocationGuard>>,
     proof: Box<dyn SnapshotLifetime>,
+    intent_digest: Option<String>,
     _lifecycle: tokio::sync::OwnedRwLockReadGuard<()>,
     _admission: Admission,
     _completion: Completion,
@@ -402,12 +427,13 @@ impl Worker {
     fn fingerprint(&self) -> Result<String, RuntimeError> {
         use sha2::{Digest, Sha256};
         let bytes = serde_json::to_vec(&(
-            "snapshot-preparation-review-v2",
+            "snapshot-preparation-review-v3",
             self.sequence,
             &self.authority,
             self.target.sequence,
             &self.target.raw,
             self.resources_digest()?,
+            &self.intent_digest,
         ))
         .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
         Ok(format!("{:x}", Sha256::digest(bytes)))
@@ -420,6 +446,16 @@ impl Worker {
             .verify_preparation(self.target.record.snapshot_origin.as_ref())
             .map_err(|error| invalid(&error))?;
         self.verify_resources().map_err(|error| invalid(&error))?;
+        if let Some(expected) = &self.intent_digest
+            && self
+                .proof
+                .preparation_intent_digest(self.target.record.snapshot_origin.as_ref())
+                .map_err(|error| invalid(&error))?
+                .as_ref()
+                != Some(expected)
+        {
+            return Err(invalid("Prepared intent changed after cancellation review"));
+        }
         let owner = &self.target.binding.owner;
         let current = match self.target.record.snapshot_preparation_receipt.as_ref() {
             Some(receipt) => acknowledged_target(db, receipt)?,
@@ -465,6 +501,7 @@ impl Worker {
             let mut record = self.target.record.clone();
             record.status = "settled".into();
             record.phase = PHASE.into();
+            record.snapshot_preparation_intent_digest = self.intent_digest.clone();
             record.admission_bindings = None;
             record.snapshot_preparation_receipt = Some(receipt.clone());
             let events = [
@@ -665,6 +702,13 @@ impl Runtime {
                     .map_err(RuntimeError::Conflict)
             })
             .transpose()?;
+        let intent_digest = if target.record.snapshot_preparation_receipt.is_some() {
+            target.record.snapshot_preparation_intent_digest.clone()
+        } else {
+            proof
+                .preparation_intent_digest(target.record.snapshot_origin.as_ref())
+                .map_err(RuntimeError::Conflict)?
+        };
         let worker = Worker {
             runtime: self.clone(),
             handle,
@@ -675,6 +719,7 @@ impl Runtime {
             resources,
             checkouts,
             proof,
+            intent_digest,
             _lifecycle: lifecycle,
             _admission: admission,
             _completion: completion,

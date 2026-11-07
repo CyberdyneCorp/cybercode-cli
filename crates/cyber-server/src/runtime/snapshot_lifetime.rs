@@ -169,6 +169,14 @@ pub trait SnapshotLifetime: Send {
     fn verify_preparation(&self, _origin: Option<&super::SnapshotOrigin>) -> Result<(), String> {
         Err("Native preparation phase proof is unavailable".into())
     }
+    /// Read only a fully prepared native intent; absence grants no payload cleanup.
+    /// This metadata-only operation must not reenter the primary Store.
+    fn preparation_intent_digest(
+        &self,
+        _origin: Option<&super::SnapshotOrigin>,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
+    }
     /// Read-only candidate check against retained native preparation receipts.
     /// Called at the primary writer; no primary Store reentry or metadata writes.
     fn prepare_preparation_acknowledgement(

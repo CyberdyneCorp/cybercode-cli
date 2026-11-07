@@ -850,3 +850,24 @@ Neither source bytes nor current source routes grant cleanup authority or need t
 be read. Both intents, settlement links, phase metadata and durable lookup receipts
 SHALL survive payload reclamation. Retention SHALL begin at durable paired settlement
 and be rechecked during deletion; unknown native owners continue to protect both.
+
+### Cancelled prepared-image cleanup
+
+An exact preparation cancellation with a published origin, positive non-admitted
+version-2 phase, complete empty checkout set and matching native cancellation
+metadata MAY reclaim fully prepared regular target images. Each leaf SHALL match
+its persisted prepared inode identity and immutable target image; incomplete
+construction without those identities SHALL remain protected. The version-3 plan
+SHALL freeze the native intent digest and complete private inventory before
+unlinking. Intent, cancellation, phase and durable request metadata SHALL remain.
+Native acknowledgement and cleanup SHALL NOT fabricate completion or source
+admission. Retention, references, reader/lifetime guards and independent unknown
+fences SHALL use the same consuming-writer protocol as other cleanup classes.
+
+For newly cancelled fully prepared images, the read-only native lifetime port
+returns the immutable intent digest. Review fingerprints bind it; consuming-writer
+revalidation checks it again and persists `snapshot_preparation_intent_digest` in
+the native cancellation event. Version-3 cleanup MUST match that exact committed
+digest. Missing historical digest evidence cannot be inferred from current native
+files and grants no cleanup authority; legacy lookup/metadata acknowledgement
+retains its existing behavior. This adds no public receipt field or source replay.

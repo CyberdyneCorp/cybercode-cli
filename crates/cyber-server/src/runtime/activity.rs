@@ -40,6 +40,8 @@ pub(super) struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_preparation_receipt: Option<super::SnapshotPreparationReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_preparation_intent_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_source_admitted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_bindings: Option<Vec<super::admission_authority::Binding>>,
@@ -140,6 +142,7 @@ impl Scope {
             snapshot_source_admitted: lifetime.as_ref().map(|_| false),
             snapshot_lifetime: lifetime,
             snapshot_preparation_receipt: None,
+            snapshot_preparation_intent_digest: None,
             admission_bindings: Some(authority.bindings().to_vec()),
         };
         let captured = authority.clone();
@@ -210,6 +213,7 @@ impl Scope {
             snapshot_source_admitted: lifetime.as_ref().map(|_| false),
             snapshot_lifetime: lifetime,
             snapshot_preparation_receipt: None,
+            snapshot_preparation_intent_digest: None,
             admission_bindings: Some(authority.bindings.clone()),
         };
         inner
