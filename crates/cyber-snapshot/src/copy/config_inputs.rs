@@ -10,7 +10,7 @@ const TOTAL_LIMIT: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct ConfigInputs {
-    environment: String,
+    environment: Option<String>,
     files: BTreeMap<PathBuf, Option<FileState>>,
     contexts: BTreeMap<PathBuf, DirectoryState>,
     repository: Option<PathBuf>,
@@ -33,6 +33,16 @@ impl ConfigInputs {
         if environment_digest()? != environment {
             return Err("Git configuration environment changed".into());
         }
+        let mut proof = Self::capture_files(paths)?;
+        if environment_digest()? != environment {
+            return Err("Git configuration environment changed".into());
+        }
+        proof.environment = Some(environment);
+        Ok(proof)
+    }
+
+    /// Generated source bytes have no environment-dependent interpretation.
+    pub(crate) fn capture_files(paths: Vec<PathBuf>) -> storage::Result<Self> {
         let mut files = BTreeMap::new();
         let mut bytes = 0;
         for path in paths {
@@ -49,15 +59,59 @@ impl ConfigInputs {
             }
             files.insert(path, state);
         }
-        if environment_digest()? != environment {
-            return Err("Git configuration environment changed".into());
-        }
         Ok(Self {
-            environment,
+            environment: None,
             files,
             contexts: BTreeMap::new(),
             repository: None,
         })
+    }
+
+    /// Reopen bytes only when they still match this observation.
+    pub(crate) fn bytes(&self, path: &Path) -> storage::Result<Vec<u8>> {
+        let expected = self.files.get(path).ok_or("Unbound Git policy input")?;
+        let (state, bytes) = read(path)?;
+        if &state != expected {
+            return Err("Git policy input changed while reading".into());
+        }
+        Ok(bytes)
+    }
+
+    pub(crate) fn fingerprint(&self) -> storage::Result<String> {
+        Ok(storage::digest(
+            &serde_json::to_vec(self).map_err(storage::fail)?,
+        ))
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) -> storage::Result<()> {
+        if other.environment.as_ref().is_some_and(|environment| {
+            self.environment
+                .as_ref()
+                .is_some_and(|old| old != environment)
+        }) || other
+            .repository
+            .as_ref()
+            .is_some_and(|path| self.repository.as_ref() != Some(path))
+        {
+            return Err("Git policy contexts disagree".into());
+        }
+        self.environment = self.environment.clone().or(other.environment);
+        for (path, state) in other.files {
+            if self.files.get(&path).is_some_and(|old| old != &state) {
+                return Err("Git policy observations disagree".into());
+            }
+            self.files.insert(path, state);
+        }
+        for (path, state) in other.contexts {
+            if self.contexts.get(&path).is_some_and(|old| old != &state) {
+                return Err("Git policy directory observations disagree".into());
+            }
+            self.contexts.insert(path, state);
+        }
+        if self.files.len() > 1024 || self.contexts.len() > 4 {
+            return Err("Combined Git policy inputs exceed limits".into());
+        }
+        self.verify()
     }
 
     pub(crate) fn bind_repository(&mut self, path: PathBuf) -> storage::Result<()> {
@@ -104,10 +158,11 @@ impl ConfigInputs {
     }
 
     pub(crate) fn verify(&self) -> storage::Result<()> {
-        let mut current = Self::capture(
-            self.files.keys().cloned().collect(),
-            self.environment.clone(),
-        )?;
+        let paths = self.files.keys().cloned().collect();
+        let mut current = match &self.environment {
+            Some(environment) => Self::capture(paths, environment.clone())?,
+            None => Self::capture_files(paths)?,
+        };
         current.bind_contexts(self.contexts.keys().cloned().collect())?;
         if let Some(repository) = &self.repository {
             current.bind_repository(repository.clone())?;
@@ -424,7 +479,7 @@ mod tests {
         let encoded = serde_json::to_string(&proof).unwrap();
         assert!(!encoded.contains("fixture-secret-value-unique"));
         let mut changed = proof;
-        changed.environment = "0".repeat(64);
+        changed.environment = Some("0".repeat(64));
         assert!(changed.verify().is_err());
     }
 }

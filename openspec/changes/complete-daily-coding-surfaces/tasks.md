@@ -446,3 +446,17 @@ client planning/routing, complete migration/limit combinations, config/generated
 rule-source and filter compatibility, native kills/platforms and reference-aware
 cleanup remain required. Managed Git source admission and M2–M8/parent tasks remain
 open; backend fixture origins do not constitute runtime/checkout proof.
+
+Generated-rule source continuation: supported native policy now retains a bounded
+version-1 generation recipe, original user common-repository exclude observations,
+application settings, skipped literal names and exact output digest. Collection
+regenerates and compares output, and native planning revalidates retained source,
+recipe, output and common/info directory identity. Unchanged generation preserves
+checkpoint identity; descriptor-relative output replacement does not follow file
+or parent links. A new policy fingerprint frame leaves old evidence unpromoted.
+This closes the reproduced post-preparation user-exclude change, including linked
+worktrees, but does not prove user-index/large-untracked eligibility, complete Git
+configuration/filter compatibility or actual runtime ownership. Managed Git source
+admission, M2–M8 and parent tasks remain open. The next client milestone is typed
+recovery review/confirm/lookup/acknowledgement on the implemented non-Git API, with
+real restart/retry acceptance; it does not waive remaining Git/GC/platform gates.

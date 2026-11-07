@@ -3,6 +3,7 @@ pub(crate) mod config_inputs;
 pub(crate) fn object_digest(bytes: &[u8]) -> String {
     storage::digest(bytes)
 }
+pub(crate) mod generated_rules;
 mod git;
 pub(crate) mod git_capture;
 mod git_images;

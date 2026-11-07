@@ -719,3 +719,18 @@ manifest validation, byte/path/count budgets, scoped selection, native preimages
 conflict refusal, worker ownership, acknowledgement and recovery remain mandatory.
 This image bridge alone SHALL NOT enable managed Git source admission or substitute
 for runtime/client/migration and crash/retention acceptance.
+
+### Generated Git exclude source binding
+
+Native policy proof SHALL bind the user common-repository `info/exclude` source,
+including absence and physical common-directory identity, to the exact generated
+shadow exclude bytes. A bounded versioned recipe SHALL retain a source observation
+digest, capture settings, skipped literal paths and generated-byte digest. Source
+locators SHALL derive from the trusted Shadow context, never decoded recipe paths.
+Collection SHALL regenerate the bytes from fresh source observations and compare
+both recipe and shadow output before granting proof. The synchronous native planner
+SHALL revalidate these source, recipe and output observations before effects.
+Unchanged generation SHALL preserve file observations and checkpoint identity;
+publication SHALL use descriptor-relative replacement without following output
+links. This does not prove user-index or large-untracked eligibility changes;
+those and full configuration/filter compatibility still gate managed Git admission.

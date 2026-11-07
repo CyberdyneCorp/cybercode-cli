@@ -11,6 +11,109 @@ struct Repo {
     snapshots: Arc<crate::GitSnapshots>,
 }
 
+#[test]
+fn unsupported_native_config_environment_keeps_ordinary_git_capture_available() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "copy::git::tests::multiline_environment_capture_child",
+        ])
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "fixture.multiline")
+        .env("GIT_CONFIG_VALUE_0", "first\nsecond")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+#[ignore = "subprocess fixture with unsupported native configuration environment"]
+async fn multiline_environment_capture_child() {
+    assert!(crate::copy::config_inputs::environment_digest().is_err());
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("file"), "canonical-readable").unwrap();
+    let snapshot = repo
+        .snapshots
+        .track(repo.root.to_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        snapshot
+            .skipped
+            .iter()
+            .any(|value| value.contains("native Git policy/raw-state proof unavailable"))
+    );
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    assert_eq!(
+        shadow
+            .blob(&snapshot.tree, "file")
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        b"canonical-readable"
+    );
+}
+
+#[tokio::test]
+async fn non_utf8_user_excludes_preserve_canonical_capture_without_native_rule_authority() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("file"), "legacy-readable").unwrap();
+    std::fs::write(repo.root.join(".git/info/exclude"), b"\xff\n").unwrap();
+    let snapshot = repo
+        .snapshots
+        .track(repo.root.to_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        snapshot
+            .skipped
+            .iter()
+            .any(|value| value.contains("native Git policy/raw-state proof unavailable"))
+    );
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    assert_eq!(
+        shadow
+            .blob(&snapshot.tree, "file")
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        b"legacy-readable"
+    );
+    assert!(
+        std::fs::read(shadow.git_dir.join("info/exclude"))
+            .unwrap()
+            .starts_with(b"\xff\n")
+    );
+}
+
+#[tokio::test]
+async fn changed_user_excludes_after_preparation_refuses_native_source_effects() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("file"), "before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), "after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    assert_eq!(repo.track(&repo.root).await, recorded);
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    std::fs::write(repo.root.join(".git/info/exclude"), "new-policy\n").unwrap();
+    let store = repo.store(&repo.root);
+    assert!(store.restore_git_worker(prepared, None).is_err());
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+    assert!(store.recovery().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn changed_git_config_locator_after_preparation_refuses_native_source_effects() {
     let repo = Repo::new();
@@ -1333,6 +1436,11 @@ async fn capture_bound_policy_rejects_application_ignore_and_size_setting_change
         std::fs::write(repo.root.join("file"), b"after").unwrap();
         let recorded = repo.track(&repo.root).await;
         changed.store(true, Ordering::SeqCst);
+        let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+        assert!(shadow.ignore_inputs().await.is_err());
+        // A fresh capture regenerates rules for the new settings. The old
+        // checkpoint still cannot authorize native restore under this policy.
+        assert_ne!(repo.track(&repo.root).await, recorded);
         let prepared = repo
             .prepare(&repo.root, &target, &recorded, &recorded)
             .await;
@@ -1617,6 +1725,19 @@ async fn sha256_linked_worktree_uses_its_common_repository_format_and_scoped_git
         .await
         .unwrap();
     assert_eq!(paths, ["nested/file"]);
+    assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before");
+    let expected = repo.track(&location).await;
+    let prepared = repo
+        .prepare(&location, &recorded, &expected, &expected)
+        .await;
+    let store = repo.store(&location);
+    assert_eq!(store.preview_git(&prepared).unwrap().len(), 1);
+    std::fs::write(
+        repo.root.join(".git/info/exclude"),
+        "changed-common-policy\n",
+    )
+    .unwrap();
+    assert!(store.restore_git_worker(prepared, None).is_err());
     assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before");
     assert_eq!(std::fs::read(linked.join(".git")).unwrap(), marker);
     assert!(

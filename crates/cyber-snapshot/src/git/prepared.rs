@@ -57,7 +57,8 @@ pub(crate) struct PreparedTree {
     pub images: BTreeMap<String, Image>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CaptureSettings {
     pub ignore: Vec<String>,
     pub max_untracked: u64,
@@ -92,7 +93,14 @@ pub(crate) struct PreparedRestore {
 
 impl Shadow {
     pub(crate) async fn ignore_inputs(&self) -> Result<IgnoreInputs, String> {
-        let (config, origins) = self.config_inputs().await?;
+        self.ignore_inputs_for(&self.capture_settings).await
+    }
+
+    pub(super) async fn ignore_inputs_for(
+        &self,
+        settings: &CaptureSettings,
+    ) -> Result<IgnoreInputs, String> {
+        let (mut config, origins) = self.config_inputs().await?;
         let default_global = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|value| !value.is_empty())
             .map(|path| PathBuf::from(path).join("git/ignore"))
@@ -114,13 +122,18 @@ impl Shadow {
             .map_or("false", |value| value.unwrap_or("true"));
         let ignore_case = self.config_boolean("core.ignorecase", raw).await?;
         self.verify_config_inputs(&config, &origins).await?;
+        config.merge(crate::copy::generated_rules::observe(
+            &self.git_dir,
+            &self.common_dir,
+            settings,
+        )?)?;
         Ok(IgnoreInputs {
             config,
             info: self.git_dir.join("info/exclude"),
             global,
             case_insensitive: ignore_case,
             private_roots: self.private_roots.clone(),
-            settings: self.capture_settings.clone(),
+            settings: settings.clone(),
         })
     }
 

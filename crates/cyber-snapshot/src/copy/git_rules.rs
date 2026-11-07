@@ -146,7 +146,7 @@ impl Rules {
             (left.source, &left.path, &left.hash).cmp(&(right.source, &right.path, &right.hash))
         });
         let bytes = serde_json::to_vec(&(
-            "git-policy-capture-v2",
+            "git-policy-capture-v3",
             &self.path,
             &self.inputs,
             bindings,

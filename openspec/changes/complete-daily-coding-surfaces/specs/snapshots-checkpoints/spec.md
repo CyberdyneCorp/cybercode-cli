@@ -345,3 +345,10 @@
 - **WHEN** the native planner prepares restoration after backend routing changes
 - **THEN** it SHALL verify each backend's original images and Location binding, retain namespaced IDs and historical exclusions, and revalidate complete current Git state before source effects
 - **AND** a version-6 journal SHALL bind explicit per-image source kinds and distinct digest framing; old journal versions SHALL refuse those annotations rather than acquire new mixed-image authority
+
+#### Scenario: Generated Git rules retain their original source
+- **GIVEN** native Git preparation uses shadow rules generated from the user common repository's `info/exclude`, application settings and skipped paths
+- **WHEN** the source file is changed or created after preparation, its common directory is replaced, or the generated recipe/output no longer matches fresh source observations
+- **THEN** native planning SHALL refuse before new journal/source effects, including for linked worktrees and scoped Locations
+- **AND** bounded recipe validation SHALL derive source locators from trusted context, preserve unchanged generation observations, and publish output without following existing file or parent links
+- **AND** this proof SHALL NOT imply user-index/large-untracked eligibility or activate managed Git admission

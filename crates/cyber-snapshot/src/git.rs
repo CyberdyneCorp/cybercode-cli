@@ -204,7 +204,7 @@ impl Shadow {
     pub async fn track(&self, ignore: &[String], max_bytes: u64) -> Result<Snapshot, String> {
         self.ensure_init().await?;
         let skipped = self.large_untracked(max_bytes).await;
-        self.write_excludes(ignore, &skipped)?;
+        self.write_excludes(ignore, max_bytes, &skipped)?;
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let capture_before = self.capture_git_state(ignore, max_bytes).await;
         let excluded = self.omitted().await?;
@@ -254,11 +254,11 @@ impl Shadow {
         ignore: &[String],
         max_untracked: u64,
     ) -> Result<crate::copy::git_capture::Capture, String> {
-        let mut inputs = self.ignore_inputs().await?;
-        inputs.settings = prepared::CaptureSettings {
+        let settings = prepared::CaptureSettings {
             ignore: ignore.to_vec(),
             max_untracked,
         };
+        let inputs = self.ignore_inputs_for(&settings).await?;
         let worktree = self.worktree.clone();
         let prefix = if self.pathspec == "." {
             String::new()
@@ -303,7 +303,31 @@ impl Shadow {
     }
 
     /// The user's `info/exclude`, `snapshots.ignore` and the skipped large files.
-    fn write_excludes(&self, ignore: &[String], skipped: &[String]) -> Result<(), String> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn write_excludes(
+        &self,
+        ignore: &[String],
+        max_untracked: u64,
+        skipped: &[String],
+    ) -> Result<(), String> {
+        crate::copy::generated_rules::write(
+            &self.git_dir,
+            &self.common_dir,
+            &prepared::CaptureSettings {
+                ignore: ignore.to_vec(),
+                max_untracked,
+            },
+            skipped,
+        )
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    fn write_excludes(
+        &self,
+        ignore: &[String],
+        _max_untracked: u64,
+        skipped: &[String],
+    ) -> Result<(), String> {
         let mut text =
             std::fs::read_to_string(self.common_dir.join("info/exclude")).unwrap_or_default();
         text.push('\n');
@@ -556,7 +580,7 @@ fn split_z(out: &[u8]) -> Vec<String> {
 }
 
 /// Escape gitignore metacharacters so a path matches only itself.
-fn escape(path: &str) -> String {
+pub(crate) fn escape(path: &str) -> String {
     path.chars().fold(String::new(), |mut s, c| {
         if matches!(c, '*' | '?' | '[' | '\\' | '!' | '#') {
             s.push('\\');

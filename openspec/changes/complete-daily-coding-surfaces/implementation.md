@@ -2739,3 +2739,79 @@ case passed after the full suite. Final format/diff, generated SDK consistency a
 all-target snapshot Clippy checks passed. Pinned strict OpenSpec validated all 117
 items, and spec lint reported 0 errors/25 warnings without baseline attribution.
 No PR/push or native Git source activation is made by this backend increment.
+
+## Generated Git exclude source binding (2026-11-07)
+
+A new real-Git regression reproduced a source-policy gap on local `5be7ab93`:
+changing the user common repository's `info/exclude` after native preparation still
+allowed source restoration. The regression failed its refusal assertion before the
+production fix. The first invocation accidentally selected no tests with an
+incomplete exact name; the fully qualified rerun executed and reproduced the gap.
+
+Supported native collection now verifies a bounded version-1 generation recipe
+against fresh original source observations, exact application settings, skipped
+literal paths and regenerated output bytes. The source locator is derived from
+the trusted Shadow common directory, not deserialized metadata. Source-file absence
+and common-directory identity are retained. The combined configuration proof also
+retains generated output/recipe file observations and the shadow info directory.
+The synchronous planner rechecks this combined proof without invoking Git. A new
+`git-policy-capture-v3` frame does not promote older checkpoint policy evidence.
+
+Generation uses descriptor-relative atomic replacement beneath a no-follow info
+directory. Existing output links are replaced without opening their target for
+writes; unchanged output and recipe are not rewritten, preserving checkpoint
+identity. Original source bytes are bounded and preserved, including non-UTF-8
+patterns, rather than silently dropping unreadable text. Unsupported/nonregular
+source files fail generation explicitly. Windows retains its existing legacy
+implementation and has no new native proof from this change.
+
+Review identified and corrected an initial compatibility regression: generated
+source observation must not require a supported native configuration environment.
+File-only observations now remain independent of environment interpretation, while
+actual native configuration collection and merged proofs retain full environment
+binding. An isolated multiline-configuration fixture verifies ordinary canonical
+capture remains available with explicitly unavailable native proof. Another case
+verifies non-UTF-8 exclude bytes retain canonical capture without native authority.
+An unavailable Rust FIFO helper and a private-method reference in test fixtures
+were corrected before final validation. Changed-settings coverage now checks early
+recipe refusal and stale native policy after regeneration under fresh settings.
+
+Tests additionally cover changed user excludes before effects, stable repeated
+checkpoint IDs, common-source changes for scoped SHA-256 linked worktrees, absent
+source creation, physical common-directory replacement, recipe/output tampering,
+settings mismatch, symlink-safe publication, parent-link refusal and over-limit/
+FIFO inputs. This is not a proof of user-index or large-untracked eligibility,
+full configuration ABA/dependency/filter compatibility, actual managed Git runtime
+ownership/checkout, complete crash/platform acceptance or reference-aware cleanup.
+Managed Git availability and M2–M8/parent acceptance remain unchanged and open.
+
+The code-review skill was applied to all changed source, fixtures and spec deltas,
+using the existing adapter architecture. Review checked bounded reads/rendering/
+parsing, trusted locator derivation, symlink/alias and directory replacement,
+source-generation agreement, combined proof limits, native environment retention,
+legacy/canonical compatibility, checkpoint stability and absence of new mutation/
+acknowledgement authority. The environment compatibility finding above is fixed
+and regression-tested. No unresolved critical/major finding remains within this
+local generated-source-binding scope. This does not accept the wider managed Git
+or complete recovery feature.
+
+Final local macOS arm64 snapshot verification passed 163 cases (123 unit, 18
+file-copy integration, 22 Git integration), with five ignored subprocess fixtures
+across test binaries and no doc tests. The isolated multiline environment fixture
+is invoked by its passing parent. A lifetime fixture child emitted UnexpectedEof
+during real-process death testing; both parent cases passed. Final all-target
+locked snapshot Clippy passed with Rust warnings denied. The initial parallel
+17-case real CLI suite passed 16 and failed one origin-before-source kill case at
+its 30-second reservation-observation deadline. It did not reach recovery assertions;
+no claim about the timeout's origin is made. The final-source serial CLI run subsequently passed all 17 cases in 204.49 seconds
+without overlapping heavy filesystem fixtures. This supplies serial acceptance,
+not an explanation or acceptance of the earlier concurrent observation timeout.
+
+Final format/diff and generated SDK consistency checks passed. Pinned strict
+OpenSpec validated 117 items; spec lint reported 0 errors and 25 warnings without
+unchanged-main attribution. Native C compilation emitted sandbox_init/
+sandbox_free_error deprecation warnings, and the CLI linker reported an oversized
+unwind table warning; no origin attribution is made. This continuation did not run
+native Linux/Windows, separate SDK runtime suites, full workspace, TUI/App or
+source-bound CI. GitHub refresh found #93 open and no open PRs; fetched origin/main
+remains db9e171e. No PR/push or parent-task acceptance is made by this local fix.
