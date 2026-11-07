@@ -1559,6 +1559,12 @@ export interface Operations {
     body: undefined;
     response: S.SnapshotRecovery[];
   };
+  "v1.session.snapshotRecoveryAcknowledge": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotRecoveryResult;
+  };
   "v1.session.snapshotRecoveryConfirm": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -4662,6 +4668,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.snapshotRecoveryAcknowledge": {
+    tag: "session",
+    name: "snapshotRecoveryAcknowledge",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.snapshotRecoveryConfirm": {
     tag: "session",
     name: "snapshotRecoveryConfirm",
@@ -6091,6 +6109,9 @@ export function createGroups(caller: Caller) {
       /** Inspect retained filesystem restore journals without acknowledging or replaying native effects (`GET /api/v1/sessions/{sessionID}/rewind/recovery`) */
       snapshotRecovery: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecovery"]["response"]> =>
         caller.call("v1.session.snapshotRecovery", { path: { sessionID } }, options),
+      /** Reconcile journal acknowledgement for the exact committed native pair without replaying source changes or starting inference (`POST /api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge`) */
+      snapshotRecoveryAcknowledge: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryAcknowledge"]["response"]> =>
+        caller.call("v1.session.snapshotRecoveryAcknowledge", { path: { sessionID, requestID } }, options),
       /** Resolve fingerprint-confirmed native snapshot effects with an exact durable request; repeated IDs are lookup-only (`POST /api/v1/sessions/{sessionID}/rewind/recovery/confirm`) */
       snapshotRecoveryConfirm: (sessionID: string, body: Operations["v1.session.snapshotRecoveryConfirm"]["body"], options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryConfirm"]["response"]> =>
         caller.call("v1.session.snapshotRecoveryConfirm", { path: { sessionID }, body }, options),

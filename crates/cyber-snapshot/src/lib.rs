@@ -315,6 +315,35 @@ impl Snapshots for GitSnapshots {
             }
         })
     }
+    fn acknowledge_recovery(
+        &self,
+        directory: String,
+        worker: cyber_server::runtime::SnapshotAcknowledgementWorker,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                let _ = (directory, worker);
+                Err("Native snapshot acknowledgement is unavailable on this host".into())
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                self.recovery_location(&directory)?;
+                let options = self.recovery_options(&directory);
+                let data = self.data_dir.clone();
+                let lock = cyber_server::workspace::mutation_lock(Path::new(&directory))
+                    .map_err(|error| error.to_string())?;
+                let workspace = lock.lock_owned().await;
+                worker
+                    .run(move |work| {
+                        let _workspace = workspace;
+                        let store = copy::Store::recover_existing(&data, &directory, options)?;
+                        store.reconcile_acknowledgement(work)
+                    })
+                    .await
+            }
+        })
+    }
     fn owned_restore_available(&self, directory: &str) -> bool {
         cfg!(any(target_os = "macos", target_os = "linux")) && self.non_git(directory)
     }

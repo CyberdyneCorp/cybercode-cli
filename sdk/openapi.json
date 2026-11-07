@@ -7466,6 +7466,13 @@
           },
           "filesystem_complete": {
             "type": "boolean"
+          },
+          "resolution_digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Immutable native resolution data, excluding acknowledgement/progress.\nMissing on older receipts; those cannot authorize new journal writes."
           }
         },
         "required": [
@@ -24476,6 +24483,63 @@
             "name": "requestID",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRecoveryResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge": {
+      "post": {
+        "operationId": "v1.session.snapshotRecoveryAcknowledge",
+        "summary": "Reconcile journal acknowledgement for the exact committed native pair without replaying source changes or starting inference",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
             "schema": {
               "type": "string"
             }

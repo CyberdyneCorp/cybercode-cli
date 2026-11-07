@@ -358,6 +358,10 @@ pub fn routes() -> Router<AppState> {
             &format!("{s}/rewind/recovery/requests/{{request_id}}"),
             get(snapshot_recovery_lookup),
         )
+        .route(
+            &format!("{s}/rewind/recovery/requests/{{request_id}}/acknowledge"),
+            post(snapshot_recovery_acknowledge),
+        )
         .route(&format!("{s}/rewind/confirm"), post(rewind_confirm))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
@@ -1248,6 +1252,17 @@ async fn snapshot_recovery_lookup(
                     "No retained snapshot recovery request",
                 )
             })?,
+    }))
+}
+async fn snapshot_recovery_acknowledge(
+    State(state): State<AppState>,
+    Path((id, request_id)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotRecoveryResult>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_acknowledge(&id, &request_id)
+            .await?,
     }))
 }
 async fn rewind_preview(

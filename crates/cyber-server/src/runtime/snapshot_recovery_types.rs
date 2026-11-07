@@ -75,6 +75,10 @@ pub struct SnapshotRecoveryReceipt {
     pub confirmation: String,
     pub original: super::SnapshotOrigin,
     pub filesystem_complete: bool,
+    /// Immutable native resolution data, excluding acknowledgement/progress.
+    /// Missing on older receipts; those cannot authorize new journal writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

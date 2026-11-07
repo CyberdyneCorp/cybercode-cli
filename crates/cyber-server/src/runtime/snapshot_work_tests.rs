@@ -1,5 +1,5 @@
 //! Instrumented worker ownership; native journal/namespace proof is tested separately.
-use super::super::{Admission, Delivery, RuntimeOptions, events};
+use super::super::{Admission, Delivery, RuntimeOptions, Snapshots, events};
 use super::*;
 use std::sync::atomic::AtomicUsize;
 use std::time::Duration;
@@ -61,6 +61,14 @@ fn runtime_with_store(
     store: Arc<cyber_store::Store>,
     root: &std::path::Path,
 ) -> Runtime {
+    runtime_with_snapshots(runtime, store, root, Arc::new(super::super::NoSnapshots))
+}
+fn runtime_with_snapshots(
+    runtime: &Runtime,
+    store: Arc<cyber_store::Store>,
+    root: &std::path::Path,
+    snapshots: Arc<dyn Snapshots>,
+) -> Runtime {
     Runtime::new(RuntimeOptions {
         store,
         resolver: runtime.inner.resolver.clone(),
@@ -73,8 +81,58 @@ fn runtime_with_store(
         max_steps: None,
         today: None,
         interactive: false,
-        snapshots: Arc::new(super::super::NoSnapshots),
+        snapshots,
     })
+}
+
+struct Acknowledgements(Arc<AtomicUsize>);
+impl Snapshots for Acknowledgements {
+    fn track(
+        &self,
+        _: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Option<super::super::Snapshot>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn changed(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<String>, String>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    fn diff(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<super::super::FileDiff>, String>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    fn restore(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<String>, RestoreError>> {
+        Box::pin(async { panic!("acknowledgement replayed a source restore") })
+    }
+    fn acknowledge_recovery(
+        &self,
+        _: String,
+        worker: super::super::SnapshotAcknowledgementWorker,
+    ) -> futures::future::BoxFuture<'_, Result<(), String>> {
+        let count = self.0.clone();
+        Box::pin(async move {
+            worker
+                .run(move |work| {
+                    work.authorize()?;
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+                .await
+        })
+    }
 }
 
 #[tokio::test]
@@ -92,7 +150,9 @@ async fn recovery_pair_lost_commit_reply_is_lookup_only_after_reopening_the_real
         Runtime::registry(),
     ))
     .unwrap();
-    let runtime = runtime_with_store(&base, Arc::new(store), temp.path());
+    let acknowledged = Arc::new(AtomicUsize::new(0));
+    let snapshots = Arc::new(Acknowledgements(acknowledged.clone()));
+    let runtime = runtime_with_snapshots(&base, Arc::new(store), temp.path(), snapshots.clone());
     let session = runtime
         .create_session(super::super::CreateSession {
             directory: temp.path().to_str().unwrap().into(),
@@ -113,6 +173,7 @@ async fn recovery_pair_lost_commit_reply_is_lookup_only_after_reopening_the_real
     drop(state);
     let count = Arc::new(AtomicUsize::new(0));
     let completed = finish_recovery(owner, request.clone(), count.clone()).await;
+    legacy_generic_unknown(&runtime, &handle, &session);
     runtime
         .inner
         .store
@@ -149,6 +210,29 @@ async fn recovery_pair_lost_commit_reply_is_lookup_only_after_reopening_the_real
     );
     assert_eq!(lookup.journal_acknowledged, None);
     let receipt = lookup.receipt.unwrap();
+    assert!(
+        handle
+            .snapshot_uncertain
+            .lock()
+            .unwrap()
+            .contains(&original.activity_id)
+    );
+    let reconciled = runtime
+        .snapshot_recovery_acknowledge(&session, &request.confirmation.request_id)
+        .await
+        .unwrap();
+    assert_eq!(reconciled.journal_acknowledged, Some(true));
+    assert_eq!(acknowledged.load(Ordering::SeqCst), 1);
+    assert!(handle.snapshot_uncertain.lock().unwrap().is_empty());
+    assert!(
+        handle.location_uncertain.load(Ordering::SeqCst),
+        "reconciliation cleared unrelated generic uncertainty"
+    );
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        0,
+        "reconciliation replayed the source worker"
+    );
     runtime.shutdown().await;
     drop(handle);
     drop(runtime);
@@ -157,7 +241,7 @@ async fn recovery_pair_lost_commit_reply_is_lookup_only_after_reopening_the_real
         Runtime::registry(),
     ))
     .unwrap();
-    let reloaded = runtime_with_store(&base, Arc::new(reopened), temp.path());
+    let reloaded = runtime_with_snapshots(&base, Arc::new(reopened), temp.path(), snapshots);
     let lookup = reloaded
         .snapshot_recovery_confirm(&session, &request.confirmation)
         .await
@@ -232,11 +316,101 @@ async fn finish_recovery(
                 confirmation: request.confirmation.confirmation,
                 original: request.original,
                 filesystem_complete: true,
+                resolution_digest: Some("d".repeat(64)),
             });
             Ok(native)
         })
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn acknowledgement_cannot_adopt_an_uncommitted_filesystem_receipt() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let count = Arc::new(AtomicUsize::new(0));
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Acknowledgements(count.clone())),
+    );
+    let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    let request = recovery_request(original);
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let state = handle.state.lock().await;
+    let owner = runtime
+        .snapshot_recovery_worker(&handle, &state, request.clone())
+        .await
+        .unwrap();
+    drop(state);
+    let completed = finish_recovery(owner, request.clone(), Arc::new(AtomicUsize::new(0))).await;
+    drop(completed);
+    assert!(
+        runtime
+            .snapshot_recovery_acknowledge(&session, &request.confirmation.request_id)
+            .await
+            .is_err()
+    );
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    assert!(handle.has_location_uncertainty());
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
+async fn disposed_acknowledgement_request_retains_actual_worker_resources_through_shutdown() {
+    let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    let request = recovery_request(original);
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let state = handle.state.lock().await;
+    let owner = runtime
+        .snapshot_recovery_worker(&handle, &state, request.clone())
+        .await
+        .unwrap();
+    drop(state);
+    let completed = finish_recovery(owner, request.clone(), Arc::new(AtomicUsize::new(0))).await;
+    let origin = completed.worker.scope.snapshot_origin().unwrap().clone();
+    let state = handle.state.lock().await;
+    let receipt = completed.commit_recovery(&state).unwrap();
+    let worker = runtime
+        .snapshot_acknowledgement_worker(&handle, &state, receipt, origin)
+        .await
+        .unwrap();
+    drop(state);
+    let permits = Arc::new(tokio::sync::Semaphore::new(1));
+    let permit = permits.clone().acquire_owned().await.unwrap();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let (finish, gate) = std::sync::mpsc::channel();
+    let task = tokio::spawn(worker.run(move |work| {
+        let _permit = permit;
+        work.authorize()?;
+        started.send(()).unwrap();
+        gate.recv().unwrap();
+        assert!(work.authorize().is_err());
+        Err("cancelled metadata worker".into())
+    }));
+    running.await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert_eq!(permits.available_permits(), 0);
+    assert!(handle.snapshot_active.load(Ordering::SeqCst));
+    let mut shutdown = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.shutdown().await }
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut shutdown)
+            .await
+            .is_err()
+    );
+    finish.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), shutdown)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(permits.available_permits(), 1);
+    assert!(!handle.snapshot_active.load(Ordering::SeqCst));
 }
 
 #[tokio::test]
@@ -679,6 +853,7 @@ async fn ordinary_restore_commit_cannot_consume_a_recovery_receipt_or_acknowledg
                 confirmation: "a".repeat(64),
                 original: origin,
                 filesystem_complete: true,
+                resolution_digest: Some("d".repeat(64)),
             });
             Ok(result)
         })

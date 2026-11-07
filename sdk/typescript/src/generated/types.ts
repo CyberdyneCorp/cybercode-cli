@@ -4762,6 +4762,11 @@ export type SnapshotRecoveryReceipt = {
   confirmation: string;
   original: SnapshotOrigin;
   filesystem_complete: boolean;
+  /**
+   * Immutable native resolution data, excluding acknowledgement/progress.
+   * Missing on older receipts; those cannot authorize new journal writes.
+   */
+  resolution_digest?: string | null;
 };
 
 export type SnapshotRecoveryResult = {

@@ -783,8 +783,9 @@ retry phases passed the repository threshold without allowances. Formatting and
 diff checks passed. macOS sandbox deprecation and Darwin linker warnings were
 observed without assigning their origin to main.
 
-The complete feature is not merge-ready. Explicit journal acknowledgement
-reconciliation after lost replies or failed flushes is still absent. Reservations
+The complete feature is not merge-ready. At this checkpoint explicit journal
+acknowledgement reconciliation after lost replies or failed flushes was absent;
+the following continuation supplies it for committed recovery requests. Reservations
 that never publish a native origin remain unknown and lookup-only; missing records
 do not prove no effects or authorize clearing checkout/process uncertainty. Those
 resource/intent cuts require their own exact proof and operator resolution. Git
@@ -794,3 +795,67 @@ cross-platform results and complete delivery review remain open. Linux/Windows,
 full-workspace checks and real SDK process acceptance were not run here. M2–M8 and
 both issues remain open. A remote refresh still reports main `db9e171e` and no open
 PRs; this increment has not been pushed or merged.
+
+
+### Committed recovery-request acknowledgement reconciliation
+
+The explicit POST `/sessions/{id}/rewind/recovery/requests/{request_id}/acknowledge`
+operation observes both durable native owners in one database read snapshot and
+requires their exact committed receipt. It never admits an unknown or merely
+filesystem-complete request. A separate runtime-issued metadata worker retains
+actual lifecycle, Location and synchronous native store/workspace owners through
+its last call. Its live control remains available to Stop; dropping the requester
+cancels work but does not release those resources before the callback finishes.
+The control is volatile because no new source effect or intent is admitted; the
+already committed owner pair remains the durable recovery identity after a crash.
+
+New receipts persist an immutable resolution digest. Native reconciliation pins
+that digest, the original intent and both private namespaces, then writes child
+acknowledgement before the parent's settlement link, checking current runtime
+authority before each write. A cut between writes retains the fence and supports
+idempotent retry. No source-file scan, replacement, inference or transcript event
+is involved. Older receipts without the digest can only observe an already fully
+acknowledged settlement; they cannot grant new metadata writes. Unrelated opaque
+uncertainty remains unchanged.
+
+Regression evidence includes a real file-backed Store committed-but-lost reply
+followed by reconciliation despite its fenced writer, rejection of an uncommitted
+filesystem receipt, and requester disposal while a synchronous callback retains a
+real semaphore permit through shutdown. Native tests reject modified immutable
+intent and missing legacy digest, cut between the two journal writes, then retry
+while preserving later owner edits. The real CLI/API keep and rollback scenarios
+also reset only mutable acknowledgement fields after a genuine prior partial-
+restore kill, then acknowledge with a source replaced by an external-target symlink.
+Both preserve that symlink, its target, transcript and inference count. This fixture
+models the acknowledgement cut; it is not an actual process kill at that boundary.
+
+The recovery-request path does not yet reconcile an ordinary successful rewind's
+Session/native receipt, reservations lacking native origin, Git journals, or
+reclamation. Those remain required alongside complete clients and platform cuts.
+M2–M8 and both issues remain open.
+
+
+Verification for this continuation on local macOS: 406 server unit tests passed,
+with the one configured subprocess fixture ignored; all 22 affected integration
+cases passed (4 idle-cancellation, 13 Location, 5 rewind-preview). Snapshot tests
+passed 72 cases (37 unit, 18 file-copy, 17 Git). The focused real CLI/API case
+passed both keep and rollback scenarios. SDK typecheck and generation checks
+passed; 131 SDK tests passed, with 10 configured process tests skipped because
+`CYBER_BIN` was unset. OpenAPI consistency and final server/snapshot/CLI all-target
+Clippy with warnings denied passed. Formatting, diff checks and strict OpenSpec
+passed (117 items); spec lint reported 0 errors and 25 warnings, and inventory
+remains 53 capabilities/1030 requirements. The initial integration invocation used
+nonexistent shorthand target names; the corrected three actual targets above all
+ran successfully. No Linux/Windows, full workspace, TUI/App recovery or real SDK
+process acceptance was performed for this continuation.
+
+The code-review skill was applied to every changed runtime/native/HTTP/test and
+generated SDK file. Review checked exact paired ownership and read-snapshot
+consistency, digest compatibility, private namespace/lock binding, child-before-
+parent durable ordering, cancellation/resource lifetime, preservation of generic
+uncertainty, route ownership and replay separation. The review added the explicit
+read transaction to the acknowledgement factory so both owners are observed from
+one snapshot. No additional critical/major findings remain for this increment;
+the missing broader recovery capabilities above remain acceptance gaps for the
+complete feature. Architecture follows the repository's runtime port and native
+adapter split. The increment remains local and does not make M2–M8 complete.

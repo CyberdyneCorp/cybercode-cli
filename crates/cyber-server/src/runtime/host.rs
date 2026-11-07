@@ -1445,6 +1445,18 @@ pub trait Snapshots: Send + Sync {
     ) -> BoxFuture<'_, Result<super::SnapshotCompletion, RestoreError>> {
         Box::pin(async { Err(RestoreError::Failed("Owned recovery is unavailable".into())) })
     }
+    /// Metadata-only reconciliation of an already committed native owner pair.
+    /// The actual synchronous callback must retain the supplied worker and may
+    /// not install source files, create a restore intent or launch subprocesses.
+    fn acknowledge_recovery(
+        &self,
+        _directory: String,
+        _worker: super::SnapshotAcknowledgementWorker,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async {
+            Err("Native snapshot acknowledgement reconciliation is unavailable".into())
+        })
+    }
     /// Only synchronous filesystem hosts retaining runtime-issued worker ownership.
     fn owned_restore_available(&self, _directory: &str) -> bool {
         false

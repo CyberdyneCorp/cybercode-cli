@@ -46,3 +46,15 @@ test("snapshot recovery confirmation and lookup retain the exact request without
   assert.equal(calls[1]!.method, "GET");
   assert.equal(calls[1]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/recovery/requests/request%2Fwith%20space");
 });
+
+test("snapshot recovery acknowledgement uses the retained request without a replay body", async () => {
+  const result = { state: "acknowledged", journal_acknowledged: true, receipt: { resolution_digest: "d".repeat(64) } };
+  const { client, calls } = mockClient(() => json(200, { data: result }));
+  const acknowledged = await client.session.snapshotRecoveryAcknowledge("ses_owner", "request/with space");
+  assert.equal(acknowledged.journal_acknowledged, true);
+  assert.equal(acknowledged.receipt?.resolution_digest, "d".repeat(64));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]!.method, "POST");
+  assert.equal(calls[0]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/recovery/requests/request%2Fwith%20space/acknowledge");
+  assert.ok(!calls[0]!.body);
+});

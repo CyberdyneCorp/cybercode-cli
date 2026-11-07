@@ -968,6 +968,62 @@ fn assert_recovery_lookup_does_not_replay(
         Some("new owner edit after recovery")
     );
     assert_eq!(env.messages(id).as_slice(), messages);
+    reconcile_missing_journal_acknowledgement(env, id, request_id, result);
+    assert_eq!(env.messages(id).as_slice(), messages);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reconcile_missing_journal_acknowledgement(
+    env: &Env,
+    id: &str,
+    request_id: &str,
+    result: &Value,
+) {
+    let namespace = std::fs::read_dir(env.root.join("cyber-home/data/snapshot/global"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    // Reproduce a cut after the durable owner pair but before either native ack.
+    // Only mutable acknowledgement metadata is reset; the persisted digest stays valid.
+    for journal in [
+        &result["receipt"]["journal_id"],
+        &result["receipt"]["resolution_id"],
+    ] {
+        let path = namespace
+            .join("journals")
+            .join(journal.as_str().unwrap())
+            .join("intent.json");
+        let mut intent: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        intent["acknowledged"] = false.into();
+        intent.as_object_mut().unwrap().remove("settled_by");
+        std::fs::write(path, serde_json::to_vec(&intent).unwrap()).unwrap();
+    }
+    let target = env.root.join("ack-owner-target");
+    std::fs::write(&target, "new owner edit after recovery").unwrap();
+    let source = env.root.join("repo/bulk_0000");
+    std::fs::remove_file(&source).unwrap();
+    std::os::unix::fs::symlink(&target, &source).unwrap();
+    let path = format!("/sessions/{id}/rewind/recovery/requests/{request_id}/acknowledge");
+    let reconciled = json(&env.cyber(&["api", "POST", &path, "-d", "{}"]))["data"].clone();
+    assert_eq!(reconciled["receipt"], result["receipt"]);
+    assert_eq!(reconciled["journal_acknowledged"], true);
+    assert!(
+        std::fs::symlink_metadata(source)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "new owner edit after recovery"
+    );
+    assert_native_settlement_link(
+        env,
+        result["receipt"]["journal_id"].as_str().unwrap(),
+        result,
+    );
 }
 
 #[test]

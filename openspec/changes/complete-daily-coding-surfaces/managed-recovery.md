@@ -189,3 +189,12 @@ count as positive native implementation acceptance.
   inactive branches, reader protection and cap pressure.
 - Linux x64/ARM and macOS Intel/ARM native positives and denials; explicit Windows
   results/limits; existing Git compatibility and shared binary recovery regressions.
+
+
+Implementation note (2026-11-06): committed file-copy recovery requests now expose
+an explicit metadata-only acknowledgement operation. New durable receipts bind an
+immutable resolution digest; older receipts lacking it cannot authorize new journal
+writes. The worker observes the exact committed owner pair, retains native locks,
+and checks current authority before publishing child and parent acknowledgements.
+Lookup remains read-only. Ordinary restore reconciliation, pre-origin cuts, Git
+integration and reference-aware reclamation remain pending implementation.

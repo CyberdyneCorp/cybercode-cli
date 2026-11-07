@@ -227,7 +227,11 @@ impl Store {
     ) -> Result<()> {
         let origin = origin.ok_or("Recovery completion has no reserved native worker origin")?;
         let (_, journal) = self.journal(&origin.binding.journal_id)?;
-        if receipt(&origin.binding.journal_id, &journal)? != *expected {
+        let mut observed = receipt(&origin.binding.journal_id, &journal)?;
+        if expected.resolution_digest.is_none() {
+            observed.resolution_digest = None;
+        }
+        if observed != *expected {
             return Err("Native resolution receipt changed".into());
         }
         Ok(())
@@ -261,7 +265,17 @@ impl Store {
         &self,
         origin: &SnapshotOrigin,
         dir: Dir,
+        journal: Journal,
+    ) -> Result<()> {
+        self.acknowledge_resolution_authorized(origin, dir, journal, &|| Ok(()))
+    }
+
+    fn acknowledge_resolution_authorized(
+        &self,
+        origin: &SnapshotOrigin,
+        dir: Dir,
         mut journal: Journal,
+        authorize: &dyn Fn() -> Result<()>,
     ) -> Result<()> {
         let resolution = journal
             .resolution
@@ -282,11 +296,45 @@ impl Store {
         }
         // The child acknowledgement is durable before publishing the parent's
         // settlement link. A cut between writes stays fenced and is idempotent.
+        authorize()?;
+        self.verify_worker_namespace(origin)?;
         journal.acknowledged = true;
         Self::record(&dir, &journal)?;
+        authorize()?;
+        self.verify_worker_namespace(&resolution.original)?;
         parent.acknowledged = true;
         parent.settled_by = Some(origin.binding.journal_id.clone());
         Self::record(&parent_dir, &parent)
+    }
+
+    pub(crate) fn reconcile_acknowledgement(
+        &self,
+        work: &cyber_server::runtime::SnapshotAcknowledgementWork<'_>,
+    ) -> Result<()> {
+        self.reconcile_receipt(work.origin(), work.receipt(), &|| work.authorize())
+    }
+    pub(super) fn reconcile_receipt(
+        &self,
+        origin: &SnapshotOrigin,
+        expected: &Receipt,
+        authorize: &dyn Fn() -> Result<()>,
+    ) -> Result<()> {
+        authorize()?;
+        self.verify_worker_namespace(origin)?;
+        self.verify_receipt(Some(origin), expected)?;
+        let (dir, journal) = self.journal(&origin.binding.journal_id)?;
+        if expected.resolution_digest.is_none() {
+            let (_, parent) = self.journal(&expected.journal_id)?;
+            if journal.acknowledged
+                && parent.acknowledged
+                && parent.settled_by.as_deref() == Some(origin.binding.journal_id.as_str())
+            {
+                self.verify_settlement(&parent)?;
+                return Ok(());
+            }
+            return Err("Legacy receipt has no persisted immutable resolution digest; retained evidence cannot authorize new acknowledgement writes".into());
+        }
+        self.acknowledge_resolution_authorized(origin, dir, journal, authorize)
     }
     pub(super) fn resolution_preimages<'a>(
         &self,
@@ -645,5 +693,6 @@ fn receipt(id: &str, record: &Journal) -> Result<Receipt> {
         confirmation: resolution.request.confirmation.clone(),
         original: resolution.original.clone(),
         filesystem_complete: true,
+        resolution_digest: Some(immutable_digest(record)?),
     })
 }

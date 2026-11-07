@@ -3,6 +3,48 @@ use super::{Runtime, RuntimeError, SnapshotRecoveryReview, SnapshotRecoverySelec
 use rusqlite::OptionalExtension;
 
 impl Runtime {
+    /// Reconcile only acknowledgement metadata for a durably committed request.
+    /// Unknown/incomplete requests cannot use this path to acquire an acknowledgement.
+    pub async fn snapshot_recovery_acknowledge(
+        &self,
+        session: &str,
+        request_id: &str,
+    ) -> Result<super::SnapshotRecoveryResult, RuntimeError> {
+        let mut result = self
+            .snapshot_recovery_lookup(session, request_id)
+            .await?
+            .ok_or_else(|| RuntimeError::Invalid("No retained recovery request".into()))?;
+        if result.state != super::SnapshotRecoveryState::Acknowledged {
+            return Err(RuntimeError::Conflict(
+                "Only an exact committed recovery receipt can reconcile journal acknowledgement"
+                    .into(),
+            ));
+        }
+        let receipt = result
+            .receipt
+            .clone()
+            .ok_or_else(|| RuntimeError::Corrupt("Committed recovery lacks its receipt".into()))?;
+        let origin = result.resolution.clone().ok_or_else(|| {
+            RuntimeError::Corrupt("Committed recovery lacks its native origin".into())
+        })?;
+        let handle = self.inner.handle(session).await?;
+        let state = handle.state.lock().await;
+        let directory = state.info.directory.clone();
+        let worker = self
+            .snapshot_acknowledgement_worker(&handle, &state, receipt.clone(), origin.clone())
+            .await?;
+        drop(state);
+        self.inner
+            .options
+            .snapshots
+            .acknowledge_recovery(directory, worker)
+            .await
+            .map_err(RuntimeError::Conflict)?;
+        handle.acknowledge_snapshot_uncertainty(&receipt.original.activity_id);
+        handle.acknowledge_snapshot_uncertainty(&origin.activity_id);
+        result.journal_acknowledged = Some(true);
+        Ok(result)
+    }
     /// A repeated request is always lookup-only, even after a partial outcome or
     /// later owner edits. Reconciliation is a separate operation.
     pub async fn snapshot_recovery_confirm(

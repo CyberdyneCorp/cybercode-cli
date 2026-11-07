@@ -43,6 +43,111 @@ impl Prepared {
             .resolve_recovery(request, &|| Ok(()), None)
             .unwrap()
     }
+    fn resolution_with_origin(
+        &self,
+        request: &Confirmation,
+    ) -> (
+        cyber_server::runtime::SnapshotRecoveryReceipt,
+        cyber_server::runtime::SnapshotOrigin,
+    ) {
+        let receipt = self.resolve(request);
+        let (dir, mut journal) = self.store.journal(&receipt.resolution_id).unwrap();
+        let mut origin = self.record.origin.as_ref().unwrap().clone();
+        origin.activity_id = "op_resolution_fixture".into();
+        origin.binding.journal_id = receipt.resolution_id;
+        origin.binding.journal_identity = storage::dir_identity(&dir).unwrap();
+        journal.origin = Some(origin.clone());
+        Store::record(&dir, &journal).unwrap();
+        (self.resolve(request), origin)
+    }
+}
+
+#[test]
+fn reconciliation_rejects_changed_intent_and_unverifiable_legacy_writes() {
+    let p = Prepared::managed();
+    p.apply(0);
+    let request = p.confirmation(Action::Rollback, "reconcile-identity");
+    let (receipt, origin) = p.resolution_with_origin(&request);
+    let mut legacy = receipt.clone();
+    legacy.resolution_digest = None;
+    assert!(
+        p.store
+            .reconcile_receipt(&origin, &legacy, &|| Ok(()))
+            .is_err()
+    );
+    let (dir, mut journal) = p.store.journal(&receipt.resolution_id).unwrap();
+    journal.context = Some(super::super::RestoreContext {
+        target: format!("copy:{}", "0".repeat(64)),
+        recorded: format!("copy:{}", "0".repeat(64)),
+        expected: format!("copy:{}", "0".repeat(64)),
+        exclusions: vec!["tampered".into()],
+    });
+    Store::record(&dir, &journal).unwrap();
+    assert!(
+        p.store
+            .reconcile_receipt(&origin, &receipt, &|| Ok(()))
+            .is_err()
+    );
+    assert!(!p.store.journal("restore_fixture").unwrap().1.acknowledged);
+    assert!(
+        !p.store
+            .journal(&receipt.resolution_id)
+            .unwrap()
+            .1
+            .acknowledged
+    );
+}
+
+#[test]
+fn reconciliation_cut_between_journal_writes_retains_fence_and_retry_preserves_owner_edits() {
+    let p = Prepared::managed();
+    p.apply(0);
+    let request = p.confirmation(Action::Rollback, "reconcile-cut");
+    let (receipt, origin) = p.resolution_with_origin(&request);
+    let calls = std::cell::Cell::new(0);
+    let stopped = || {
+        calls.set(calls.get() + 1);
+        if calls.get() == 3 {
+            Err("cancelled before parent acknowledgement".into())
+        } else {
+            Ok(())
+        }
+    };
+    assert!(
+        p.store
+            .reconcile_receipt(&origin, &receipt, &stopped)
+            .is_err()
+    );
+    assert!(
+        p.store
+            .journal(&receipt.resolution_id)
+            .unwrap()
+            .1
+            .acknowledged
+    );
+    assert!(!p.store.journal("restore_fixture").unwrap().1.acknowledged);
+    assert!(p.store.ensure_recovered().is_err());
+    std::fs::write(p.root.join("existing/replace"), b"later owner data").unwrap();
+    p.store
+        .reconcile_receipt(&origin, &receipt, &|| Ok(()))
+        .unwrap();
+    p.store.ensure_recovered().unwrap();
+    assert_eq!(
+        std::fs::read(p.root.join("existing/replace")).unwrap(),
+        b"later owner data"
+    );
+    let (dir, _) = p.store.journal(&receipt.resolution_id).unwrap();
+    let before =
+        storage::identity(&storage::open(&dir, Path::new("intent.json")).unwrap()).unwrap();
+    let mut legacy = receipt;
+    legacy.resolution_digest = None;
+    p.store
+        .reconcile_receipt(&origin, &legacy, &|| Ok(()))
+        .unwrap();
+    assert_eq!(
+        storage::identity(&storage::open(&dir, Path::new("intent.json")).unwrap()).unwrap(),
+        before
+    );
 }
 
 #[tokio::test]
@@ -59,6 +164,7 @@ async fn immutable_intent_handoff_rejects_changed_context_with_unchanged_files_a
     origin.binding.journal_identity = storage::dir_identity(&dir).unwrap();
     journal.origin = Some(origin.clone());
     Store::record(&dir, &journal).unwrap();
+    let receipt = p.resolve(&request);
     let digest = p.store.worker_digest(Some(&origin)).unwrap();
     let workspace = std::sync::Arc::new(tokio::sync::Mutex::new(()))
         .lock_owned()
