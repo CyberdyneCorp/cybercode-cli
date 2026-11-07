@@ -2474,3 +2474,89 @@ integration/native and real CLI tests cover the added behavior; generated SDK
 checks and real-client tests pass as recorded above. This review does not approve
 the full recovery delivery increment or close the explicitly retained managed Git,
 partial-construction, reclamation, crash/platform/client and CI acceptance gaps.
+
+
+## Git object-format routing and retained-history inspection (2026-11-07)
+
+A new regression against production code at 0a7cfad4 initialized an actual SHA-256
+user repository and captured through the public Snapshots adapter. It failed with
+a 69-character copy identity rather than a 64-character Git identity: libgit2's
+read-only worktree discovery refused this repository, so non_git incorrectly
+selected the copy backend. The former test manually initialized a SHA-256 shadow
+inside a SHA-1 user repository and therefore did not prove public discovery.
+This is a comparison against the prior local implementation, not an assertion
+about unchanged main.
+
+Read-only ancestor marker checks now prevent fallback admission for unsupported,
+malformed, dangling or unreadable Git metadata. Canonicalizing the Location covers
+relative paths and nested Locations; a marker does not supply repository, native
+worker or mutation authority. Classification creates no identity cache or snapshot
+namespace. Capture reports unavailable repository discovery explicitly instead of
+silently returning a new copy checkpoint.
+
+Before shadow initialization, bounded read-only Git metadata queries determine the
+exact common repository storage format. Only SHA-1/SHA-256 are accepted; existing
+shadow formats must match before capture/index changes. New shadows explicitly
+initialize with the matching format and borrow only matching-format object stores.
+The storage selector is documented in
+[Git's versioned rev-parse manual](https://git-scm.com/docs/git-rev-parse/2.31.0#Documentation/git-rev-parse.txt---show-object-formatstorageinputoutput).
+No new native Git source admission or checkout/reclamation authority is enabled.
+
+Pre-fix SHA-256 Locations may retain copy checkpoints. Changed-path/diff inspection
+now dispatches by typed pair identity, rejects mixed-backend comparisons explicitly,
+and opens only an existing Location-bound store. Historical exclusions group copy
+and Git IDs separately before combining reports. Missing stores refuse without
+creating metadata. This prevents routing correction from hiding old read-only
+history; cross-backend restore/migration is still unimplemented and must be resolved
+before complete managed Git delivery. Original checkpoints/journals are retained,
+not rewritten or relabeled.
+
+Regression coverage uses actual SHA-256 user repositories and a linked worktree,
+including nested Location scoping, UTF-16 canonical/raw images, exact native import,
+legacy public reviewed restore of supported plain images, unchanged user index and
+config, original gitfile preservation, malformed/dangling marker refusal,
+mismatched existing shadow refusal and existing-only history inspection. Managed
+Git admission remains disabled in all fixtures. These tests do not prove the full
+runtime-owned Git callback, crash/recovery/platform or migration contract.
+
+
+The code-review skill was applied to routing, initialization, read ports, tests
+and spec changes. Review found and corrected a native reader-lifetime regression:
+inspection-only Store opening lacked the lock formerly held by file_copy reads.
+The existing-only read helper now holds the original native namespace lock through
+its callback. A real held-Store regression refuses inspection with storage-busy,
+then succeeds after the actual owner drops. Missing-store reads create no state.
+This retains existing fencing; complete reference/reader/lease-aware reclamation
+still requires its separate implementation and acceptance.
+
+Local macOS arm64 verification: the full locked snapshot suite passed 141 cases
+(101 unit, 18 file-copy integration, 22 Git integration), with 2 ignored subprocess
+fixtures; no doc tests were present. The extended linked-worktree public-restore
+case, missing-store/no-creation case and native reader-contention case also passed
+focused final-source checks. All-target locked snapshot Clippy passed with Rust
+warnings denied. Format/diff and generated SDK consistency checks passed. Pinned
+strict OpenSpec passed all 117 items; spec lint reported 0 errors and 25 warnings
+without unchanged-main attribution. Native C compilation reported sandbox_init/
+sandbox_free_error deprecation warnings without origin attribution.
+
+GitHub state was rechecked through the GitHub skill: #92 and #93 are open, no open
+PRs were returned, and fetched origin/main remains db9e171e. There is no new main
+composition to merge. No PR/push, source-bound CI, native Linux/Windows, TUI/App,
+full workspace or separate SDK execution is claimed for this format-routing
+continuation. Public API/schema shapes did not change.
+
+Review verdict: approve the local format-routing and inspection correction;
+0 critical and 0 major findings remain unresolved. The native reader-lock finding
+was fixed and regression-tested. Existing snapshot adapter/native Store boundaries
+are preserved. Full managed Git integration, cross-backend restore/migration,
+configuration/filter races, partial-constructor recovery, reference-aware cleanup
+and full client/platform acceptance remain open; neither issue nor parent tasks
+are complete.
+
+
+Final-source locked real CLI branch/recovery acceptance passed all 17 cases,
+including partial-replacement kills, keep/rollback, restart/retry, stage/clear,
+disabled snapshots and ordinary no-op receipts. These cases preserve unmanaged
+file-copy and legacy Git behavior; the new SHA-256 fixtures above separately cover
+actual repository-format discovery and scoped materialization. No managed Git
+runtime activation or full goal acceptance is inferred from these results.

@@ -80,6 +80,18 @@ impl Drop for PreviewIndex {
     }
 }
 
+/// A marker only prevents fallback admission. It grants no Git/source authority
+/// and creates no project identity cache when library discovery is unsupported.
+pub(crate) fn repository_marker(location: &Path) -> bool {
+    let Ok(location) = std::fs::canonicalize(location) else {
+        return true;
+    };
+    location.ancestors().any(|parent| {
+        !matches!(std::fs::symlink_metadata(parent.join(".git")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
 impl Shadow {
     pub fn locate(root: &Path, location: &Path) -> Option<Self> {
         let project = cyber_core::project::identify(location);
@@ -151,11 +163,18 @@ impl Shadow {
     }
 
     async fn ensure_init(&self) -> Result<(), String> {
+        let mut source = self.clone();
+        source.git_dir = self.common_dir.clone();
+        let format = source.object_format().await?;
         if self.git_dir.join("HEAD").exists() {
+            if self.object_format().await? != format {
+                return Err("Git snapshot shadow object format differs from its repository".into());
+            }
             return Ok(());
         }
         std::fs::create_dir_all(&self.git_dir).map_err(|e| e.to_string())?;
-        self.run(&["init", "--quiet"]).await?;
+        self.run(&["init", "--quiet", &format!("--object-format={format}")])
+            .await?;
         for (key, value) in [
             ("core.autocrlf", "false"),
             ("core.fsmonitor", "false"),
@@ -166,6 +185,18 @@ impl Shadow {
         let alternates = self.git_dir.join("objects/info/alternates");
         let objects = self.common_dir.join("objects");
         std::fs::write(alternates, format!("{}\n", objects.display())).map_err(|e| e.to_string())
+    }
+
+    async fn object_format(&self) -> Result<&'static str, String> {
+        match self
+            .run_bounded(&["rev-parse", "--show-object-format=storage"], 16)
+            .await?
+            .as_slice()
+        {
+            b"sha1\n" => Ok("sha1"),
+            b"sha256\n" => Ok("sha256"),
+            _ => Err("Unsupported Git snapshot repository object format".into()),
+        }
     }
 
     pub async fn track(&self, ignore: &[String], max_bytes: u64) -> Result<Snapshot, String> {

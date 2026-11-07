@@ -626,3 +626,27 @@ resolution digest. Native journal verification remains responsible for its own
 immutable intent; runtime checkout evidence is additionally attested by the writer.
 Legacy receipts omit the section and gain no marker authority. Missing original
 version-2 proof cannot be silently downgraded to legacy evidence.
+
+
+### Git repository format routing
+
+Read-only presence of an ancestor .git marker SHALL prevent an unsupported or
+unreadable Git repository from being admitted as an ordinary non-Git Location.
+This guard SHALL NOT parse untrusted markers into mutation authority or create
+project identity/cache files. Shadow initialization SHALL query the exact user's
+common repository object format with bounded read-only Git metadata output,
+initialize a matching SHA-1 or SHA-256 private repository, and refuse an existing
+shadow with a different format before capture/index mutation. Public capture of a
+SHA-256 user repository SHALL retain its Git identities rather than silently
+returning copy identities. Source admission, native acknowledgement and reclamation
+retain their independent gates. Unsupported formats SHALL fail explicitly rather
+than selecting a different backend.
+
+
+Retained historical copy checkpoints SHALL remain readable by their typed IDs for
+changed-path, diff and exclusion inspection after Git discovery is corrected.
+These reads SHALL require an existing Location-bound store and SHALL create no
+replacement namespace. Comparing a copy checkpoint to a Git checkpoint SHALL
+refuse explicitly rather than return an empty difference or reinterpret IDs.
+This read-only compatibility grants no cross-backend restore/migration authority;
+that acceptance remains required before complete managed Git delivery.

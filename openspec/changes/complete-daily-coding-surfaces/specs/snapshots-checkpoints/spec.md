@@ -317,3 +317,17 @@
 #### Scenario: Non-git project
 - **WHEN** a Session runs in an admitted folder without git
 - **THEN** edits remain rewindable through private Location-bound file-copy snapshots
+
+
+#### Scenario: Git repository object format does not select a non-Git backend
+- **WHEN** a Location has an ancestor Git marker but the library cannot discover its repository format
+- **THEN** the snapshot adapter SHALL NOT classify it as an ordinary non-Git Location or enable non-Git owned restore
+- **AND** Git capture SHALL initialize a private shadow with the exact user's supported SHA-1 or SHA-256 object format and refuse a mismatched existing shadow before capture/index mutation
+- **AND** read-only backend classification SHALL create no identity cache or snapshot namespace, and malformed/unreadable repository metadata SHALL NOT grant fallback mutation authority
+
+
+#### Scenario: Historical copy checkpoints remain inspectable after Git routing changes
+- **GIVEN** a Git Location retains copy checkpoints produced by earlier fallback routing
+- **WHEN** the caller inspects changed paths, diffs or historical exclusions
+- **THEN** typed copy IDs SHALL select the existing Location-bound copy store without creating a missing namespace, and exclusions from copy and Git history SHALL remain reportable
+- **AND** comparisons between copy and Git IDs SHALL refuse explicitly without source effects or fabricated empty differences; read compatibility SHALL NOT authorize cross-backend restore or migration

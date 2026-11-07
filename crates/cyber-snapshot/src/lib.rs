@@ -29,6 +29,16 @@ pub type ReferencesFn = dyn Fn() -> Result<BTreeSet<String>, String> + Send + Sy
 
 const DEFAULT_MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
 
+fn copy_comparison(from: &str, to: &str) -> Result<bool, String> {
+    match (from.starts_with("copy:"), to.starts_with("copy:")) {
+        (true, true) => Ok(true),
+        (false, false) => Ok(false),
+        _ => {
+            Err("Snapshots use different backends; cross-backend comparison is unavailable".into())
+        }
+    }
+}
+
 pub struct GitSnapshots {
     data_dir: PathBuf,
     config: Arc<ConfigFn>,
@@ -92,6 +102,7 @@ impl GitSnapshots {
             .any(|root| Path::new(directory).starts_with(root))
             && (self.config)(Path::new(directory)).get("snapshots") != Some(&Value::Bool(false))
             && cyber_core::project::worktree_root(Path::new(directory)).is_none()
+            && !git::repository_marker(Path::new(directory))
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -130,6 +141,60 @@ impl GitSnapshots {
         })
         .await
         .map_err(|e| format!("Snapshot worker did not acknowledge completion: {e}"))?
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn read_file_copy<T: Send + 'static>(
+        &self,
+        directory: String,
+        operation: impl FnOnce(copy::Store) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, String> {
+        let options = self.copy_options(&directory);
+        let data = self.data_dir.clone();
+        let lock = cyber_server::workspace::mutation_lock(Path::new(&directory))
+            .map_err(|error| error.to_string())?;
+        let guard = lock.lock_owned().await;
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            // Keep the existing native namespace lock through immutable reads;
+            // opening for inspection alone would lose the former reader fence.
+            let store = copy::Store::recover_existing(&data, &directory, options)?;
+            operation(store)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn retained_exclusions(
+        &self,
+        directory: String,
+        trees: Vec<String>,
+    ) -> Result<Vec<String>, String> {
+        if trees.is_empty() {
+            return Ok(vec![]);
+        }
+        if self.non_git(&directory) {
+            return self
+                .read_file_copy(directory, move |store| store.exclusions(&trees))
+                .await;
+        }
+        let (copies, git): (Vec<_>, Vec<_>) =
+            trees.into_iter().partition(|id| id.starts_with("copy:"));
+        let mut exclusions = BTreeSet::new();
+        if !copies.is_empty() {
+            exclusions.extend(
+                self.read_file_copy(directory.clone(), move |store| store.exclusions(&copies))
+                    .await?,
+            );
+        }
+        if !git.is_empty() {
+            let shadow = self
+                .shadow(&directory)
+                .ok_or("Git snapshot exclusion history is unavailable")?;
+            exclusions.extend(shadow.historical_exclusions(&git).await?);
+        }
+        Ok(exclusions.into_iter().collect())
     }
 
     /// Inspect retained journals without restoring files or acknowledging native effects.
@@ -602,6 +667,12 @@ impl Snapshots for GitSnapshots {
                 }
             }
             let Some(shadow) = self.shadow(&directory) else {
+                if (self.config)(Path::new(&directory)).get("snapshots")
+                    != Some(&Value::Bool(false))
+                    && git::repository_marker(Path::new(&directory))
+                {
+                    return Err("Git snapshots are unavailable for this repository; non-Git fallback is disabled".into());
+                }
                 return Ok(None);
             };
             let (ignore, max) = self.options(Path::new(&directory));
@@ -620,10 +691,10 @@ impl Snapshots for GitSnapshots {
     ) -> BoxFuture<'_, Result<Vec<String>, String>> {
         let (directory, from, to) = (directory.to_string(), from.to_string(), to.to_string());
         Box::pin(async move {
-            if self.non_git(&directory) {
+            if copy_comparison(&from, &to)? || self.non_git(&directory) {
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
                 return self
-                    .file_copy(directory, move |store| store.changed(&from, &to))
+                    .read_file_copy(directory, move |store| store.changed(&from, &to))
                     .await;
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 return Err("Non-Git snapshots are unavailable on this host".into());
@@ -647,10 +718,10 @@ impl Snapshots for GitSnapshots {
     ) -> BoxFuture<'_, Result<Vec<FileDiff>, String>> {
         let (directory, from, to) = (directory.to_string(), from.to_string(), to.to_string());
         Box::pin(async move {
-            if self.non_git(&directory) {
+            if copy_comparison(&from, &to)? || self.non_git(&directory) {
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
                 return self
-                    .file_copy(directory, move |store| store.diff(&from, &to))
+                    .read_file_copy(directory, move |store| store.diff(&from, &to))
                     .await;
                 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
                 return Err("Non-Git snapshots are unavailable on this host".into());
@@ -670,15 +741,16 @@ impl Snapshots for GitSnapshots {
         let directory = directory.to_owned();
         Box::pin(async move {
             #[cfg(any(target_os = "macos", target_os = "linux"))]
-            if self.non_git(&directory) {
-                return self
-                    .file_copy(directory, move |store| store.exclusions(&trees))
-                    .await;
+            {
+                self.retained_exclusions(directory, trees).await
             }
-            if let Some(shadow) = self.shadow(&directory) {
-                return shadow.historical_exclusions(&trees).await;
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                if let Some(shadow) = self.shadow(&directory) {
+                    return shadow.historical_exclusions(&trees).await;
+                }
+                Ok(vec![])
             }
-            Ok(vec![])
         })
     }
     fn reviewed_restore_available(&self) -> bool {

@@ -405,3 +405,15 @@ substituting a fresh Session lease or replaying source work. Legacy receipts gai
 no new claim authority. This continuation does not close M2–M8 or parent tasks:
 partial acquisition, actual managed Git source integration, reference-aware
 reclamation and full native/platform/client acceptance remain required.
+
+
+Git format routing continuation: public capture now declines non-Git fallback when
+an ancestor .git marker exists even if libgit2 cannot discover the repository.
+Private shadows initialize with the user's exact supported object format and
+mismatched existing shadows refuse before index mutation. Actual SHA-256 repository,
+encoded-image and linked-worktree/subdirectory coverage replaces the former
+manually initialized shadow-only graph fixture. Retained copy history stays readable
+by typed IDs through existing namespaces; mixed-backend comparison refuses. This
+does not admit managed Git source work or implement cross-backend restore/migration.
+These compatibility/acceptance requirements, configuration races, partial
+construction and reference-aware cleanup remain open with M2–M8 and parent tasks.

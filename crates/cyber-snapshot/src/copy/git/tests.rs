@@ -12,6 +12,9 @@ struct Repo {
 }
 impl Repo {
     fn new() -> Self {
+        Self::with_format("sha1")
+    }
+    fn with_format(format: &str) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let base = temp.path().canonicalize().unwrap();
         let root = base.join("work");
@@ -19,7 +22,7 @@ impl Repo {
         std::fs::create_dir(&root).unwrap();
         assert!(
             std::process::Command::new("git")
-                .args(["init", "--quiet"])
+                .args(["init", "--quiet", &format!("--object-format={format}")])
                 .arg(&root)
                 .status()
                 .unwrap()
@@ -1153,21 +1156,8 @@ async fn native_git_rejects_later_normalization_equivalent_owner_bytes() {
 }
 
 #[tokio::test]
-async fn native_git_raw_capture_supports_sha256_shadow_graphs_and_encoded_bytes() {
-    let repo = Repo::new();
-    // Test the graph codec at both object widths. This does not claim public
-    // discovery of SHA-256 user repositories (libgit2 discovery still refuses it).
-    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
-    std::fs::create_dir_all(&shadow.git_dir).unwrap();
-    assert!(
-        std::process::Command::new("git")
-            .arg("--git-dir")
-            .arg(&shadow.git_dir)
-            .args(["init", "--bare", "--quiet", "--object-format=sha256"])
-            .status()
-            .unwrap()
-            .success()
-    );
+async fn native_git_raw_capture_supports_sha256_user_repositories_and_encoded_bytes() {
+    let repo = Repo::with_format("sha256");
     std::fs::write(
         repo.root.join(".gitattributes"),
         b"*.txt working-tree-encoding=UTF-16LE\n",
@@ -1182,8 +1172,24 @@ async fn native_git_raw_capture_supports_sha256_shadow_graphs_and_encoded_bytes(
         .flat_map(u16::to_le_bytes)
         .collect();
     std::fs::write(repo.root.join("file.txt"), &before).unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo.root)
+            .args(["add", "--all"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let user_index = std::fs::read(repo.root.join(".git/index")).unwrap();
+    let user_config = std::fs::read(repo.root.join(".git/config")).unwrap();
     let target = repo.track(&repo.root).await;
     assert_eq!(target.len(), 64);
+    assert!(
+        !repo
+            .snapshots
+            .owned_restore_available(repo.root.to_str().unwrap())
+    );
     std::fs::write(repo.root.join("file.txt"), &after).unwrap();
     let recorded = repo.track(&repo.root).await;
     let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
@@ -1201,6 +1207,230 @@ async fn native_git_raw_capture_supports_sha256_shadow_graphs_and_encoded_bytes(
         ["file.txt"]
     );
     assert_eq!(std::fs::read(repo.root.join("file.txt")).unwrap(), before);
+    assert_eq!(
+        std::fs::read(repo.root.join(".git/index")).unwrap(),
+        user_index
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join(".git/config")).unwrap(),
+        user_config
+    );
+}
+
+#[tokio::test]
+async fn git_markers_refuse_non_git_admission_without_creating_identity_or_snapshot_state() {
+    let repo = Repo::with_format("sha256");
+    let nested = repo.root.join("nested/deep");
+    std::fs::create_dir_all(&nested).unwrap();
+    for path in [&repo.root, &nested] {
+        assert!(!repo.snapshots.non_git(path.to_str().unwrap()));
+        assert!(
+            !repo
+                .snapshots
+                .owned_restore_available(path.to_str().unwrap())
+        );
+    }
+    assert!(!repo.root.join(".git/cyber-project-id").exists());
+    assert!(!repo.data.exists());
+    let missing = format!("copy:{}", "0".repeat(64));
+    assert!(
+        repo.snapshots
+            .changed(repo.root.to_str().unwrap(), &missing, &missing)
+            .await
+            .is_err()
+    );
+    assert!(
+        repo.snapshots
+            .diff(repo.root.to_str().unwrap(), &missing, &missing)
+            .await
+            .is_err()
+    );
+    assert!(!repo.data.exists());
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    std::fs::write(root.join(".git"), "malformed gitfile\n").unwrap();
+    assert!(!repo.snapshots.non_git(root.to_str().unwrap()));
+    assert!(
+        repo.snapshots
+            .track(root.to_str().unwrap())
+            .await
+            .unwrap_err()
+            .contains("fallback is disabled")
+    );
+    std::fs::remove_file(root.join(".git")).unwrap();
+    std::os::unix::fs::symlink("missing", root.join(".git")).unwrap();
+    assert!(!repo.snapshots.non_git(root.to_str().unwrap()));
+    std::fs::remove_file(root.join(".git")).unwrap();
+    assert!(repo.snapshots.non_git(root.to_str().unwrap()));
+    assert!(!repo.data.exists());
+}
+
+#[tokio::test]
+async fn mismatched_git_shadow_format_refuses_capture_without_touching_source_or_index() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("file"), "source").unwrap();
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    std::fs::create_dir_all(&shadow.git_dir).unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(&shadow.git_dir)
+            .args(["init", "--bare", "--quiet", "--object-format=sha256"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let config = std::fs::read(shadow.git_dir.join("config")).unwrap();
+    let error = repo
+        .snapshots
+        .track(repo.root.to_str().unwrap())
+        .await
+        .unwrap_err();
+    assert!(error.contains("object format differs"), "{error}");
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"source");
+    assert_eq!(
+        std::fs::read(shadow.git_dir.join("config")).unwrap(),
+        config
+    );
+    assert!(!shadow.git_dir.join("index").exists());
+    assert!(!repo.root.join(".git/index").exists());
+    assert!(!repo.data.join("snapshot/global").exists());
+}
+
+#[tokio::test]
+async fn sha256_linked_worktree_uses_its_common_repository_format_and_scoped_git_images() {
+    let repo = Repo::with_format("sha256");
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo.root)
+            .args([
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "root"
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let linked = repo._temp.path().canonicalize().unwrap().join("linked");
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo.root)
+            .args(["worktree", "add", "--quiet", "--detach"])
+            .arg(&linked)
+            .arg("HEAD")
+            .status()
+            .unwrap()
+            .success()
+    );
+    let marker = std::fs::read(linked.join(".git")).unwrap();
+    let location = linked.join("nested");
+    std::fs::create_dir(&location).unwrap();
+    std::fs::write(location.join("file"), "before").unwrap();
+    let target = repo.track(&location).await;
+    assert_eq!(target.len(), 64);
+    std::fs::write(location.join("file"), "after").unwrap();
+    let recorded = repo.track(&location).await;
+    let prepared = repo.prepare(&location, &target, &recorded, &recorded).await;
+    assert_eq!(prepared.prefix, "nested");
+    assert_eq!(prepared.target.images["file"].bytes, b"before");
+    repo.store(&location)
+        .restore_git_worker(prepared, None)
+        .unwrap();
+    assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before");
+    std::fs::write(location.join("file"), "after").unwrap();
+    let paths = repo
+        .snapshots
+        .restore_reviewed(
+            location.to_str().unwrap(),
+            &target,
+            &recorded,
+            &recorded,
+            Arc::new(|| Ok(())),
+        )
+        .await
+        .unwrap();
+    assert_eq!(paths, ["nested/file"]);
+    assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before");
+    assert_eq!(std::fs::read(linked.join(".git")).unwrap(), marker);
+    assert!(
+        !repo
+            .snapshots
+            .owned_restore_available(location.to_str().unwrap())
+    );
+}
+
+#[tokio::test]
+async fn retained_copy_history_stays_readable_after_sha256_repository_routing_is_corrected() {
+    let repo = Repo::with_format("sha256");
+    let directory = repo.root.to_str().unwrap();
+    std::fs::write(repo.root.join("file"), "before\n").unwrap();
+    std::fs::write(repo.root.join("huge"), vec![b'x'; 65537]).unwrap();
+    // Reproduce checkpoints captured by the prior erroneous fallback routing.
+    let store = repo.store(&repo.root);
+    let target = store.track().unwrap().tree;
+    std::fs::write(repo.root.join("file"), "after\n").unwrap();
+    let recorded = store.track().unwrap().tree;
+    let excluded = store
+        .exclusions(&[target.clone(), recorded.clone()])
+        .unwrap();
+    assert!(!excluded.is_empty());
+    assert!(
+        repo.snapshots
+            .changed(directory, &target, &recorded)
+            .await
+            .unwrap_err()
+            .contains("storage is busy")
+    );
+    drop(store);
+    let git = repo.track(&repo.root).await;
+    assert_eq!(git.len(), 64);
+    assert_eq!(
+        repo.snapshots
+            .changed(directory, &target, &recorded)
+            .await
+            .unwrap(),
+        ["file"]
+    );
+    assert_eq!(
+        repo.snapshots
+            .diff(directory, &target, &recorded)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let observed = repo
+        .snapshots
+        .exclusions(directory, vec![target.clone(), recorded, git.clone()])
+        .await
+        .unwrap();
+    for path in excluded {
+        assert!(observed.contains(&path));
+    }
+    assert!(
+        repo.snapshots
+            .changed(directory, &target, &git)
+            .await
+            .unwrap_err()
+            .contains("different backends")
+    );
+    assert!(
+        repo.snapshots
+            .diff(directory, &git, &target)
+            .await
+            .unwrap_err()
+            .contains("different backends")
+    );
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after\n");
 }
 
 #[tokio::test]
