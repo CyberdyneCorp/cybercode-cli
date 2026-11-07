@@ -933,3 +933,76 @@ Session sequence anchor. The repository runtime port/native adapter separation i
 preserved. No critical/major findings remain for this increment; broader feature
 acceptance gaps remain recorded above. A remote refresh reports main `db9e171e`,
 issues #92/#93 open and no open PRs. This increment is local, not pushed or merged.
+
+
+### Exact lifetime evidence before snapshot origin
+
+The pre-origin audit found that the current Session-owned checkout lease cannot
+prove exit of one snapshot worker. New file-copy workers now obtain a separate
+private lifetime file lock before the runtime writes reservation sequence zero and
+before it acquires checkout resources. The immutable binding includes exact native
+Location/namespace/worker-directory/file identities and activity/Session-creation/
+checkout ownership. The native activity retains it unchanged through origin,
+receipt settlement and late disposal; native attestation rejects a changed binding.
+`SnapshotWork::authorize` revalidates the native route before effects. The guard is
+the last worker field released, after its resource owners. Hosts lacking this port,
+Git paths and historical reservations retain no lifetime proof.
+
+The record is flushed privately, then published under its stable activity name by
+native no-replace rename. Interrupted private stages remain retained, without
+poisoning a stable request owner name or deleting evidence to retry. Reopening an
+existing worker requires the exact immutable payload and native identities; missing,
+replaced, unsafe or live locks refuse. Lifetime metadata is included in the same
+per-Location quota as journal/object/manifest data. GC conservatively stops pruning
+while lifetime records or stages exist. This retains evidence until M6 supplies
+complete reference accounting and durable two-phase reclamation; it does not claim
+that reclamation or full retention/cap acceptance is implemented.
+
+Runtime regressions retain a real semaphore-backed lifetime through requester
+abort and shutdown before an origin exists, and reject a foreign lifetime before
+publishing any reservation. Native tests check private permissions, quota refusal
+before owner-file creation, replacement/missing-proof refusal and conservative GC.
+A native child actually holds the lifetime lock after dropping its Store: a fresh
+Store refuses the live lock, then reacquires the exact identity after killing and
+waiting for that process. A second process cut pauses after the staged record's
+flush but before no-replace publication; its death leaves that stage intact while
+a fresh worker publishes a distinct complete lock. These are storage-level cuts,
+not real service/operator acceptance for the complete early-recovery protocol.
+The real CLI assertion now checks that a successful ordinary rewind's runtime
+record contains the same immutable lifetime payload as its private file.
+
+No pre-origin acknowledgement path is enabled by this increment. A missing origin
+or journal remains insufficient to acknowledge checkout/process uncertainty. The
+operator consuming proof, explicit source-admission phases, managed-checkout
+ownership equivalence, Git integration and remaining native cuts remain required.
+M2–M8 and both issues remain open.
+
+
+Final local macOS arm64 evidence: 409 server unit tests passed (one ignored
+subprocess fixture invoked by its existing parent tests), all 22 affected
+integrations passed (4 idle-cancellation, 13 Location, 5 rewind-preview), and all
+77 snapshot cases passed (42 unit, 18 file-copy, 17 Git). Snapshot tests list one
+ignored lifetime subprocess fixture, which both new process-kill parents invoke.
+All 14 real CLI branch/recovery tests passed, including ordinary rewind's persisted
+lifetime assertion and actual partial-restore keep/rollback kills. SDK typecheck,
+generation consistency and 132 SDK tests passed; 10 configured process tests were
+skipped because `CYBER_BIN` was unset. Server/snapshot/CLI all-target Clippy with
+warnings denied passed. The expanded CLI receipt assertion initially exceeded
+18/15 complexity; extracting its lifetime assertion passed without allowances.
+Formatting, diff checks and strict OpenSpec passed (117 items); lint reports
+0 errors/25 warnings and inventory stays 53 capabilities/1030 requirements. Native
+sandbox deprecation and Darwin linker warnings were observed without assigning
+their origin to main. Linux/Windows, full workspace, real SDK process and TUI/App
+recovery acceptance were not run.
+
+The code-review skill was applied to every changed runtime/native/test/spec file.
+Review checks lifetime-before-reservation ordering, unchanged exact binding through
+native attestation and disposal, guard teardown order, immutable payload and native
+route/descriptor consistency, private modes/alias rejection, quota accounting and
+reference protection. Review changed construction to staged no-replace publication
+so a crash cannot leave a partial stable owner record, and reads payload and native
+identity from the same descriptor during verification. The runtime/native adapter
+port separation is retained. No critical/major findings remain for this prerequisite;
+its explicitly missing consuming recovery protocol and broader acceptance gates
+are not accepted by these tests. This is local progress, not a merged delivery or
+completion of either issue.

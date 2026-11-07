@@ -127,9 +127,11 @@ mod model;
 mod requests;
 mod rewind;
 mod rewind_preview;
+mod snapshot_lifetime;
 mod snapshot_recovery;
 mod snapshot_recovery_types;
 mod snapshot_restore_receipt;
+pub use snapshot_lifetime::{SnapshotLifetime, SnapshotLifetimeBinding, SnapshotLifetimeRequest};
 mod snapshot_work;
 pub use rewind_preview::{
     RewindAction, RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview,

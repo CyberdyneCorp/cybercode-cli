@@ -237,6 +237,43 @@ impl GitSnapshots {
 }
 
 impl Snapshots for GitSnapshots {
+    fn reserve_worker(
+        &self,
+        request: cyber_server::runtime::SnapshotLifetimeRequest,
+    ) -> BoxFuture<'_, Result<Option<Box<dyn cyber_server::runtime::SnapshotLifetime>>, String>>
+    {
+        Box::pin(async move {
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                let _ = request;
+                Ok(None)
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                let directory = request
+                    .directory
+                    .to_str()
+                    .ok_or("Invalid snapshot lifetime Location")?;
+                // Git journaling and its lifetime proof are integrated separately.
+                if cyber_core::project::worktree_root(Path::new(directory)).is_some() {
+                    return Ok(None);
+                }
+                self.recovery_location(directory)?;
+                let data = self.data_dir.clone();
+                let options = self.recovery_options(directory);
+                let directory = directory.to_owned();
+                tokio::task::spawn_blocking(move || {
+                    let store = copy::Store::open(&data, &directory, options)?;
+                    let lifetime = store.reserve_lifetime(request)?;
+                    Ok(Some(
+                        Box::new(lifetime) as Box<dyn cyber_server::runtime::SnapshotLifetime>
+                    ))
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            }
+        })
+    }
     fn recovery_review(
         &self,
         directory: &str,

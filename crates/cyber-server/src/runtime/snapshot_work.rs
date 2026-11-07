@@ -98,6 +98,8 @@ pub struct SnapshotWorker {
     worktree_id: Option<String>,
     _location: Box<dyn Send>,
     _lifecycle: OwnedRwLockReadGuard<()>,
+    // Last: releasing this lock proves all earlier worker resources were dropped.
+    _lifetime: Option<Box<dyn super::SnapshotLifetime>>,
 }
 
 struct SnapshotAdmission(Arc<Handle>);
@@ -135,6 +137,9 @@ impl SnapshotWork<'_> {
         }
     }
     pub fn authorize(&self) -> Result<(), String> {
+        if let Some(lifetime) = &self.owner._lifetime {
+            lifetime.verify()?;
+        }
         if self.owner.scope.control.stop.is_cancelled() {
             return Err("Snapshot worker cancelled; retain its journal before retrying".into());
         }
@@ -332,12 +337,14 @@ impl Runtime {
             &request.original.session_created_id,
             &request.confirmation.request_id,
         );
+        let lifetime = self.snapshot_lifetime(state, &id).await?;
         let scope = activity::Scope::reserve_recovery(
             self,
             handle.clone(),
             id,
             request.clone(),
             authority,
+            lifetime.as_ref().map(|owner| owner.binding().clone()),
         )?;
         let lease = self
             .inner
@@ -372,6 +379,7 @@ impl Runtime {
             worktree_id: state.info.worktree_id.clone(),
             _location: lease.settle_retained().map_err(RuntimeError::Invalid)?,
             _lifecycle: lifecycle,
+            _lifetime: lifetime,
         })
     }
     pub(crate) async fn snapshot_worker(
@@ -389,7 +397,15 @@ impl Runtime {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .map_err(|_| RuntimeError::Busy(state.info.id.clone()))?;
         let admission = SnapshotAdmission(handle.clone());
-        let scope = activity::Scope::reserve_snapshot(&self.inner, state.info.id.clone()).await?;
+        let id = cyber_core::ids::new_id("op");
+        let lifetime = self.snapshot_lifetime(state, &id).await?;
+        let scope = activity::Scope::reserve_snapshot_owned(
+            &self.inner,
+            state.info.id.clone(),
+            id,
+            lifetime.as_ref().map(|owner| owner.binding().clone()),
+        )
+        .await?;
         let lease = self
             .inner
             .claim_location(&state.info, false, scope.control.stop.clone())
@@ -419,6 +435,7 @@ impl Runtime {
             worktree_id,
             _location: lease.settle_retained().map_err(RuntimeError::Invalid)?,
             _lifecycle: lifecycle,
+            _lifetime: lifetime,
             admission,
             sequence: state.last_seq,
         })

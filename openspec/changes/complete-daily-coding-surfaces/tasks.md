@@ -84,6 +84,16 @@ proof; missing records alone do not license acknowledgement.
 - [ ] M7 Add owner recovery review/confirm/lookup HTTP routes, typed CLI and SDK operations, and TUI recovery entry from rewind unavailability. Regenerate OpenAPI/SDK/command artifacts; exercise the real clients with no inference or transcript movement and with stale/foreign request refusal.
 - [ ] M8 Run process-kill cuts before/after intent, stage preparation, every exchange, progress, filesystem completion, writer commit, journal acknowledgement and reclaim. Obtain Linux x64/ARM and macOS Intel/ARM positives/denials, explicit Windows results/limits and shared Git/binary regressions; update evidence and perform substantive code/security review before accepting parent tasks.
 
+Lifetime continuation: new file-copy runtime reservations now retain an exact
+worker-specific private lock acquired before reservation and checkout admission.
+The actual worker keeps it through resource teardown, and source authorization
+revalidates its native route. Lock metadata and orphan stages count toward the cap
+and conservatively protect GC. Native tests reacquire only after actual process
+death and preserve an interrupted pre-publication stage. This is a prerequisite,
+not completion of pre-origin recovery: its consuming operator path, positive
+source-admission phases, independent managed-checkout proof and Git equivalent
+remain open. No new acknowledgement admission or force-clear is enabled.
+
 Implementation source map:
 
 The non-Git reviewed-confirm path now uses a runtime-issued synchronous worker,

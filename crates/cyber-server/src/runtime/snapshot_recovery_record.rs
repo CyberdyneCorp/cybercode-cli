@@ -170,6 +170,7 @@ pub(super) fn attest(
                 || record.snapshot_origin.as_ref() != Some(origin)
         })
         || launched.snapshot_request != latest.snapshot_request
+        || launched.snapshot_lifetime != latest.snapshot_lifetime
         || !matches!(latest.status.as_str(), "pending" | "unknown" | "settled")
     {
         return Err(StoreError::InvalidAppend(

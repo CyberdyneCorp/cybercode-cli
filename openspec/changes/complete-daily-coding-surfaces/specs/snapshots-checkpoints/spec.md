@@ -93,6 +93,12 @@
 - **THEN** its actual native owners remain held until the synchronous worker exits, Stop and read-only Session inspection remain available between source effects, and shutdown waits for actual ownership settlement
 - **AND** uncertain effects retain their origin and admission fence across runtime reload without replay
 
+#### Scenario: Lifetime proof precedes reservation
+- **WHEN** a new file-copy worker reserves runtime ownership before publishing its restore origin
+- **THEN** an immutable worker-specific native lifetime lock already binds its activity, Session creation, checkout, Location and private namespace, and remains retained through actual resource teardown
+- **AND** replacement, missing proof or a live lock refuses reacquisition; a privately staged incomplete publication remains retained and cannot grant acknowledgement authority
+- **AND** this evidence counts toward the Location cap, protects pending references from GC, and cannot settle a generic process, Session-owned checkout lease or historical reservation without that binding
+
 #### Scenario: Session changes before a source effect
 - **WHEN** the Session revision changes after preparation but before the next source mutation
 - **THEN** that mutation is refused and existing owner bytes remain unchanged

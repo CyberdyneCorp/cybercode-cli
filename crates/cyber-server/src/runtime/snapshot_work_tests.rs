@@ -89,6 +89,176 @@ fn runtime_with_snapshots(
 }
 
 struct Acknowledgements(Arc<AtomicUsize>);
+struct Lifetimes {
+    inner: Acknowledgements,
+    permits: Arc<tokio::sync::Semaphore>,
+    foreign: bool,
+}
+struct LifetimePermit {
+    binding: super::super::SnapshotLifetimeBinding,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+impl super::super::SnapshotLifetime for LifetimePermit {
+    fn binding(&self) -> &super::super::SnapshotLifetimeBinding {
+        &self.binding
+    }
+    fn verify(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+impl Snapshots for Lifetimes {
+    fn reserve_worker(
+        &self,
+        mut request: super::super::SnapshotLifetimeRequest,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<Option<Box<dyn super::super::SnapshotLifetime>>, String>,
+    > {
+        Box::pin(async move {
+            let permit = self
+                .permits
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|error| error.to_string())?;
+            if self.foreign {
+                request.session_id = "ses_foreign".into();
+            }
+            Ok(Some(Box::new(LifetimePermit {
+                binding: super::super::SnapshotLifetimeBinding {
+                    version: 1,
+                    owner: request,
+                    root_identity: "fixture-root".into(),
+                    namespace_identity: "fixture-namespace".into(),
+                    directory_identity: "fixture-directory".into(),
+                    file_identity: "fixture-file".into(),
+                },
+                _permit: permit,
+            })
+                as Box<dyn super::super::SnapshotLifetime>))
+        })
+    }
+    fn track(
+        &self,
+        directory: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Option<super::super::Snapshot>, String>> {
+        self.inner.track(directory)
+    }
+    fn changed(
+        &self,
+        directory: &str,
+        before: &str,
+        after: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<String>, String>> {
+        self.inner.changed(directory, before, after)
+    }
+    fn diff(
+        &self,
+        directory: &str,
+        before: &str,
+        after: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<super::super::FileDiff>, String>> {
+        self.inner.diff(directory, before, after)
+    }
+    fn restore(
+        &self,
+        directory: &str,
+        before: &str,
+        after: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<String>, RestoreError>> {
+        self.inner.restore(directory, before, after)
+    }
+}
+
+#[tokio::test]
+async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_request_disposal() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let permits = Arc::new(tokio::sync::Semaphore::new(1));
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: permits.clone(),
+            foreign: false,
+        }),
+    );
+    let owner = worker(&runtime, &session).await;
+    let id = owner.scope.id().to_owned();
+    assert_eq!(permits.available_permits(), 0);
+    let record = latest(&runtime, &session);
+    assert!(record["snapshot_origin"].is_null());
+    assert_eq!(record["snapshot_lifetime"]["owner"]["activity_id"], id);
+    assert_eq!(record["snapshot_lifetime"]["owner"]["session_id"], session);
+    let (started, running) = tokio::sync::oneshot::channel();
+    let (finish, gate) = std::sync::mpsc::channel();
+    let task = tokio::spawn(owner.run(move |work| {
+        work.authorize().unwrap();
+        started.send(()).unwrap();
+        gate.recv().unwrap();
+        assert!(work.effect(|| Ok(())).is_err());
+        Err(RestoreError::Failed(
+            "cancelled pre-origin preparation".into(),
+        ))
+    }));
+    running.await.unwrap();
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    assert_eq!(permits.available_permits(), 0);
+    let mut shutdown = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.shutdown().await }
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut shutdown)
+            .await
+            .is_err()
+    );
+    finish.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), shutdown)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(permits.available_permits(), 1);
+    base.shutdown().await;
+}
+
+#[tokio::test]
+async fn foreign_lifetime_proof_is_rejected_before_any_native_reservation() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let permits = Arc::new(tokio::sync::Semaphore::new(1));
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: permits.clone(),
+            foreign: true,
+        }),
+    );
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let state = handle.state.lock().await;
+    assert!(runtime.snapshot_worker(&handle, &state).await.is_err());
+    drop(state);
+    assert_eq!(permits.available_permits(), 1);
+    assert!(!handle.snapshot_active.load(Ordering::SeqCst));
+    let count: i64 = runtime
+        .inner
+        .store
+        .read(|db| {
+            Ok(db.query_row(
+                "SELECT COUNT(*) FROM event WHERE type='native.activity.changed.1'",
+                [],
+                |row| row.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(count, 0);
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
 impl Snapshots for Acknowledgements {
     fn track(
         &self,

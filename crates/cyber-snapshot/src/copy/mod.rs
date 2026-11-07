@@ -68,6 +68,8 @@ pub(crate) struct Store {
     usage: std::cell::Cell<Option<u64>>,
 }
 
+mod lifetime;
+
 pub(crate) struct WorkerGuard {
     pub store: Store,
     pub workspace: tokio::sync::OwnedMutexGuard<()>,
@@ -285,6 +287,20 @@ impl Store {
                     )
                     .ok_or("Snapshot storage overflow")?;
             }
+        }
+        match self.namespace.symlink_metadata("workers") {
+            Ok(_) => {
+                let workers = storage::existing_child(&self.namespace, "workers", true)?;
+                for name in storage::names(&workers, ENTRY_LIMIT)? {
+                    let file = storage::open(&workers, Path::new(&name))?;
+                    storage::validate_lock(&file)?;
+                    size = size
+                        .checked_add(file.metadata().map_err(fail)?.len())
+                        .ok_or("Snapshot storage overflow")?;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(fail(error)),
         }
         self.usage.set(Some(size));
         Ok(size)
@@ -504,6 +520,16 @@ fn gc_location(
     config: &std::sync::Arc<crate::ConfigFn>,
     protected: &BTreeSet<String>,
 ) -> Result<()> {
+    match dir.symlink_metadata("workers") {
+        Ok(_) => {
+            let workers = storage::existing_child(dir, "workers", true)?;
+            if !storage::names(&workers, ENTRY_LIMIT)?.is_empty() {
+                return Ok(());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(fail(error)),
+    }
     let manifests = storage::private_child(dir, "manifests")?;
     let journals = storage::private_child(dir, "journals")?;
     // Until an owner resolves/acknowledges native evidence, no journal is evicted.

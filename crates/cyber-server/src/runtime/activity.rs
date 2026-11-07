@@ -36,6 +36,8 @@ pub(super) struct Record {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_restore_receipt: Option<super::SnapshotRestoreReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_lifetime: Option<super::SnapshotLifetimeBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_bindings: Option<Vec<super::admission_authority::Binding>>,
 }
 pub(super) struct Scope {
@@ -94,13 +96,22 @@ impl Scope {
         binary_document: Option<String>,
     ) -> Result<Self, RuntimeError> {
         let source = handle.state.lock().await.info.id.clone();
-        Self::reserve_owner(inner, source, binary_document, false).await
+        Self::reserve_owner(inner, source, binary_document, false, None).await
     }
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
     pub(super) async fn reserve_snapshot(
         inner: &Inner,
         source: String,
     ) -> Result<Self, RuntimeError> {
-        Self::reserve_owner(inner, source, None, true).await
+        Self::reserve_owner(inner, source, None, true, None).await
+    }
+    pub(super) async fn reserve_snapshot_owned(
+        inner: &Inner,
+        source: String,
+        id: String,
+        lifetime: Option<super::SnapshotLifetimeBinding>,
+    ) -> Result<Self, RuntimeError> {
+        Self::reserve_owner(inner, source, None, true, Some((id, lifetime))).await
     }
     pub(super) fn reserve_recovery(
         runtime: &Runtime,
@@ -108,6 +119,7 @@ impl Scope {
         id: String,
         request: super::snapshot_recovery_types::RecoveryRequest,
         authority: super::snapshot_recovery_authority::RecoveryAuthority,
+        lifetime: Option<super::SnapshotLifetimeBinding>,
     ) -> Result<Self, RuntimeError> {
         let source = request.original.session_id.clone();
         let record = Record {
@@ -120,6 +132,7 @@ impl Scope {
             snapshot_request: Some(request.clone()),
             snapshot_receipt: None,
             snapshot_restore_receipt: None,
+            snapshot_lifetime: lifetime,
             admission_bindings: Some(authority.bindings().to_vec()),
         };
         let captured = authority.clone();
@@ -168,13 +181,14 @@ impl Scope {
         source: String,
         binary_document: Option<String>,
         snapshot_worker: bool,
+        owner: Option<(String, Option<super::SnapshotLifetimeBinding>)>,
     ) -> Result<Self, RuntimeError> {
         let runtime = Runtime {
             inner: inner.me.upgrade().ok_or(RuntimeError::ShuttingDown)?,
         };
         let authority = runtime.capture_child_admission(&source)?;
         let owned_handle = runtime.inner.handle(&source).await?;
-        let id = cyber_core::ids::new_id("op");
+        let (id, lifetime) = owner.unwrap_or_else(|| (cyber_core::ids::new_id("op"), None));
         let record = Record {
             session_id: source.clone(),
             status: "pending".into(),
@@ -185,6 +199,7 @@ impl Scope {
             snapshot_request: None,
             snapshot_receipt: None,
             snapshot_restore_receipt: None,
+            snapshot_lifetime: lifetime,
             admission_bindings: Some(authority.bindings.clone()),
         };
         inner
@@ -464,6 +479,7 @@ impl Scope {
                 || current.snapshot_worker != original.snapshot_worker
                 || current.snapshot_origin.as_ref() != origin
                 || current.snapshot_request != original.snapshot_request
+                || current.snapshot_lifetime != original.snapshot_lifetime
             {
                 return Err(cyber_store::StoreError::InvalidAppend("Native activity ownership changed before disposal".into()));
             }

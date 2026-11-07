@@ -1198,6 +1198,7 @@ fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
         .unwrap();
     let activity: Value = serde_json::from_str(&data).unwrap();
     assert_eq!(activity["snapshot_origin"], *origin);
+    assert_snapshot_lifetime(&namespaces[0], &activity, origin);
     assert_eq!(activity["status"], "settled");
     assert_eq!(activity["phase"], "snapshot_restore_committed");
     let created: String = db
@@ -1208,6 +1209,23 @@ fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
         )
         .unwrap();
     assert_eq!(origin["session_created_id"], created);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_snapshot_lifetime(namespace: &std::path::Path, activity: &Value, origin: &Value) {
+    let lifetime = &activity["snapshot_lifetime"];
+    assert_eq!(lifetime["version"], 1);
+    assert_eq!(lifetime["owner"]["activity_id"], origin["activity_id"]);
+    assert_eq!(
+        lifetime["owner"]["session_created_id"],
+        origin["session_created_id"]
+    );
+    let lifetime_file = namespace
+        .join("workers")
+        .join(origin["activity_id"].as_str().unwrap());
+    let recorded_lifetime: Value =
+        serde_json::from_slice(&std::fs::read(lifetime_file).unwrap()).unwrap();
+    assert_eq!(recorded_lifetime, *lifetime);
 }
 
 #[test]

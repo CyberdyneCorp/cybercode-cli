@@ -11,7 +11,8 @@ acceptance; the native/platform and complete recovery tests remain required.
 Implementation checkpoint: the non-Git review/confirm/lookup API and SDK now use
 durable request reservation and paired native settlement. Local real-service
 partial-restore kills exercise keep/rollback and lookup without replay. Explicit
-journal acknowledgement reconciliation, pre-origin resource cuts, Git journaling,
+journal acknowledgement reconciliation is implemented for new file-copy receipts;
+pre-origin resource cuts, Git journaling,
 reclamation, complete clients and the platform matrix remain unfinished. Parent
 tasks are open; the complete recovery delivery is not merge-ready.
 
@@ -212,3 +213,30 @@ later owner files. Historical native settlements lacking this receipt remain
 inspectable but cannot acquire new acknowledgement-write authority. A stale
 in-memory Session after a committed-but-lost writer reply must be reloaded before
 this operation can proceed. This does not manufacture a second transcript change.
+
+
+### Lifetime proof before origin publication
+
+New file-copy workers acquire a distinct private native lifetime lock before their
+runtime reservation is published or checkout acquisition begins. Its immutable
+binding names the activity, Session creation, checkout, canonical/native Location,
+private namespace and exact lock file/directory identities. The reservation keeps
+this binding unchanged through origin publication, settlement and disposal. The
+actual worker retains the lock until its earlier resource owners are dropped;
+source authorization verifies the current lifetime route as well as its existing
+authority. Reacquisition of the exact native lock proves only this worker's exit.
+It cannot settle a Session-owned checkout lease or another native/process owner.
+
+Construction writes and flushes a privately staged record before publishing its
+stable owner name with no-replace. A cut before publication retains the unreferenced
+stage; a later reservation can create its own complete lock without deleting that
+evidence. Metadata is counted in the per-Location cap. GC retains all preparation
+references conservatively while worker records exist; reference-aware reclamation
+must eventually account for both complete records and orphan stages.
+
+This supplies lifetime evidence for the reserved-before-origin cut. It does not
+by itself admit cancellation/acknowledgement of that reservation, prove that a
+missing journal had no source effects, or acknowledge managed checkout/process
+uncertainty. The explicit pre-effect consuming protocol, origin-before-intent cut,
+Git equivalent and complete native/client acceptance remain required. Older
+reservations without this binding receive no retrospective proof.
