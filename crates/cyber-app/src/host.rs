@@ -80,6 +80,10 @@ impl ToolHost for AppHost {
         self.builtin.language(directory)
     }
 
+    fn fallback(&self, directory: &str) -> cyber_core::model_fallback::FallbackSettings {
+        self.builtin.fallback(directory)
+    }
+
     fn output_style(
         &self,
         directory: &str,

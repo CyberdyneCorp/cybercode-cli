@@ -55,6 +55,9 @@ pub struct Session {
     /// The pending usage limit wait (`session-runtime` → Usage limit wait); null when the
     /// Session is not waiting for a limit to reset.
     pub usage_limit: Option<crate::runtime::UsageLimitWait>,
+    /// The model fallback in effect (`provider-catalog` → Model fallback chain).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<crate::runtime::ModelFallback>,
 }
 
 /// A history entry with the tool calls it made.
@@ -393,6 +396,7 @@ pub(super) fn session(state: &AppState, s: SessionState) -> Session {
         context,
         untrusted_content,
         usage_limit: s.usage_wait.pending.clone(),
+        fallback: state.runtime.model_fallback(&s),
         effective_mode,
         pending_mode,
         status: status.into(),
