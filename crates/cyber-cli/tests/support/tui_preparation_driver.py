@@ -57,6 +57,10 @@ class Forward(http.server.BaseHTTPRequestHandler):
             upstream.request(self.command, self.path, body, dict(self.headers))
             response = upstream.getresponse()
             call["status"] = response.status
+            failure = None
+            if self.path.endswith("/review") and response.status != 200:
+                failure = response.read(65536)
+                call["error"] = failure.decode("utf-8", errors="replace")
             if self.command == "POST" and "/rewind/preparations/" in self.path and self.path.endswith("/confirm"):
                 payload = json.loads(response.read())
                 assert response.status == 200, payload
@@ -72,6 +76,9 @@ class Forward(http.server.BaseHTTPRequestHandler):
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
+            if failure is not None:
+                self.wfile.write(failure)
+                self.wfile.flush()
             while block := response.read1(65536):
                 self.wfile.write(block)
                 self.wfile.flush()
@@ -179,16 +186,22 @@ def open_preparations(terminal, proxy):
 
 
 def positive_review(terminal, proxy):
-    for attempt in range(3):
+    for attempt in range(20):
         terminal.wait(lambda: completed(proxy, "/review", success=False) > attempt, "pre-effect review response")
         reply = [call for call in proxy.calls if call["done"] and call["path"].endswith("/review")][-1]
         if reply["status"] == 200:
             return attempt + 1
-        assert reply["status"] == 409, reply
-        # A busy native namespace may refuse a read-only review. Explicit Enter
-        # requests fresh discovery/review; no confirmation has been submitted.
+        error = json.loads(reply["error"])
+        busy = error.get("_tag") == "SessionBusyError" or error == {
+            "_tag": "ConflictError", "message": "Snapshot storage is busy",
+        }
+        assert reply["status"] == 409 and busy, reply
+        # Rewind inspection can still own the Session while its native worker
+        # exits. Retry only this typed busy refusal, with bounded breathing room;
+        # Enter requests fresh discovery/review, never cancellation replay.
+        terminal.pump(0.5)
         terminal.send(b"\r")
-    raise AssertionError("native pre-effect review stayed busy")
+    raise AssertionError(f"native pre-effect review refused: {reply}; terminal: {terminal.text()[-3000:]!r}")
 
 
 def exercise(binary, session, activity, proxy):

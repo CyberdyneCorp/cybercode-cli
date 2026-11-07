@@ -138,6 +138,7 @@ mod snapshot_recovery_checkout;
 mod snapshot_recovery_types;
 mod snapshot_restore_receipt;
 pub use snapshot_lifetime::{SnapshotLifetime, SnapshotLifetimeBinding, SnapshotLifetimeRequest};
+pub mod snapshot_reclamation;
 mod snapshot_work;
 pub use rewind_preview::{
     RewindAction, RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview,

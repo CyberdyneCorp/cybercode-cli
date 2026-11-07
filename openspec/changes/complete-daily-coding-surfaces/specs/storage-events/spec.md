@@ -28,3 +28,18 @@
 - **WHEN** a database is upgraded for snapshot-worker ownership
 - **THEN** migration `20261106000000_snapshot_worker_ownership` persists without rewriting legacy evidence or adding tables
 - **AND** a binary whose migration catalog predates that marker opens the database read-only through the existing unknown-migration gate instead of writing while ignoring new native admission fences
+
+#### Scenario: Durable private snapshot reclamation plan
+- **GIVEN** an ordinary file-copy restore has an exact committed settlement receipt and matching native acknowledgement
+- **WHEN** eligible displaced payloads are reclaimed after retention
+- **THEN** a bounded receipt-owned `snapshot.reclamation.planned.1` event SHALL commit before any private unlink
+- **AND** the consuming writer SHALL revalidate the receipt and complete reference/uncertainty view while reference writes remain serialized
+- **AND** `snapshot.reclamation.completed.1` SHALL retain the same plan identity and cumulative reclaimed bytes after durable filesystem completion
+- **AND** an interrupted plan SHALL remain retryable without acknowledging independent native owners or replaying source effects
+
+#### Scenario: Transactional snapshot reference index
+- **GIVEN** retained events contain canonical `copy:<64 lowercase hex>` manifest identities
+- **WHEN** reference-index storage is introduced or event data is inserted, updated or deleted
+- **THEN** existing references SHALL be backfilled and each later change SHALL update its event-owned reference rows in the same transaction
+- **AND** shared references SHALL remain protected until every referencing event is removed
+- **AND** missing, unreadable or oversized reference views SHALL refuse reclamation

@@ -3141,3 +3141,127 @@ library available (it runs by default in Linux/macOS branch integration tests):
 ```sh
 CARGO_INCREMENTAL=0 cargo test --locked -p cyber-cli --test branches_cli terminal_preparation_recovery -- --test-threads=1
 ```
+
+## Ordinary acknowledged file-copy payload reclamation (2026-11-07, local)
+
+The first M6 cleanup path reclaims displaced regular-file stages from completed,
+natively acknowledged ordinary file-copy restores in an unmanaged Location. It
+requires an immutable ordinary restore receipt, version-2 exited worker lifetime,
+positively published empty checkout resources and unchanged native source phase.
+It does not admit managed Git, keep/rollback resolution, cancelled preparation,
+partial construction or legacy payload cleanup. M6 and parent tasks remain open.
+
+A deterministic receipt-owned Store aggregate records a bounded immutable plan
+before deletion. It freezes each stage leaf's original inode identity, metadata
+generation, BLAKE3 identity and size. The application adapter re-attests the receipt
+and complete reference view in its serialized writer transaction while the native
+callback retains namespace, Location reader/mutation and lifetime locks. Native
+intent/phase pins, current unmanaged checkout inventory, fresh retention policy
+and every remaining leaf are checked. Missing leaves count as resumable progress
+only for an already committed matching plan. No source image is read or installed;
+intents, worker metadata, ordinary receipts and all referenced CAS images remain.
+A separate completion event preserves cumulative accounting and idempotent retry.
+A cap failure can invoke the same admission and retry capture once. Existing
+fallback collection now reads references under the writer that excludes concurrent
+reference commits. Its conservative worker/journal gates remain in place; complete
+CAS/metadata/worker reclamation is still required.
+
+The reference index migration backfills canonical copy manifest identities from
+retained event values, then uses transactional SQLite insert/update triggers and
+per-event deletion cascades. It avoids reparsing all conversations at every cleanup
+admission. The old writer catalog refuses the new migration. Migration regressions
+cover nested/duplicate/shared roots, invalid identities, original event byte
+preservation, generic imports, transaction rollback, metadata repair, deletion and
+older-catalog refusal. Two older compatibility tests initially failed because they
+applied the entire later catalog while asserting their original marker's schema or
+single unknown ID. They now test that exact marker migration; the separate index
+case tests the new schema and older-catalog refusal.
+
+Real-App integration uses actual scripted-provider prompts, file-copy snapshots,
+reviewed rewind, paired Store settlement and native acknowledgement. It verifies
+reclaimed stages, unchanged retained images/intent, later source symlink/target,
+unchanged transcript/inference, receipt reconciliation, repeated cleanup, retention
+age/zero/disabled capture, real reader/lifetime locks, independent unknown/missing
+Location owners, aliases/replacements/missing leaves/unknown entries, contradictory
+native source phase, cap-pressure retry and complete-reference bounds. Pending
+plans still obey later retention changes and unknown-owner fences. Historical
+projection replay remains possible after later uncertainty or Session deletion;
+replaying records grants no filesystem or native acknowledgement authority.
+
+Two actual process-death boundaries launch a separate test executable using the
+same production App and native cleanup adapters. A test-only Policy wrapper pauses
+inside the consuming writer callback before native deletion or after all private
+deletions/fsyncs but before callback return/completion append. The parent observes
+the boundary, sends SIGKILL, verifies signal 9, reaps the process, reopens the actual
+file-backed Store and resumes through the normal policy. Both retain a pending
+durable plan and complete idempotently without replaying source, including a later
+owner's symlink and target. The ordinary suite helper is inert without its explicit
+fixture environment. A separate partial-unlink state test is synthetic and is not
+claimed as a process kill between individual unlinks. Native writer commit,
+every-unlink, metadata replacement and all other crash/platform cuts remain open.
+
+Code-review skill inspection covered all changed production/test/migration files:
+Store/native ownership separation, reference atomicity, bounded plans and names,
+receipt identity, native lock lifetime and no-follow private deletion, replay versus
+new admission, retention and quota semantics, error/evidence preservation, process
+cleanup and platform cfgs. Review corrected an inconsistent multi-query reader by
+using explicit read transactions for maintenance receipt/plan lookup, and added
+native phase contradiction checks and metadata pins before accepting deletion.
+Rust uses the workspace Clippy cognitive-complexity threshold (15), without
+allowances; the cognitive-complexity skill has no Rust analyzer. The complete M6
+feature still needs managed resources, resolution/preparation construction classes,
+CAS/metadata reclamation and the full native class/lease/platform/crash matrix.
+
+Verification on local macOS arm64: the full Store suite passed (65 tests across
+its unit/integration suites); the final App cleanup invocation passed all 14 cases
+in 46.76 seconds, including its inert child-process helper. The subsequently added
+periodic-maintenance entry-point regression passed separately in 4.80 seconds;
+the combined 15-case suite was not rerun after that test-only addition. HTTP passed
+all 80 cases, including the checked OpenAPI document. All-target Store/App/snapshot/
+server Clippy passed after the production review corrections; App's final test
+target also passed Clippy after the periodic case was added. Generated SDK
+consistency, format/diff checks, strict OpenSpec (117 passed) and spec lint (0
+errors/25 warnings) passed. Earlier native snapshot verification for this cleanup
+implementation passed 163 tests with 5 ignored, before the final reference-index
+migration and maintenance reader-transaction correction; that broader suite was
+not repeated for those later Store/App changes. C sandbox deprecations and a linker
+oversized-unwind warning were observed without unchanged-main origin attribution.
+All Cargo test/Clippy commands used CARGO_INCREMENTAL=0 and --locked. No Linux,
+Windows, macOS Intel, source-bound CI, full workspace or full SDK test invocation
+ran for this cleanup increment. No goal task/issue is closed by these local checks.
+
+A final incomplete-view audit corrected SQL NULL comparison semantics: a retained
+native activity lacking its status field now protects cleanup as unknown rather
+than falling out of the eligibility query. The expanded four-case independent
+owner regression passed in 24.13 seconds and verifies unchanged retained event
+bytes. All-target Store/App/snapshot/server Clippy passed again after this fix.
+The full serial CLI branch/recovery suite passed 17 cases but failed its real PTY
+preparation case after three HTTP 409 review responses; the driver previously
+labelled every such response as busy without retaining its error. Investigation
+now preserves bounded review error bodies and terminal diagnostics without logging
+authorization headers. This failure is not attributed to unchanged main and the
+cleanup increment was not represented as passing full CLI acceptance at that point.
+
+With review-body diagnostics enabled, the focused real-terminal case passed both
+boundaries in 79.89 seconds. This does not establish the cause or resolve the full
+invocation's intermittent refusal. The driver now retries only a typed
+SessionBusyError, allowing a bounded half-second pause between at most 20 fresh
+read-only reviews while native inspection tears down. Any other refusal fails
+with its bounded error/terminal evidence; mutation and exactly-once checks are
+unchanged. Python compilation and the cognitive-complexity skill pass (maximum
+13, complexipy 8.3.0, no analyzer warnings). The next full run again passed 17 cases and failed the PTY case in 244.84
+seconds; its captured body identified the exact refusal as ConflictError with
+message "Snapshot storage is busy". The bounded read-only retry now additionally
+recognizes only that exact native-lock error; other conflicts still fail. This
+is test synchronization, with production admission and mutation assertions
+unchanged. The final complete serial invocation passed all 18 cases in 287.58
+seconds, including both terminal process-death boundaries, with that correction.
+The earlier failures remain recorded rather than attributed to unchanged main.
+
+Review result for this ordinary-payload increment: no unresolved critical/major
+code finding remains after the receipt-read, native-phase, incomplete-owner-view
+and test-synchronization corrections. Existing snapshot ports and the application
+Store adapter retain their project-specific dependency roles. The full recovery
+feature still requires the acceptance gaps above; this is not approval of the
+complete M6 feature or either issue. All final local checks are recorded above;
+no PR/push or parent-task completion is claimed.

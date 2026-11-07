@@ -16,6 +16,7 @@ mod registration;
 pub mod retention;
 mod server;
 mod services;
+pub mod snapshot_reclamation;
 pub mod update_check;
 
 use std::path::PathBuf;
@@ -325,17 +326,11 @@ impl App {
             let loader = Arc::clone(&config);
             let snapshot_store = store.clone();
             let references: Arc<cyber_snapshot::ReferencesFn> = Arc::new(move || {
-                let rows = snapshot_store.read(|db| {
-                    let mut query = db.prepare("SELECT DISTINCT j.value FROM event e,json_tree(e.data) j WHERE j.type='text' AND j.value LIKE 'copy:%' LIMIT 100001")?;
-                    let rows = query.query_map([], |row|row.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
-                    Ok(rows)
-                }).map_err(|error|error.to_string())?;
-                if rows.len() > 100000 {
-                    return Err("Snapshot reference limit exceeded; pruning refused".into());
-                }
-                Ok(rows.into_iter().collect())
+                snapshot_store
+                    .read(cyber_server::runtime::snapshot_reclamation::references)
+                    .map_err(|error| error.to_string())
             });
-            let snaps = cyber_snapshot::GitSnapshots::with_policy(
+            let snaps = cyber_snapshot::GitSnapshots::with_reclamation(
                 opts.paths.data.clone(),
                 Arc::new(move |p| loader(p).map(|(v, _)| v).unwrap_or(Value::Null)),
                 vec![
@@ -345,6 +340,7 @@ impl App {
                     opts.paths.tmp.clone(),
                 ],
                 Some(references),
+                Some(snapshot_reclamation::policy(store.clone())),
             );
             snaps.spawn_gc();
             snaps

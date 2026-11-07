@@ -787,3 +787,44 @@ retain a request ID before confirmation, use lookup after reply loss, and keep
 native reconciliation explicit. Stale/foreign replies and missing current proof
 SHALL NOT enable cancellation; closing/navigation SHALL preserve drafts, attachments
 and all independent uncertainty.
+
+### Ordinary file-copy payload reclamation
+
+The initial reclamation admission covers completed, natively acknowledged ordinary
+file-copy restores with an exact immutable Store receipt, version-2 lifetime and a
+positively persisted empty checkout resource set in a currently unmanaged Location.
+Managed checkout, resolution, preparation-construction and legacy payload cleanup
+remain separate required acceptance paths; they gain no authority from this path.
+
+A bounded `snapshot.reclamation.planned.1` event is committed under a deterministic
+receipt-bound aggregate before private unlinks. It freezes each known stage leaf's
+native identity, metadata generation, BLAKE3 content identity and size. The native
+namespace lock, Location reader/mutation guard and exact exited lifetime remain
+retained through deletion. Unknown entries, aliases or changed identities refuse;
+no source image is read or installed by cleanup. Native Location/checkout metadata remains checked. Missing payloads are restart progress only
+when matched to the already durable plan and original ownership metadata.
+
+The consuming Store writer transaction re-attests the original receipt, obtains a
+complete bounded reference view, and refuses unsettled native owners in the same
+Session/Location or an owner whose Location cannot be established. Reference
+writers cannot interleave with the bounded native deletion callback. Independent
+native activities and checkout records are never settled by cleanup. A separately
+committed `snapshot.reclamation.completed.1` event retains cumulative reclaimed
+bytes and the original plan identity for idempotent retry. The plan lives in the
+Store, so a full snapshot quota cannot prevent recording cleanup eligibility.
+
+Retention uses the durable settlement time, with a fresh policy check before each
+unlink. Disabled snapshots and zero retention preserve payloads. Cap pressure may
+attempt this same eligible cleanup and retry capture once; it never overrides
+reference, lifetime, acknowledgement or retention checks. Periodic fallback-object
+collection also takes its reference view at the serialized Store writer, rather
+than applying a stale view after later reference commits. Native intent/lifetime
+metadata and all referenced CAS images remain retained by this initial path.
+
+The durable fallback reference view uses an event-owned index of canonical
+`copy:<64 lowercase hex>` manifest identities. Migration backfills existing events
+before the index can be used; transactional insert/update bookkeeping covers new
+or rewritten event data and event deletion cascades remove only that event's roots.
+The same complete index protects staged, inactive-branch and saved-version history.
+A missing/unreadable/oversized index refuses cleanup. Reference lookup at the writer
+must not repeatedly parse the entire conversation history while other writes wait.

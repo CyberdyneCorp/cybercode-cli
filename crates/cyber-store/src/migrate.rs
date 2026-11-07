@@ -201,6 +201,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261107020000_snapshot_checkout_acknowledgements",
         sql: include_str!("../migrations/20261107020000_snapshot_checkout_acknowledgements.sql"),
     },
+    Migration {
+        id: "20261107030000_snapshot_reference_index",
+        sql: include_str!("../migrations/20261107030000_snapshot_reference_index.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -313,7 +317,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            migrate(&mut conn, MIGRATIONS).unwrap(),
+            migrate(&mut conn, &MIGRATIONS[..=at]).unwrap(),
             Outcome::Current
         ));
         assert_eq!(
@@ -332,7 +336,7 @@ mod tests {
         };
         assert_eq!(
             unknown,
-            MIGRATIONS[at..]
+            MIGRATIONS[at..=at]
                 .iter()
                 .map(|migration| migration.id)
                 .collect::<Vec<_>>()
@@ -544,7 +548,7 @@ mod tests {
             })
             .unwrap();
         migrate(&mut db, &MIGRATIONS[..at]).unwrap();
-        migrate(&mut db, MIGRATIONS).unwrap();
+        migrate(&mut db, &MIGRATIONS[..=at]).unwrap();
         let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
             panic!("previous writer accepted native checkout disposition");
         };
@@ -557,6 +561,92 @@ mod tests {
             std::fs::read(marker).unwrap(),
             b"retained exact receipt metadata"
         );
+    }
+
+    #[test]
+    fn snapshot_reference_index_backfills_and_tracks_event_transactions() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261107030000_snapshot_reference_index")
+            .unwrap();
+        migrate(&mut db, &MIGRATIONS[..at]).unwrap();
+        let first = format!("copy:{}", "a".repeat(64));
+        let second = format!("copy:{}", "b".repeat(64));
+        let evidence = serde_json::json!({
+            "nested": [{"snapshot": first}, first],
+            "invalid": ["copy:short", format!("copy:{}", "A".repeat(64)),
+                format!("copy:{}", "g".repeat(64)), format!("copy:{}", "a".repeat(65))]
+        })
+        .to_string();
+        db.execute(
+            "INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('old','ses_old',0,'retained.1',?1,1)",
+            [&evidence],
+        ).unwrap();
+        migrate(&mut db, MIGRATIONS).unwrap();
+        let roots = |db: &Connection| -> Vec<(String, String)> {
+            db.prepare("SELECT event_id,root FROM snapshot_reference ORDER BY event_id,root")
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(roots(&db), [("old".into(), first.clone())]);
+        assert_eq!(
+            db.query_row("SELECT data FROM event WHERE id='old'", [], |row| row
+                .get::<_, String>(0))
+                .unwrap(),
+            evidence
+        );
+
+        // Generic imports retain shared roots independently of runtime projectors.
+        let fresh = serde_json::json!([first, second, second]).to_string();
+        db.execute(
+            "INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('new','ses_new',0,'imported.1',?1,2)",
+            [&fresh],
+        ).unwrap();
+        assert_eq!(
+            roots(&db),
+            [
+                ("new".into(), first.clone()),
+                ("new".into(), second.clone()),
+                ("old".into(), first.clone())
+            ]
+        );
+        // A failed append/projector transaction must not publish new references.
+        {
+            let tx = db.transaction().unwrap();
+            tx.execute(
+                "INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('rolled_back','ses_failed',0,'imported.1',?1,3)",
+                [&fresh],
+            ).unwrap();
+            assert_eq!(roots(&tx).len(), 5);
+            tx.rollback().unwrap();
+        }
+        assert_eq!(roots(&db).len(), 3);
+        db.execute(
+            "UPDATE event SET data=?1 WHERE id='old'",
+            [serde_json::json!({"repaired":second}).to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            roots(&db),
+            [
+                ("new".into(), first),
+                ("new".into(), second.clone()),
+                ("old".into(), second.clone())
+            ]
+        );
+        db.execute("DELETE FROM event WHERE id='new'", []).unwrap();
+        assert_eq!(roots(&db), [("old".into(), second)]);
+        db.execute("DELETE FROM event WHERE id='old'", []).unwrap();
+        assert!(roots(&db).is_empty());
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted reference-index storage");
+        };
+        assert_eq!(unknown, [MIGRATIONS[at].id]);
     }
 
     #[test]

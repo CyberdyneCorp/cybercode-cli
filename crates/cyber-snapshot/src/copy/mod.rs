@@ -12,6 +12,7 @@ mod inventory;
 mod links;
 mod ownership;
 mod preparation;
+pub(crate) mod reclamation;
 mod resolution;
 mod restore;
 mod storage;

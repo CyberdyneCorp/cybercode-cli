@@ -164,8 +164,20 @@ A cap warning is emitted once per Location/condition in the running service;
 conversation work and successful `exec` results continue. A fresh capture retries
 availability after conditions change. Durable Session references protect staged
 baselines and inactive branches. Unreferenced old manifests/objects can be pruned
-only with a complete durable reference view. Every namespace containing journals
-is conservatively retained; no quota or timeout discards unresolved evidence.
+only with a complete durable reference view. Namespaces containing journals remain
+protected from manifest/object pruning; no quota or timeout discards unresolved
+evidence.
+
+On admitted Linux/macOS hosts, periodic maintenance can reclaim displaced regular
+file payloads from an ordinary, completed and natively acknowledged file-copy
+restore in an unmanaged Location. It requires the exact durable restore receipt,
+exited worker proof, a complete reference view and the retention period measured
+from durable settlement. Disabled snapshots or zero retention preserve payloads.
+Live readers, independent unknown effects, changed payloads or incomplete native
+ownership refuse cleanup. A full capture may attempt the same eligible cleanup
+and retry once. Cleanup retains the intent, lifetime records and durable retry
+receipt, and never reads or restores source files. Managed Git, keep/rollback,
+preparation-construction and legacy payload reclamation remain unfinished.
 
 Before file changes, restore durably publishes an intent and prepares private
 stages. Replacements retain displaced inodes; progress and completion are flushed

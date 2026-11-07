@@ -482,6 +482,11 @@ impl Ownership {
         store.verify_root()?;
         Ok(Observations { files, parents })
     }
+    pub(super) fn original_identity(&self, index: usize) -> Option<&str> {
+        self.files
+            .get(index)
+            .and_then(|file| file.source.as_deref())
+    }
     pub(super) fn verify_original(&self, index: usize, file: &std::fs::File) -> Result<()> {
         if self.files.get(index).and_then(|file| file.source.as_ref())
             != Some(&storage::identity(file)?)

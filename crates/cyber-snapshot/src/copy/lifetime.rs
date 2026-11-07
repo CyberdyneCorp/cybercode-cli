@@ -218,6 +218,26 @@ impl Store {
         phase.checkout_bindings = Some(resources.to_vec());
         self.write_source_phase(binding, &phase)
     }
+    pub(crate) fn verify_reclamation_phase(
+        &self,
+        binding: &SnapshotLifetimeBinding,
+        origin: &cyber_server::runtime::SnapshotOrigin,
+        resources_digest: &str,
+    ) -> Result<(), String> {
+        let phase = self.read_source_phase(binding)?;
+        let resources = phase
+            .checkout_bindings
+            .as_ref()
+            .ok_or("Missing acquired reclamation resources")?;
+        if !phase.admitted
+            || phase.origin.as_ref() != Some(origin)
+            || !resources.is_empty()
+            || binding.checkout_resources_digest(resources)? != resources_digest
+        {
+            return Err("Reclamation source phase contradicts committed restore evidence".into());
+        }
+        Ok(())
+    }
     fn write_source_phase(
         &self,
         binding: &SnapshotLifetimeBinding,

@@ -521,3 +521,14 @@ payloads and later source symlinks/bytes, messages and inference counts. These a
 local macOS arm64 positives; other platform/cut combinations remain unproven.
 M7/M8 and their parent tasks stay open alongside partial constructors, managed Git
 admission, safe reclamation and complete compatibility/platform evidence.
+
+M6 ordinary-payload continuation: implement receipt-bound Store plan/completion
+records, writer-serialized reference checks, retained native namespace/reader/
+lifetime proof, and no-follow removal of positively owned ordinary file-copy
+stages. Keep intent/lifetime metadata and CAS roots; recheck retention and refuse
+unknown entries, aliases, live workers and independent uncertainty. Wire periodic
+maintenance and a bounded cap-pressure capture retry. Validate real-App positives,
+interrupted plan resume, missing/changed proof, disabled/zero retention and cap
+pressure before accepting this path. Managed Git, recovery-resolution/preparation
+construction payload cleanup and complete reclamation/platform acceptance remain
+required; M6 and all parent tasks stay open.

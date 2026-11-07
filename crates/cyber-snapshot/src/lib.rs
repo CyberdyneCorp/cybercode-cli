@@ -8,6 +8,7 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod copy;
 mod git;
+pub mod reclamation;
 mod restore;
 pub use cyber_server::runtime::SnapshotRecovery;
 
@@ -45,6 +46,7 @@ pub struct GitSnapshots {
     private_roots: Vec<PathBuf>,
     references: Option<Arc<ReferencesFn>>,
     unavailable: Mutex<HashMap<String, String>>,
+    reclamation: Option<Arc<dyn reclamation::Policy>>,
 }
 
 impl GitSnapshots {
@@ -59,7 +61,18 @@ impl GitSnapshots {
         private_roots: Vec<PathBuf>,
         references: Option<Arc<ReferencesFn>>,
     ) -> Arc<Self> {
+        Self::with_reclamation(data_dir, config, private_roots, references, None)
+    }
+
+    pub fn with_reclamation(
+        data_dir: PathBuf,
+        config: Arc<ConfigFn>,
+        private_roots: Vec<PathBuf>,
+        references: Option<Arc<ReferencesFn>>,
+        reclamation: Option<Arc<dyn reclamation::Policy>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
+            reclamation,
             data_dir,
             config,
             private_roots,
@@ -327,17 +340,141 @@ impl GitSnapshots {
         })
     }
 
-    pub async fn gc(&self) {
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        if let Some(references) = &self.references
-            && let Ok(protected) = references()
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn track_with_reclamation(&self, directory: &str) -> Result<Snapshot, String> {
+        let result = self
+            .file_copy(directory.to_owned(), |store| store.track())
+            .await;
+        let Some(policy) = &self.reclamation else {
+            return result;
+        };
+        if !result
+            .as_ref()
+            .is_err_and(|error| error.starts_with("Non-Git snapshot storage cap reached"))
         {
+            return result;
+        }
+        match self.reclaim(directory).await {
+            Ok(bytes) if bytes > 0 => {
+                self.file_copy(directory.to_owned(), |store| store.track())
+                    .await
+            }
+            Ok(_) => result,
+            Err(error) => {
+                policy.refused(directory, &error);
+                result
+            }
+        }
+    }
+
+    /// Reclaim one independently settled ordinary journal. Intent/lifetime
+    /// metadata and durable retry receipts remain retained. No source effects.
+    pub async fn reclaim(&self, directory: &str) -> Result<u64, String> {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let policy = self
+                .reclamation
+                .clone()
+                .ok_or("Snapshot reclamation authority is unavailable")?;
+            self.recovery_location(directory)?;
+            let directory = directory.to_owned();
             let data = self.data_dir.clone();
-            let config = self.config.clone();
-            let _ = tokio::task::spawn_blocking(move || copy::gc(&data, &config, &protected)).await;
+            let options = self.recovery_options(&directory);
+            let lock = cyber_server::workspace::mutation_lock(Path::new(&directory))
+                .map_err(|error| error.to_string())?;
+            let reader = lock
+                .clone()
+                .try_lock_owned()
+                .map_err(|_| "Snapshot reader or writer is active")?;
+            let (source, native_data, native_options) =
+                (directory.clone(), data.clone(), options.clone());
+            let journals = tokio::task::spawn_blocking(move || {
+                let _reader = reader;
+                copy::Store::recover_existing(&native_data, &source, native_options)?
+                    .reclamation_journals()
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            let mut refusal = None;
+            for journal in journals {
+                let workspace = lock
+                    .clone()
+                    .try_lock_owned()
+                    .map_err(|_| "Snapshot reader or writer is active")?;
+                let (source, native_data, native_options, native_policy, config) = (
+                    directory.clone(),
+                    data.clone(),
+                    options.clone(),
+                    policy.clone(),
+                    self.config.clone(),
+                );
+                let result = tokio::task::spawn_blocking(move || {
+                    let store =
+                        copy::Store::recover_existing(&native_data, &source, native_options)?;
+                    copy::reclamation::reclaim(store, workspace, config, native_policy, &journal)
+                })
+                .await
+                .map_err(|error| error.to_string())?;
+                match result {
+                    Ok(0) => {}
+                    Ok(bytes) => return Ok(bytes),
+                    Err(error) => {
+                        refusal.get_or_insert(error);
+                    }
+                }
+            }
+            refusal.map_or(Ok(0), Err)
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        let _ = &self.references;
+        {
+            let _ = directory;
+            Err("Native snapshot reclamation is unsupported on this host".into())
+        }
+    }
+
+    pub async fn gc(&self) {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            if let Some(policy) = &self.reclamation {
+                let data = self.data_dir.clone();
+                let locations =
+                    tokio::task::spawn_blocking(move || copy::reclamation::locations(&data)).await;
+                match locations {
+                    Ok(Ok(locations)) => {
+                        for directory in locations {
+                            if let Err(error) = self.reclaim(&directory).await {
+                                policy.refused(&directory, &error);
+                            }
+                        }
+                    }
+                    Ok(Err(error)) => policy.refused("snapshot inventory", &error),
+                    Err(error) => policy.refused("snapshot inventory", &error.to_string()),
+                }
+                let (data, config, policy) =
+                    (self.data_dir.clone(), self.config.clone(), policy.clone());
+                let report = policy.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    policy.collect(Box::new(move |protected| {
+                        copy::gc(&data, &config, protected)
+                    }))
+                })
+                .await;
+                if let Err(error) = result
+                    .map_err(|error| error.to_string())
+                    .and_then(|value| value)
+                {
+                    report.refused("snapshot collection", &error);
+                }
+            } else if let Some(references) = &self.references
+                && let Ok(protected) = references()
+            {
+                let (data, config) = (self.data_dir.clone(), self.config.clone());
+                let _ =
+                    tokio::task::spawn_blocking(move || copy::gc(&data, &config, &protected)).await;
+            }
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let _ = (&self.references, &self.reclamation);
         for git_dir in git::shadow_dirs(&self.root()) {
             git::gc(&git_dir).await;
         }
@@ -633,9 +770,7 @@ impl Snapshots for GitSnapshots {
             if self.non_git(&directory) {
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
                 {
-                    let result = self
-                        .file_copy(directory.clone(), |store| store.track())
-                        .await;
+                    let result = self.track_with_reclamation(&directory).await;
                     let mut unavailable = self
                         .unavailable
                         .lock()

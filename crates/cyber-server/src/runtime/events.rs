@@ -552,6 +552,7 @@ pub fn registry() -> EventRegistry {
                 .map_err(|e| e.to_string())
         })
         .expect("valid messaging override event");
+    super::snapshot_reclamation::register(&mut registry);
     super::branches::register(&mut registry);
     super::budget::register(&mut registry);
     super::reservations::register(&mut registry);
@@ -579,6 +580,7 @@ pub fn registry() -> EventRegistry {
 }
 
 fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
+    super::snapshot_reclamation::project(tx, e)?;
     super::deferred_tools::validate_event(tx, e)?;
     super::admission_authority::project(tx, e)?;
     super::hooks::project(tx, e)?;
