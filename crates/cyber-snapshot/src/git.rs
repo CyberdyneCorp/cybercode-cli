@@ -16,6 +16,8 @@ mod images;
 pub(crate) mod prepared;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod raw;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod user_index;
 
 /// A shadow git directory bound to one worktree and scoped to one Location.
 #[derive(Debug, Clone)]

@@ -735,6 +735,20 @@ publication SHALL use descriptor-relative replacement without following output
 links. This does not prove user-index or large-untracked eligibility changes;
 those and full configuration/filter compatibility still gate managed Git admission.
 
+### User Git index handoff binding
+
+Native policy collection SHALL observe the user's actual per-worktree index,
+including absence, and the active split-index dependency before and after Git
+path resolution. Linked worktrees SHALL bind their own index and routing files,
+rather than substituting the common repository index. The synchronous native
+planner SHALL revalidate retained file generations, bytes and directory identities
+without running Git or writing the user index. A missing, changed, oversized or
+unsupported observation SHALL not become native restore authority. Ordinary
+canonical capture SHALL remain available when native proof is unavailable.
+This binding does not by itself prove the generated large-untracked decisions,
+all user configuration dependencies, tracked-large-file compatibility or full Git
+runtime acceptance; those obligations still gate managed Git source admission.
+
 ### Typed recovery CLI dispatch
 
 `cyber sessions recovery <session>` SHALL list retained journals without inference.

@@ -115,6 +115,180 @@ async fn changed_user_excludes_after_preparation_refuses_native_source_effects()
 }
 
 #[tokio::test]
+async fn changed_user_index_after_preparation_refuses_native_source_effects() {
+    let mut repo = Repo::new();
+    repo.snapshots = crate::GitSnapshots::new(
+        repo.data.clone(),
+        Arc::new(|_| serde_json::json!({"snapshots":{"max_file_bytes":4096}})),
+    );
+    std::fs::write(repo.root.join("large"), vec![b'x'; 5120]).unwrap();
+    let git = |args: &[&str]| {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo.root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    git(&["add", "--", "large"]);
+    std::fs::write(repo.root.join("file"), "before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), "after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    git(&["rm", "--cached", "--quiet", "--", "large"]);
+    let store = repo.store(&repo.root);
+    assert!(store.restore_git_worker(prepared, None).is_err());
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+    assert_eq!(
+        std::fs::read(repo.root.join("large")).unwrap(),
+        vec![b'x'; 5120]
+    );
+    assert!(store.recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_git_index_proof_rejects_creation_replacement_and_changed_split_dependency() {
+    for kind in ["creation", "replacement", "split"] {
+        let repo = Repo::new();
+        std::fs::write(repo.root.join("file"), "before").unwrap();
+        if kind != "creation" {
+            repo.git(&["add", "--", "file"]);
+        }
+        if kind == "split" {
+            repo.git(&["update-index", "--split-index"]);
+        }
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join("file"), "after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        match kind {
+            "creation" => repo.git(&["add", "--", "file"]),
+            "replacement" => {
+                let index = repo.root.join(".git/index");
+                let replacement = repo.root.join(".git/replacement");
+                std::fs::write(&replacement, std::fs::read(&index).unwrap()).unwrap();
+                std::fs::rename(replacement, index).unwrap();
+            }
+            "split" => {
+                let shared = std::fs::read_dir(repo.root.join(".git"))
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| {
+                        path.file_name()
+                            .unwrap()
+                            .to_str()
+                            .unwrap()
+                            .starts_with("sharedindex.")
+                    })
+                    .unwrap();
+                std::fs::write(shared, "changed split index").unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert!(prepared.ignore.config.verify().is_err(), "{kind}");
+        let store = repo.store(&repo.root);
+        assert!(store.restore_git_worker(prepared, None).is_err(), "{kind}");
+        assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+        assert!(store.recovery().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn native_git_split_index_preparation_and_restore_preserve_user_index_metadata() {
+    use std::os::unix::fs::MetadataExt;
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("file"), "before").unwrap();
+    repo.git(&["add", "--", "file"]);
+    repo.git(&["update-index", "--split-index"]);
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), "after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let shared = std::fs::read_dir(repo.root.join(".git"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .as_encoded_bytes()
+                .starts_with(b"sharedindex.")
+        })
+        .unwrap();
+    let paths = [repo.root.join(".git/index"), shared];
+    let observations = || {
+        paths.each_ref().map(|path| {
+            let metadata = std::fs::metadata(path).unwrap();
+            (
+                metadata.ino(),
+                metadata.mtime(),
+                metadata.mtime_nsec(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+                std::fs::read(path).unwrap(),
+            )
+        })
+    };
+    let before = observations();
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    assert_eq!(observations(), before);
+    repo.store(&repo.root)
+        .restore_git_worker(prepared, None)
+        .unwrap();
+    assert_eq!(observations(), before);
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"before");
+}
+
+#[tokio::test]
+async fn oversized_user_index_keeps_canonical_capture_without_native_authority() {
+    use sha1::Digest;
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("file"), "canonical-readable").unwrap();
+    repo.git(&["add", "--", "file"]);
+    let path = repo.root.join(".git/index");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.truncate(bytes.len() - 20);
+    bytes.extend_from_slice(b"TEST");
+    bytes.extend_from_slice(&(1024_u32 * 1024).to_be_bytes());
+    bytes.resize(bytes.len() + 1024 * 1024, 0);
+    let hash = sha1::Sha1::digest(&bytes);
+    bytes.extend_from_slice(&hash);
+    std::fs::write(&path, &bytes).unwrap();
+    repo.git(&["ls-files", "--error-unmatch", "--", "file"]);
+    let snapshot = repo
+        .snapshots
+        .track(repo.root.to_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        snapshot
+            .skipped
+            .iter()
+            .any(|value| value.contains("native Git policy/raw-state proof unavailable"))
+    );
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    assert_eq!(
+        shadow
+            .blob(&snapshot.tree, "file")
+            .await
+            .unwrap()
+            .unwrap()
+            .1,
+        b"canonical-readable"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), bytes);
+}
+
+#[tokio::test]
 async fn changed_git_config_locator_after_preparation_refuses_native_source_effects() {
     let repo = Repo::new();
     repo.track(&repo.root).await;
@@ -203,6 +377,17 @@ async fn native_git_config_proof_rejects_include_creation_changes_and_conditiona
 }
 
 impl Repo {
+    fn git(&self, args: &[&str]) {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.root)
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
     fn new() -> Self {
         Self::with_format("sha1")
     }
@@ -1708,9 +1893,11 @@ async fn sha256_linked_worktree_uses_its_common_repository_format_and_scoped_git
     let prepared = repo.prepare(&location, &target, &recorded, &recorded).await;
     assert_eq!(prepared.prefix, "nested");
     assert_eq!(prepared.target.images["file"].bytes, b"before");
+    let policy = prepared.ignore.config.clone();
     repo.store(&location)
         .restore_git_worker(prepared, None)
         .unwrap();
+    policy.verify().unwrap();
     assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before");
     std::fs::write(location.join("file"), "after").unwrap();
     let paths = repo
@@ -1740,6 +1927,28 @@ async fn sha256_linked_worktree_uses_its_common_repository_format_and_scoped_git
     assert!(store.restore_git_worker(prepared, None).is_err());
     assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before");
     assert_eq!(std::fs::read(linked.join(".git")).unwrap(), marker);
+    std::fs::remove_file(repo.root.join(".git/info/exclude")).unwrap();
+    let expected = repo.track(&location).await;
+    let prepared = repo
+        .prepare(&location, &recorded, &expected, &expected)
+        .await;
+    let common_index = std::fs::read(repo.root.join(".git/index")).ok();
+    assert!(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(&linked)
+            .args(["add", "--", "nested/file"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(prepared.ignore.config.verify().is_err());
+    assert!(store.restore_git_worker(prepared, None).is_err());
+    assert_eq!(
+        std::fs::read(repo.root.join(".git/index")).ok(),
+        common_index
+    );
+    assert_eq!(std::fs::read(location.join("file")).unwrap(), b"before");
     assert!(
         !repo
             .snapshots

@@ -127,6 +127,7 @@ impl Shadow {
             &self.common_dir,
             settings,
         )?)?;
+        config.merge(self.user_index_inputs().await?)?;
         Ok(IgnoreInputs {
             config,
             info: self.git_dir.join("info/exclude"),

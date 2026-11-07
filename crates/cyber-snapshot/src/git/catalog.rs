@@ -32,8 +32,15 @@ impl Shadow {
         limit: usize,
         timeout: std::time::Duration,
     ) -> Result<Vec<u8>, String> {
-        let mut child = self
-            .command(args)
+        Self::bounded_command(self.command(args), limit, timeout).await
+    }
+
+    pub(super) async fn bounded_command(
+        mut command: tokio::process::Command,
+        limit: usize,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, String> {
+        let mut child = command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()

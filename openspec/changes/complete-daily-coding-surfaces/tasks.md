@@ -552,3 +552,14 @@ while SQLite writer contention prevents source admission, then verify changed
 inodes/digests, historical missing proof and durable partial cleanup. Raw partial
 construction, managed/Git resources, metadata/CAS and full platform/cut acceptance
 remain required; all parent tasks stay open.
+
+User-index handoff continuation: native policy now binds the actual per-worktree
+index, absence, routing files and bounded shared-index candidates, with native
+read-only revalidation and a distinct fingerprint frame. Regression coverage
+includes tracked-to-untracked, creation, identical-byte inode replacement, split
+dependency changes and SHA-256 linked-worktree index isolation. A positive verifies
+split-index metadata/bytes remain unchanged through preparation and native restore;
+oversized observations retain canonical capture without native authority. Size-
+decision generation, complete user config/filter compatibility, tracked large
+files, runtime/checkout/recovery/cleanup and full crash/platform gates remain open.
+Managed Git source admission and all M2–M8/parent task acceptance remain unchanged.

@@ -3412,3 +3412,63 @@ execution ran for this increment. No unresolved critical/major review finding
 remains in this fully prepared regular-target scope; raw construction, managed/Git,
 metadata/CAS and full acceptance remain required. No PR/push or parent completion
 is claimed.
+
+### User Git index handoff evidence (2026-11-07)
+
+A new real-repository regression reproduced a native backend gap: after preparing
+an expected checkpoint with a 5 KiB tracked file and a 4 KiB untracked limit,
+removing that file from the user's index still allowed the native restore. The
+initial regression failed its refusal assertion; this is reproduced branch
+behavior, not an unchanged-main attribution.
+
+Native capture/preparation now binds the actual per-worktree index (including
+absence), marker/admin routing and all bounded shared-index candidates into the
+existing read-only metadata observations. User path discovery clears repository
+redirection environment, disables optional locks, and uses the existing bounded
+output/deadline/kill-and-await runner. The routing marker is observed before
+resolution; resolved layout is checked again after index collection. The
+synchronous native worker revalidates exact file observations and directory
+identities without Git, index writes or source replays. A distinct v4 policy
+fingerprint leaves older policy evidence unpromoted. The combined directory
+context bound is eight so a linked worktree can retain its independent admin
+identity alongside common/shadow/rule contexts. Existing 1 MiB per-file, 8 MiB
+aggregate and 1024-file observation limits remain enforced.
+
+The first split-index implementation used `git rev-parse --shared-index-path`.
+Its new regression failed because this nominally read-only command refreshes
+shared-index mtime/ctime even with GIT_OPTIONAL_LOCKS=0. A direct temporary
+repository experiment confirmed that metadata change. Collection now enumerates
+at most 4096 admin entries and binds shared-index candidates directly, avoiding
+that command and leaving selection bound by the exact index bytes. This is a
+conservative superset: an unused candidate changing can refuse native preparation.
+Oversized observations retain ordinary canonical capture with explicit native
+proof unavailability. A valid oversized index with an optional extension exercises
+that fallback and verifies that capture preserves user index bytes.
+
+Regression coverage includes post-preparation tracked-to-untracked changes,
+absent-index creation, identical-byte inode replacement, shared-index dependency
+changes, SHA-256 linked-worktree independent index changes, and successful split-
+index preparation/restore preserving index/shared-index bytes, inode and mtime/
+ctime. The linked-worktree positive also revalidates the retained policy after
+native source restoration. Code-review skill inspection checked routing before
+resolution, bounded subprocess cleanup, native verification without subprocesses,
+old fingerprint handling and canonical fallback. No critical/major finding remains
+in this index-handoff increment; it does not prove size-decision generation or
+complete user config dependencies.
+
+Local macOS arm64 validation: the full snapshot library run passed 126 tests with
+four intentionally ignored subprocess fixtures in 44.16 seconds; the subsequently
+added split-index metadata positive passed separately in 2.15 seconds. Integration
+suites passed all 18 file-copy and 22 Git snapshot cases (one intentionally ignored
+subprocess fixture). The Windows-only file_copy_platform binary selected zero
+cases on this host and supplies no Windows evidence. Snapshot all-target Clippy,
+format/diff, generated SDK consistency, strict OpenSpec (117 items) and spec lint
+(0 errors/25 warnings) passed. Cargo invocations used CARGO_INCREMENTAL=0 and
+--locked. No full workspace, CLI/TUI acceptance rerun, SDK execution, other native
+platform or CI run was performed for this increment.
+
+Managed Git source admission stays disabled. Fresh generated large-untracked
+classification, complete user config/filter compatibility, tracked-large-file
+limits, runtime/checkout/recovery/cleanup and full crash/platform acceptance still
+require implementation or proof. M2–M8, parent tasks and both issues remain open;
+there is no push/PR/merge acceptance claim.

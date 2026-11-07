@@ -108,7 +108,7 @@ impl ConfigInputs {
             }
             self.contexts.insert(path, state);
         }
-        if self.files.len() > 1024 || self.contexts.len() > 4 {
+        if self.files.len() > 1024 || self.contexts.len() > 8 {
             return Err("Combined Git policy inputs exceed limits".into());
         }
         self.verify()
@@ -121,7 +121,7 @@ impl ConfigInputs {
     }
 
     pub(crate) fn bind_contexts(&mut self, paths: Vec<PathBuf>) -> storage::Result<()> {
-        if paths.len() > 4 {
+        if paths.len() > 8 {
             return Err("Git configuration directory context exceeds limit".into());
         }
         for path in paths {

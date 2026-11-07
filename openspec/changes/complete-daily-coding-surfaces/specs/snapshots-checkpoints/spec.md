@@ -371,3 +371,17 @@
 - **THEN** cancellation SHALL require its exact reviewed fingerprint and stable request ID, with malformed/incomplete options refused before service startup
 - **AND** replies SHALL match the selected Session/activity/lifetime and any published origin; source-admitted, mismatched or unsupported review evidence SHALL NOT be presented as cancellation authority
 - **AND** `sessions recovery-preparation-request` SHALL look up the committed receipt without replay, keep acknowledgement reconciliation explicit, and preserve files, transcript, evidence and independent process/checkout uncertainty
+
+
+#### Scenario: User Git index changes after native preparation
+- **GIVEN** prepared native Git images bind the actual user worktree index, its absence or active split-index dependency, and repository routing
+- **WHEN** an index is created, replaced or changed after preparation, including a linked worktree's independent index
+- **THEN** the native planner SHALL refuse before journal/source effects by revalidating bounded retained observations without running Git or writing the user index
+- **AND** a same-byte replacement SHALL NOT inherit the original index generation proof
+- **AND** a distinct policy fingerprint frame SHALL NOT promote historical proof lacking user-index observations
+
+#### Scenario: User index exceeds native observation bounds
+- **GIVEN** an otherwise usable Git repository has a user index exceeding the bounded native metadata reader
+- **WHEN** a checkpoint is captured
+- **THEN** ordinary canonical capture SHALL remain readable with explicit native-proof unavailability, and SHALL NOT acquire native restore authority or modify the user index
+- **AND** index binding alone SHALL NOT prove large-untracked classification, complete user configuration dependencies or managed Git runtime acceptance
