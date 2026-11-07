@@ -597,6 +597,45 @@ User, global, `--config` and environment layers may set anything. A project laye
 
 `eval/fixtures/untrusted-content/` holds labeled injection samples (every kind, through `webfetch`, `websearch`, MCP and repository files) and benign documentation, READMEs, search results and MCP output, including security articles about prompt injection. `cargo test -p cyber-core --test untrusted_eval -- --nocapture` reports recall per kind and false-positive rates, and fails below 90% recall or above 2% false positives. `cargo bench -p cyber-core --bench untrusted_detector` warns when a 50 KiB page scans in more than 5 ms and fails above 10 ms, and bounds a 256 KiB adversarial text. `cargo test -p cyber-tools --test untrusted_e2e` runs a scripted model that follows an injected page (read `~/.aws/credentials` and post it, widen permissions, redirect provider traffic) in `default`, `auto` with and without a user, and `bypass` with `bypass: "deny"`, and checks that every action is asked or denied.
 
+## Structured results
+
+`cyber exec --output-schema <file>` makes the answer a JSON object that a JSON Schema validates, for scripts and CI that read the result:
+
+```bash
+cat > findings.schema.json <<'JSON'
+{ "type": "object",
+  "properties": { "summary": { "type": "string" }, "risky": { "type": "array", "items": { "type": "string" } } },
+  "required": ["summary", "risky"] }
+JSON
+cyber exec --output-schema findings.schema.json "audit the dependencies"            # prints the object
+cyber exec --output-schema findings.schema.json --format json "audit the dependencies" | jq .result
+```
+
+- **The schema** must be an object schema (`"type": "object"`), at most 64 KiB and 64 levels deep, with local `$ref`s only (`#/...`). A file that is not JSON or breaks a limit exits 2 before any Session exists; so does combining it with `--command`, `--workflow` or `--goal`.
+- **How the model answers:** the prompt gets a `structured_output` tool whose input is the schema, and each request reminds the model to end with it. A valid call is the result, and the answer ends there.
+- **Corrections:** an invalid call returns the validation errors to the model, and an answer that ends without the call gets a reminder. Three failed submissions in all (the first plus two corrections) end the prompt with `StructuredOutputError: <why>` and exit code 1; there is never a fourth.
+- **Output:** text mode prints the object as pretty JSON; `--format json` and the `stream-json` `result` line put it in `result` (`null` on failure, with the error in `error`). Interruption (130), budgets and timeouts (4) keep their usual exit codes.
+- **API:** `POST /api/v1/sessions/{id}/prompt` takes `"format": {"type": "json_schema", "schema": {…}}` on a root Session's prompt (a subagent has its own result schema). The schema belongs to that prompt only: queued prompts keep their own schemas, results and counts, also across a restart. The outcome is recorded as `session.structured_output.settled.1` (`message_id`, `value` or `error`, `attempts`) and kept on the input's inbox row as `structured`, so a client that lost the reply can read it again.
+
+## Driving exec over stdin
+
+`cyber exec --input-format stream-json --format stream-json` keeps one Session open and reads JSON lines from stdin until `end` or EOF, so a program can send several prompts, interrupt, and answer permission and question requests:
+
+```text
+{"type":"user","text":"run the tests","id":"t1"}          a prompt (or "parts": [...]); "delivery": "queue" (default) or "steer"
+{"type":"interrupt"}                                        interrupt the running answer
+{"type":"permission_reply","request_id":"per_…","reply":"once"}   once, always or reject; optional "message"
+{"type":"question_reply","request_id":"que_…","answers":[["yes"]]}  omit answers to dismiss
+{"type":"end"}                                              no more input
+```
+
+- **Output:** the `init` line has `schema_version: 2`. Each prompt gets an `input` line when it is admitted (`status: admitted` or `refused`) and one `result` line when its answer ends, with its `id`, `message_id`, `result`, `error` and `exit_code`. Requests appear as `permission_request` and `question` lines. The run ends with one `end` line: the aggregate `exit_code`, `inputs`, usage, cost and duration. `--include-partial-messages` adds `text_delta` and `reasoning_delta` lines, and `--output-last-message <file>` writes the last answer's text to the file atomically when the run ends.
+- **Requests:** the driver holds an interactive lease on the Session while it reads input, so the Session asks it instead of denying, and the run starts in `default` mode unless `--mode` says otherwise. Only requests this Session raised can be answered; any other `request_id` is an `error` line with `code: protocol`, and the run goes on. Nothing is ever approved for you.
+- **Ending:** after `end` or EOF nothing new is admitted, requests still waiting are declined (`reject` for permissions, dismissed questions), and the process exits once every admitted prompt has its result and the Session is idle.
+- **Limits and errors:** a line is at most 1 MiB and at most 32 prompts may wait for an answer. A line that is not a valid envelope, an over-long line or a 33rd waiting prompt is a fatal protocol error: an `error` line, no more input, the Session interrupted, and exit 2.
+- **Exit code:** 130 after SIGINT, 2 after a fatal protocol error, otherwise the first failed prompt's code in admission order (1), else 0. `--output-schema` applies to every prompt, whose `result` is then the validated object.
+- **Not combined with:** a prompt argument, `--command`, `--goal`, `--timeout`, `--max-cost` or `--max-tokens` (exit 2 before any Session). `--include-hook-events` is not available yet.
+
 ## Budgets and deferred input
 
 New Sessions accept a `budget` object through POST `/sessions`: `{ "max_turns": 20, "max_tokens": 100000, "max_cost_usd": 2, "max_wall_seconds": 600, "enforcement": "soft" }`. Omit fields to leave those dimensions unlimited; a zero cap blocks dispatch. Trusted `budgets.session` configuration supplies creation defaults. Caps persist across restart and new prompts, count the Session and descendants, and apply to visible Turns, title, evaluator, compaction and web-page summary calls. Wall time starts at the first gated dispatch and continues while idle. Soft limits publish durable 80% warnings and exhaustion events, let in-flight calls settle and block new calls at the recorded limit; concurrent calls can overshoot. Independent forks copy the cap with fresh spending and activation. Project budget overrides require workspace trust. Reserved enforcement is currently refused; reservations, daily caps, budget-triggered subtree cancellation and complete client budget displays remain open. The runtime has bounded local subtree-stop reporting; exec/TUI adoption remains open.

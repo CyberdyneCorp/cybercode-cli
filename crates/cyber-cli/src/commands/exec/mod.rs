@@ -2,9 +2,12 @@
 
 mod background;
 mod delegation;
+mod driver;
+mod frames;
 pub(crate) mod goals;
 pub(crate) mod report;
 mod review_run;
+mod schema;
 pub(crate) mod setup;
 mod style;
 mod workflow;
@@ -90,6 +93,26 @@ pub struct ExecArgs {
     /// listed at the Location, or the run exits 2 before any Session exists.
     #[arg(long, value_name = "NAME")]
     pub output_style: Option<String>,
+    /// A JSON Schema file the final answer must satisfy: the model ends with a validated
+    /// object, which becomes `result` (printed as JSON in text mode). Three invalid
+    /// submissions exit 1 with `StructuredOutputError`.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["workflow", "command", "goal"])]
+    pub output_schema: Option<PathBuf>,
+    /// `stream-json` reads JSON lines from stdin for the life of the process: prompts,
+    /// `interrupt`, permission and question replies, and `end` (needs --format
+    /// stream-json; each prompt gets its own `result` line).
+    #[arg(long, value_enum, default_value_t = InputFormat::Text)]
+    pub input_format: InputFormat,
+    /// With --input-format stream-json: add `text_delta` and `reasoning_delta` lines.
+    #[arg(long)]
+    pub include_partial_messages: bool,
+    /// With --input-format stream-json: write the last answer's text to this file,
+    /// atomically, when the run ends.
+    #[arg(long, value_name = "FILE")]
+    pub output_last_message: Option<PathBuf>,
+    /// The parsed `--output-schema` (filled by `run`).
+    #[arg(skip)]
+    pub schema: Option<serde_json::Value>,
     /// Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return
     /// value is the result.
     #[arg(long, value_name = "NAME|PATH", conflicts_with_all = ["command", "prompt"])]
@@ -143,7 +166,22 @@ pub struct ExecArgs {
     pub trust_project_hooks: bool,
 }
 
+/// `--input-format`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum InputFormat {
+    /// The prompt from the arguments and stdin.
+    #[default]
+    Text,
+    /// JSON lines driving the Session for the life of the process.
+    StreamJson,
+}
+
 impl ExecArgs {
+    /// The run is driven over stdin (`--input-format stream-json`).
+    pub(crate) fn driven(&self) -> bool {
+        self.input_format == InputFormat::StreamJson
+    }
+
     /// Whether this run takes the no-sandbox `bypass` override, under either name.
     pub(crate) fn bypass_override(&self) -> bool {
         self.dangerously_bypass_permissions || self.dangerously_skip_permissions
@@ -169,6 +207,16 @@ pub fn run(mut args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(),
     if args.workflow.is_some() {
         return launch(args, ctx, global, String::new(), None);
     }
+    args.schema = schema::load(args.output_schema.as_deref())?;
+    if args.driven() {
+        check_driven(&args, global)?;
+        return launch(args, ctx, global, String::new(), None);
+    }
+    if args.include_partial_messages || args.output_last_message.is_some() {
+        return Err(CliError::usage(
+            "--include-partial-messages and --output-last-message need --input-format stream-json",
+        ));
+    }
     let prompt = if args.goals.is_empty() {
         setup::prompt(&args.prompt)?
     } else {
@@ -181,6 +229,29 @@ pub fn run(mut args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(),
         );
     }
     launch(args, ctx, global, prompt, None)
+}
+
+/// `--input-format stream-json` refuses what it cannot honor before any Session exists.
+fn check_driven(args: &ExecArgs, global: &GlobalArgs) -> Result<(), CliError> {
+    if global.format != Some(Format::StreamJson) {
+        return Err(CliError::usage(
+            "--input-format stream-json needs --format stream-json",
+        ));
+    }
+    let conflicts = [
+        (!args.prompt.is_empty(), "a prompt argument"),
+        (args.command.is_some(), "--command"),
+        (!args.goal.is_empty(), "--goal"),
+        (args.timeout.is_some(), "--timeout"),
+        (args.max_cost.is_some(), "--max-cost"),
+        (args.max_tokens.is_some(), "--max-tokens"),
+    ];
+    match conflicts.iter().find(|(set, _)| *set) {
+        Some((_, what)) => Err(CliError::usage(format!(
+            "--input-format stream-json takes its prompts from stdin and cannot be combined with {what}"
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// `cyber review`: the `review` command over the normalized target, reported as findings.
@@ -236,6 +307,7 @@ fn launch(
                 out.review(target);
                 execute_session(&client, &session, &args, prompt, timeout, out).await
             }
+            (None, None) if args.driven() => driver::execute(&client, &session, &args, out).await,
             (None, None) => execute(&client, &session, &args, prompt, timeout, out).await,
         };
         if let Some(id) = session["id"].as_str() {

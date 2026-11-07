@@ -58,6 +58,7 @@ async fn message_records_project_survive_a_restart_and_leave_with_their_session(
                 message_id: Some("msgx_held".into()),
                 source: "session".into(),
                 resume: false,
+                output_schema: None,
                 ..Admission::text("<cross_session_message/>", Delivery::Hold)
             },
         )
