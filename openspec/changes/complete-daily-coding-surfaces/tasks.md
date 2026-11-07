@@ -380,3 +380,14 @@ without source replay/inference. The full managed Git backend/source/checkout pa
 recovery-resolution resource acknowledgement, complete native cuts/platforms and
 reference-aware cleanup still require acceptance; parent tasks and Git admission
 remain unchanged and open.
+
+
+Original-owner retention continuation: recovery now reads attested original lifetime
+metadata, reacquires exact version-2 lifetime and published native checkout resources
+before reserving a resolution owner, and retains both owners through work/commit.
+Authorization revalidates the original set. Legacy v1/missing lifetimes gain no new
+claim proof; unknown versions refuse. Completion drops native result guards before
+worker lifetime locks. This is retention, not original/resolution checkout marker
+authority: binding both sets into consuming recovery receipts and publishing/
+reconciling their exact acknowledgements remain required. M2–M8 and parent tasks
+stay open; ordinary Git source admission is unchanged and disabled.

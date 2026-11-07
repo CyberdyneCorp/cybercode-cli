@@ -2334,3 +2334,55 @@ execution, real TUI/App, owned managed-Git source/checkout callbacks, Linux/Wind
 and source-bound CI were not run for this increment. Native recovery-resolution
 resource acknowledgement and reference-aware cleanup remain required; parent
 tasks and ordinary Git admission stay open/gated.
+
+
+## Retaining interrupted-owner resources through resolution (2026-11-07)
+
+Recovery now reads the attested original activity's lifetime before creating the
+resolution lifetime or publishing its owner. For version 2 it locks the exact
+original lifetime, requires its complete published resource set, reacquires those
+native claims read-only and verifies owner/Session creation/Location/root context.
+The original lifetime and claims remain in the synchronous worker alongside the
+distinct resolution owner's resources. Source authorization and recovery completion
+revalidate original publication and retained bindings. No original claim is created,
+settled or rewritten by acquisition. Version-1/missing historical lifetime evidence
+stays distinct without new adoption; unsupported lifetime versions refuse.
+
+SnapshotCompletion now disposes its native result guard before its worker. This
+keeps native guard cleanup under the existing lifetime locks rather than releasing
+the worker proof first. Original claims drop before their original lifetime; the
+resolution lifetime remains the worker's final ownership resource. Retention alone
+commits no receipt and acknowledges no native fence.
+
+Two runtime regressions use instrumented lifetime/Location ports. One holds both
+owners, checks distinct activity identity and verifies that changed original
+publication prevents callback dispatch; dropping an unconsumed completion leaves
+the original activity unknown. Another native result Drop guard asserts the worker
+lifetime is still retained during its cleanup. The unstarted-resolution fixture
+now provides two semaphore permits for the two independent owners; native storage
+uses distinct per-activity lock files. These tests do not claim actual managed
+checkout resource-set or native cross-process proof by themselves.
+
+The code-review skill was applied to source/tests/artifacts, focusing on acquisition
+before dispatch, no retrospective legacy adoption, unsupported-version refusal,
+read-only resource proof, lifetime/claim/native guard disposal order, cancellation
+and preservation of unknown evidence. Full recovery receipts still need both
+resource sets bound and consumed at the writer, with exact native marker publication
+and lost-reply reconciliation. Safe cleanup, actual managed-Git callbacks and full
+client/platform/cut acceptance remain open; no parent task or Git admission gate
+is accepted by this retention increment.
+
+Final local macOS arm64 verification: locked server library tests passed 434 cases
+with one ignored fixture; the complete 17-case real CLI branch/recovery suite
+passed, including actual kill/restart, keep/rollback, stage/clear and no-op paths.
+These clients use unmanaged file-copy and legacy Git paths, not owned managed-Git
+source callbacks. The final focused worker suite passed 45 cases after the explicit
+unsupported-version branch was added. Four-package all-target locked Clippy
+(server/snapshot/tools/CLI) passed with Rust warnings denied. Native C compilation
+reported sandbox_init/sandbox_free_error deprecation warnings; no main comparison
+or pre-existing attribution was made. Format/diff and generated SDK consistency
+passed. Pinned strict OpenSpec passed all 117 items; spec lint reported 0 errors/
+25 warnings. Full snapshot/SDK/workspace execution, actual managed checkout
+cross-process retention, real TUI/App, Linux/Windows and source-bound CI were not
+run for this increment. Consuming recovery resource evidence, exact native marker
+publication/reconciliation and reference-aware cleanup remain open.

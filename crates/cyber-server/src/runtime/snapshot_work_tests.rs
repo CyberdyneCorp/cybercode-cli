@@ -1216,7 +1216,7 @@ async fn cancelling_an_unstarted_resolution_keeps_its_original_failed_restore_fe
         temp.path(),
         Arc::new(Lifetimes {
             inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
-            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            permits: Arc::new(tokio::sync::Semaphore::new(2)),
             foreign: false,
             reject_resources: false,
             resources: Default::default(),
@@ -3403,4 +3403,130 @@ async fn managed_completion_without_a_journal_receipt_keeps_pre_effect_recovery_
         assert!(record["snapshot_restore_receipt"].is_null());
         runtime.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn resolution_retains_original_and_distinct_resolution_lifetimes_through_native_work() {
+    for changed in [false, true] {
+        let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let permits = Arc::new(tokio::sync::Semaphore::new(2));
+        let resources = Arc::new(std::sync::Mutex::new(None));
+        let runtime = runtime_with_snapshots(
+            &base,
+            base.inner.store.clone(),
+            temp.path(),
+            Arc::new(Lifetimes {
+                inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+                permits: permits.clone(),
+                foreign: false,
+                reject_resources: false,
+                resources: resources.clone(),
+            }),
+        );
+        let original =
+            failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+        assert_eq!(permits.available_permits(), 2);
+        let request = recovery_request(original.clone());
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let state = handle.state.lock().await;
+        let owner = runtime
+            .snapshot_recovery_worker(&handle, &state, request.clone())
+            .await
+            .unwrap();
+        assert_eq!(owner._original.as_ref().unwrap().origin, original);
+        assert_ne!(owner.scope.id(), original.activity_id);
+        assert_eq!(
+            permits.available_permits(),
+            0,
+            "both owners must remain held"
+        );
+        drop(state);
+        if changed {
+            *resources.lock().unwrap() = None;
+            let effects = Arc::new(AtomicUsize::new(0));
+            let seen = effects.clone();
+            let result = owner
+                .run(move |work| {
+                    work.authorize().map_err(RestoreError::Failed)?;
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    Err(RestoreError::Failed("unexpected dispatch".into()))
+                })
+                .await;
+            assert!(result.is_err());
+            assert_eq!(effects.load(Ordering::SeqCst), 0);
+        } else {
+            let completed = finish_recovery(owner, request, Arc::new(AtomicUsize::new(0))).await;
+            assert_eq!(permits.available_permits(), 0);
+            // No consuming pair: retaining owners alone cannot acknowledge either.
+            drop(completed);
+        }
+        assert_eq!(permits.available_permits(), 2);
+        let events = runtime
+            .inner
+            .store
+            .read_events(&original.activity_id, -1, 10)
+            .unwrap();
+        assert_eq!(events.events.last().unwrap().data["status"], "unknown");
+        runtime.shutdown().await;
+    }
+}
+
+struct NativeDisposal {
+    permits: Arc<tokio::sync::Semaphore>,
+    disposed: Arc<std::sync::atomic::AtomicBool>,
+}
+impl SnapshotNativeGuard for NativeDisposal {
+    fn verify(&self, origin: Option<&SnapshotOrigin>) -> Result<(), String> {
+        if origin.is_none() {
+            Ok(())
+        } else {
+            Err("unexpected origin".into())
+        }
+    }
+    fn acknowledge(&mut self, _: Option<&SnapshotOrigin>) -> Result<(), String> {
+        Ok(())
+    }
+}
+impl Drop for NativeDisposal {
+    fn drop(&mut self) {
+        assert_eq!(
+            self.permits.available_permits(),
+            0,
+            "native cleanup outlived lifetime ownership"
+        );
+        self.disposed.store(true, Ordering::SeqCst);
+    }
+}
+
+#[tokio::test]
+async fn native_result_cleanup_precedes_worker_lifetime_exit() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let permits = Arc::new(tokio::sync::Semaphore::new(1));
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: permits.clone(),
+            foreign: false,
+            reject_resources: false,
+            resources: Default::default(),
+        }),
+    );
+    let owner = worker(&runtime, &session).await;
+    let disposed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pin = NativeDisposal {
+        permits: permits.clone(),
+        disposed: disposed.clone(),
+    };
+    let completed = owner
+        .run(move |_| Ok(SnapshotNativeResult::new(vec![], Box::new(pin))))
+        .await
+        .unwrap();
+    assert_eq!(permits.available_permits(), 0);
+    drop(completed);
+    assert!(disposed.load(Ordering::SeqCst));
+    assert_eq!(permits.available_permits(), 1);
+    runtime.shutdown().await;
 }

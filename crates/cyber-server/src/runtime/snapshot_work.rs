@@ -108,6 +108,7 @@ pub struct SnapshotWorker {
     created_id: String,
     worktree_id: Option<String>,
     _location: Option<Box<dyn super::SnapshotLocationGuard>>,
+    _original: Option<OriginalResources>,
     _lifecycle: OwnedRwLockReadGuard<()>,
     // Last: releasing this lock proves all earlier worker resources were dropped.
     _lifetime: Option<Box<dyn super::SnapshotLifetime>>,
@@ -127,8 +128,38 @@ pub struct SnapshotWork<'a> {
 }
 
 pub struct SnapshotCompletion {
-    worker: SnapshotWorker,
+    // Native guard cleanup remains covered by the worker's lifetime locks.
     native: SnapshotNativeResult,
+    worker: SnapshotWorker,
+}
+
+struct OriginalResources {
+    origin: SnapshotOrigin,
+    claims: Box<dyn super::SnapshotLocationGuard>,
+    bindings: Vec<cyber_core::worktrees::CheckoutBinding>,
+    // Last: keep the exited original's lock through all native claim disposal.
+    lifetime: Box<dyn super::SnapshotLifetime>,
+}
+impl OriginalResources {
+    fn verify(&self) -> Result<(), String> {
+        self.lifetime.verify()?;
+        if self.lifetime.checkout_bindings()?.as_ref() != Some(&self.bindings) {
+            return Err("Original recovery checkout publication changed".into());
+        }
+        self.claims.verify()?;
+        if self.claims.bindings()? != self.bindings {
+            return Err("Original recovery checkout ownership changed".into());
+        }
+        super::SnapshotRestoreCheckout {
+            version: 1,
+            lifetime: self.lifetime.binding().clone(),
+            resources_digest: self
+                .lifetime
+                .binding()
+                .checkout_resources_digest(&self.bindings)?,
+        }
+        .validate(&self.origin)
+    }
 }
 
 impl SnapshotWork<'_> {
@@ -174,6 +205,9 @@ impl SnapshotWork<'_> {
         self.owner.location()?.verify()?;
         if let Some(lifetime) = &self.owner._lifetime {
             lifetime.verify()?;
+        }
+        if let Some(original) = &self.owner._original {
+            original.verify()?;
         }
         if self.owner.scope.control.stop.is_cancelled() {
             return Err("Snapshot worker cancelled; retain its journal before retrying".into());
@@ -362,6 +396,9 @@ impl SnapshotCompletion {
             .guard
             .verify(self.worker.scope.snapshot_origin())
             .map_err(RuntimeError::Conflict)?;
+        if let Some(original) = &self.worker._original {
+            original.verify().map_err(RuntimeError::Conflict)?;
+        }
         let location = self
             .worker
             ._location
@@ -476,6 +513,55 @@ impl Runtime {
             &request.original.session_created_id,
             &request.confirmation.request_id,
         );
+        let original_origin = request.original.clone();
+        let original_lifetime = self.inner.store.read(move |db| {
+            let (_, original) = super::snapshot_recovery_record::attest(db, &original_origin)?;
+            match original.snapshot_lifetime {
+                Some(binding) if binding.version == 2 => Ok(Some(binding)),
+                None => Ok(None),
+                Some(binding) if binding.version == 1 => Ok(None),
+                Some(_) => Err(cyber_store::StoreError::InvalidAppend(
+                    "Unsupported original recovery lifetime version".into(),
+                )),
+            }
+        })?;
+        let original = if let Some(binding) = original_lifetime {
+            let lifetime = self
+                .inner
+                .options
+                .snapshots
+                .lock_worker(binding.clone())
+                .await
+                .map_err(RuntimeError::Conflict)?;
+            if lifetime.binding() != &binding {
+                return Err(RuntimeError::Conflict(
+                    "Original recovery lifetime differs".into(),
+                ));
+            }
+            let bindings = lifetime
+                .checkout_bindings()
+                .map_err(RuntimeError::Conflict)?
+                .ok_or_else(|| {
+                    RuntimeError::Conflict(
+                        "Original recovery resource publication is missing".into(),
+                    )
+                })?;
+            let claims = self
+                .inner
+                .tools
+                .reacquire_snapshot_location(&state.info, &binding, &bindings)
+                .map_err(RuntimeError::Conflict)?;
+            let original = OriginalResources {
+                origin: request.original.clone(),
+                claims,
+                bindings,
+                lifetime,
+            };
+            original.verify().map_err(RuntimeError::Conflict)?;
+            Some(original)
+        } else {
+            None
+        };
         let lifetime = self.snapshot_lifetime(state, &id).await?;
         let scope = activity::Scope::reserve_recovery(
             self,
@@ -531,6 +617,7 @@ impl Runtime {
             created_id,
             worktree_id: state.info.worktree_id.clone(),
             _location: Some(location),
+            _original: original,
             _lifecycle: lifecycle,
             _lifetime: lifetime,
         })
@@ -601,6 +688,7 @@ impl Runtime {
             created_id,
             worktree_id,
             _location: Some(location),
+            _original: None,
             _lifecycle: lifecycle,
             _lifetime: lifetime,
             admission,

@@ -292,6 +292,12 @@
 - **THEN** consuming receipt validation SHALL bind both exact identities and the common owner/Location/root context without requiring the distinct namespace directories to have equal identities
 - **AND** lookup and acknowledgement SHALL retain the original lifetime and journal verification and reject foreign owner or changed resource proof
 
+#### Scenario: Resolution retains the interrupted owner's native resources
+- **WHEN** recovery prepares a resolution for an interrupted owner with version-2 lifetime proof
+- **THEN** it SHALL reacquire and retain that original lifetime and complete published checkout set alongside the distinct resolution owner, refusing live, missing, foreign or changed proof before source dispatch
+- **AND** source authorization and consuming completion SHALL revalidate original resources; legacy owners SHALL gain no retrospective proof and unknown lifetime versions SHALL refuse
+- **AND** retaining owners alone SHALL NOT acknowledge either native activity, and native result guard disposal SHALL precede worker lifetime release
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

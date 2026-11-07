@@ -607,3 +607,12 @@ empty plan does not justify a synthetic journal ID or invented historical proof.
 Legacy unowned no-op calls retain their former no-journal behavior. Lifetime and
 journal namespace identities refer to different native directories; each is
 verified by its native guard, and the receipt binds both rather than equating them.
+
+Before dispatching a resolution, a version-2 interrupted owner SHALL have its
+exact original lifetime and complete published checkout set reacquired read-only
+and retained alongside the distinct resolution owner's resources. Verification
+SHALL continue through source operations and consuming commit. Live, missing,
+foreign or changed proof refuses before resolution dispatch. Legacy owners SHALL
+NOT acquire retrospective checkout proof. Completion disposal SHALL release native
+result guards before the worker's lifetime locks so guard cleanup cannot outlive
+the native ownership proof. Retention alone grants no checkout acknowledgement.
