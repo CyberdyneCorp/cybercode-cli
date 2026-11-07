@@ -766,6 +766,38 @@ recipe's classification was derived from the same user index/configuration durin
 its original generation; that separate capture-provenance requirement and full Git
 runtime acceptance remain necessary before managed Git admission.
 
+### Capture provenance of generated size exclusions
+
+A version-2 generated-rule recipe SHALL retain a digest of the exact observed
+user index/routing and resolved configuration inputs used to classify untracked
+files. The classifier SHALL read private copies of observed index/shared-index
+bytes, replay effective configuration values after resolving includes in their
+original context, and avoid re-evaluating conditional includes in the private
+context. It SHALL preserve the user's index metadata and bytes. The original
+input observations SHALL be verified before/after classification and recipe
+publication. Native capture/preparation SHALL compare fresh input proof with the
+recipe digest and retain it for native revalidation without Git subprocesses.
+Legacy/unproven recipes SHALL remain canonical-readable without native authority.
+Classifier output, arguments, metadata copies and subprocess lifetime SHALL be
+bounded. Unsupported or failed collection SHALL visibly withhold native proof
+while preserving canonical capture. Current size/type revalidation and historical
+exclusion constraints remain mandatory. This does not itself activate managed Git
+source admission or complete filter/runtime/platform acceptance.
+
+Classification rule observations SHALL detect changed generations as well as
+bytes. Directory-generation marks SHALL fence only the classification window;
+they SHALL NOT turn harmless empty-directory additions into permanent checkpoint
+conflicts. Disposable private files SHALL be created without following links and
+with mode 0600 beneath a private temporary directory, then revalidated after Git.
+The complete private admin inventory SHALL contain only the constructed regular
+files and directories; links and unknown routing entries SHALL refuse. Only
+timestamps of disposable shared-index copies may refresh; their content,
+inode, stable attributes and route SHALL still match. Original input checks stay
+strict. Configuration values SHALL remain in private files, not command arguments.
+GIT_CONFIG, which redirects configuration commands rather than the repository's
+ordinary reads, SHALL be cleared with repository redirects so internal setup
+cannot modify an unrelated file.
+
 ### Typed recovery CLI dispatch
 
 `cyber sessions recovery <session>` SHALL list retained journals without inference.

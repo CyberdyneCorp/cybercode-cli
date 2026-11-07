@@ -15,6 +15,8 @@ struct Recipe {
     settings: CaptureSettings,
     skipped: Vec<String>,
     output: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    classification: Option<String>,
 }
 
 fn source(common: &Path) -> Result<(ConfigInputs, Vec<u8>)> {
@@ -59,15 +61,20 @@ pub(crate) fn write(
     common: &Path,
     settings: &CaptureSettings,
     skipped: &[String],
+    classification: Option<(&str, &ConfigInputs)>,
 ) -> Result<()> {
+    if let Some((_, inputs)) = classification {
+        inputs.verify()?;
+    }
     let (proof, original) = source(common)?;
     let bytes = render(original, settings, skipped)?;
     let recipe = serde_json::to_vec(&Recipe {
-        version: 1,
+        version: if classification.is_some() { 2 } else { 1 },
         source: proof.fingerprint()?,
         settings: settings.clone(),
         skipped: skipped.to_vec(),
         output: storage::digest(&bytes),
+        classification: classification.map(|(digest, _)| digest.to_owned()),
     })
     .map_err(storage::fail)?;
     if recipe.len() as u64 > LIMIT {
@@ -79,6 +86,9 @@ pub(crate) fn write(
     proof.verify()?;
     publish(&info, "exclude", &bytes)?;
     publish(&info, RECIPE, &recipe)?;
+    if let Some((_, inputs)) = classification {
+        inputs.verify()?;
+    }
     proof.verify()
 }
 
@@ -94,6 +104,7 @@ fn publish(info: &Dir, name: &str, bytes: &[u8]) -> Result<()> {
 pub(crate) struct Observed {
     pub inputs: ConfigInputs,
     pub size_excluded: Vec<String>,
+    pub classification: Option<String>,
 }
 
 pub(crate) fn observe(
@@ -113,7 +124,13 @@ pub(crate) fn observe(
     let encoded = storage::read(&info, RECIPE, LIMIT)?;
     let recipe: Recipe = serde_json::from_slice(&encoded).map_err(storage::fail)?;
     let (source, original) = source(common)?;
-    if recipe.version != 1
+    if !matches!(
+        (recipe.version, recipe.classification.as_deref()),
+        (1, None) | (2, Some(_))
+    ) || recipe
+        .classification
+        .as_deref()
+        .is_some_and(|digest| !storage::valid_digest(digest))
         || recipe.settings != *settings
         || recipe.source != source.fingerprint()?
     {
@@ -131,6 +148,7 @@ pub(crate) fn observe(
     Ok(Observed {
         inputs: output,
         size_excluded: recipe.skipped,
+        classification: recipe.classification,
     })
 }
 
@@ -169,6 +187,7 @@ mod tests {
                 &self.common,
                 &self.settings,
                 &["big[1]".into()],
+                None,
             )
             .unwrap();
         }
@@ -244,7 +263,16 @@ mod tests {
         }
         std::fs::rename(fixture.shadow.join("info"), fixture.shadow.join("old-info")).unwrap();
         symlink(fixture.common.join("info"), fixture.shadow.join("info")).unwrap();
-        assert!(write(&fixture.shadow, &fixture.common, &fixture.settings, &[]).is_err());
+        assert!(
+            write(
+                &fixture.shadow,
+                &fixture.common,
+                &fixture.settings,
+                &[],
+                None
+            )
+            .is_err()
+        );
         assert!(fixture.proof().is_err());
         assert!(!fixture.common.join("info").join(RECIPE).exists());
     }
@@ -262,7 +290,16 @@ mod tests {
         );
         fixture.proof().unwrap().verify().unwrap();
         std::fs::write(&path, vec![0; LIMIT as usize + 1]).unwrap();
-        assert!(write(&fixture.shadow, &fixture.common, &fixture.settings, &[]).is_err());
+        assert!(
+            write(
+                &fixture.shadow,
+                &fixture.common,
+                &fixture.settings,
+                &[],
+                None
+            )
+            .is_err()
+        );
         std::fs::remove_file(&path).unwrap();
         assert!(
             std::process::Command::new("mkfifo")
@@ -271,6 +308,15 @@ mod tests {
                 .unwrap()
                 .success()
         );
-        assert!(write(&fixture.shadow, &fixture.common, &fixture.settings, &[]).is_err());
+        assert!(
+            write(
+                &fixture.shadow,
+                &fixture.common,
+                &fixture.settings,
+                &[],
+                None
+            )
+            .is_err()
+        );
     }
 }

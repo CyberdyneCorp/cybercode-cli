@@ -403,3 +403,32 @@
 - **THEN** the current capture SHALL include its exact raw image and remove the expired generated size exclusion
 - **AND** target/recorded historical omissions SHALL continue to protect that file from fabricated deletion/restoration
 - **AND** this size revalidation SHALL NOT imply original classification provenance, complete user config dependencies or managed Git runtime acceptance
+
+
+#### Scenario: Generated size classification retains capture provenance
+- **GIVEN** native Git capture classifies untracked files against a user's index and resolved configuration
+- **WHEN** the generated-rule recipe is published
+- **THEN** a version-2 recipe SHALL retain the bounded classification-input digest, and fresh capture/preparation SHALL require matching inputs and skipped names
+- **AND** classification SHALL use private index/shared-index copies, effective configuration resolved in the original gitdir/branch context, and retained rule observations
+- **AND** original index/shared-index bytes and metadata SHALL remain unchanged on the supported bound path
+
+#### Scenario: Classification or private copied inputs change during collection
+- **WHEN** the original index/config/rules change during classification or a private copied config/index changes unexpectedly
+- **THEN** the result SHALL NOT grant native authority, and canonical-readable fallback SHALL explicitly report unavailable native proof
+- **AND** Git's timestamp refresh on disposable shared-index copies SHALL NOT waive their content, inode, attribute or route checks, or any strict original-input check
+
+#### Scenario: Git configuration command override cannot redirect snapshot writes
+- **GIVEN** the process environment contains GIT_CONFIG pointing at an unrelated file
+- **WHEN** internal snapshot Git configuration is initialized or queried
+- **THEN** the command-only override SHALL be cleared with repository redirects, internal writes SHALL target the shadow, and the unrelated file SHALL remain unchanged
+
+#### Scenario: Historical generated rules lack classification provenance
+- **WHEN** an existing version-1 generated recipe has no classification digest
+- **THEN** it SHALL remain readable for canonical capture but SHALL NOT be promoted into native classification proof
+- **AND** a fresh supported capture SHALL regenerate current proof without changing historical checkpoint image identities or exclusion protections
+
+
+#### Scenario: Empty directories preserve checkpoint identity
+- **GIVEN** captured file images, effective configuration, ignores and size-excluded names are unchanged
+- **WHEN** harmless empty directories add only absent source .gitignore observations
+- **THEN** those absence checks SHALL remain available during verification without changing serialized classification provenance or checkpoint identity

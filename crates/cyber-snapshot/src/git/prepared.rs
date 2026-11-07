@@ -73,6 +73,7 @@ pub(crate) struct IgnoreInputs {
     pub private_roots: Vec<PathBuf>,
     pub settings: CaptureSettings,
     pub size_excluded: Vec<String>,
+    pub classification_rules: Option<crate::copy::git_rules::RuleProof>,
 }
 
 pub(crate) struct PreparedRestore {
@@ -126,7 +127,13 @@ impl Shadow {
         let generated =
             crate::copy::generated_rules::observe(&self.git_dir, &self.common_dir, settings)?;
         config.merge(generated.inputs)?;
-        config.merge(self.user_index_inputs().await?)?;
+        let classified = self.classify_untracked(settings.max_untracked).await?;
+        if generated.classification.as_deref() != Some(classified.fingerprint()?.as_str())
+            || generated.size_excluded != classified.skipped
+        {
+            return Err("Generated Git size classification changed or lacks provenance".into());
+        }
+        config.merge(classified.inputs)?;
         Ok(IgnoreInputs {
             config,
             info: self.git_dir.join("info/exclude"),
@@ -135,10 +142,12 @@ impl Shadow {
             private_roots: self.private_roots.clone(),
             settings: settings.clone(),
             size_excluded: generated.size_excluded,
+            classification_rules: Some(classified.rules),
         })
     }
 
-    /// No source reads, Git index writes or merge subprocesses occur here.
+    /// Policy collection reads rules and metadata; immutable images supply bytes.
+    /// No source image reads, user-index writes or merge subprocesses occur here.
     pub(crate) async fn prepare_restore(
         &self,
         request: &SnapshotRestoreRequest,

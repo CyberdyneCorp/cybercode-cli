@@ -3534,3 +3534,115 @@ The GitHub refresh still reports #93 and #92 open and origin/main remains
 `db9e171e`, already contained in this branch. PR #115 concerns model fallback and
 is outside this recovery increment; it was left untouched. No goal PR/push/merge
 or parent completion is claimed.
+
+### Bound size-classification generation (2026-11-07)
+
+A new real-repository test reproduced another missing guard: changing the user's
+classification config after native preparation still allowed source restoration.
+Its initial refusal assertion failed on this branch; there is no unchanged-main
+attribution. New version-2 generated-rule recipes retain a classification digest
+covering the observed actual user index/routing, resolved user configuration and
+rule observations. Fresh capture/preparation repeats bounded classification and
+requires both matching digest and exact skipped names before granting proof.
+Version-1 recipes remain canonical-readable without invented classification proof.
+The native policy frame is v6, so older checkpoint proof is not promoted.
+
+The classifier materializes only observed index/shared-index bytes in a private
+temporary admin directory. Active config includes are resolved in the user's real
+branch/gitdir context; ordered effective values (including null/empty and quoted
+values) are serialized into a private config without re-evaluating includes there.
+Global/info excludes are copied from bound observations, and source rule reads
+remain no-follow. Config secrets stay out of command arguments and checkpoints.
+The generic user-config profile retains roots, active/absent includes, HEAD and
+physical context without applying the private shadow's empty-reference profile to
+a real user repository. GIT_CONFIG is now cleared with repository redirects: it
+redirects config commands rather than ordinary repository reads and could otherwise
+make internal setup modify an unrelated file. A subprocess regression verifies
+native capture/restore and preservation of that external config.
+
+Private copied files use create-new/no-follow mode 0600 beneath a private temporary
+directory. They are verified again after Git reads them. Only disposable shared-
+index timestamps may refresh; byte digest, inode, stable attributes and physical
+route still have to match. Original index/config inputs retain strict generation
+verification. Rule reads now bracket content reads with generation checks, and
+classification retains both bytes' hashes and generations. Directory marks guard
+the collection window but stay out of checkpoint fingerprints and native handoff
+verification, preserving harmless empty-directory changes. Existing native
+namespace validation still runs. Blocking rule scans, metadata census and private
+index materialization run outside async executor threads. Metadata copies retain
+the existing 1 MiB/file and 8 MiB/aggregate input bounds; rule traversal, output,
+entry count and process deadlines remain bounded. The canonical fallback's Git
+listing now uses the bounded kill-and-await runner too.
+
+Regression evidence includes original-config changes, effective gitdir/onbranch
+includes in their original context, null/quoted/multiline config round trips,
+disabled global excludes and original split-index metadata/bytes preserved across
+capture, preparation and native restoration. An isolated real Git wrapper changes
+the original index or the disposable private config after classification has read
+its inputs. Both cases retain canonical-readable snapshots with explicit missing
+native proof and no native journal/source effects. The original-index case still
+captures its now-tracked large file; private-copy tampering retains the ordinary
+size omission. This wrapper injects deterministic interference; it is not an OS
+process-death cut.
+
+Review corrected an overly strict first pass that rejected harmless new empty
+directories. Generation checks are retained where they detect collection races,
+while native planning uses existing eligibility/namespace rules. An older rule-
+change test now keeps a prepared handoff before the edit to exercise native
+refusal. A rule changed and restored to identical bytes has a new generation and
+requires a fresh expected capture; its positive then restores correctly. The
+conditional-include fixture initially used a trailing slash matching descendants
+rather than the exact gitdir, and was corrected with an actual Git selection
+assertion. A test initially attempted process-global environment mutation, rejected
+by the workspace unsafe-code lint; it now derives the root from the child command's
+existing worktree environment. Clippy's collapsible-if finding was fixed without
+allowances. Code-review skill inspection covered original-vs-private proof
+separation, no secret argv, recipe/version compatibility, bounded child cleanup,
+no-follow paths, private-copy interference and preservation of positive behavior.
+
+Local snapshot-library acceptance passed 136 tests with six intentionally ignored
+subprocess fixtures in 85.64 seconds. A subsequently added disabled-global-excludes
+positive passed separately in 4.24 seconds; production code is the same. Strict
+OpenSpec passed 117 items. Remaining check results are recorded below. All managed
+Git source admission and M2–M8/parent acceptance remain disabled/open. Full general
+configuration/ABA/dependency and sparse/filter/limit combinations, native runtime/
+checkout/recovery, partial construction, cleanup of metadata/CAS and orphan private
+classification directories after process death, and full native platform/cut
+acceptance remain required. These checks do not prove the two issues complete.
+
+Final namespace review also requires an exact disposable admin inventory before
+and after Git: only the constructed regular files and directories may exist, and
+links/unknown routing files refuse without traversal. The interference fixture now
+also inserts an unexpected commondir file, and removes its own output scratch file
+before verification so that each intended guard is exercised independently. The
+copied-file proof retains stable inode/attribute identity separately from full
+metadata generation; its shared-index timestamp exception is used only on these
+private copies, never on original user inputs. No unresolved critical/major finding
+remains in this bounded classification increment; broader compatibility, process-
+death cleanup and activation acceptance remain open as listed above.
+
+The final complete package invocation passed all 137 library cases (six ignored
+subprocess fixtures), 18 file-copy integration cases in 1.23 seconds and 22 Git
+integration cases in 23.58 seconds (one ignored subprocess fixture). Library time
+was 89.01 seconds. The Windows-only platform binary and doctests selected zero
+cases on this host and provide no additional platform/doc execution evidence.
+Final all-target snapshot Clippy with -D warnings, format/diff checks, generated
+SDK consistency, strict OpenSpec (117 items) and spec lint (0 errors/25 warnings)
+passed. All Cargo tests/Clippy used CARGO_INCREMENTAL=0 and --locked. No full
+workspace, CLI/TUI rerun, SDK execution or source-bound native CI/platform matrix
+ran for this increment. No push/PR/merge or parent/issue completion is claimed.
+
+A final compatibility regression then reproduced changed checkpoint IDs after
+adding only empty directories. Classification retained absent .gitignore bindings
+for those new directories in its serialized digest. They now stay available for
+verification but are filtered from serialization using the same source-absence
+rule as native policy capture. This preserves both ordinary checkpoint identity
+and classification identity while retaining mutation detection. The regression
+failed before that correction and passes afterward; no baseline attribution is
+made. The final package rerun supersedes the earlier counts above: 138 library
+cases passed in 86.93 seconds, plus 18 file-copy cases in 1.14 seconds and 22 Git
+cases in 23.56 seconds. Six library and one integration subprocess fixtures remain
+intentionally excluded from direct top-level selection. Windows-only/doc binaries
+again selected zero. Final all-target Clippy, format/diff, strict OpenSpec (117),
+lint (0/25) and SDK generation consistency passed. No further scope or acceptance
+claim changes: source admission and parent tasks remain open as stated above.

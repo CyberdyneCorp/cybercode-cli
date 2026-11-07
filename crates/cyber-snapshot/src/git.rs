@@ -9,6 +9,8 @@ use sha1::{Digest, Sha1};
 mod catalog;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod config;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod eligibility;
 #[path = "git_history.rs"]
 pub(crate) mod history;
 mod images;
@@ -37,6 +39,7 @@ pub(crate) struct Shadow {
 /// Environment variables that would redirect git away from the shadow repository.
 pub(crate) const GIT_ENV: &[&str] = &[
     "GIT_DIR",
+    "GIT_CONFIG",
     "GIT_WORK_TREE",
     "GIT_INDEX_FILE",
     "GIT_OBJECT_DIRECTORY",
@@ -205,8 +208,13 @@ impl Shadow {
 
     pub async fn track(&self, ignore: &[String], max_bytes: u64) -> Result<Snapshot, String> {
         self.ensure_init().await?;
-        let skipped = self.large_untracked(max_bytes).await;
-        self.write_excludes(ignore, max_bytes, &skipped)?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        self.write_capture_excludes(ignore, max_bytes).await?;
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let skipped = self.large_untracked(max_bytes).await;
+            self.write_excludes(ignore, max_bytes, &skipped)?;
+        }
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let capture_before = self.capture_git_state(ignore, max_bytes).await;
         let excluded = self.omitted().await?;
@@ -277,50 +285,31 @@ impl Shadow {
 
     /// Untracked files (per the user's repository) over the size limit.
     async fn large_untracked(&self, max_bytes: u64) -> Vec<String> {
-        let mut cmd = tokio::process::Command::new("git");
-        for name in GIT_ENV {
-            cmd.env_remove(name);
-        }
-        let out = cmd
-            .arg("--literal-pathspecs")
-            .arg("-C")
-            .arg(&self.worktree)
-            .args([
-                "ls-files",
-                "--others",
-                "--exclude-standard",
-                "-z",
-                "--",
-                &self.pathspec,
-            ])
-            .output()
-            .await;
-        let Ok(out) = out else { return Vec::new() };
-        out.stdout
+        let mut command = self.command(&[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            &self.pathspec,
+        ]);
+        command
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env("GIT_OPTIONAL_LOCKS", "0");
+        let Ok(bytes) =
+            Self::bounded_command(command, 8 * 1024 * 1024, std::time::Duration::from_secs(10))
+                .await
+        else {
+            return Vec::new();
+        };
+        bytes
             .split(|b| *b == 0)
             .filter(|p| !p.is_empty())
+            .take(65536)
             .map(|p| String::from_utf8_lossy(p).to_string())
             .filter(|p| std::fs::metadata(self.worktree.join(p)).is_ok_and(|m| m.len() > max_bytes))
             .collect()
-    }
-
-    /// The user's `info/exclude`, `snapshots.ignore` and the skipped large files.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn write_excludes(
-        &self,
-        ignore: &[String],
-        max_untracked: u64,
-        skipped: &[String],
-    ) -> Result<(), String> {
-        crate::copy::generated_rules::write(
-            &self.git_dir,
-            &self.common_dir,
-            &prepared::CaptureSettings {
-                ignore: ignore.to_vec(),
-                max_untracked,
-            },
-            skipped,
-        )
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]

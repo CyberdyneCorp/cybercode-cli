@@ -573,3 +573,17 @@ cases and still-oversized/fresh-capture historical-exclusion positives are cover
 Original classification provenance at generation, full configuration/filter/limit
 compatibility and runtime/checkout/recovery/cleanup/platform acceptance remain
 required; managed Git source admission and parent task acceptance stay disabled.
+
+Classification-provenance continuation: version-2 generated recipes now bind
+observed user index/routing, resolved user configuration and rule inputs. A private
+classifier uses copied index/shared-index bytes and effective configuration whose
+includes were resolved in the original branch/gitdir context; original metadata
+stays strict. Private copied files have mode 0600 and post-read verification, with
+only disposable shared-index timestamp refresh allowed. Fresh capture/preparation
+requires matching provenance and skipped names; legacy/unproven recipes retain
+canonical readability without native authority. GIT_CONFIG command redirection is
+cleared to prevent internal configuration writes reaching an unrelated file.
+Supported capture/preparation/restore and mutation-during-classification positives
+and denials are covered. Complete configuration/ABA/filter/limit compatibility,
+managed Git runtime/checkout/recovery/cleanup and source-bound platform acceptance
+remain open; managed source admission and all parent acceptance stay disabled.

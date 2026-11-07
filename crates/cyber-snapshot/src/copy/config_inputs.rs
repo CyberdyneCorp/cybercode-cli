@@ -25,6 +25,7 @@ struct FileState {
     canonical: PathBuf,
     parent_identity: String,
     generation: String,
+    identity: String,
     hash: String,
 }
 
@@ -75,6 +76,32 @@ impl ConfigInputs {
             return Err("Git policy input changed while reading".into());
         }
         Ok(bytes)
+    }
+
+    pub(crate) fn optional_bytes(&self, path: &Path) -> storage::Result<Option<Vec<u8>>> {
+        let bytes = self.bytes(path)?;
+        Ok(self.files.get(path).and_then(Option::as_ref).map(|_| bytes))
+    }
+
+    /// Only disposable classifier copies use this check. Git refreshes shared
+    /// index timestamps, but their bytes, inode, attributes and route must match.
+    /// Original user inputs always use strict verify(), including timestamps.
+    pub(crate) fn verify_private_index_copies(&self) -> storage::Result<()> {
+        let mut current = Self::capture_files(self.files.keys().cloned().collect())?;
+        for (path, state) in &mut current.files {
+            if path
+                .file_name()
+                .is_some_and(|name| name.as_encoded_bytes().starts_with(b"sharedindex."))
+                && let (Some(current), Some(Some(expected))) =
+                    (state.as_mut(), self.files.get(path))
+            {
+                current.generation = expected.generation.clone();
+            }
+        }
+        if current != *self {
+            return Err("Private Git classifier inputs changed".into());
+        }
+        Ok(())
     }
 
     pub(crate) fn fingerprint(&self) -> storage::Result<String> {
@@ -194,6 +221,19 @@ fn read(path: &Path) -> storage::Result<(Option<FileState>, Vec<u8>)> {
         return Err("Unsupported or over-limit Git configuration input".into());
     }
     let generation = ownership::generation(&file)?;
+    use std::os::unix::fs::MetadataExt;
+    let identity = storage::digest(
+        &serde_json::to_vec(&(
+            metadata.dev(),
+            metadata.ino(),
+            metadata.mode(),
+            metadata.uid(),
+            metadata.gid(),
+            metadata.nlink(),
+            metadata.len(),
+        ))
+        .map_err(storage::fail)?,
+    );
     let canonical = path.canonicalize().map_err(storage::fail)?;
     let parent = cap_std::fs::Dir::open_ambient_dir(
         canonical.parent().ok_or("Missing config parent")?,
@@ -225,6 +265,7 @@ fn read(path: &Path) -> storage::Result<(Option<FileState>, Vec<u8>)> {
             canonical,
             parent_identity,
             generation,
+            identity,
             hash: storage::digest(&bytes),
         }),
         bytes,

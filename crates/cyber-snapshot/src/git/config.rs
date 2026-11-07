@@ -11,6 +11,44 @@ pub(super) struct Inventory {
 }
 
 impl Inventory {
+    pub(super) fn frozen_config(&self) -> Result<Vec<u8>, String> {
+        let mut text = String::new();
+        for (_, key, value) in records(&self.values)? {
+            if include_key(key) {
+                continue;
+            }
+            let (section, rest) = key.split_once('.').ok_or("Invalid frozen Git config key")?;
+            let (subsection, variable) = rest
+                .rsplit_once('.')
+                .map_or((None, rest), |(subsection, variable)| {
+                    (Some(subsection), variable)
+                });
+            if !config_name(section) || !config_name(variable) {
+                return Err("Unsupported frozen Git config key".into());
+            }
+            text.push('[');
+            text.push_str(section);
+            if let Some(subsection) = subsection {
+                if subsection.chars().any(char::is_control) {
+                    return Err("Unsupported frozen Git config subsection".into());
+                }
+                text.push(' ');
+                text.push_str(&quote(subsection)?);
+            }
+            text.push_str("]\n\t");
+            text.push_str(variable);
+            if let Some(value) = value {
+                text.push_str(" = ");
+                text.push_str(&quote(value)?);
+            }
+            text.push('\n');
+            if text.len() > 1024 * 1024 {
+                return Err("Frozen Git configuration exceeds limit".into());
+            }
+        }
+        Ok(text.into_bytes())
+    }
+
     pub(super) fn selected(&self, key: &str) -> Result<Option<Option<&str>>, String> {
         Ok(records(&self.values)?
             .into_iter()
@@ -22,16 +60,36 @@ impl Inventory {
 
 impl Shadow {
     pub(super) async fn config_inputs(&self) -> Result<(ConfigInputs, Inventory), String> {
+        self.config_inputs_profile(true).await
+    }
+
+    pub(super) async fn user_config_inputs(&self) -> Result<(ConfigInputs, Inventory), String> {
+        self.config_inputs_profile(false).await
+    }
+
+    async fn config_inputs_profile(
+        &self,
+        private: bool,
+    ) -> Result<(ConfigInputs, Inventory), String> {
         let environment = environment_digest()?;
         let contexts = vec![self.worktree.clone(), self.worktree.join(&self.git_dir)];
-        let roots = self.config_roots().await?;
-        let original = capture(roots.clone(), environment.clone(), contexts.clone()).await?;
+        let mut roots = self.config_roots().await?;
+        if !private {
+            roots.push(self.common_dir.join("config"));
+        }
+        let original = capture(
+            roots.clone(),
+            environment.clone(),
+            contexts.clone(),
+            private,
+        )
+        .await?;
         let inventory = self.config_inventory().await?;
         let paths = roots
             .into_iter()
             .chain(inventory.paths.iter().cloned())
             .collect();
-        let proof = capture(paths, environment, contexts).await?;
+        let proof = capture(paths, environment, contexts, private).await?;
         if !proof.retains(&original) {
             return Err("Git configuration roots changed during resolution".into());
         }
@@ -81,9 +139,6 @@ impl Shadow {
                 }
                 paths.insert(self.worktree.join(path));
             }
-        }
-        if let Some(path) = std::env::var_os("GIT_CONFIG").filter(|path| !path.is_empty()) {
-            paths.insert(self.worktree.join(path));
         }
         Ok(paths.into_iter().collect())
     }
@@ -197,10 +252,37 @@ impl Shadow {
     }
 }
 
+fn config_name(name: &str) -> bool {
+    name.as_bytes().first().is_some_and(u8::is_ascii_alphabetic)
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+fn quote(value: &str) -> Result<String, String> {
+    let mut text = String::from("\"");
+    for character in value.chars() {
+        match character {
+            '\\' => text.push_str("\\\\"),
+            '"' => text.push_str("\\\""),
+            '\n' => text.push_str("\\n"),
+            '\t' => text.push_str("\\t"),
+            '\u{0008}' => text.push_str("\\b"),
+            character if character.is_control() => {
+                return Err("Unsupported frozen Git config value".into());
+            }
+            character => text.push(character),
+        }
+    }
+    text.push('"');
+    Ok(text)
+}
+
 async fn capture(
     paths: Vec<PathBuf>,
     environment: String,
     contexts: Vec<PathBuf>,
+    private: bool,
 ) -> Result<ConfigInputs, String> {
     tokio::task::spawn_blocking(move || {
         let mut proof = ConfigInputs::capture(paths, environment)?;
@@ -209,7 +291,9 @@ async fn capture(
             .ok_or("Missing private Git configuration context")?
             .clone();
         proof.bind_contexts(contexts)?;
-        proof.bind_repository(repository)?;
+        if private {
+            proof.bind_repository(repository)?;
+        }
         Ok(proof)
     })
     .await
@@ -317,6 +401,59 @@ mod tests {
             paths: BTreeSet::new(),
         };
         assert_eq!(inventory.selected("core.ignorecase").unwrap(), Some(None));
+    }
+
+    #[test]
+    fn frozen_configuration_round_trips_values_without_replaying_includes() {
+        let entries = [
+            ("include.path", Some("never-read")),
+            (
+                "custom.quoted.sub.value",
+                Some(" quotes \" \\ \n\t\u{0008}"),
+            ),
+            ("custom.flag", None),
+            ("custom.empty", Some("")),
+        ];
+        let mut values = Vec::new();
+        for (key, value) in entries {
+            values.extend_from_slice(format!("file:a\0{key}").as_bytes());
+            if let Some(value) = value {
+                values.push(b'\n');
+                values.extend_from_slice(value.as_bytes());
+            }
+            values.push(0);
+        }
+        let inventory = Inventory {
+            values: values.to_vec(),
+            paths: BTreeSet::new(),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config");
+        std::fs::write(&path, inventory.frozen_config().unwrap()).unwrap();
+        let output = std::process::Command::new("git")
+            .args(["config", "--file"])
+            .arg(path)
+            .args(["--null", "--show-origin", "--list"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let actual: Vec<_> = records(&output.stdout)
+            .unwrap()
+            .into_iter()
+            .map(|(_, key, value)| (key, value))
+            .collect();
+        let expected: Vec<_> = records(&values)
+            .unwrap()
+            .into_iter()
+            .filter(|(_, key, _)| !include_key(key))
+            .map(|(_, key, value)| (key, value))
+            .collect();
+        assert_eq!(actual, expected);
+        assert!(quote("unsupported\rvalue").is_err());
     }
 
     #[tokio::test]

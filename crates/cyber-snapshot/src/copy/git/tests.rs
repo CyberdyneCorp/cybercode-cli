@@ -114,6 +114,258 @@ async fn changed_user_excludes_after_preparation_refuses_native_source_effects()
     assert!(store.recovery().unwrap().is_empty());
 }
 
+#[test]
+fn git_config_command_override_cannot_redirect_snapshot_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("external-config");
+    let original = b"[core]\nexcludesfile=never-read\n";
+    std::fs::write(&path, original).unwrap();
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "copy::git::tests::git_config_override_child",
+        ])
+        .env("GIT_CONFIG", &path)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(std::fs::read(path).unwrap(), original);
+}
+
+#[tokio::test]
+#[ignore = "subprocess fixture with isolated Git config command override"]
+async fn git_config_override_child() {
+    let (repo, target, recorded) = Repo::size_fixture().await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    assert!(prepared.expected_policy.is_some());
+    assert_eq!(
+        repo.store(&repo.root)
+            .restore_git_worker(prepared, None)
+            .unwrap(),
+        ["file"]
+    );
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"before");
+}
+
+#[tokio::test]
+async fn frozen_classification_resolves_user_gitdir_and_branch_includes_in_original_context() {
+    let mut repo = Repo::new();
+    repo.snapshots = crate::GitSnapshots::new(
+        repo.data.clone(),
+        Arc::new(|_| serde_json::json!({"snapshots":{"max_file_bytes":4096}})),
+    );
+    let global = repo._temp.path().join("conditional-ignore");
+    std::fs::write(&global, "ignored\n").unwrap();
+    let include = repo._temp.path().join("conditional-config");
+    std::fs::write(
+        &include,
+        format!("[core]\nexcludesfile={}\n", global.display()),
+    )
+    .unwrap();
+    repo.git(&[
+        "config",
+        &format!("includeIf.gitdir:{}.path", repo.root.join(".git").display()),
+        include.to_str().unwrap(),
+    ]);
+    let head = std::fs::read_to_string(repo.root.join(".git/HEAD")).unwrap();
+    let branch = head.trim().strip_prefix("ref: refs/heads/").unwrap();
+    let branch_config = repo._temp.path().join("branch-config");
+    std::fs::write(
+        &branch_config,
+        "[custom]\nflag\nvalue=\"quoted \\\"value\\\"\"\n",
+    )
+    .unwrap();
+    repo.git(&[
+        "config",
+        &format!("includeIf.onbranch:{branch}.path"),
+        branch_config.to_str().unwrap(),
+    ]);
+    repo.git(&["config", "--get", "core.excludesfile"]);
+    repo.git(&["config", "--bool", "--get", "custom.flag"]);
+    std::fs::create_dir(repo.root.join("nested")).unwrap();
+    std::fs::write(repo.root.join("nested/large[1]"), vec![b'x'; 5120]).unwrap();
+    std::fs::write(repo.root.join("ignored"), vec![b'i'; 8192]).unwrap();
+    std::fs::write(repo.root.join("file"), "before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), "after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    assert_eq!(prepared.ignore.size_excluded, ["nested/large[1]"]);
+    assert!(prepared.expected.images.contains_key("ignored"));
+    assert_eq!(
+        repo.store(&repo.root)
+            .restore_git_worker(prepared, None)
+            .unwrap(),
+        ["file"]
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("ignored")).unwrap(),
+        vec![b'i'; 8192]
+    );
+    assert!(!repo.root.join(".git/index").exists());
+}
+
+#[test]
+fn classification_mutation_keeps_canonical_capture_without_native_proof() {
+    let temporary = tempfile::tempdir().unwrap();
+    let bin = temporary.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let wrapper = bin.join("git");
+    std::fs::write(&wrapper, r#"#!/bin/sh
+listing=0
+for argument in "$@"; do
+    if [ "$argument" = ls-files ]; then listing=1; fi
+done
+case "$GIT_DIR" in
+    */.eligibility-*)
+        if [ "$listing" = 1 ] && [ ! -f "$CYBER_CLASSIFY_CUT" ]; then
+            "$CYBER_REAL_GIT" "$@" > "$GIT_DIR/listing-output" || exit "$?"
+            touch "$CYBER_CLASSIFY_CUT"
+            case "$CYBER_CLASSIFY_MUTATION" in
+                source-index) env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE "$CYBER_REAL_GIT" -C "$GIT_WORK_TREE" add -- 'nested/large[1]' || exit "$?" ;;
+                private-config) printf '\n# changed private config\n' >> "$GIT_DIR/config" ;;
+                private-route) printf 'foreign-route\n' > "$GIT_DIR/commondir" ;;
+            esac
+            cat "$GIT_DIR/listing-output"
+            result=$?
+            rm "$GIT_DIR/listing-output"
+            exit "$result"
+        fi
+        ;;
+esac
+exec "$CYBER_REAL_GIT" "$@"
+"#).unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let real = std::process::Command::new("which")
+        .arg("git")
+        .output()
+        .unwrap();
+    assert!(real.status.success());
+    let real = std::str::from_utf8(&real.stdout).unwrap().trim();
+    for kind in ["source-index", "private-config", "private-route"] {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "copy::git::tests::classification_index_change_child",
+            ])
+            .env("CYBER_REAL_GIT", real)
+            .env("CYBER_CLASSIFY_MUTATION", kind)
+            .env(
+                "CYBER_CLASSIFY_CUT",
+                temporary.path().join(format!("cut-{kind}")),
+            )
+            .env(
+                "PATH",
+                format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}
+
+#[tokio::test]
+#[ignore = "subprocess fixture with isolated Git classification wrapper"]
+async fn classification_index_change_child() {
+    let repo = Repo::new();
+    std::fs::create_dir(repo.root.join("nested")).unwrap();
+    std::fs::write(repo.root.join("nested/large[1]"), vec![b'x'; 5120]).unwrap();
+    std::fs::write(repo.root.join("file"), "before").unwrap();
+    let mut repo = repo;
+    repo.snapshots = crate::GitSnapshots::new(
+        repo.data.clone(),
+        Arc::new(|_| serde_json::json!({"snapshots":{"max_file_bytes":4096}})),
+    );
+    let snapshot = repo
+        .snapshots
+        .track(repo.root.to_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(std::path::Path::new(&std::env::var_os("CYBER_CLASSIFY_CUT").unwrap()).exists());
+    assert!(
+        snapshot
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("native Git policy/raw-state proof unavailable"))
+    );
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    let blob = shadow
+        .blob(&snapshot.tree, "nested/large[1]")
+        .await
+        .unwrap();
+    if std::env::var("CYBER_CLASSIFY_MUTATION").unwrap() == "source-index" {
+        assert_eq!(blob.unwrap().1, vec![b'x'; 5120]);
+    } else {
+        assert!(blob.is_none());
+    }
+    assert_eq!(
+        std::fs::read(repo.root.join("nested/large[1]")).unwrap(),
+        vec![b'x'; 5120]
+    );
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"before");
+    assert!(repo.store(&repo.root).recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn empty_directories_do_not_change_capture_or_classification_identity() {
+    let (repo, _, recorded) = Repo::size_fixture().await;
+    std::fs::create_dir_all(repo.root.join("empty/deep")).unwrap();
+    assert_eq!(repo.track(&repo.root).await, recorded);
+}
+
+#[tokio::test]
+async fn disabled_user_global_ignores_keep_bound_size_classification_available() {
+    let (repo, target, recorded) = Repo::size_fixture().await;
+    repo.git(&["config", "core.excludesfile", ""]);
+    let expected = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &expected)
+        .await;
+    assert_eq!(prepared.ignore.size_excluded, ["nested/large[1]"]);
+    assert_eq!(
+        repo.store(&repo.root)
+            .restore_git_worker(prepared, None)
+            .unwrap(),
+        ["file"]
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("nested/large[1]")).unwrap(),
+        vec![b'x'; 5120]
+    );
+}
+
+#[tokio::test]
+async fn changed_user_classification_config_after_preparation_refuses_native_restore() {
+    let (repo, target, recorded) = Repo::size_fixture().await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    let ignore = repo._temp.path().join("classification-ignore");
+    std::fs::write(&ignore, "nested/large[1]\n").unwrap();
+    repo.git(&["config", "core.excludesfile", ignore.to_str().unwrap()]);
+    let store = repo.store(&repo.root);
+    assert!(store.restore_git_worker(prepared, None).is_err());
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+    assert!(store.recovery().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn shrinking_size_excluded_file_after_preparation_refuses_native_restore() {
     let mut repo = Repo::new();
@@ -331,15 +583,12 @@ async fn native_git_index_proof_rejects_creation_replacement_and_changed_split_d
 }
 
 #[tokio::test]
-async fn native_git_split_index_preparation_and_restore_preserve_user_index_metadata() {
+async fn native_git_split_index_capture_preparation_and_restore_preserve_user_index_metadata() {
     use std::os::unix::fs::MetadataExt;
     let repo = Repo::new();
     std::fs::write(repo.root.join("file"), "before").unwrap();
     repo.git(&["add", "--", "file"]);
     repo.git(&["update-index", "--split-index"]);
-    let target = repo.track(&repo.root).await;
-    std::fs::write(repo.root.join("file"), "after").unwrap();
-    let recorded = repo.track(&repo.root).await;
     let shared = std::fs::read_dir(repo.root.join(".git"))
         .unwrap()
         .map(|entry| entry.unwrap().path())
@@ -365,6 +614,10 @@ async fn native_git_split_index_preparation_and_restore_preserve_user_index_meta
         })
     };
     let before = observations();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), "after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    assert_eq!(observations(), before);
     let prepared = repo
         .prepare(&repo.root, &target, &recorded, &recorded)
         .await;
@@ -1537,6 +1790,14 @@ async fn native_inventory_reads_git_external_ignore_inputs_and_detects_rule_only
     std::fs::write(&global, b"file\n").unwrap();
     assert!(matches!(inventory.verify(&store), Err(RestoreError::Stale)));
     std::fs::write(&global, b"*.global\n").unwrap();
+    assert!(matches!(
+        store.restore_git_worker(prepared, None),
+        Err(RestoreError::Stale)
+    ));
+    let expected = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &expected)
+        .await;
     assert_eq!(store.restore_git_worker(prepared, None).unwrap(), ["file"]);
     assert_eq!(
         std::fs::read(repo.root.join("owner.info")).unwrap(),
@@ -1654,14 +1915,14 @@ async fn capture_bound_policy_rejects_excluded_rule_changes_that_do_not_change_t
     let target = repo.track(&repo.root).await;
     std::fs::write(repo.root.join("file"), b"after").unwrap();
     let recorded = repo.track(&repo.root).await;
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
     std::fs::write(
         repo.root.join(".gitignore"),
         b"*.log\n# changed ignored rule input\n",
     )
     .unwrap();
-    let prepared = repo
-        .prepare(&repo.root, &target, &recorded, &recorded)
-        .await;
     assert!(!prepared.expected.images.contains_key(".gitignore"));
     let store = repo.store(&repo.root);
     assert!(matches!(

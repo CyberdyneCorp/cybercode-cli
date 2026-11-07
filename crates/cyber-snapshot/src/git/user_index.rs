@@ -9,8 +9,14 @@ struct Layout {
     index: PathBuf,
 }
 
+pub(super) struct UserIndex {
+    pub inputs: ConfigInputs,
+    pub directory: PathBuf,
+    pub files: Vec<PathBuf>,
+}
+
 impl Shadow {
-    pub(super) async fn user_index_inputs(&self) -> Result<ConfigInputs, String> {
+    pub(super) async fn user_index(&self) -> Result<UserIndex, String> {
         // Observe discovery routing before Git resolves any metadata paths.
         let marker = self.worktree.join(".git");
         let metadata = std::fs::symlink_metadata(&marker).map_err(|error| error.to_string())?;
@@ -33,7 +39,9 @@ impl Shadow {
             layout.directory.join("commondir"),
             layout.directory.join("gitdir"),
         ];
-        paths.extend(shared_indexes(&layout.directory)?);
+        let mut files = vec![layout.index.clone()];
+        files.extend(shared_indexes(&layout.directory)?);
+        paths.extend(files.iter().skip(1).cloned());
         let mut index = ConfigInputs::capture_files(paths)?;
         index.bind_contexts(vec![layout.directory.clone()])?;
         proof.merge(index)?;
@@ -41,7 +49,11 @@ impl Shadow {
             return Err("User Git index layout changed during collection".into());
         }
         proof.verify()?;
-        Ok(proof)
+        Ok(UserIndex {
+            inputs: proof,
+            directory: layout.directory,
+            files,
+        })
     }
 
     async fn user_index_layout(&self) -> Result<Layout, String> {
