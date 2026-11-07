@@ -97,6 +97,16 @@ fn right_side(app: &App) -> Vec<Span<'static>> {
         }
         spans.push(Span::styled(text, Style::default().fg(t.accent)));
     }
+    let fallback = app.session.fallback.as_ref();
+    if let Some((model, _)) = fallback.filter(|(_, until)| *until > crate::loops::now_ms()) {
+        if !spans.is_empty() {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            app.trf("fallback: {model}", &[("model", model)]),
+            Style::default().fg(t.warning),
+        ));
+    }
     if let Some(text) = app.session.usage_wait.map(crate::usage_wait::footer) {
         if !spans.is_empty() {
             spans.push(Span::raw("  "));
