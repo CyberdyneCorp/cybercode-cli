@@ -176,8 +176,15 @@ from durable settlement. Disabled snapshots or zero retention preserve payloads.
 Live readers, independent unknown effects, changed payloads or incomplete native
 ownership refuse cleanup. A full capture may attempt the same eligible cleanup
 and retry once. Cleanup retains the intent, lifetime records and durable retry
-receipt, and never reads or restores source files. Managed Git, keep/rollback,
-preparation-construction and legacy payload reclamation remain unfinished.
+receipt, and never reads or restores source files.
+
+Acknowledged keep/rollback recovery can also reclaim its original and resolution
+regular-file stages together under both exited worker lifetimes. It requires the
+exact paired receipt, both native acknowledgements, the original settlement link
+and unchanged recorded private slots. Both inventories are checked before deletion;
+interrupted cleanup resumes only through its durable plan. Both intents and lookup
+receipts remain usable afterward. Managed Git, preparation-construction, metadata/
+CAS and legacy payload reclamation remain unfinished.
 
 Before file changes, restore durably publishes an intent and prepares private
 stages. Replacements retain displaced inodes; progress and completion are flushed

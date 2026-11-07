@@ -227,7 +227,15 @@ async fn prompt(app: &App, client: &Client, session: &str, text: &str, expected:
 
 #[tokio::test]
 async fn acknowledged_ordinary_payloads_are_reclaimed_without_source_or_reference_image_changes() {
+    use sha2::Digest;
     let f = Fixture::new().await;
+    let legacy_frame = serde_json::to_vec(&("snapshot-reclamation-v1", &f.receipt)).unwrap();
+    let legacy_id = format!("snapshot_reclaim_{:x}", sha2::Sha256::digest(legacy_frame));
+    assert_eq!(records::Plan::id(&f.receipt).unwrap(), legacy_id);
+    assert_eq!(
+        serde_json::to_value(records::Receipt::Restore(f.receipt.clone())).unwrap(),
+        serde_json::to_value(&f.receipt).unwrap()
+    );
     f.age();
     let messages = f
         .client
@@ -364,7 +372,7 @@ impl Policy for Cut {
     ) -> Result<Option<Settlement>, String> {
         self.inner.receipt(origin)
     }
-    fn record(&self, receipt: &SnapshotRestoreReceipt) -> Result<Option<records::Record>, String> {
+    fn record(&self, receipt: &records::Receipt) -> Result<Option<records::Record>, String> {
         self.inner.record(receipt)
     }
     fn reclaim(&self, plan: records::Plan, delete: Delete) -> Result<u64, String> {
@@ -507,14 +515,26 @@ async fn actual_process_death_preserves_plan_and_resumes_without_source_replay()
             .unwrap(),
         );
         let policy = cyber_app::snapshot_reclamation::policy(store.clone());
-        assert!(!policy.record(&receipt).unwrap().unwrap().completed);
+        assert!(
+            !policy
+                .record(&receipt.clone().into())
+                .unwrap()
+                .unwrap()
+                .completed
+        );
         let snapshots = maintenance(
             &paths,
             Arc::new(Mutex::new(json!({"snapshots":{"retention_days":7}}))),
             policy.clone(),
         );
         assert!(snapshots.reclaim(project.to_str().unwrap()).await.unwrap() > 0);
-        assert!(policy.record(&receipt).unwrap().unwrap().completed);
+        assert!(
+            policy
+                .record(&receipt.clone().into())
+                .unwrap()
+                .unwrap()
+                .completed
+        );
         assert_eq!(
             snapshots.reclaim(project.to_str().unwrap()).await.unwrap(),
             0
@@ -775,7 +795,10 @@ async fn reclamation_projectors_roll_back_foreign_plans_and_invalid_completions(
     let id = records::Plan::id(&plan.receipt).unwrap();
     let notifications = f.app.store.subscribe();
     let mut wrong = plan.clone();
-    wrong.receipt.events_digest = "0".repeat(64);
+    let records::Receipt::Restore(receipt) = &mut wrong.receipt else {
+        panic!("ordinary fixture");
+    };
+    receipt.events_digest = "0".repeat(64);
     let foreign = records::Plan::id(&wrong.receipt).unwrap();
     assert!(
         f.app

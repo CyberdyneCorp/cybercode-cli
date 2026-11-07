@@ -3265,3 +3265,78 @@ Store adapter retain their project-specific dependency roles. The full recovery
 feature still requires the acceptance gaps above; this is not approval of the
 complete M6 feature or either issue. All final local checks are recorded above;
 no PR/push or parent-task completion is claimed.
+
+## Paired keep/rollback payload reclamation (2026-11-07, local)
+
+The next M6 path removes original and resolution regular private stages together
+only after the exact paired Store receipt, both native acknowledgements and the
+parent's settlement link agree. It preserves both intents, immutable final slot
+observations, worker/phase metadata, CAS images and lookup receipts. An untagged
+internal receipt carrier retains ordinary version-1 serialization and aggregate
+IDs; version-2 plans identify each leaf's exact original/resolution journal. Both
+complete inventories are preflighted before any unlink, with both exited lifetime
+locks, metadata pins and the shared namespace/Location guard retained. The Store
+writer re-attests both owners and references around the bounded native callback.
+
+Original leaves must match the resolution's immutable final private observations;
+resolution leaves must match its own displaced originals. Missing leaves require
+an already committed matching plan. Resume indexes frozen leaves by journal/name
+rather than repeatedly scanning the full plan. Retention uses paired settlement;
+zero/disabled settings, unknown native owners and incomplete proof still refuse.
+An admitted original is required. A resolution with zero changes, as in keep,
+must instead have an exact non-admitted phase with no origin; other resolutions
+require admission. This does not generalize ordinary cleanup's positive phase
+requirement or admit preparation construction, legacy evidence or managed Git.
+
+The real CLI fixture kills a service after a partial source restore, performs
+reviewed keep and rollback, and now reopens the stopped service's actual Store
+for maintenance. It checks young retention, both independently held worker locks,
+a durable plan cut before deletion, refusal on an unknown entry before any unlink,
+synthetic progress of one planned unlink, complete retry, retained intent bytes,
+unchanged later source/symlink/target and idempotent accounting. The plan cut and
+single unlink are synthetic states, not additional cleanup process-kill claims.
+The fixture restarts the actual service and verifies original request lookup and
+explicit acknowledgement still work without inference or transcript movement.
+
+Code-review skill inspection covered receipt serialization and legacy ID framing,
+two-owner attestation, leaf/journal association and bounds, native phase admission,
+full preflight, private metadata pins, no-follow unlinks/fsync and retained retry
+receipts. The existing application policy owns database transactions; native
+snapshot cleanup remains a filesystem adapter with no Store/source replay port.
+Clippy identified test helper cognitive complexity 17/15 and 19/15; the fixture
+was split by cleanup setup, interrupted-plan verification and lookup responsibilities,
+without allowances. Native paired preparation/deletion passes the same threshold.
+
+Initial local checks: the ordinary App cleanup suite passed all 15 cases in
+43.99 seconds, and the real keep/rollback fixture passed in 81.50 seconds before
+its final test-helper refactor. HTTP passed all 80 cases, strict OpenSpec passed
+117 items and SDK generation consistency passed. Final source checks and the
+complete serial CLI composition are recorded below when finished. This path does
+not close M6: managed resource/Git cleanup, non-admitted original/preparation and
+construction classes, CAS/metadata reclamation and the full native crash, lease
+and platform matrix remain required. No PR/push or parent acceptance is claimed.
+
+Review then tightened consuming-time inventory checks to allow only the durable
+plan's leaves, rather than every possible stage index in the journal. A valid
+resolution can have an intentionally empty stage (rollback recreating a deleted
+file). The strengthened real-kill fixture includes such a file and injects owner
+bytes into that empty index inside the consuming writer callback, after native
+planning. Cleanup must report the unplanned entry before removing any planned
+leaf, retain the injected bytes and resume only after explicit fixture cleanup.
+This is a regression for that review correction, not an ownership/admission bypass.
+
+Final local macOS arm64 evidence: the complete serial CLI branch/recovery run
+passed all 18 cases in 346.57 seconds before the final inventory tightening. The
+final focused keep/rollback case passed both actions and the strengthened empty-slot
+regression in 84.39 seconds afterward; the full 18-case run was not repeated for
+that paired-only correction. Ordinary legacy ID/serialization compatibility passed
+separately in 5.37 seconds. All-target App/server/snapshot/CLI Clippy passed after
+the final correction, with no complexity allowances. Format/diff checks, generated
+SDK consistency, strict OpenSpec (117 passed) and spec lint (0 errors/25 warnings)
+passed. HTTP's 80 cases passed before that native inventory correction. No full
+snapshot-library/workspace/SDK execution, additional native platform or CI run was
+performed for this increment. C deprecation/linker unwind warnings were observed
+without unchanged-main attribution. All Cargo tests/checks/Clippy used
+CARGO_INCREMENTAL=0 and --locked. No unresolved critical/major code-review finding
+remains within this paired regular-payload scope; the broader acceptance obligations
+listed above remain open and neither issue is complete.

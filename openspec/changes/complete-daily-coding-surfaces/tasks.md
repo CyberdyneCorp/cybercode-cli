@@ -532,3 +532,12 @@ interrupted plan resume, missing/changed proof, disabled/zero retention and cap
 pressure before accepting this path. Managed Git, recovery-resolution/preparation
 construction payload cleanup and complete reclamation/platform acceptance remain
 required; M6 and all parent tasks stay open.
+
+M6 paired-payload continuation: reclaim original and resolution regular private
+slots together after exact keep/rollback Store and native acknowledgement. Bind
+both journals, preserve version-1 ordinary plan IDs, retain both lifetimes/phases,
+and preflight complete immutable outcome/displaced inventories before deleting.
+Exercise the real partial-restore kill fixture for keep and rollback, both live
+worker locks, young retention, unknown entries and planned partial progress.
+Construction/preparation payloads, managed resources/Git, CAS/metadata reclamation
+and the complete native cut/platform matrix remain required; M6 stays open.

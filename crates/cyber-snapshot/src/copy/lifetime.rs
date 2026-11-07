@@ -224,13 +224,22 @@ impl Store {
         origin: &cyber_server::runtime::SnapshotOrigin,
         resources_digest: &str,
     ) -> Result<(), String> {
+        self.verify_reclamation_phase_admission(binding, origin, resources_digest, true)
+    }
+    pub(crate) fn verify_reclamation_phase_admission(
+        &self,
+        binding: &SnapshotLifetimeBinding,
+        origin: &cyber_server::runtime::SnapshotOrigin,
+        resources_digest: &str,
+        admitted: bool,
+    ) -> Result<(), String> {
         let phase = self.read_source_phase(binding)?;
         let resources = phase
             .checkout_bindings
             .as_ref()
             .ok_or("Missing acquired reclamation resources")?;
-        if !phase.admitted
-            || phase.origin.as_ref() != Some(origin)
+        if phase.admitted != admitted
+            || phase.origin.as_ref() != admitted.then_some(origin)
             || !resources.is_empty()
             || binding.checkout_resources_digest(resources)? != resources_digest
         {

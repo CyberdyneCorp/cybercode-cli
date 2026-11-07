@@ -57,6 +57,7 @@ tempfile.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
+cyber-snapshot = { path = "../cyber-snapshot" }
 cyber-install = { path = "../cyber-install", features = ["test-support"] }
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
 aws-lc-rs = "1"

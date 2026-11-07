@@ -828,3 +828,25 @@ or rewritten event data and event deletion cascades remove only that event's roo
 The same complete index protects staged, inactive-branch and saved-version history.
 A missing/unreadable/oversized index refuses cleanup. Reference lookup at the writer
 must not repeatedly parse the entire conversation history while other writes wait.
+
+### Paired recovery payload cleanup
+
+Acknowledged keep/rollback cleanup SHALL bind the exact durable two-owner recovery
+receipt, both immutable native intents and the parent's settlement link. The
+reclamation frame SHALL distinguish original and resolution journal leaves while
+preserving existing ordinary restore plan identities and serialization. Native
+cleanup SHALL retain both exited worker lifetimes, their phase pins and the shared
+Location/namespace guards. The initial paired admission requires an admitted original source phase and
+empty complete checkout inventories. A resolution with no journal changes must
+retain a positively non-admitted phase with no origin; other resolutions require
+positive admission; other
+preparation/managed resource classes remain required separately.
+
+Original private slots SHALL match the resolution's immutable final observations;
+resolution slots SHALL match its own completed journal's original displaced
+images. Both complete inventories SHALL be preflighted before any unlink. Partial
+progress SHALL require the committed exact plan and immutable ownership evidence.
+Neither source bytes nor current source routes grant cleanup authority or need to
+be read. Both intents, settlement links, phase metadata and durable lookup receipts
+SHALL survive payload reclamation. Retention SHALL begin at durable paired settlement
+and be rechecked during deletion; unknown native owners continue to protect both.

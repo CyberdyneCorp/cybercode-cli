@@ -10,6 +10,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "support/reclamation.rs"]
+mod reclamation_support;
 #[path = "../../cyber-app/tests/support/scripted_model.rs"]
 mod scripted_model;
 
@@ -1253,6 +1256,7 @@ fn managed_native_recovery_after_partial_kill(action: &str) {
         std::fs::write(repo.join(format!("bulk_{index:04}")), "after").unwrap();
     }
     std::fs::write(repo.join("zz\nfixture"), "after").unwrap();
+    std::fs::write(repo.join("aa_removed"), "after-only source").unwrap();
     env.exec(Some(&id), "after snapshot");
     let messages = kill_partial_restore(&env, &id, &first);
     let requests = model.requests().len();
@@ -1288,7 +1292,298 @@ fn managed_native_recovery_after_partial_kill(action: &str) {
     );
     assert_native_settlement_link(&env, &journal, &result);
     assert_recovery_lookup_does_not_replay(&env, &id, &request_id, &request, &result, &messages);
+    assert_cleanup_preserves_request(&env, &id, &request_id, &result, &messages);
     assert_eq!(model.requests().len(), requests);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_cleanup_preserves_request(
+    env: &Env,
+    id: &str,
+    request_id: &str,
+    result: &Value,
+    messages: &[Value],
+) {
+    assert_paired_payload_cleanup(env, result);
+    let lookup = json(&env.cyber(&[
+        "sessions",
+        "recovery-request",
+        id,
+        request_id,
+        "--acknowledge",
+        "--format",
+        "json",
+    ]));
+    assert_eq!(lookup["receipt"], result["receipt"]);
+    assert_eq!(env.messages(id), messages);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_paired_payload_cleanup(env: &Env, result: &Value) {
+    use cyber_server::runtime::snapshot_reclamation::{self as records, Receipt};
+    use cyber_store::{Store, StoreOptions};
+    use std::sync::Arc;
+    exits(&env.cyber(&["service", "stop"]), 0);
+    let root = env.root.join("cyber-home");
+    let data = root.join("data");
+    let database = std::fs::read_dir(&data)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "db"))
+        .unwrap();
+    let store = Arc::new(
+        Store::open(StoreOptions::new(
+            cyber_core::paths::DatabaseLocation::File(database),
+            cyber_server::runtime::Runtime::registry(),
+        ))
+        .unwrap(),
+    );
+    let receipt: cyber_server::runtime::SnapshotRecoveryReceipt =
+        serde_json::from_value(result["receipt"].clone()).unwrap();
+    let owner = receipt
+        .checkout
+        .as_ref()
+        .unwrap()
+        .resolution_origin
+        .activity_id
+        .clone();
+    let receipt = Receipt::Recovery(receipt);
+    let namespace = std::fs::read_dir(data.join("snapshot/global"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let journals = match &receipt {
+        Receipt::Recovery(receipt) => [
+            namespace.join("journals").join(&receipt.journal_id),
+            namespace.join("journals").join(&receipt.resolution_id),
+        ],
+        _ => unreachable!(),
+    };
+    let intents = journals
+        .each_ref()
+        .map(|journal| std::fs::read(journal.join("intent.json")).unwrap());
+    let original_source = env.file("bulk_0000");
+    let source = env.root.join("repo");
+    let target = env.root.join("cleanup-owner-target");
+    std::fs::write(&target, "later owner target").unwrap();
+    std::os::unix::fs::symlink(&target, source.join("cleanup-owner-link")).unwrap();
+    let policy = cyber_app::snapshot_reclamation::policy(store.clone());
+    let snapshots = cyber_snapshot::GitSnapshots::with_reclamation(
+        data.clone(),
+        Arc::new(|_| json!({"snapshots":{"retention_days":7}})),
+        vec![root.join("config"), root.join("state"), root.join("cache")],
+        None,
+        Some(policy.clone()),
+    );
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    assert_eq!(
+        runtime
+            .block_on(snapshots.reclaim(source.to_str().unwrap()))
+            .unwrap(),
+        0,
+        "young paired receipt must retain payloads"
+    );
+    assert!(policy.record(&receipt).unwrap().is_none());
+    store
+        .transaction(move |db| {
+            db.execute(
+                "UPDATE event SET time=time-?1 WHERE aggregate_id=?2",
+                rusqlite::params![8i64 * 86400000, owner],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_paired_live_owners_refuse(&runtime, &snapshots, &namespace, &receipt);
+    let injection = Arc::new(std::sync::Mutex::new(None));
+    let cut = cyber_snapshot::GitSnapshots::with_reclamation(
+        data,
+        Arc::new(|_| json!({"snapshots":{"retention_days":7}})),
+        vec![root.join("config"), root.join("state"), root.join("cache")],
+        None,
+        Some(Arc::new(reclamation_support::Planned(
+            policy.clone(),
+            injection.clone(),
+        ))),
+    );
+    assert_paired_plan_interruption(
+        &runtime,
+        &snapshots,
+        (&cut, &injection),
+        &policy,
+        &receipt,
+        &namespace,
+        &journals,
+    );
+    assert!(
+        runtime
+            .block_on(snapshots.reclaim(source.to_str().unwrap()))
+            .unwrap()
+            > 0
+    );
+    let record = policy.record(&receipt).unwrap().unwrap();
+    assert!(record.completed);
+    assert_eq!(record.plan.version, 2);
+    assert_eq!(
+        records::Plan::id(&record.plan.receipt).unwrap(),
+        records::Plan::id(&receipt).unwrap()
+    );
+    for (journal, intent) in journals.iter().zip(intents) {
+        assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
+        assert_eq!(
+            std::fs::read_dir(journal).unwrap().count(),
+            1,
+            "only the acknowledged intent remains"
+        );
+    }
+    assert_eq!(
+        runtime
+            .block_on(snapshots.reclaim(source.to_str().unwrap()))
+            .unwrap(),
+        0
+    );
+    assert_eq!(env.file("bulk_0000"), original_source);
+    assert_eq!(
+        std::fs::read_link(source.join("cleanup-owner-link")).unwrap(),
+        target
+    );
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "later owner target"
+    );
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_paired_plan_interruption(
+    runtime: &tokio::runtime::Runtime,
+    snapshots: &cyber_snapshot::GitSnapshots,
+    cut: (
+        &cyber_snapshot::GitSnapshots,
+        &std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
+    ),
+    policy: &std::sync::Arc<dyn cyber_snapshot::reclamation::Policy>,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+    namespace: &std::path::Path,
+    journals: &[PathBuf; 2],
+) {
+    assert!(
+        runtime
+            .block_on(
+                cut.0.reclaim(
+                    receipt
+                        .origin()
+                        .unwrap()
+                        .binding
+                        .directory
+                        .to_str()
+                        .unwrap()
+                )
+            )
+            .is_err()
+    );
+    let pending = policy.record(receipt).unwrap().unwrap();
+    assert!(!pending.completed);
+    let first = &pending.plan.files[0];
+    let leaf = namespace
+        .join("journals")
+        .join(first.journal.as_deref().unwrap())
+        .join(&first.name);
+    let unknown = journals[1].join("foreign-entry");
+    std::fs::write(&unknown, "owner evidence").unwrap();
+    assert!(
+        runtime
+            .block_on(
+                snapshots.reclaim(
+                    receipt
+                        .origin()
+                        .unwrap()
+                        .binding
+                        .directory
+                        .to_str()
+                        .unwrap()
+                )
+            )
+            .is_err()
+    );
+    assert!(
+        leaf.exists(),
+        "unknown entry must refuse before any planned unlink"
+    );
+    std::fs::remove_file(unknown).unwrap();
+    assert_unplanned_empty_slot(runtime, cut, &journals[1], receipt, &leaf);
+    // Synthetic state cut of one planned unlink; the restore itself was killed
+    // as a real process above. This is not a paired cleanup process-kill claim.
+    std::fs::remove_file(&leaf).unwrap();
+    std::fs::File::open(leaf.parent().unwrap())
+        .unwrap()
+        .sync_all()
+        .unwrap();
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_unplanned_empty_slot(
+    runtime: &tokio::runtime::Runtime,
+    cut: (
+        &cyber_snapshot::GitSnapshots,
+        &std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
+    ),
+    journal: &std::path::Path,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+    retained: &std::path::Path,
+) {
+    use cyber_server::runtime::{SnapshotRecoveryAction, snapshot_reclamation::Receipt};
+    let Receipt::Recovery(pair) = receipt else {
+        panic!("paired fixture");
+    };
+    if pair.action != SnapshotRecoveryAction::Rollback {
+        return;
+    }
+    let intent: Value =
+        serde_json::from_slice(&std::fs::read(journal.join("intent.json")).unwrap()).unwrap();
+    let index = intent["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|change| change["before"].is_null())
+        .expect("rollback fixture needs a genuinely empty private stage");
+    let path = journal.join(format!("stage_{index}"));
+    assert!(!path.exists());
+    *cut.1.lock().unwrap() = Some(path.clone());
+    let error = runtime
+        .block_on(
+            cut.0
+                .reclaim(pair.original.binding.directory.to_str().unwrap()),
+        )
+        .unwrap_err();
+    assert!(error.contains("Unplanned entry"), "{error}");
+    assert!(
+        retained.exists(),
+        "no planned payload may be removed before complete preflight"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"unplanned owner evidence");
+    std::fs::remove_file(path).unwrap();
+    *cut.1.lock().unwrap() = None;
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_paired_live_owners_refuse(
+    runtime: &tokio::runtime::Runtime,
+    snapshots: &cyber_snapshot::GitSnapshots,
+    namespace: &std::path::Path,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+) {
+    for (origin, _) in receipt.owners().unwrap() {
+        let held =
+            std::fs::File::open(namespace.join("workers").join(&origin.activity_id)).unwrap();
+        held.try_lock().unwrap();
+        assert!(
+            runtime
+                .block_on(snapshots.reclaim(origin.binding.directory.to_str().unwrap()))
+                .is_err()
+        );
+        drop(held);
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

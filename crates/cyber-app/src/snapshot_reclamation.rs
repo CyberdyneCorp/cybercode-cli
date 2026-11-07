@@ -23,7 +23,7 @@ impl Policy for Reclamation {
         self.0
             .read(move |db| {
                 let tx = db.unchecked_transaction()?;
-                let Some(receipt) = records::restore_receipt(&tx, &origin)? else {
+                let Some(receipt) = records::settlement_receipt(&tx, &origin)? else {
                     return Ok(None);
                 };
                 let settled_at_ms = tx.query_row(
@@ -39,10 +39,7 @@ impl Policy for Reclamation {
             })
             .map_err(|error| error.to_string())
     }
-    fn record(
-        &self,
-        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
-    ) -> Result<Option<Record>, String> {
+    fn record(&self, receipt: &records::Receipt) -> Result<Option<Record>, String> {
         let receipt = receipt.clone();
         self.0
             .read(move |db| {

@@ -1,5 +1,8 @@
 //! Durable private-payload cleanup plans. These never settle native activities.
-use super::{SnapshotOrigin, SnapshotRestoreReceipt, activity};
+use super::{
+    SnapshotOrigin, SnapshotRecoveryReceipt, SnapshotRestoreCheckout, SnapshotRestoreReceipt,
+    activity,
+};
 use cyber_store::{EventRegistry, StoreError, StoredEvent};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -11,9 +14,80 @@ pub const COMPLETED: &str = "snapshot.reclamation.completed.1";
 const LIMIT: usize = 4096;
 const BYTES: usize = 8 * 1024 * 1024;
 
+/// Untagged serialization preserves every existing ordinary receipt and plan ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Receipt {
+    Restore(SnapshotRestoreReceipt),
+    Recovery(SnapshotRecoveryReceipt),
+}
+impl From<SnapshotRestoreReceipt> for Receipt {
+    fn from(value: SnapshotRestoreReceipt) -> Self {
+        Self::Restore(value)
+    }
+}
+impl From<SnapshotRecoveryReceipt> for Receipt {
+    fn from(value: SnapshotRecoveryReceipt) -> Self {
+        Self::Recovery(value)
+    }
+}
+impl Receipt {
+    pub fn origin(&self) -> Result<&SnapshotOrigin, StoreError> {
+        match self {
+            Self::Restore(receipt) => Ok(&receipt.origin),
+            Self::Recovery(receipt) => receipt
+                .checkout
+                .as_ref()
+                .map(|checkout| &checkout.resolution_origin)
+                .ok_or_else(|| invalid("Missing recovery checkout")),
+        }
+    }
+    pub fn owners(&self) -> Result<Vec<(&SnapshotOrigin, &SnapshotRestoreCheckout)>, StoreError> {
+        match self {
+            Self::Restore(receipt) => {
+                receipt.checkout_acknowledgement_digest().map_err(invalid)?;
+                Ok(vec![(
+                    &receipt.origin,
+                    receipt
+                        .checkout
+                        .as_deref()
+                        .ok_or_else(|| invalid("Missing restore checkout"))?,
+                )])
+            }
+            Self::Recovery(receipt) => {
+                receipt.checkout_acknowledgement_digest().map_err(invalid)?;
+                let checkout = receipt
+                    .checkout
+                    .as_ref()
+                    .ok_or_else(|| invalid("Missing recovery checkout"))?;
+                Ok(vec![
+                    (
+                        &receipt.original,
+                        checkout
+                            .original
+                            .as_deref()
+                            .ok_or_else(|| invalid("Missing original recovery checkout"))?,
+                    ),
+                    (&checkout.resolution_origin, &checkout.resolution),
+                ])
+            }
+        }
+    }
+    fn verify(&self, db: &Connection) -> Result<(), StoreError> {
+        match self {
+            Self::Restore(receipt) => super::snapshot_restore_receipt::verify(db, receipt),
+            Self::Recovery(receipt) => {
+                super::snapshot_acknowledgement::verify_committed(db, receipt)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct File {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journal: Option<String>,
     pub name: String,
     pub identity: String,
     pub generation: String,
@@ -24,7 +98,7 @@ pub struct File {
 #[serde(deny_unknown_fields)]
 pub struct Plan {
     pub version: u32,
-    pub receipt: SnapshotRestoreReceipt,
+    pub receipt: Receipt,
     pub files: Vec<File>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,28 +119,33 @@ fn hash(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 impl Plan {
-    pub fn id(receipt: &SnapshotRestoreReceipt) -> Result<String, StoreError> {
+    pub fn id<R: Clone + Into<Receipt>>(receipt: &R) -> Result<String, StoreError> {
+        let receipt: Receipt = receipt.clone().into();
         let frame = serde_json::to_vec(&("snapshot-reclamation-v1", receipt))
             .map_err(|e| invalid(e.to_string()))?;
         Ok(format!("snapshot_reclaim_{:x}", Sha256::digest(frame)))
     }
     pub fn validate(&self) -> Result<(), StoreError> {
-        let checkout = self
-            .receipt
-            .checkout
-            .as_ref()
-            .ok_or_else(|| invalid("Reclamation requires retained checkout evidence"))?;
-        self.receipt
-            .checkout_acknowledgement_digest()
-            .map_err(invalid)?;
-        let empty = checkout
-            .lifetime
-            .checkout_resources_digest(&[])
-            .map_err(invalid)?;
-        if self.version != 1
-            || self.receipt.origin.worktree_id.is_some()
-            || checkout.resources_digest != empty
-            || self.files.len() > LIMIT
+        let owners = self.receipt.owners()?;
+        for (origin, checkout) in &owners {
+            if origin.worktree_id.is_some()
+                || checkout.resources_digest
+                    != checkout
+                        .lifetime
+                        .checkout_resources_digest(&[])
+                        .map_err(invalid)?
+            {
+                return Err(invalid(
+                    "Managed reclamation requires retained resource guards",
+                ));
+            }
+        }
+        let version = match &self.receipt {
+            Receipt::Restore(_) => 1,
+            Receipt::Recovery(_) => 2,
+        };
+        if self.version != version
+            || self.files.len() > LIMIT * owners.len()
             || serde_json::to_vec(self)
                 .map_err(|e| invalid(e.to_string()))?
                 .len()
@@ -83,7 +162,13 @@ impl Plan {
                 .strip_prefix("stage_")
                 .and_then(|index| index.parse::<usize>().ok());
             if index.is_none_or(|index| index >= LIMIT || file.name != format!("stage_{index}"))
-                || !names.insert(&file.name)
+                || !names.insert((&file.journal, &file.name))
+                || match &self.receipt {
+                    Receipt::Restore(_) => file.journal.is_some(),
+                    Receipt::Recovery(_) => !owners.iter().any(|(origin, _)| {
+                        file.journal.as_deref() == Some(origin.binding.journal_id.as_str())
+                    }),
+                }
                 || file.identity.is_empty()
                 || file.identity.len() > 128
                 || !hash(&file.generation)
@@ -105,18 +190,17 @@ impl Plan {
     /// must separately retain native namespace, reader, lifetime and lease proof.
     pub fn authorize(&self, db: &Connection) -> Result<BTreeSet<String>, StoreError> {
         self.validate()?;
-        super::snapshot_restore_receipt::verify(db, &self.receipt)?;
-        let journal = &self.receipt.origin.binding.journal_id;
-        let directory = self
-            .receipt
-            .origin
+        self.receipt.verify(db)?;
+        let origin = self.receipt.origin()?;
+        let journal = &origin.binding.journal_id;
+        let directory = origin
             .binding
             .directory
             .to_str()
             .ok_or_else(|| invalid("Non-UTF8 reclamation Location"))?;
         let protected: bool = db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM event e LEFT JOIN session s ON s.id=json_extract(e.data,'$.session_id') WHERE e.type='native.activity.changed.1' AND coalesce(json_extract(e.data,'$.status'),'unknown')<>'settled' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq) AND (s.id IS NULL OR (coalesce(json_extract(e.data,'$.status'),'unknown')='unknown' AND json_extract(e.data,'$.snapshot_lifetime') IS NULL) OR s.directory=?2 OR json_extract(e.data,'$.session_id')=?3 OR json_extract(e.data,'$.snapshot_lifetime.owner.directory')=?2 OR EXISTS(SELECT 1 FROM json_tree(e.data) j WHERE j.key='journal_id' AND j.value=?1)))",
-            rusqlite::params![journal, directory, self.receipt.origin.session_id], |row| row.get(0),
+            "SELECT EXISTS(SELECT 1 FROM event e LEFT JOIN session s ON s.id=json_extract(e.data,'$.session_id') WHERE e.type='native.activity.changed.1' AND coalesce(json_extract(e.data,'$.status'),'unknown')<>'settled' AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq) AND (s.id IS NULL OR (coalesce(json_extract(e.data,'$.status'),'unknown')='unknown' AND json_extract(e.data,'$.snapshot_lifetime') IS NULL) OR s.directory=?2 OR json_extract(e.data,'$.session_id')=?3 OR json_extract(e.data,'$.snapshot_lifetime.owner.directory')=?2 OR EXISTS(SELECT 1 FROM json_tree(e.data) j WHERE j.key='journal_id' AND j.value IN (?1,?4))))",
+            rusqlite::params![journal, directory, origin.session_id, self.receipt.owners()?[0].0.binding.journal_id], |row| row.get(0),
         )?;
         if protected {
             return Err(invalid(
@@ -142,10 +226,10 @@ pub fn references(db: &Connection) -> Result<BTreeSet<String>, StoreError> {
     Ok(roots)
 }
 
-pub fn restore_receipt(
+pub fn settlement_receipt(
     db: &Connection,
     origin: &SnapshotOrigin,
-) -> Result<Option<SnapshotRestoreReceipt>, StoreError> {
+) -> Result<Option<Receipt>, StoreError> {
     let raw: Option<String> = db
         .query_row(
             "SELECT data FROM event WHERE aggregate_id=?1 AND type=?2 ORDER BY seq DESC LIMIT 1",
@@ -158,21 +242,26 @@ pub fn restore_receipt(
     };
     let record: activity::Record =
         serde_json::from_str(&raw).map_err(|e| invalid(e.to_string()))?;
-    let Some(receipt) = record.snapshot_restore_receipt else {
-        return Ok(None);
+    let receipt = match (record.snapshot_restore_receipt, record.snapshot_receipt) {
+        (Some(receipt), None) => Receipt::Restore(receipt),
+        (None, Some(receipt)) => Receipt::Recovery(receipt),
+        (None, None) => return Ok(None),
+        _ => return Err(invalid("Ambiguous cleanup receipt")),
     };
-    if receipt.origin != *origin {
+    receipt.owners()?;
+    if receipt.origin()? != origin {
         return Err(invalid("Foreign reclamation receipt"));
     }
-    super::snapshot_restore_receipt::verify(db, &receipt)?;
+    receipt.verify(db)?;
     Ok(Some(receipt))
 }
 
-pub fn lookup(
+pub fn lookup<R: Clone + Into<Receipt>>(
     db: &Connection,
-    receipt: &SnapshotRestoreReceipt,
+    receipt: &R,
 ) -> Result<Option<Record>, StoreError> {
-    let id = Plan::id(receipt)?;
+    let receipt: Receipt = receipt.clone().into();
+    let id = Plan::id(&receipt)?;
     let first: Option<(String, String)> = db
         .query_row(
             "SELECT type,data FROM event WHERE aggregate_id=?1 AND seq=0",
@@ -185,7 +274,7 @@ pub fn lookup(
     };
     let plan: Plan = serde_json::from_str(&raw).map_err(|e| invalid(e.to_string()))?;
     plan.validate()?;
-    if kind != PLANNED || plan.receipt != *receipt {
+    if kind != PLANNED || plan.receipt != receipt {
         return Err(invalid("Reclamation request owner differs"));
     }
     let (seq, kind, raw): (i64, String, String) = db.query_row(

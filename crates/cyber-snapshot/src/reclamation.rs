@@ -1,13 +1,13 @@
 //! Application-owned Store authority for private snapshot maintenance.
 use cyber_server::runtime::{
-    SnapshotOrigin, SnapshotRestoreReceipt,
-    snapshot_reclamation::{Plan, Record},
+    SnapshotOrigin,
+    snapshot_reclamation::{Plan, Receipt, Record},
 };
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone)]
 pub struct Settlement {
-    pub receipt: SnapshotRestoreReceipt,
+    pub receipt: Receipt,
     pub settled_at_ms: i64,
 }
 
@@ -18,7 +18,7 @@ pub type Collect = Box<dyn FnOnce(&BTreeSet<String>) -> Result<(), String> + Sen
 /// retained by that closure. Neither method may acknowledge a native activity.
 pub trait Policy: Send + Sync {
     fn receipt(&self, origin: &SnapshotOrigin) -> Result<Option<Settlement>, String>;
-    fn record(&self, receipt: &SnapshotRestoreReceipt) -> Result<Option<Record>, String>;
+    fn record(&self, receipt: &Receipt) -> Result<Option<Record>, String>;
     fn reclaim(&self, plan: Plan, delete: Delete) -> Result<u64, String>;
     fn collect(&self, collect: Collect) -> Result<(), String>;
     fn refused(&self, directory: &str, error: &str);

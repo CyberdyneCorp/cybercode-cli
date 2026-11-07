@@ -43,3 +43,11 @@
 - **THEN** existing references SHALL be backfilled and each later change SHALL update its event-owned reference rows in the same transaction
 - **AND** shared references SHALL remain protected until every referencing event is removed
 - **AND** missing, unreadable or oversized reference views SHALL refuse reclamation
+
+#### Scenario: Reclaim an acknowledged recovery pair
+- **GIVEN** exact paired keep/rollback settlement and matching original/resolution native acknowledgement
+- **WHEN** private recovery payloads become eligible after retention
+- **THEN** a version-2 reclamation plan SHALL bind both journals and their exact immutable private leaves
+- **AND** both exited lifetimes and complete inventories SHALL be checked before any unlink
+- **AND** interrupted deletion SHALL resume only from that durable plan without reading or replaying source
+- **AND** original version-1 restore plan serialization and IDs SHALL remain unchanged

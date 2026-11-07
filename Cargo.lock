@@ -1046,6 +1046,7 @@ dependencies = [
  "cyber-llm",
  "cyber-sandbox",
  "cyber-server",
+ "cyber-snapshot",
  "cyber-store",
  "cyber-telemetry",
  "cyber-tools",

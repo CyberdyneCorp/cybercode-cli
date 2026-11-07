@@ -1,4 +1,5 @@
 //! Reclaim only exact acknowledged displaced images; keep intent/lifetime receipts.
+mod paired;
 use super::{
     Store, ownership,
     restore::{Journal, JournalBackend},
@@ -28,6 +29,7 @@ struct Prepared {
     workspace: tokio::sync::OwnedMutexGuard<()>,
     config: Arc<crate::ConfigFn>,
     settled_at_ms: i64,
+    intent_digest: String,
 }
 struct MetadataPin {
     file: std::fs::File,
@@ -128,7 +130,7 @@ pub(crate) fn locations(data: &Path) -> Result<BTreeSet<String>, String> {
                 )?)
                 .map_err(storage::fail)?,
             };
-            if ordinary(&record) {
+            if ordinary(&record) || paired::eligible(&record) {
                 result.insert(
                     record
                         .location
@@ -153,6 +155,9 @@ pub(crate) fn reclaim(
         return Ok(0);
     }
     let (directory, record) = store.journal(id)?;
+    if paired::eligible(&record) {
+        return paired::reclaim(store, workspace, config, policy, directory, record);
+    }
     if !ordinary(&record) {
         return Ok(0);
     }
@@ -193,12 +198,15 @@ fn prepare(
     config: Arc<crate::ConfigFn>,
 ) -> Result<Prepared, String> {
     let receipt = settlement.receipt;
-    let origin = &receipt.origin;
+    let cyber_server::runtime::snapshot_reclamation::Receipt::Restore(restore) = &receipt else {
+        return Err("Ordinary cleanup received a recovery receipt".into());
+    };
+    let origin = &restore.origin;
     store.verify_worker_namespace(origin)?;
-    if store.worker_digest(Some(origin))?.as_ref() != Some(&receipt.intent_digest) {
+    if store.worker_digest(Some(origin))?.as_ref() != Some(&restore.intent_digest) {
         return Err("Reclamation intent differs from committed restore".into());
     }
-    let checkout = receipt
+    let checkout = restore
         .checkout
         .as_ref()
         .ok_or("Legacy restore has no cleanup checkout proof")?;
@@ -239,6 +247,7 @@ fn prepare(
                 let pin = storage::open(&journal, Path::new(&name))?;
                 ownership.verify_original(index, &pin)?;
                 let file = Payload {
+                    journal: None,
                     name: name.clone(),
                     identity: image.identity,
                     generation: image.generation,
@@ -268,6 +277,7 @@ fn prepare(
             return Err("Unknown journal file or construction stage; reclamation refused".into());
         }
     }
+    let intent_digest = restore.intent_digest.clone();
     let plan = Plan {
         version: 1,
         receipt,
@@ -287,18 +297,20 @@ fn prepare(
     let phase = MetadataPin::open(&workers, name)?;
     store.verify_reclamation_phase(
         binding,
-        &plan.receipt.origin,
-        &plan
-            .receipt
-            .checkout
-            .as_ref()
-            .ok_or("Missing reclamation checkout")?
+        plan.receipt.origin().map_err(storage::fail)?,
+        &plan.receipt.owners().map_err(storage::fail)?[0]
+            .1
             .resources_digest,
     )?;
     phase.verify(&workers, name)?;
     storage::existing_child(
         &store.journals,
-        &plan.receipt.origin.binding.journal_id,
+        &plan
+            .receipt
+            .origin()
+            .map_err(storage::fail)?
+            .binding
+            .journal_id,
         true,
     )?;
     Ok(Prepared {
@@ -312,6 +324,7 @@ fn prepare(
         workspace,
         config,
         settled_at_ms: settlement.settled_at_ms,
+        intent_digest,
     })
 }
 fn unmanaged(store: &Store) -> Result<(), String> {
@@ -328,7 +341,7 @@ impl Prepared {
         let _reader_lease = &self.workspace;
         self.lifetime.verify()?;
         self.store
-            .verify_worker_namespace(&self.plan.receipt.origin)?;
+            .verify_worker_namespace(self.plan.receipt.origin().map_err(storage::fail)?)?;
         if !due(self.config.as_ref(), &self.store.root, self.settled_at_ms) {
             return Err("Snapshot retention no longer permits reclamation".into());
         }
@@ -345,15 +358,21 @@ impl Prepared {
     }
     fn verify(&self) -> Result<(), String> {
         self.verify_routes()?;
-        let (_, record) = self
-            .store
-            .journal(&self.plan.receipt.origin.binding.journal_id)?;
+        let (_, record) = self.store.journal(
+            &self
+                .plan
+                .receipt
+                .origin()
+                .map_err(storage::fail)?
+                .binding
+                .journal_id,
+        )?;
         if !ordinary(&record)
             || self
                 .store
-                .worker_digest(Some(&self.plan.receipt.origin))?
+                .worker_digest(Some(self.plan.receipt.origin().map_err(storage::fail)?))?
                 .as_ref()
-                != Some(&self.plan.receipt.intent_digest)
+                != Some(&self.intent_digest)
         {
             return Err("Acknowledged reclamation intent changed".into());
         }
