@@ -1293,3 +1293,88 @@ async fn git_capture_does_not_publish_a_checkpoint_if_a_fixture_filter_changes_r
         b"changed"
     );
 }
+
+#[tokio::test]
+async fn native_git_preview_and_path_selection_include_normalization_only_changes() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join(".gitattributes"), b"*.txt text eol=lf\n").unwrap();
+    std::fs::write(repo.root.join("file.txt"), b"same\r\n").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file.txt"), b"same\n").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+    assert!(shadow.changed(&target, &recorded).await.unwrap().is_empty());
+    assert_eq!(
+        shadow.changed_native(&target, &recorded).await.unwrap(),
+        ["file.txt"]
+    );
+    assert!(
+        !repo
+            .snapshots
+            .owned_restore_available(repo.root.to_str().unwrap())
+    );
+    let preview = repo
+        .snapshots
+        .git_preview(SnapshotRestoreRequest {
+            directory: repo.root.to_str().unwrap().into(),
+            target: target.clone(),
+            recorded: recorded.clone(),
+            expected: recorded.clone(),
+            paths: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(preview.len(), 1);
+    assert_eq!(preview[0].file, "file.txt");
+    assert!(!preview[0].patch.is_empty());
+    assert_eq!(
+        std::fs::read(repo.root.join("file.txt")).unwrap(),
+        b"same\n"
+    );
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    let store = repo.store(&repo.root);
+    assert!(store.recovery().unwrap().is_empty());
+    assert_eq!(
+        store.restore_git_worker(prepared, None).unwrap(),
+        ["file.txt"]
+    );
+    assert_eq!(
+        std::fs::read(repo.root.join("file.txt")).unwrap(),
+        b"same\r\n"
+    );
+}
+
+#[tokio::test]
+async fn native_git_scoped_preview_matches_restore_selection_and_refuses_stale_state() {
+    let repo = Repo::new();
+    let directory = repo.root.join("scope");
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::write(directory.join("one"), b"before one").unwrap();
+    std::fs::write(directory.join("two"), b"before two").unwrap();
+    let target = repo.track(&directory).await;
+    std::fs::write(directory.join("one"), b"after one").unwrap();
+    std::fs::write(directory.join("two"), b"after two").unwrap();
+    let recorded = repo.track(&directory).await;
+    let request = || SnapshotRestoreRequest {
+        directory: directory.to_str().unwrap().into(),
+        target: target.clone(),
+        recorded: recorded.clone(),
+        expected: recorded.clone(),
+        paths: Some(vec!["scope/one".into()]),
+    };
+    let preview = repo.snapshots.git_preview(request()).await.unwrap();
+    assert_eq!(preview.len(), 1);
+    assert_eq!(preview[0].file, "scope/one");
+    assert!(preview[0].patch.contains("a/scope/one"));
+    assert_eq!(std::fs::read(directory.join("one")).unwrap(), b"after one");
+    assert!(repo.store(&directory).recovery().unwrap().is_empty());
+    std::fs::write(directory.join("two"), b"later owner edit outside selection").unwrap();
+    assert!(matches!(
+        repo.snapshots.git_preview(request()).await,
+        Err(RestoreError::Stale)
+    ));
+    assert_eq!(std::fs::read(directory.join("one")).unwrap(), b"after one");
+    assert!(repo.store(&directory).recovery().unwrap().is_empty());
+}

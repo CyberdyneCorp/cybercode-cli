@@ -555,3 +555,10 @@ intact. Unsupported capture SHALL retain explicit unavailable proof and SHALL NO
 silently promote canonical blobs into raw-state evidence. This does not admit
 ordinary Git workers or resolve their lifetime, acknowledgement, configuration
 race, reclamation or complete compatibility/acceptance gates.
+
+Managed Git preview SHALL use the same native raw-image planner as restore,
+including expected-state/policy revalidation, historical exclusions, allowed paths
+and all-plan conflict refusal. Preview SHALL publish no journal or source effects.
+Its client path SHALL remain behind the ordinary owned-Git availability gate;
+connecting preview alone SHALL NOT enable native source admission. Raw changed-path
+selection SHALL preserve normalization-only changes when managed Git is admitted.

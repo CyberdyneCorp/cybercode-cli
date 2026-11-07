@@ -253,6 +253,12 @@
 - **AND** native expected-state validation and restoration SHALL use verified raw images, retaining original snapshot IDs and historical exclusions without invoking filters inside the filesystem worker
 - **AND** legacy public Git diff/blob behavior SHALL resolve the canonical tree, older records SHALL remain readable without acquiring raw proof, and changed successful captures SHALL refuse publication
 
+#### Scenario: Managed Git preview and selected paths use the native plan
+- **WHEN** an admitted managed Git restore previews a checkpoint whose raw bytes differ only by normalization
+- **THEN** changed-path selection and preview SHALL preserve that difference and preview SHALL use the same raw-image planner, expected-state/policy checks, allowed paths and whole-plan conflicts as native restore
+- **AND** Git paths and patch headers SHALL remain worktree-relative, including scoped Locations, and preview SHALL publish no journal or source mutation
+- **AND** connecting this path SHALL NOT enable ordinary owned Git admission before its remaining gates are satisfied
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

@@ -2065,3 +2065,46 @@ all-target locked Clippy passed with warnings denied. Format/diff and generated
 SDK consistency passed. Pinned strict OpenSpec validation passed all 117 items;
 spec lint reported 0 errors/25 warnings. Full workspace/SDK execution, Linux,
 Windows, real CLI/TUI/App and source-bound CI acceptance were not run here.
+
+
+## Native Git preview and raw path selection (2026-11-07)
+
+`Store::preview_git` now calls the same native raw-image planner as restore, with
+full expected namespace/policy/image validation, historical mutation exclusions,
+selected paths, merge/conflict behavior and pre-effect directory checks. Rendering
+uses the verified expected packet for before images: inspected Git source bytes
+are not necessarily in the native CAS. This was caught during review and corrected
+without reopening source or following links. Preview may populate private CAS
+objects but publishes no journal or source effect. Git file paths and unified diff
+headers are worktree-relative, including subdirectory Locations.
+
+The GitSnapshots preview and selected-preview ports use this implementation only
+when ordinary owned Git is admitted. `changed` similarly selects verified raw
+catalogs behind that same gate, retaining normalization-only path differences.
+The actual gate remains closed for Git; legacy public behavior remains unchanged.
+An async adapter retains the worktree mutation lock across bounded immutable
+preparation and the synchronous native preview callback. No Git subprocess runs
+inside that callback. No preview-only activation or worker authority is added.
+
+Two backend/adapter fixtures exercise normalization-only CRLF differences, raw
+changed-path selection versus canonical compatibility, preview/apply path parity,
+source/journal preservation, scoped selected paths/patch headers and stale owner
+edits outside selection. The fixtures explicitly verify ordinary Git admission
+remains disabled. These are not real CLI/TUI/App or full runtime acceptance.
+
+The code-review skill was applied to the complete source/test/artifact diff,
+including expected-packet rendering, source versus private CAS effects, scoped
+path translation, lock retention, full-state versus selected-mutation checks and
+the unchanged admission gate. No critical/major finding remains in this disabled
+preview scope. Raw summary/client parity, complete worker lifetime/checkout
+acknowledgement, reclamation, Git compatibility and platform/crash acceptance still
+block ordinary admission; all parent tasks remain open.
+
+Final local macOS arm64 verification: locked snapshot tests passed 135 cases with
+two ignored fixtures (the pathspec fixture is invoked by its parent). Snapshot
+all-target locked Clippy passed with warnings denied. Format/diff and generated
+SDK consistency passed. Pinned strict OpenSpec passed all 117 items; spec lint
+reported 0 errors/25 warnings. An initial fixture compile error assumed the request
+was Clone; the test now constructs independent identical requests without changing
+the production API. Full workspace/SDK execution, real CLI/TUI/App, Linux/Windows
+and source-bound CI acceptance were not run for this increment.

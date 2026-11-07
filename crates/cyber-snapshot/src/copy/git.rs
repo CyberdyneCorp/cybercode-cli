@@ -72,6 +72,43 @@ fn matches(entry: Option<&Entry>, image: Option<&Image>) -> bool {
 }
 
 impl Store {
+    pub(crate) fn preview_git(
+        &self,
+        prepared: &PreparedRestore,
+    ) -> std::result::Result<Vec<cyber_server::runtime::FileDiff>, RestoreError> {
+        let (changes, _) = self.plan_git(prepared)?;
+        changes
+            .iter()
+            .map(|change| {
+                // Current Git images were inspected without copying source bytes
+                // into the native CAS. Use the already verified expected packet
+                // for rendering, rather than reopening source or following links.
+                if let Some(before) = &change.before {
+                    let image = prepared
+                        .expected
+                        .images
+                        .get(&change.path)
+                        .ok_or(RestoreError::Stale)?;
+                    if self
+                        .object(&image.bytes)
+                        .map_err(RestoreError::Failed)?
+                        .object
+                        != before.object
+                    {
+                        return Err(RestoreError::Stale);
+                    }
+                }
+                let path = if prepared.prefix.is_empty() {
+                    change.path.clone()
+                } else {
+                    format!("{}/{}", prepared.prefix, change.path)
+                };
+                self.file_diff(&path, change.before.as_ref(), change.after.as_ref())
+                    .map_err(RestoreError::Failed)
+            })
+            .collect()
+    }
+
     /// Called only inside a retained synchronous worker. Ordinary Git admission
     /// stays disabled until full state/lifetime and native acceptance gates are ready.
     pub(crate) fn restore_git_worker(

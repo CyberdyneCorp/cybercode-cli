@@ -325,3 +325,14 @@ cannot supply missing raw native proof. Git runtime ownership/acknowledgement,
 preview/path-selection parity for normalized-only changes, configuration races,
 remaining Git compatibility, retention and full client/platform acceptance still
 block ordinary admission. M2–M8 and parent tasks remain incomplete.
+
+
+Native preview continuation: managed Git preview is connected to the same raw
+planner as restore behind the unchanged owned-Git availability gate. Raw changed-
+path selection is connected at the same gate, preserving normalization-only edits.
+Rendering uses verified expected images rather than reopening current source, and
+scoped Git paths/patch headers stay worktree-relative. Backend fixtures verify
+preview leaves no journal/source changes and revalidates outside selected paths.
+Complete summaries/client behavior, worker lifetime/acknowledgement, reclamation,
+remaining Git compatibility and platform acceptance remain required. Ordinary Git
+admission and all M2–M8/parent task acceptance remain unchanged and incomplete.

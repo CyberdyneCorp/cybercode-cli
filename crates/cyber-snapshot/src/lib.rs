@@ -164,6 +164,35 @@ impl GitSnapshots {
         }
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn git_preview(
+        &self,
+        request: cyber_server::runtime::SnapshotRestoreRequest,
+    ) -> Result<Vec<FileDiff>, RestoreError> {
+        self.recovery_location(&request.directory)
+            .map_err(RestoreError::Failed)?;
+        let shadow = self
+            .shadow(&request.directory)
+            .ok_or_else(|| RestoreError::Failed("Git snapshots are unavailable".into()))?;
+        let options = self.copy_options(&request.directory);
+        let lock = cyber_server::workspace::mutation_lock(&shadow.worktree)
+            .map_err(|error| RestoreError::Failed(error.to_string()))?;
+        let guard = lock.lock_owned().await;
+        let prepared = shadow
+            .prepare_restore(&request, options.max_file, options.max_total)
+            .await
+            .map_err(RestoreError::Failed)?;
+        let data = self.data_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            let store = copy::Store::open(&data, &request.directory, options)
+                .map_err(RestoreError::Failed)?;
+            store.preview_git(&prepared)
+        })
+        .await
+        .map_err(|error| RestoreError::Failed(error.to_string()))?
+    }
+
     fn options(&self, location: &Path) -> (Vec<String>, u64) {
         Self::options_value(&(self.config)(location))
     }
@@ -603,6 +632,10 @@ impl Snapshots for GitSnapshots {
             let Some(shadow) = self.shadow(&directory) else {
                 return Ok(Vec::new());
             };
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            if self.owned_restore_available(&directory) {
+                return shadow.changed_native(&from, &to).await;
+            }
             shadow.changed(&from, &to).await
         })
     }
@@ -679,6 +712,18 @@ impl Snapshots for GitSnapshots {
                 return Err(RestoreError::Failed(
                     "Non-Git restore is unavailable on this host".into(),
                 ));
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            if self.owned_restore_available(&directory) {
+                return self
+                    .git_preview(cyber_server::runtime::SnapshotRestoreRequest {
+                        directory,
+                        target,
+                        recorded,
+                        expected,
+                        paths: None,
+                    })
+                    .await;
             }
             let shadow = self
                 .shadow(&directory)
@@ -781,6 +826,18 @@ impl Snapshots for GitSnapshots {
                 return Err(RestoreError::Failed(
                     "Non-Git restore is unavailable on this host".into(),
                 ));
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            if self.owned_restore_available(&directory) {
+                return self
+                    .git_preview(cyber_server::runtime::SnapshotRestoreRequest {
+                        directory,
+                        target,
+                        recorded,
+                        expected,
+                        paths: Some(paths),
+                    })
+                    .await;
             }
             let shadow = self
                 .shadow(&directory)

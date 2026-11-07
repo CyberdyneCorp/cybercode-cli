@@ -4,6 +4,20 @@ use crate::copy::git_capture::RawImage;
 use std::collections::BTreeMap;
 
 impl Shadow {
+    pub(crate) async fn changed_native(&self, from: &str, to: &str) -> Result<Vec<String>, String> {
+        let excluded = self.excluded_between(from, to).await?;
+        let before = self.native_image_catalog(from).await?;
+        let after = self.native_image_catalog(to).await?;
+        let names: std::collections::BTreeSet<_> =
+            before.keys().chain(after.keys()).cloned().collect();
+        Ok(names
+            .into_iter()
+            .filter(|path| {
+                before.get(path) != after.get(path) && !super::history::excludes(&excluded, path)
+            })
+            .collect())
+    }
+
     pub(super) async fn write_raw_capture(
         &self,
         files: &BTreeMap<String, RawImage>,
