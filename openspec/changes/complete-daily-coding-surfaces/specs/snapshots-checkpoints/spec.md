@@ -365,3 +365,9 @@
 - **THEN** bounded read-only discovery SHALL identify requests for that exact Session creation and journal without native access, acknowledgement or replay
 - **AND** the panel SHALL offer lookup of retained identities, keep native reconciliation explicit, preserve the composer/conversation and reject stale Session/Location/generation replies
 - **AND** unavailable discovery or legacy proof SHALL NOT enable an unreviewed replacement attempt or clear native fences
+
+#### Scenario: Typed preparation cancellation preserves exact pre-effect ownership
+- **WHEN** the owner lists or reviews an exited preparation through `sessions recovery-preparation`
+- **THEN** cancellation SHALL require its exact reviewed fingerprint and stable request ID, with malformed/incomplete options refused before service startup
+- **AND** replies SHALL match the selected Session/activity/lifetime and any published origin; source-admitted, mismatched or unsupported review evidence SHALL NOT be presented as cancellation authority
+- **AND** `sessions recovery-preparation-request` SHALL look up the committed receipt without replay, keep acknowledgement reconciliation explicit, and preserve files, transcript, evidence and independent process/checkout uncertainty

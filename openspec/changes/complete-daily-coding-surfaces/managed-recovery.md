@@ -761,3 +761,16 @@ requests, review explicit keep/rollback selections, and require a second Enter f
 the reviewed fingerprint. Request lookup and native acknowledgement reconciliation
 SHALL remain separate explicit keys. Session/Location/UI-generation changes SHALL
 invalidate stale replies without changing the composer or clearing native fences.
+
+### Typed preparation recovery commands
+
+`sessions recovery-preparation <session> [activity]` SHALL list candidates when no
+activity is selected and otherwise obtain a read-only eligibility review. Explicit
+`--confirm <fingerprint> --request-id <stable-id>` SHALL consume only the exact
+existing positive pre-effect cancellation protocol. The separate
+`sessions recovery-preparation-request <session> <activity> <request-id>` SHALL
+perform committed receipt lookup; explicit `--acknowledge` SHALL reconcile native
+metadata through the existing route. Replies SHALL match the selected Session,
+activity and lifetime, and lookup SHALL NOT imply observed native acknowledgement.
+No missing journal, historical lifetime or completed filesystem work SHALL be
+promoted into cancellation authority by these clients.

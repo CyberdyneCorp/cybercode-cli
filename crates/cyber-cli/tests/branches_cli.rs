@@ -818,39 +818,46 @@ fn cancelled_pre_effect_preparation(published: bool) {
     std::fs::write(&target, "later owner bytes").unwrap();
     std::fs::remove_file(repo.join("bulk_0000")).unwrap();
     std::os::unix::fs::symlink(&target, repo.join("bulk_0000")).unwrap();
-    let list =
-        json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/preparations")]))["data"]
-            .clone();
+    let list = json(&env.cyber(&["sessions", "recovery-preparation", &id, "--format", "json"]));
     assert_eq!(list[0]["activity_id"], activity);
     assert_eq!(list[0]["lifetime_available"], true);
-    let route = format!("/sessions/{id}/rewind/preparations/{activity}");
-    let review =
-        json(&env.cyber(&["api", "POST", &format!("{route}/review"), "-d", "{}"]))["data"].clone();
-    let body =
-        json!({"confirmation":review["confirmation"],"request_id":"before-origin"}).to_string();
-    let receipt =
-        json(&env.cyber(&["api", "POST", &format!("{route}/confirm"), "-d", &body]))["data"]
-            .clone();
+    let review = json(&env.cyber(&[
+        "sessions",
+        "recovery-preparation",
+        &id,
+        &activity,
+        "--format",
+        "json",
+    ]));
+    let request_id = "before-origin/ owner #?%";
+    let body = json!({"confirmation":review["confirmation"],"request_id":request_id});
+    assert_preparation_client_refusals(&env, &id, &activity, &body);
+    let receipt = json(&preparation_confirm_cli(&env, &id, &activity, &body));
     assert_preparation_resource_digest(&review, &receipt, published);
-    let acknowledge = format!("{route}/requests/before-origin/acknowledge");
     assert_eq!(
-        json(&env.cyber(&["api", "POST", &acknowledge]))["data"],
+        json(&preparation_request_cli(
+            &env, &id, &activity, request_id, true
+        )),
         receipt
     );
     if published {
         assert_preparation_tombstone(&env, &receipt);
     }
     kill_registered_service(&env);
-    let repeated =
-        json(&env.cyber(&["api", "POST", &format!("{route}/confirm"), "-d", &body]))["data"]
-            .clone();
-    assert_eq!(repeated, receipt);
-    let lookup =
-        json(&env.cyber(&["api", "GET", &format!("{route}/requests/before-origin")]))["data"]
-            .clone();
-    assert_eq!(lookup, receipt);
     assert_eq!(
-        json(&env.cyber(&["api", "POST", &acknowledge]))["data"],
+        json(&preparation_confirm_cli(&env, &id, &activity, &body)),
+        receipt
+    );
+    assert_eq!(
+        json(&preparation_request_cli(
+            &env, &id, &activity, request_id, false
+        )),
+        receipt
+    );
+    assert_eq!(
+        json(&preparation_request_cli(
+            &env, &id, &activity, request_id, true
+        )),
         receipt
     );
     assert!(
@@ -867,6 +874,78 @@ fn cancelled_pre_effect_preparation(published: bool) {
     assert_eq!(env.messages(&id), messages);
     assert_eq!(model.requests().len(), requests);
     env.exec(Some(&id), "after preparation cancellation");
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn preparation_confirm_cli(env: &Env, session: &str, activity: &str, body: &Value) -> Output {
+    env.cyber(&[
+        "sessions",
+        "recovery-preparation",
+        session,
+        activity,
+        "--confirm",
+        body["confirmation"].as_str().unwrap(),
+        "--request-id",
+        body["request_id"].as_str().unwrap(),
+        "--format",
+        "json",
+    ])
+}
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn preparation_request_cli(
+    env: &Env,
+    session: &str,
+    activity: &str,
+    request: &str,
+    acknowledge: bool,
+) -> Output {
+    let mut args = vec![
+        "sessions",
+        "recovery-preparation-request",
+        session,
+        activity,
+        request,
+        "--format",
+        "json",
+    ];
+    if acknowledge {
+        args.push("--acknowledge");
+    }
+    env.cyber(&args)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_preparation_client_refusals(env: &Env, session: &str, activity: &str, body: &Value) {
+    let mut stale = body.clone();
+    stale["confirmation"] = "0".repeat(64).into();
+    let refused = preparation_confirm_cli(env, session, activity, &stale);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("recovery-preparation-request"));
+    let foreign = json(&env.cyber(&[
+        "api",
+        "POST",
+        "/sessions",
+        "-d",
+        "{\"title\":\"foreign preparation\"}",
+    ]));
+    let foreign_id = foreign["data"]["id"].as_str().unwrap();
+    assert!(
+        !env.cyber(&[
+            "sessions",
+            "recovery-preparation",
+            foreign_id,
+            activity,
+            "--format",
+            "json"
+        ])
+        .status
+        .success()
+    );
+    assert!(
+        !preparation_confirm_cli(env, foreign_id, activity, body)
+            .status
+            .success()
+    );
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

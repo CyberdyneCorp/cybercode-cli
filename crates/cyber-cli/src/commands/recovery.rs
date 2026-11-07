@@ -66,7 +66,7 @@ fn journal_id(value: &str) -> Result<String, String> {
         Err("expected an exact restore journal ID from sessions recovery".into())
     }
 }
-fn fingerprint(value: &str) -> Result<String, String> {
+pub(super) fn fingerprint(value: &str) -> Result<String, String> {
     if value.len() == 64
         && value
             .bytes()
@@ -77,7 +77,7 @@ fn fingerprint(value: &str) -> Result<String, String> {
         Err("expected the 64-character lowercase fingerprint from recovery review".into())
     }
 }
-fn request_id(value: &str) -> Result<String, String> {
+pub(super) fn request_id(value: &str) -> Result<String, String> {
     if matches!(value, "." | "..") {
         return Err("a dot path segment cannot be addressed as a recovery request; choose a stable named ID".into());
     }
@@ -87,7 +87,7 @@ fn request_id(value: &str) -> Result<String, String> {
         Err("recovery request ID must contain 1-256 bytes without NUL".into())
     }
 }
-fn data<T: DeserializeOwned>(reply: Value) -> Result<T, CliError> {
+pub(super) fn data<T: DeserializeOwned>(reply: Value) -> Result<T, CliError> {
     serde_json::from_value(reply["data"].clone())
         .map_err(|error| CliError::runtime(format!("Invalid recovery response: {error}")))
 }

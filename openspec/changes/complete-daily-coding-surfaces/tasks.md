@@ -489,3 +489,16 @@ checks discovery after server restart and foreign-Session filtering. Preparation
 clients, ordinary managed Git source integration, partial construction, reclamation
 and complete cut/platform acceptance remain open; M2–M8 and parent tasks are not
 closed by this client continuation.
+
+Typed preparation CLI continuation: `sessions recovery-preparation` lists and
+reviews exact candidates, then requires a fingerprint and stable request ID for
+pre-effect cancellation. `sessions recovery-preparation-request` provides receipt
+lookup and explicit native metadata reconciliation. Replies bind selected
+Session/activity/lifetime and published-origin context; unsupported review proof
+or admitted effects refuse, while historical receipts retain their separate read
+semantics. Real CLI pre-origin and published-origin-before-source kill cases now
+use these typed commands for cancellation, restart lookup and reconciliation,
+including stale/foreign refusal and preservation of later owner symlinks/files.
+This advances the preparation CLI portion of M7; preparation TUI, partial
+construction, managed Git integration, safe reclamation and complete acceptance
+remain open. No parent task is closed.

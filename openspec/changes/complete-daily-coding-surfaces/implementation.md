@@ -2981,3 +2981,46 @@ Git source/runtime integration, partial-constructor recovery, reference/reader/
 lease-aware reclamation and full cap/platform/client acceptance remain open. No
 parent task, issue, Git availability guard or delivery status is promoted; no
 PR/push is made by this local continuation.
+
+## Typed preparation recovery CLI (2026-11-07)
+
+`sessions recovery-preparation` now lists candidates or reviews an exact activity.
+Cancellation requires both its fingerprint and caller-retained request ID. The
+separate `sessions recovery-preparation-request` performs committed receipt lookup;
+explicit `--acknowledge` invokes existing native metadata reconciliation. No server
+operation, native admission rule or journal encoding changes. Shared fingerprint,
+request-ID and typed-response helpers retain their existing validation. Replies
+must match Session/activity/lifetime and any published origin's creation, worktree,
+directory and root identity. Namespace identities with different roles are not
+conflated. Unsupported review lifetime/phase evidence and admitted-effect receipts
+refuse. Historical receipts retain read semantics without acquiring new proof.
+
+Text distinguishes durable cancellation from native acknowledgement observation,
+quotes paths/IDs, reports unavailable checkout proof and preserves independent
+uncertainty. Ambiguous confirmation errors retain an exact shell-quoted or
+JSON-escaped lookup hint. No force option exists. The operator guide and generated
+CLI reference are synchronized. Grouped recovery dispatch keeps the Session
+router readable; the existing deletion handler remains unchanged.
+
+Both actual pre-origin and published-origin-before-source service-kill cases now
+use typed listing/review/confirmation, repeated confirmation, request lookup after
+restart and explicit reconciliation. They verify stale/foreign refusal, exact
+resource digests/tombstones, later owner symlinks/files, unchanged messages and no
+inference. Final local macOS arm64 checks passed: all 86 CLI unit tests, all 17
+serial branch/recovery cases (187.37 seconds), all-target locked CLI Clippy,
+format/diff, generated CLI/SDK consistency and pinned strict OpenSpec (117 items).
+The two focused native cuts also passed separately in 61.63 seconds. Spec lint
+reported 0 errors/25 warnings, without unchanged-main attribution. Every Cargo
+build/check/test/Clippy used CARGO_INCREMENTAL=0 and --locked.
+
+The code-review skill covered parser-before-startup refusal, exact response scope,
+legacy evidence, replay/lookup separation, native acknowledgement limits and all
+changed tests/docs. No unresolved critical/major finding remains in this CLI
+scope. The cognitive-complexity skill was applied using native Rust Clippy because
+its dispatcher does not support Rust; grouping recovery routing resolved 17/15
+complexity without allowances. C deprecation and oversized unwind linker warnings
+were observed without origin attribution. No separate SDK runtime, TUI/server/full
+workspace, Linux/Windows native or source-bound CI checks ran for this command-only
+continuation. Preparation TUI, partial constructors, managed Git source integration,
+reference-aware reclamation and broader acceptance remain open; no parent task,
+issue or Git availability guard is promoted. No PR/push is made by this local work.

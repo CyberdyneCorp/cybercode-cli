@@ -442,3 +442,45 @@ filters to the current Session creation, verifies request-owner identities and
 returns at most 4096 retained confirmation records. Overflow refuses explicitly
 without deleting history. Discovery does not inspect source files, acknowledge
 native work or start inference. The SDK exposes `session.snapshotRecoveryRequests`.
+
+## Recovering an exited pre-effect preparation
+
+A worker can stop before it publishes an intent or admits source effects. Its
+missing journal alone does not prove that cancellation is safe. List retained
+candidates and review an exact activity:
+
+```sh
+cyber sessions recovery-preparation ses_example
+cyber sessions recovery-preparation ses_example op_example
+```
+
+Listing shows durable status and whether lifetime metadata exists; it does not
+establish that the worker exited. Review acquires the exact retained native
+lifetime/checkout evidence and refuses a live worker, missing historical proof,
+stale ownership or possible admitted effects. It shows the published-origin flag,
+versions/sequences, complete checkout-set digest when available and the protocol
+warning. Nothing is cancelled by review.
+
+Confirm only a reviewed fingerprint and retain your stable cancellation ID:
+
+```sh
+cyber sessions recovery-preparation ses_example op_example \\
+  --confirm <review-fingerprint> --request-id cancel-one
+cyber sessions recovery-preparation-request ses_example op_example cancel-one
+cyber sessions recovery-preparation-request ses_example op_example cancel-one --acknowledge
+```
+
+The second command looks up the exact committed cancellation without replay; the
+third explicitly reconciles that receipt's native metadata. Repeating the original
+confirmation with the same request ID/content also returns its retained receipt.
+A receipt lookup does not establish observation of native acknowledgement. Errors
+after confirmation include the exact lookup command, with quoted IDs. Never choose
+a new request ID to retry an uncertain outcome. All forms support `--format json`;
+malformed/incomplete confirmation options fail before service startup.
+
+Cancellation preserves files, transcript, retained intents, private payloads and
+independent process/checkout uncertainty. Older receipts can remain inspectable
+without gaining newer native acknowledgement authority. If source effects may
+have been admitted, use the journal's keep/rollback review instead. No force-clear
+or evidence deletion option exists. The TUI preparation path and remaining partial
+constructor/native-platform acceptance are still unfinished.

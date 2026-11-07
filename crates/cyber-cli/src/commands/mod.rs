@@ -29,6 +29,7 @@ pub mod permissions;
 pub mod plugin_config;
 pub mod plugins;
 pub mod pr;
+mod preparation_recovery;
 pub mod providers;
 mod recovery;
 pub mod review;
