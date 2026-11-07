@@ -303,3 +303,14 @@ backslashes while rejecting empty/dot/traversal components. Snapshot-bound ignor
 raw-state proof, full Git compatibility, actual Git lifetime/acknowledgement, safe
 reclamation and full client/platform acceptance remain open. Admission remains
 disabled; no M2–M8 or parent task is accepted by these checks.
+
+
+Capture-policy continuation: version-2 Git checkpoint tags now retain bounded
+capture-time policy fingerprints. Native inventory compares effective ignore
+settings, rule hashes and canonical ignored names before intent publication;
+legacy records remain readable without native proof. Captures bracket Git tree
+creation with policy collections and refuse a changed successful collection.
+Application ignore/size settings and private roots are included. Raw working-tree
+representation, configuration-resolution races, Git compatibility, actual worker
+lifetime/acknowledgement, reclamation and full clients/platform acceptance remain
+open. Git admission stays disabled; M2–M8 and parent tasks remain incomplete.

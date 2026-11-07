@@ -1951,3 +1951,48 @@ Final formatting/diff checks and generated SDK consistency passed. Strict pinned
 OpenSpec passed all 117 items; spec lint reports 0 errors/25 warnings. The real-Git
 compaction probe and current tests are local evidence only; no CI or complete Git
 recovery admission is claimed.
+
+
+## Capture-bound Git policy fingerprints (2026-11-07)
+
+Version-2 immutable Git tags now bind a BLAKE3 policy fingerprint collected before
+and after Git tree capture. The fingerprint includes application ignore/size
+settings, private roots, effective global ignore locator and case policy, bounded
+rule input hashes, and canonical ignored names. Missing source rule files are
+excluded from the persistent digest so empty-directory creation does not change
+Git file identity, but their absence is still checked during each transient scan.
+Unsupported initial collection retains a legacy capture with a generic unavailable
+proof diagnostic; a changed or failed second collection refuses publication.
+Legacy version-1 tags and bare trees remain readable without policy proof. Native
+import refuses an expected checkpoint lacking proof before recovery/journal access.
+
+Five new native importer regressions cover ignored-name changes in mixed dirs,
+ignored rule-file edits, absent legacy proof, external content/locator/case changes,
+and application ignore/size setting changes. One history regression exercises v2,
+v1 and bare-tree reading, invalid writer fingerprints and forged v1 policy fields.
+The native object independence fixture now removes only the Git object directory:
+removing all shadow metadata correctly invalidates its bound info/exclude input.
+
+The code-review skill was applied to every changed source/test file and artifacts.
+Review covered cfg boundaries, tag framing and typed object verification, bounded
+no-follow traversal, deterministic fingerprints, configuration versus effect
+ownership, unsupported fallback, and absence of an admission-gate bypass. No
+critical/major finding remains for this disabled policy-validation increment.
+The effective-setting resolver's source configuration files are not bound across
+resolution/worker dispatch. Raw file bytes, attributes/filters, gitlinks and complete
+exclusion parity are not proven by this fingerprint. Existing Git capture may run
+configured clean filters. This work does not establish process isolation, Git
+worker lifetime, post-effect acknowledgement or reclamation authority.
+
+Local macOS arm64 verification: locked snapshot tests passed 128 cases, with two
+ignored fixtures (the pathspec fixture is invoked by its parent). Snapshot
+all-target Clippy passed with warnings denied. An earlier run exposed the obsolete
+whole-shadow-removal expectation, corrected above; an earlier Clippy run found a
+collapsible conditional, corrected before the passing run. No full workspace,
+Linux/Windows, real CLI/TUI/App or source-bound CI acceptance was run for this
+increment. Ordinary Git availability/reservation gates stay disabled and all
+parent recovery tasks remain open.
+
+Final format/diff checks and SDK generation consistency passed. Pinned strict
+OpenSpec validation passed all 117 items; spec lint reported 0 errors/25 warnings.
+These results do not provide source-bound CI or complete recovery acceptance.

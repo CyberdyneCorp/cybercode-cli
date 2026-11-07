@@ -115,6 +115,12 @@ impl Store {
                 "Git handoff belongs to another native Location".into(),
             ));
         }
+        if prepared.expected_policy.is_none() {
+            return Err(RestoreError::Failed(
+                "Expected Git checkpoint lacks capture-bound policy proof; refresh the preview"
+                    .into(),
+            ));
+        }
         self.ensure_recovered().map_err(RestoreError::Failed)?;
         // Known image validation precedes any source effect. Full state scanning
         // and actual runtime lifetime integration remain required before activation.

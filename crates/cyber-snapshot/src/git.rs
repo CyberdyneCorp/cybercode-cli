@@ -23,6 +23,9 @@ pub(crate) struct Shadow {
     /// The Location relative to the worktree, as a pathspec (`.` for the root).
     pathspec: String,
     catalogs: Arc<Mutex<catalog::CatalogCache>>,
+    pub private_roots: Vec<PathBuf>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub capture_settings: prepared::CaptureSettings,
 }
 
 /// Environment variables that would redirect git away from the shadow repository.
@@ -96,6 +99,12 @@ impl Shadow {
             common_dir: git_path(&common_dir),
             pathspec: if rel.is_empty() { ".".into() } else { rel },
             catalogs: Arc::new(Mutex::new(catalog::CatalogCache::new())),
+            private_roots: vec![root.parent().unwrap_or(root).to_path_buf()],
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            capture_settings: prepared::CaptureSettings {
+                ignore: vec![],
+                max_untracked: 2 * 1024 * 1024,
+            },
         })
     }
 
@@ -161,6 +170,8 @@ impl Shadow {
         self.ensure_init().await?;
         let skipped = self.large_untracked(max_bytes).await;
         self.write_excludes(ignore, &skipped)?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let policy_before = self.capture_policy(ignore, max_bytes).await;
         let excluded = self.omitted().await?;
         let cached_paths: Vec<_> = excluded
             .iter()
@@ -179,8 +190,50 @@ impl Shadow {
             .trim()
             .to_string();
         let skipped = excluded.clone();
-        let tree = self.record_snapshot(&tree, excluded).await?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let (policy, skipped) = match policy_before {
+            Ok(before) => {
+                let after = self.capture_policy(ignore, max_bytes).await?;
+                if before != after {
+                    return Err("Git policy changed during checkpoint capture".into());
+                }
+                (Some(after), skipped)
+            }
+            Err(_) => {
+                let mut skipped = skipped;
+                skipped.push("native Git policy proof unavailable for this capture".into());
+                (None, skipped)
+            }
+        };
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let policy = None;
+        let tree = self.record_snapshot(&tree, excluded, policy).await?;
         Ok(Snapshot { tree, skipped })
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn capture_policy(
+        &self,
+        ignore: &[String],
+        max_untracked: u64,
+    ) -> Result<String, String> {
+        let mut inputs = self.ignore_inputs().await?;
+        inputs.settings = prepared::CaptureSettings {
+            ignore: ignore.to_vec(),
+            max_untracked,
+        };
+        let worktree = self.worktree.clone();
+        let prefix = if self.pathspec == "." {
+            String::new()
+        } else {
+            self.pathspec.clone()
+        };
+        tokio::task::spawn_blocking(move || {
+            crate::copy::git_rules::capture_policy(&worktree, &prefix, &inputs)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("{error:?}"))
     }
 
     /// Untracked files (per the user's repository) over the size limit.

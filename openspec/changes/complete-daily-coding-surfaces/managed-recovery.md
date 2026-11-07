@@ -526,3 +526,18 @@ ignore oracle, and a changed ignored inventory can change a tag without changing
 its eligible graph. Snapshot-bound policy/raw-state proof, complete exclusion
 identity parity, attribute/filter and remaining Git compatibility, lifetime and
 acceptance gates are still required before admitting ordinary Git workers.
+
+
+### Capture-bound Git policy fingerprints
+
+New supported native captures bind a versioned fingerprint of the effective Git
+ignore settings, read-only rule input hashes and canonical ignored namespace names
+into an immutable version-2 checkpoint tag. Policy is collected before and after
+Git capture; a changed successful collection refuses publication. Unsupported
+collections retain a readable legacy checkpoint with an explicit unavailable
+diagnostic, never fabricated policy proof. Version-1 tags and bare trees remain
+readable without acquiring that evidence. Native inventory compares the current
+fingerprint with the expected tag before journaling. This is a policy/state-input
+precondition, not worker, mutation, acknowledgement or reclamation authority. Raw
+working-tree representation and the remaining admission/compatibility gates remain
+required; a policy fingerprint alone does not activate ordinary Git recovery.

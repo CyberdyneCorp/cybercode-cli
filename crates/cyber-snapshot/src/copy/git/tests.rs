@@ -117,7 +117,8 @@ async fn native_git_import_restores_files_modes_creations_deletions_and_retains_
         .await;
     let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
     // Native execution must not ask Git for object bytes or use its index again.
-    std::fs::rename(&shadow.git_dir, shadow.git_dir.with_extension("retained")).unwrap();
+    let objects = shadow.git_dir.join("objects");
+    std::fs::rename(&objects, objects.with_extension("retained")).unwrap();
     let store = repo.store(&repo.root);
     assert_eq!(
         store.restore_git_worker(prepared, None).unwrap(),
@@ -925,4 +926,164 @@ async fn non_git_snapshots_capture_and_restore_literal_backslash_names() {
         std::fs::read(root.join("literal\\name")).unwrap(),
         b"before"
     );
+}
+
+#[tokio::test]
+async fn capture_bound_policy_rejects_ignored_inventory_changes_before_planning() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join(".gitignore"), b"*.log\n").unwrap();
+    std::fs::create_dir(repo.root.join("mixed")).unwrap();
+    std::fs::write(repo.root.join("mixed/kept"), b"owner").unwrap();
+    std::fs::write(repo.root.join("mixed/old.log"), b"ignored owner").unwrap();
+    std::fs::write(repo.root.join("file"), b"before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), b"after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("mixed/new.log"), b"new ignored owner").unwrap();
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    assert!(prepared.expected_policy.is_some());
+    let store = repo.store(&repo.root);
+    assert!(matches!(
+        store.restore_git_worker(prepared, None),
+        Err(RestoreError::Stale)
+    ));
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+    assert!(store.recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn capture_bound_policy_rejects_excluded_rule_changes_that_do_not_change_the_tree() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join(".git/info/exclude"), b".gitignore\n").unwrap();
+    std::fs::write(repo.root.join(".gitignore"), b"*.log\n").unwrap();
+    std::fs::write(repo.root.join("file"), b"before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), b"after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    std::fs::write(
+        repo.root.join(".gitignore"),
+        b"*.log\n# changed ignored rule input\n",
+    )
+    .unwrap();
+    let prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    assert!(!prepared.expected.images.contains_key(".gitignore"));
+    let store = repo.store(&repo.root);
+    assert!(matches!(
+        store.restore_git_worker(prepared, None),
+        Err(RestoreError::Stale)
+    ));
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+    assert!(store.recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn legacy_expected_policy_absence_never_authorizes_native_import() {
+    let repo = Repo::new();
+    std::fs::write(repo.root.join("file"), b"before").unwrap();
+    let target = repo.track(&repo.root).await;
+    std::fs::write(repo.root.join("file"), b"after").unwrap();
+    let recorded = repo.track(&repo.root).await;
+    let mut prepared = repo
+        .prepare(&repo.root, &target, &recorded, &recorded)
+        .await;
+    prepared.expected_policy = None;
+    let store = repo.store(&repo.root);
+    assert!(
+        matches!(store.restore_git_worker(prepared, None), Err(RestoreError::Failed(error)) if error.contains("capture-bound policy"))
+    );
+    assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+    assert!(store.recovery().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn capture_bound_policy_rejects_external_setting_changes_before_preparation() {
+    for change in ["content", "locator", "case"] {
+        let repo = Repo::new();
+        std::fs::write(repo.root.join("file"), b"before").unwrap();
+        repo.track(&repo.root).await;
+        let global = repo.root.parent().unwrap().join("ignore-a");
+        let other = repo.root.parent().unwrap().join("ignore-b");
+        std::fs::write(&global, b"*.log\n").unwrap();
+        std::fs::write(&other, b"*.log\n").unwrap();
+        let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+        let config = |key: &str, value: &str| {
+            assert!(
+                std::process::Command::new("git")
+                    .arg("--git-dir")
+                    .arg(&shadow.git_dir)
+                    .args(["config", key, value])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+        };
+        config("core.excludesfile", global.to_str().unwrap());
+        config("core.ignorecase", "false");
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join("file"), b"after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        match change {
+            "content" => std::fs::write(&global, b"*.log\n# changed input\n").unwrap(),
+            "locator" => config("core.excludesfile", other.to_str().unwrap()),
+            _ => config("core.ignorecase", "true"),
+        }
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        let store = repo.store(&repo.root);
+        assert!(
+            matches!(
+                store.restore_git_worker(prepared, None),
+                Err(RestoreError::Stale)
+            ),
+            "{change}"
+        );
+        assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+        assert!(store.recovery().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn capture_bound_policy_rejects_application_ignore_and_size_setting_changes() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for choice in ["ignore", "size"] {
+        let mut repo = Repo::new();
+        let changed = Arc::new(AtomicBool::new(false));
+        let config_changed = changed.clone();
+        repo.snapshots = crate::GitSnapshots::new(
+            repo.data.clone(),
+            Arc::new(move |_| {
+                if !config_changed.load(Ordering::SeqCst) {
+                    return serde_json::json!({});
+                }
+                if choice == "ignore" {
+                    serde_json::json!({"snapshots":{"ignore":["never-matched-name"]}})
+                } else {
+                    serde_json::json!({"snapshots":{"max_file_bytes":1048576}})
+                }
+            }),
+        );
+        std::fs::write(repo.root.join("file"), b"before").unwrap();
+        let target = repo.track(&repo.root).await;
+        std::fs::write(repo.root.join("file"), b"after").unwrap();
+        let recorded = repo.track(&repo.root).await;
+        changed.store(true, Ordering::SeqCst);
+        let prepared = repo
+            .prepare(&repo.root, &target, &recorded, &recorded)
+            .await;
+        let store = repo.store(&repo.root);
+        assert!(
+            matches!(
+                store.restore_git_worker(prepared, None),
+                Err(RestoreError::Stale)
+            ),
+            "{choice}"
+        );
+        assert_eq!(std::fs::read(repo.root.join("file")).unwrap(), b"after");
+        assert!(store.recovery().unwrap().is_empty());
+    }
 }

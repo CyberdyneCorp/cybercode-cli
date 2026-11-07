@@ -21,6 +21,7 @@ pub(super) struct Inventory {
     bytes: usize,
     found: BTreeSet<String>,
     rules: super::git_rules::Rules,
+    ignored: BTreeSet<String>,
 }
 
 impl Inventory {
@@ -103,6 +104,12 @@ impl Inventory {
                 &full,
                 metadata.is_dir() && !metadata.file_type().is_symlink(),
             ) {
+                self.ignored
+                    .insert(if metadata.is_dir() && !metadata.file_type().is_symlink() {
+                        format!("{full}/")
+                    } else {
+                        full
+                    });
                 continue;
             }
             if metadata.is_dir() && !metadata.file_type().is_symlink() {
@@ -144,12 +151,18 @@ impl Store {
             bytes: 0,
             found: BTreeSet::new(),
             rules: super::git_rules::Rules::new(prepared)?,
+            ignored: BTreeSet::new(),
         };
         inventory.walk(self, prepared, &self.work, "", 0)?;
         if !inventory.found.iter().eq(prepared.expected.images.keys()) {
             return Err(RestoreError::Stale);
         }
         inventory.verify(self)?;
+        if let Some(expected) = &prepared.expected_policy
+            && &inventory.rules.fingerprint(&inventory.ignored)? != expected
+        {
+            return Err(RestoreError::Stale);
+        }
         Ok(inventory)
     }
     fn check_expected_exclusions(&self, prepared: &PreparedRestore) -> Result<(), RestoreError> {

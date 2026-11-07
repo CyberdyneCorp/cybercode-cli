@@ -1,6 +1,6 @@
 //! Location-bound native recovery journals and private non-Git BLAKE3 snapshots.
 mod git;
-mod git_rules;
+pub(crate) mod git_rules;
 mod inventory;
 mod links;
 mod ownership;

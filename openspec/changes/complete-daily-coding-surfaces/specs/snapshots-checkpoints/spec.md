@@ -241,6 +241,12 @@
 - **THEN** later requests with its ID look up that original result or incomplete outcome and never dispatch source changes again
 - **AND** changed request content refuses, preimages and directory ownership evidence remain retained, and filesystem completion alone does not settle original/native fences
 
+#### Scenario: Native Git policy is bound to the expected capture
+- **WHEN** native Git restore validates an expected checkpoint
+- **THEN** its immutable capture record SHALL bind effective ignore settings, bounded read-only rule input hashes and canonical ignored namespace names, and current inputs SHALL match before journal publication
+- **AND** successful policy collections before and after capture SHALL agree; unsupported capture SHALL report unavailable proof without inventing it, and legacy tags/bare trees SHALL remain readable without acquiring native admission authority
+- **AND** this policy fingerprint SHALL NOT substitute for raw working-tree state, exact worker ownership, native acknowledgement or reference-aware reclamation
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

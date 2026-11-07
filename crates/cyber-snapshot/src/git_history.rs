@@ -15,6 +15,8 @@ struct Record {
     location: PathBuf,
     tree: String,
     excluded: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    policy: Option<String>,
 }
 fn oid(id: &str) -> bool {
     matches!(id.len(), 40 | 64)
@@ -96,21 +98,31 @@ impl Shadow {
         &self,
         tree: &str,
         excluded: Vec<String>,
+        policy: Option<String>,
     ) -> Result<String, String> {
         if !oid(tree) {
             return Err("Invalid snapshot tree identity".into());
         }
+        if policy.as_ref().is_some_and(|hash| {
+            hash.len() != 64
+                || !hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }) {
+            return Err("Invalid Git policy fingerprint".into());
+        }
         let record = Record {
-            version: 1,
+            version: if policy.is_some() { 2 } else { 1 },
             location: self.worktree.join(&self.pathspec),
             tree: tree.into(),
             excluded,
+            policy,
         };
         let bytes = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
         if bytes.len() > LIMIT {
             return Err("Snapshot exclusions exceed record limit".into());
         }
-        let mut tag = format!("object {tree}\ntype tree\ntag cyber-snapshot-v1\ntagger Cyber Snapshot <snapshot@localhost> 0 +0000\n\n").into_bytes();
+        let mut tag = format!("object {tree}\ntype tree\ntag cyber-snapshot-v{}\ntagger Cyber Snapshot <snapshot@localhost> 0 +0000\n\n", record.version).into_bytes();
         tag.extend(bytes);
         let id = String::from_utf8(self.input(&["mktag"], &tag).await?)
             .map_err(|e| e.to_string())?
@@ -136,16 +148,27 @@ impl Shadow {
 
     /// Return the root identity from the same verified bytes as the exclusions.
     /// Resolving the tag again would allow a later substitution to change its root.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub(super) async fn snapshot_policy(&self, id: &str) -> Result<Option<String>, String> {
+        Ok(self.read_record(id).await?.and_then(|record| record.policy))
+    }
     pub(super) async fn snapshot_metadata(
         &self,
         id: &str,
     ) -> Result<(String, Option<Vec<String>>), String> {
+        Ok(match self.read_record(id).await? {
+            Some(record) => (record.tree, Some(record.excluded)),
+            None => (id.to_owned(), None),
+        })
+    }
+
+    async fn read_record(&self, id: &str) -> Result<Option<Record>, String> {
         if !oid(id) {
             return Err("Invalid snapshot identity".into());
         }
         let kind = self.run(&["cat-file", "-t", id]).await?;
         if kind == b"tree\n" {
-            return Ok((id.to_owned(), None));
+            return Ok(None);
         }
         if kind != b"tag\n" {
             return Err("Snapshot identity is not a tree or exclusion record".into());
@@ -168,21 +191,28 @@ impl Shadow {
             .split_once("\n\n")
             .ok_or("Invalid snapshot exclusion record")?;
         let record: Record = serde_json::from_str(body).map_err(|e| e.to_string())?;
-        if record.version != 1
-            || record.location != self.worktree.join(&self.pathspec)
+        if !matches!(
+            (record.version, record.policy.as_deref()),
+            (1, None) | (2, Some(_))
+        ) || record.policy.as_ref().is_some_and(|policy| {
+            policy.len() != 64
+                || !policy
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }) || record.location != self.worktree.join(&self.pathspec)
             || !oid(&record.tree)
             || record.excluded.len() > PATH_LIMIT
             || record.excluded.iter().any(|p| !safe_path(p))
             || !header.starts_with(&format!(
-                "object {}\ntype tree\ntag cyber-snapshot-v1\n",
-                record.tree
+                "object {}\ntype tree\ntag cyber-snapshot-v{}\n",
+                record.tree, record.version
             ))
         {
             return Err(
                 "Snapshot exclusion record belongs to another Location or is corrupt".into(),
             );
         }
-        Ok((record.tree, Some(record.excluded)))
+        Ok(Some(record))
     }
     pub(super) async fn excluded_between(
         &self,
@@ -212,5 +242,64 @@ impl Shadow {
             }
         }
         Ok(out.into_iter().collect())
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod policy_tests {
+    use super::*;
+    #[tokio::test]
+    async fn versioned_tags_keep_legacy_metadata_readable_without_promoting_policy_proof() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().canonicalize().unwrap();
+        let root = base.join("work");
+        std::fs::create_dir(&root).unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "--quiet"])
+                .arg(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        std::fs::write(root.join("file"), b"source").unwrap();
+        let shadow = Shadow::locate(&base.join("data/snapshot"), &root).unwrap();
+        let checkpoint = shadow.track(&[], 2 * 1024 * 1024).await.unwrap();
+        let record = shadow.read_record(&checkpoint.tree).await.unwrap().unwrap();
+        assert_eq!(record.version, 2);
+        assert!(record.policy.is_some());
+        let legacy = shadow
+            .record_snapshot(&record.tree, record.excluded.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            shadow.read_record(&legacy).await.unwrap().unwrap().version,
+            1
+        );
+        assert!(shadow.snapshot_policy(&legacy).await.unwrap().is_none());
+        assert!(
+            shadow
+                .snapshot_policy(&record.tree)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            shadow.blob(&legacy, "file").await.unwrap().unwrap().1,
+            b"source"
+        );
+        assert!(
+            shadow
+                .record_snapshot(&record.tree, vec![], Some("invalid".into()))
+                .await
+                .is_err()
+        );
+        let mut invalid = shadow.read_record(&legacy).await.unwrap().unwrap();
+        invalid.policy = Some("a".repeat(64));
+        let body = serde_json::to_vec(&invalid).unwrap();
+        let mut tag = format!("object {}\ntype tree\ntag cyber-snapshot-v1\ntagger Cyber Snapshot <snapshot@localhost> 0 +0000\n\n", record.tree).into_bytes();
+        tag.extend(body);
+        let id = String::from_utf8(shadow.input(&["mktag"], &tag).await.unwrap()).unwrap();
+        assert!(shadow.snapshot_metadata(id.trim()).await.is_err());
     }
 }

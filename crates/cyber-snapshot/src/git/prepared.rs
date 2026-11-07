@@ -23,10 +23,19 @@ pub(crate) struct PreparedTree {
     pub images: BTreeMap<String, Image>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct CaptureSettings {
+    pub ignore: Vec<String>,
+    pub max_untracked: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct IgnoreInputs {
     pub info: PathBuf,
     pub global: Option<PathBuf>,
     pub case_insensitive: bool,
+    pub private_roots: Vec<PathBuf>,
+    pub settings: CaptureSettings,
 }
 
 pub(crate) struct PreparedRestore {
@@ -42,16 +51,11 @@ pub(crate) struct PreparedRestore {
     pub expected_excluded: Vec<String>,
     pub allowed: Option<BTreeSet<String>>,
     pub ignore: IgnoreInputs,
+    pub expected_policy: Option<String>,
 }
 
 impl Shadow {
-    /// No source reads, Git index writes or merge subprocesses occur here.
-    pub(crate) async fn prepare_restore(
-        &self,
-        request: &SnapshotRestoreRequest,
-        max_file: u64,
-        max_total: u64,
-    ) -> Result<PreparedRestore, String> {
+    pub(crate) async fn ignore_inputs(&self) -> Result<IgnoreInputs, String> {
         let default_global = std::env::var_os("XDG_CONFIG_HOME")
             .filter(|value| !value.is_empty())
             .map(|path| PathBuf::from(path).join("git/ignore"))
@@ -92,11 +96,24 @@ impl Shadow {
                 16,
             )
             .await?;
-        let ignore = IgnoreInputs {
+        Ok(IgnoreInputs {
             info: self.git_dir.join("info/exclude"),
             global,
             case_insensitive: ignore_case == b"true\n",
-        };
+            private_roots: self.private_roots.clone(),
+            settings: self.capture_settings.clone(),
+        })
+    }
+
+    /// No source reads, Git index writes or merge subprocesses occur here.
+    pub(crate) async fn prepare_restore(
+        &self,
+        request: &SnapshotRestoreRequest,
+        max_file: u64,
+        max_total: u64,
+    ) -> Result<PreparedRestore, String> {
+        let ignore = self.ignore_inputs().await?;
+        let expected_policy = self.snapshot_policy(&request.expected).await?;
         let prefix = if self.pathspec == "." {
             ""
         } else {
@@ -182,6 +199,7 @@ impl Shadow {
             expected_excluded,
             allowed,
             ignore,
+            expected_policy,
         })
     }
 }

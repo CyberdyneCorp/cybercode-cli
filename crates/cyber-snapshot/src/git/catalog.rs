@@ -169,6 +169,12 @@ mod tests {
             common_dir: temp.path().join("common"),
             pathspec: ".".into(),
             catalogs: Default::default(),
+            private_roots: vec![],
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            capture_settings: super::super::prepared::CaptureSettings {
+                ignore: vec![],
+                max_untracked: 2 * 1024 * 1024,
+            },
         };
         assert!(
             shadow

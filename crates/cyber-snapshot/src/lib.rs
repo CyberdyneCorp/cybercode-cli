@@ -68,7 +68,21 @@ impl GitSnapshots {
         if (self.config)(location).get("snapshots") == Some(&Value::Bool(false)) {
             return None;
         }
-        Shadow::locate(&self.root(), location)
+        let mut shadow = Shadow::locate(&self.root(), location)?;
+        shadow
+            .private_roots
+            .extend(self.private_roots.iter().cloned());
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let (ignore, max_untracked) = self.options(location);
+            shadow.capture_settings = git::prepared::CaptureSettings {
+                ignore,
+                max_untracked,
+            };
+        }
+        shadow.private_roots.sort();
+        shadow.private_roots.dedup();
+        Some(shadow)
     }
 
     fn non_git(&self, directory: &str) -> bool {
