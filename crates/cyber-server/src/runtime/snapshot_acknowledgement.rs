@@ -14,10 +14,39 @@ pub struct SnapshotAcknowledgementWorker {
     origin: SnapshotOrigin,
     control: Arc<activity::Control>,
     // Actual resources are released before ordinary admission or Stop waiters.
-    _location: Box<dyn Send>,
+    _location: Option<Box<dyn Send>>,
+    checkouts: Option<RestoreResources>,
     _lifecycle: OwnedRwLockReadGuard<()>,
     _admission: Admission,
     _completion: Completion,
+}
+struct RestoreResources {
+    claims: Box<dyn super::SnapshotLocationGuard>,
+    // Last: retain the original worker's lock until every native claim is released.
+    lifetime: Box<dyn super::SnapshotLifetime>,
+}
+impl RestoreResources {
+    fn verify(&self, receipt: &super::SnapshotRestoreReceipt) -> Result<(), String> {
+        let checkout = receipt
+            .checkout
+            .as_ref()
+            .ok_or("Missing restore checkout evidence")?;
+        if self.lifetime.binding() != &checkout.lifetime {
+            return Err("Restore acknowledgement lifetime changed".into());
+        }
+        self.lifetime.verify()?;
+        let resources = self
+            .lifetime
+            .checkout_bindings()?
+            .ok_or("Missing published restore resources")?;
+        self.claims.verify()?;
+        if self.claims.bindings()? != resources
+            || checkout.lifetime.checkout_resources_digest(&resources)? != checkout.resources_digest
+        {
+            return Err("Original restore checkout resource set differs".into());
+        }
+        Ok(())
+    }
 }
 #[derive(Clone)]
 pub(super) enum Acknowledgement {
@@ -87,6 +116,11 @@ impl SnapshotAcknowledgementWork<'_> {
         if self.0.control.stop.is_cancelled() {
             return Err("Snapshot acknowledgement was cancelled".into());
         }
+        if let (Some(resources), Acknowledgement::Restore(receipt)) =
+            (&self.0.checkouts, &self.0.receipt)
+        {
+            resources.verify(receipt)?;
+        }
         let authority = self.0.authority.clone();
         let receipt = self.0.receipt.clone();
         let origin = self.0.origin.clone();
@@ -117,11 +151,23 @@ impl SnapshotAcknowledgementWork<'_> {
 
 impl SnapshotAcknowledgementWorker {
     pub async fn run(
-        self,
+        mut self,
         work: impl FnOnce(&SnapshotAcknowledgementWork<'_>) -> Result<(), String> + Send + 'static,
     ) -> Result<(), String> {
         let cancelled = self.control.stop.clone().drop_guard();
-        let joined = tokio::task::spawn_blocking(move || work(&SnapshotAcknowledgementWork(&self)));
+        let joined = tokio::task::spawn_blocking(move || {
+            work(&SnapshotAcknowledgementWork(&self))?;
+            if self.checkouts.is_some() {
+                SnapshotAcknowledgementWork(&self).authorize()?;
+            }
+            if let (Some(resources), Acknowledgement::Restore(receipt)) =
+                (&mut self.checkouts, &self.receipt)
+            {
+                resources.verify(receipt)?;
+                resources.claims.acknowledge_restore(receipt)?;
+            }
+            Ok(())
+        });
         let result = joined.await.map_err(|_| {
             "Snapshot acknowledgement worker failed; lookup and reconcile its committed receipt"
                 .to_owned()
@@ -214,15 +260,49 @@ impl Runtime {
             id,
             control: control.clone(),
         };
-        let lease = self
-            .inner
-            .claim_location(&state.info, false, control.stop.clone())
-            .await?;
-        if lease.worktree_id != state.info.worktree_id {
-            return Err(RuntimeError::Conflict(
-                "Acknowledgement checkout changed".into(),
-            ));
-        }
+        let (location, checkouts) = if let Acknowledgement::Restore(restore) = &receipt
+            && let Some(checkout) = &restore.checkout
+        {
+            let lifetime = self
+                .inner
+                .options
+                .snapshots
+                .lock_worker(checkout.lifetime.clone())
+                .await
+                .map_err(RuntimeError::Conflict)?;
+            let published = lifetime
+                .checkout_bindings()
+                .map_err(RuntimeError::Conflict)?
+                .ok_or_else(|| {
+                    RuntimeError::Conflict("Original restore resources are unpublished".into())
+                })?;
+            let claims = self
+                .inner
+                .tools
+                .reacquire_snapshot_location(&state.info, &checkout.lifetime, &published)
+                .map_err(RuntimeError::Conflict)?;
+            let mut resources = RestoreResources { claims, lifetime };
+            resources.verify(restore).map_err(RuntimeError::Conflict)?;
+            resources
+                .claims
+                .prepare_restore_acknowledgement(restore)
+                .map_err(RuntimeError::Conflict)?;
+            (None, Some(resources))
+        } else {
+            let lease = self
+                .inner
+                .claim_location(&state.info, false, control.stop.clone())
+                .await?;
+            if lease.worktree_id != state.info.worktree_id {
+                return Err(RuntimeError::Conflict(
+                    "Acknowledgement checkout changed".into(),
+                ));
+            }
+            (
+                Some(lease.settle_retained().map_err(RuntimeError::Invalid)?),
+                None,
+            )
+        };
         Ok(SnapshotAcknowledgementWorker {
             runtime: self.clone(),
             authority,
@@ -230,7 +310,8 @@ impl Runtime {
             receipt,
             origin,
             control,
-            _location: lease.settle_retained().map_err(RuntimeError::Invalid)?,
+            _location: location,
+            checkouts,
             _lifecycle: lifecycle,
             _admission: admission,
             _completion: completion,

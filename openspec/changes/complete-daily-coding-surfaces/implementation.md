@@ -2198,3 +2198,69 @@ diff and SDK generation consistency passed. Strict pinned OpenSpec passed all
 publication, CLI/TUI/App, Linux/Windows, full workspace and source-bound CI
 acceptance were not run here. No post-effect native checkout marker is published
 by this increment and no parent recovery task is accepted.
+
+
+## Ordinary native checkout publication and reconciliation (2026-11-07)
+
+A consuming ordinary restore now verifies its candidate receipt through the retained
+Location guard inside the paired writer, before any acknowledgement metadata is
+created. After the durable pair is observed and Session state applied, the original
+claims publish idempotent markers bound to that receipt's complete-resource digest
+and versioned checksum. Candidate failure refuses the pair; publication failure
+reports committed runtime state and leaves exact original evidence for explicit
+metadata reconciliation. Journal acknowledgement follows successful checkout
+publication in the ordinary completion path. Existing foreign markers refuse.
+
+The actual host now consumes owned CheckoutLease values into descriptor-retaining
+SnapshotClaim proofs. Version-2 acquisition no longer calls generic settlement:
+original UseRecord bytes remain unsettled, so worker exit without a consuming marker
+still blocks native removal. Version-1 acquisition retains its former settled
+encoding without gaining new marker authority. Core conversion performs no writes
+and exposes no generic settlement method. Live and reacquired claims share the same
+native verification/publication engine; the live activity wrapper delegates the new
+receipt callbacks while retaining its LSP ownership.
+
+Explicit reconciliation of a new receipt locks its original lifetime, reads its
+published complete set, reacquires exact native claims and checks existing markers.
+The acknowledgement worker verifies native resources and durable authority before
+journal metadata work and again before checkout publication. No new Session claim
+is substituted for the original resources. Original claims are released before the
+original lifetime lock; admission/Stop completion follow resource release. Legacy
+receipt and recovery-receipt metadata paths retain their existing behavior.
+
+A journal-less managed completion cannot yet produce a positive consuming checkout
+receipt. Committing it after preserving unsettled claims would leave an unresolvable
+settled owner, so this path refuses before the pair and retains pre-effect/unknown
+evidence instead. This is an interim refusal, not accepted managed no-op behavior;
+a positive no-effect protocol remains required before ordinary Git admission.
+Recovery-resolution checkout receipts/publication are also still incomplete.
+
+Native core coverage adds an owned-claim/removal regression with and without a
+matching marker, asserting original bytes stay identical. The actual host test now
+checks unsettled acquisition bytes, read-only candidate verification, ordinary marker
+publication/retry, foreign receipt and legacy refusal, plus existing pre-effect
+acknowledgement coverage. Its lifetime/receipt inputs are adapter fixtures; it is not
+a real consuming Store/runtime/source proof. Instrumented runtime tests exercise
+candidate refusal, committed publication failure, successful ordering, repeated
+explicit reconciliation without source replay, missing original publication refusal,
+and journal-less managed refusal versus unchanged unmanaged no-effect behavior.
+Actual Git backend source callbacks and managed no-op positives remain unverified.
+
+The code-review skill was applied to every source/test/artifact change, focusing on
+preserved unknown/removal fences, read-only writer callbacks, original ownership
+versus generic settlement, durable-commit publication ordering, partial/idempotent
+markers, legacy limits, cancellation/resource disposal, and metadata-only original
+resource reacquisition. Admission, cleanup and full parent acceptance remain gated.
+
+Final local macOS arm64 verification: locked core worktree-repository tests passed
+74 cases with one ignored fixture, actual host worktree-setup tests passed all 40,
+and server library tests passed 432 cases with one ignored fixture. Four-package
+all-target locked Clippy (core/server/snapshot/tools) passed with Rust warnings
+denied. Native C compilation emitted sandbox_init/sandbox_free_error deprecation
+warnings; no main comparison or pre-existing attribution was made. Format/diff and
+generated SDK consistency passed. Strict pinned OpenSpec passed all 117 items;
+spec lint reported 0 errors/25 warnings. Full snapshot/SDK/workspace execution,
+real CLI/TUI/App, actual Git backend consuming callbacks, Linux/Windows and
+source-bound CI acceptance were not run for this increment. No-op success,
+recovery-resolution checkout acknowledgements and reference-aware cleanup remain
+open, as do all parent recovery acceptance tasks.

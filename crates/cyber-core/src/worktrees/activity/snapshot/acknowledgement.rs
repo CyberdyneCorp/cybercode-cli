@@ -135,7 +135,7 @@ impl CheckoutAcknowledgement {
             receipt_digest: receipt_digest.into(),
         })
     }
-    /// Native metadata only. The caller must retain matching exited lifetime and
+    /// Native metadata only. The caller must retain matching owned or exited lifetime and
     /// complete-resource proof through the observed Store commit and this call.
     pub fn publish(&self, claim: &mut SnapshotClaim) -> io::Result<()> {
         self.publish_before(claim, || Ok(()))

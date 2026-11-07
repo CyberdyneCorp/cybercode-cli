@@ -63,6 +63,34 @@ pub trait SnapshotLocationGuard: Send {
     ) -> Result<(), String> {
         self.prepare_preparation_acknowledgement(receipt)
     }
+
+    /// Read-only candidate check under retained exact checkout locks.
+    fn prepare_restore_acknowledgement(
+        &mut self,
+        receipt: &super::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        let checkout = receipt
+            .checkout
+            .as_ref()
+            .ok_or("Missing restore checkout proof")?;
+        let resources = self.bindings()?;
+        if checkout.lifetime.owner.worktree_id.is_some() || !resources.is_empty() {
+            return Err("Native restore checkout acknowledgement is unsupported".into());
+        }
+        if checkout.lifetime.checkout_resources_digest(&resources)? != checkout.resources_digest {
+            return Err("Receipt differs from retained restore resources".into());
+        }
+        Ok(())
+    }
+
+    /// Metadata only, issued after observing the exact consuming runtime pair.
+    fn acknowledge_restore(
+        &mut self,
+        receipt: &super::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        self.prepare_restore_acknowledgement(receipt)
+    }
 }
 struct UnmanagedSnapshotLocation {
     _owner: Box<dyn Send>,

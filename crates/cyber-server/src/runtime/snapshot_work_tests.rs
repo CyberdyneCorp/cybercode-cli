@@ -702,6 +702,13 @@ impl Snapshots for Lifetimes {
                 as Box<dyn super::super::SnapshotLifetime>))
         })
     }
+    fn acknowledge_recovery(
+        &self,
+        directory: String,
+        worker: super::super::SnapshotAcknowledgementWorker,
+    ) -> futures::future::BoxFuture<'_, Result<(), String>> {
+        self.inner.acknowledge_recovery(directory, worker)
+    }
     fn track(
         &self,
         directory: &str,
@@ -3132,6 +3139,264 @@ async fn ordinary_restore_receipt_binds_native_lifetime_and_rechecks_resources_a
             assert!(legacy.checkout_acknowledgement_digest().is_err());
             assert_eq!(acks.load(Ordering::SeqCst), 1);
         }
+        runtime.shutdown().await;
+    }
+}
+
+struct RestoreCheckoutAck {
+    stage: &'static str,
+    prepared: Arc<AtomicUsize>,
+    acknowledged: Arc<AtomicUsize>,
+}
+impl super::super::SnapshotLocationGuard for RestoreCheckoutAck {
+    fn verify(&self) -> Result<(), String> {
+        Ok(())
+    }
+    fn prepare_restore_acknowledgement(
+        &mut self,
+        receipt: &SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        self.prepared.fetch_add(1, Ordering::SeqCst);
+        if self.stage == "prepare" {
+            Err("fixture refused candidate checkout receipt".into())
+        } else {
+            Ok(())
+        }
+    }
+    fn acknowledge_restore(&mut self, receipt: &SnapshotRestoreReceipt) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        self.acknowledged.fetch_add(1, Ordering::SeqCst);
+        if self.stage == "publish" {
+            Err("fixture failed checkout marker publication".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[tokio::test]
+async fn ordinary_checkout_acknowledgement_follows_the_consuming_pair_and_keeps_committed_state_on_failure()
+ {
+    for stage in ["valid", "prepare", "publish"] {
+        let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let reconciled = Arc::new(AtomicUsize::new(0));
+        let resources = Arc::new(std::sync::Mutex::new(None));
+        let runtime = runtime_with_snapshots(
+            &base,
+            base.inner.store.clone(),
+            temp.path(),
+            Arc::new(Lifetimes {
+                inner: Acknowledgements(reconciled.clone()),
+                permits: Arc::new(tokio::sync::Semaphore::new(1)),
+                foreign: false,
+                reject_resources: false,
+                resources: resources.clone(),
+            }),
+        );
+        let mut owner = worker(&runtime, &session).await;
+        let id = owner.scope.id().to_owned();
+        let prepared = Arc::new(AtomicUsize::new(0));
+        let acknowledged = Arc::new(AtomicUsize::new(0));
+        owner._location = Some(Box::new(RestoreCheckoutAck {
+            stage,
+            prepared: prepared.clone(),
+            acknowledged: acknowledged.clone(),
+        }));
+        let binding = binding(temp.path().canonicalize().unwrap());
+        let journal_acks = Arc::new(AtomicUsize::new(0));
+        let seen = journal_acks.clone();
+        let completed = owner
+            .run(move |work| {
+                let origin = work.begin(binding).unwrap();
+                work.effect(|| Ok(())).unwrap();
+                Ok(SnapshotNativeResult::new(
+                    vec![],
+                    Box::new(Guard {
+                        origin: Some(origin),
+                        acknowledgements: seen,
+                    }),
+                ))
+            })
+            .await
+            .unwrap();
+        assert_eq!(prepared.load(Ordering::SeqCst), 0);
+        assert_eq!(acknowledged.load(Ordering::SeqCst), 0);
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let mut state = handle.state.lock().await;
+        let before = state.last_seq;
+        let result = completed.commit(
+            &mut state,
+            vec![events::event(
+                events::TITLE_GENERATED,
+                &events::Titled {
+                    title: "durable checkout".into(),
+                    usage: None,
+                    cost: None,
+                    model: None,
+                },
+            )],
+        );
+        assert_eq!(prepared.load(Ordering::SeqCst), 1);
+        if stage == "prepare" {
+            assert!(result.is_err());
+            assert_eq!(state.last_seq, before);
+            assert_eq!(acknowledged.load(Ordering::SeqCst), 0);
+            assert_eq!(journal_acks.load(Ordering::SeqCst), 0);
+            drop(state);
+            assert!(
+                runtime
+                    .snapshot_restore_lookup(&session, &id)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(latest(&runtime, &session)["status"], "unknown");
+        } else {
+            if stage == "publish" {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("runtime acknowledgement committed")
+                );
+            } else {
+                result.unwrap();
+            }
+            assert_eq!(state.info.title, "durable checkout");
+            assert!(state.last_seq > before);
+            assert_eq!(acknowledged.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                journal_acks.load(Ordering::SeqCst),
+                usize::from(stage == "valid")
+            );
+            drop(state);
+            assert!(
+                runtime
+                    .snapshot_restore_lookup(&session, &id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .checkout
+                    .is_some()
+            );
+            assert_eq!(latest(&runtime, &session)["status"], "settled");
+            if stage == "publish" {
+                let before = runtime
+                    .snapshot_restore_lookup(&session, &id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                *resources.lock().unwrap() = None;
+                assert!(
+                    runtime
+                        .snapshot_restore_acknowledge(&session, &id)
+                        .await
+                        .is_err()
+                );
+                assert_eq!(reconciled.load(Ordering::SeqCst), 0);
+                assert!(!handle.snapshot_active.load(Ordering::SeqCst));
+                *resources.lock().unwrap() = Some(vec![]);
+                let reconciled_receipt = runtime
+                    .snapshot_restore_acknowledge(&session, &id)
+                    .await
+                    .unwrap();
+                assert_eq!(reconciled_receipt, before);
+                runtime
+                    .snapshot_restore_acknowledge(&session, &id)
+                    .await
+                    .unwrap();
+                assert_eq!(reconciled.load(Ordering::SeqCst), 2);
+                assert_eq!(
+                    journal_acks.load(Ordering::SeqCst),
+                    0,
+                    "metadata retry replayed the original worker"
+                );
+                assert_eq!(
+                    runtime.state(&session).await.unwrap().info.title,
+                    "durable checkout"
+                );
+            }
+        }
+        runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn managed_completion_without_a_journal_receipt_keeps_pre_effect_recovery_evidence() {
+    for managed in [false, true] {
+        let (temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let created = runtime
+            .inner
+            .store
+            .read_events(&session, -1, 1)
+            .unwrap()
+            .events[0]
+            .id
+            .clone();
+        let id = cyber_core::ids::new_id("op");
+        // Writer-boundary fixture: no native source worker or checkout is admitted.
+        let lifetime = super::super::SnapshotLifetimeBinding {
+            version: 2,
+            owner: super::super::SnapshotLifetimeRequest {
+                activity_id: id.clone(),
+                session_id: session.clone(),
+                session_created_id: created,
+                directory: temp.path().canonicalize().unwrap(),
+                worktree_id: managed.then(|| "wt_fixture".into()),
+            },
+            root_identity: "fixture-root".into(),
+            namespace_identity: "fixture-namespace".into(),
+            directory_identity: "fixture-directory".into(),
+            file_identity: "fixture-file".into(),
+            source_phase: Some("phase_fixture".into()),
+        };
+        let mut scope = activity::Scope::reserve_snapshot_owned(
+            &runtime.inner,
+            session.clone(),
+            id,
+            Some(lifetime),
+        )
+        .await
+        .unwrap();
+        let mut state = handle.state.lock().await;
+        let before = state.last_seq;
+        let result = scope.commit_snapshot(
+            &mut state,
+            before,
+            vec![events::event(
+                events::TITLE_GENERATED,
+                &events::Titled {
+                    title: "no source effects".into(),
+                    usage: None,
+                    cost: None,
+                    model: None,
+                },
+            )],
+            None,
+            Box::new(BindingLease {
+                bindings: vec![],
+                settlements: Arc::new(AtomicUsize::new(0)),
+            }),
+        );
+        if managed {
+            assert!(result.is_err());
+            assert_eq!(state.last_seq, before);
+        } else {
+            result.unwrap();
+            assert_eq!(state.info.title, "no source effects");
+        }
+        drop(state);
+        drop(scope);
+        let record = latest(&runtime, &session);
+        assert_eq!(
+            record["status"],
+            if managed { "unknown" } else { "settled" }
+        );
+        assert!(record["snapshot_origin"].is_null());
+        assert_eq!(record["snapshot_source_admitted"], false);
+        assert!(record["snapshot_restore_receipt"].is_null());
         runtime.shutdown().await;
     }
 }

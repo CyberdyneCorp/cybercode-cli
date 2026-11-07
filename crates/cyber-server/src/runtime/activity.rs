@@ -341,7 +341,7 @@ impl Scope {
         sequence: i64,
         events: Vec<NewEvent>,
         intent_digest: Option<&str>,
-        location: Box<dyn super::SnapshotLocationGuard>,
+        mut location: Box<dyn super::SnapshotLocationGuard>,
     ) -> Result<Box<dyn super::SnapshotLocationGuard>, RuntimeError> {
         let runtime = Runtime {
             inner: self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?,
@@ -373,6 +373,17 @@ impl Scope {
                 )
             })
             .transpose()?;
+        if settled.snapshot_restore_receipt.is_none()
+            && self
+                .snapshot_lifetime()
+                .is_some_and(|lifetime| lifetime.owner.worktree_id.is_some())
+        {
+            return Err(RuntimeError::Conflict(
+                "Managed snapshot completion lacks a consuming journal receipt; inspect retained recovery evidence".into(),
+            ));
+        }
+        let receipt = settled.snapshot_restore_receipt.clone();
+        let candidate = receipt.clone();
         let checkout = settled
             .snapshot_restore_receipt
             .as_ref()
@@ -384,7 +395,7 @@ impl Scope {
             (self.id.clone(), self.sequence()),
         ];
         let stop = self.control.stop.clone();
-        let (stored, location) = self
+        let (stored, mut location) = self
             .store
             .append_pair_checked(owners, move |tx| {
                 location
@@ -405,6 +416,13 @@ impl Scope {
                         ));
                     }
                 }
+                if let Some(receipt) = &candidate
+                    && receipt.checkout.is_some()
+                {
+                    location
+                        .prepare_restore_acknowledgement(receipt)
+                        .map_err(cyber_store::StoreError::InvalidAppend)?;
+                }
                 if stop.is_cancelled() {
                     return Err(cyber_store::StoreError::InvalidAppend(
                         "Snapshot consuming acknowledgement was cancelled".into(),
@@ -424,6 +442,13 @@ impl Scope {
             state.apply(event).map_err(RuntimeError::Corrupt)?;
         }
         runtime.inner.publish(&stored[0]);
+        if let Some(receipt) = &receipt
+            && receipt.checkout.is_some()
+        {
+            location.acknowledge_restore(receipt).map_err(|error| RuntimeError::Conflict(format!(
+                "Snapshot runtime acknowledgement committed; checkout acknowledgement requires reconciliation: {error}"
+            )))?;
+        }
         Ok(location)
     }
     pub fn settle(&mut self) -> Result<(), RuntimeError> {

@@ -355,3 +355,16 @@ optional field and cannot generate new checkout acknowledgement evidence. This
 adds receipt evidence only; exact post-effect native checkout publication and
 reconciliation, actual Git runtime acceptance, reclamation and remaining M2–M8 /
 parent obligations remain open. Git source availability stays disabled.
+
+
+Ordinary checkout acknowledgement continuation: version-2 host acquisition now
+retains original unsettled claim bytes instead of applying generic settlement
+before source dispatch. The consuming writer verifies candidate markers read-only;
+observed durable ordinary-restore receipts publish exact native markers. Explicit
+reconciliation reacquires original lifetime/resources and never dispatches source
+work. Legacy version-1 acquisition and old receipt behavior remain distinct. Missing
+managed journal receipts refuse with retained recovery evidence; successful managed
+no-effect completion is not implemented. Recovery-resolution receipt/checkout
+integration, actual Git source/backend/runtime and complete crash/platform/client
+acceptance, reference-aware cleanup and other M2–M8/parent obligations remain open.
+Ordinary Git source admission remains disabled.

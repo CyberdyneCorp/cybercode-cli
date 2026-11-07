@@ -578,3 +578,23 @@ lookup SHALL verify the receipt's lifetime against the original native history.
 Historical receipts without this field remain readable without gaining checkout
 acknowledgement authority. The receipt field is evidence for subsequent exact
 native acknowledgement, not publication or reclamation authority by itself.
+
+Version-2 checkout acquisition SHALL retain the owned original claim without
+rewriting its unsettled record before source dispatch. An exited source worker
+without a consuming acknowledgement SHALL therefore continue fencing native
+removal. The consuming writer SHALL check a proposed ordinary-restore receipt
+against retained claims and any existing disposition markers using read-only
+verification. Only after observing the durable pair may the native host publish
+idempotent markers for that receipt. Partial publication retains original bytes
+and remaining fences; a failure SHALL report committed runtime state and require
+explicit metadata reconciliation, never source replay. Legacy acquisition retains
+its original behavior without gaining version-2 acknowledgement authority.
+
+Explicit reconciliation for a new ordinary restore receipt SHALL reacquire the
+receipt's original lifetime and complete checkout set, revalidate durable owner
+history and current authority, and publish only journal/checkout acknowledgement
+metadata. Missing publication, live locks, changed resources or foreign markers
+SHALL refuse. Legacy receipts retain their original metadata path without gaining
+claim adoption. Managed completions lacking a journal receipt SHALL retain their
+pre-effect/unknown evidence instead of committing an unacknowledgeable claim; a
+positive no-effect consuming protocol remains required before ordinary admission.

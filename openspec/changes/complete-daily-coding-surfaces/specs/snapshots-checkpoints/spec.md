@@ -271,6 +271,17 @@
 - **AND** lost or changed resource proof SHALL refuse the complete consuming pair and native acknowledgement, while lookup SHALL verify the bound lifetime against original native history
 - **AND** historical receipts without checkout evidence SHALL remain readable without acquiring checkout acknowledgement or reclamation authority
 
+#### Scenario: Owned checkout evidence survives source dispatch and consuming commit
+- **WHEN** a version-2 snapshot worker retains an acquired managed checkout
+- **THEN** acquisition SHALL preserve its unsettled original claim bytes and native lock, so an exited worker without acknowledgement continues to fence removal
+- **AND** the consuming writer SHALL read-only verify the exact proposed restore receipt against retained claims before committing, then publish only matching idempotent markers after observing the durable pair
+- **AND** failed publication SHALL preserve committed Session state and original claims for explicit reconciliation, with no source replay or unrelated-claim acknowledgement
+
+#### Scenario: Ordinary checkout acknowledgement reconciles original resources
+- **WHEN** an owner explicitly reconciles a committed ordinary restore with bound checkout evidence
+- **THEN** reconciliation SHALL reacquire the exact original lifetime and complete checkout set, refuse missing/changed/live proof, and perform only bounded journal and checkout acknowledgement metadata writes
+- **AND** legacy receipts SHALL gain no claim adoption authority and a managed completion without a journal receipt SHALL NOT manufacture one or discard its recovery fence
+
 ## MODIFIED Requirements
 
 ### Requirement: Non-git fallback

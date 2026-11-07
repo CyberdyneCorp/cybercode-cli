@@ -947,3 +947,57 @@ fn claims_refuse_stale_ownership_and_invalid_session_names_before_creating_recor
     assert!(block_on(repository.claim(&fixture.execution, &managed, "ses_valid")).is_err());
     assert!(!managed.common_dir.join("cyber-worktree-activity").exists());
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn retaining_owned_snapshot_claim_never_settles_unknown_evidence_without_a_marker() {
+    use cyber_core::worktrees::{CheckoutAcknowledgement, CheckoutOwner};
+    for acknowledge in [false, true] {
+        let fixture = Fixture::new();
+        let repository = fixture.repository();
+        let managed = fixture
+            .create(
+                &repository,
+                &Name::parse("owned-retain").unwrap(),
+                &Settings::default(),
+            )
+            .unwrap();
+        let owner = CheckoutOwner {
+            activity_id: "op_owned".into(),
+            session_id: "ses_fixture".into(),
+            session_created_id: "evt_fixture".into(),
+            directory: managed.path.clone(),
+            lifetime_digest: "a".repeat(64),
+        };
+        let lease = block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner))
+            .unwrap();
+        let path = managed
+            .common_dir
+            .join("cyber-worktree-activity")
+            .join(&managed.id)
+            .join("op_owned.lock");
+        let original = std::fs::read(&path).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&original).unwrap()["settled"],
+            false
+        );
+        let mut claim = lease.retain_snapshot().unwrap();
+        claim.verify().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+                .is_err()
+        );
+        if acknowledge {
+            CheckoutAcknowledgement::new(claim.binding(), &"a".repeat(64), &"b".repeat(64))
+                .unwrap()
+                .publish(&mut claim)
+                .unwrap();
+        }
+        drop(claim);
+        let result =
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true));
+        assert_eq!(result.is_ok(), acknowledge);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
+}

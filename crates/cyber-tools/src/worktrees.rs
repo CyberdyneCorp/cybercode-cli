@@ -312,7 +312,7 @@ impl BuiltinHost {
                     .map_err(|error| error.to_string())
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Box::new(ReacquiredSnapshotProof(claims)))
+        Ok(Box::new(RetainedSnapshotProof(claims)))
     }
 
     pub(crate) async fn claim_hook_test_location(
@@ -1310,10 +1310,22 @@ impl cyber_server::runtime::SnapshotLocationGuard for ActiveSnapshotLocation {
     fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
         self.proof.bindings()
     }
+    fn prepare_restore_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        self.proof.prepare_restore_acknowledgement(receipt)
+    }
+    fn acknowledge_restore(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        self.proof.acknowledge_restore(receipt)
+    }
 }
 
-struct ReacquiredSnapshotProof(Vec<cyber_core::worktrees::SnapshotClaim>);
-impl cyber_server::runtime::SnapshotLocationGuard for ReacquiredSnapshotProof {
+struct RetainedSnapshotProof(Vec<cyber_core::worktrees::SnapshotClaim>);
+impl cyber_server::runtime::SnapshotLocationGuard for RetainedSnapshotProof {
     fn verify(&self) -> Result<(), String> {
         self.0
             .iter()
@@ -1365,27 +1377,57 @@ impl cyber_server::runtime::SnapshotLocationGuard for ReacquiredSnapshotProof {
         }
         self.verify()
     }
-}
-
-struct SnapshotWorktreeProof(Vec<cyber_core::worktrees::CheckoutLease>);
-impl cyber_server::runtime::SnapshotLocationGuard for SnapshotWorktreeProof {
-    fn verify(&self) -> Result<(), String> {
-        for lease in &self.0 {
-            lease.verify_snapshot().map_err(|error| error.to_string())?;
+    fn prepare_restore_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        let checkout = receipt
+            .checkout
+            .as_ref()
+            .ok_or("Legacy restore receipt lacks checkout evidence")?;
+        let digest = checkout
+            .lifetime
+            .checkout_resources_digest(&self.bindings()?)?;
+        if digest != checkout.resources_digest {
+            return Err("Restore checkout resources differ".into());
         }
-        Ok(())
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .and_then(|ack| ack.retain_existing(claim))
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
     }
-    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
-        self.0
-            .iter()
-            .map(|lease| {
-                lease.verify_snapshot().map_err(|error| error.to_string())?;
-                lease
-                    .snapshot_binding()
-                    .cloned()
-                    .map_err(|error| error.to_string())
-            })
-            .collect()
+    fn acknowledge_restore(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        let checkout = receipt
+            .checkout
+            .as_ref()
+            .ok_or("Legacy restore receipt lacks checkout evidence")?;
+        let digest = checkout
+            .lifetime
+            .checkout_resources_digest(&self.bindings()?)?;
+        if digest != checkout.resources_digest {
+            return Err("Restore checkout resources differ".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .and_then(|ack| ack.publish(claim))
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
     }
 }
 
@@ -1426,9 +1468,21 @@ impl cyber_server::runtime::LocationGuard for WorktreeLease {
         let leases = self
             .0
             .into_iter()
-            .map(|lease| lease.settle_retained().map_err(|error| error.to_string()))
+            .map(|lease| {
+                let lease = if lease
+                    .snapshot_binding()
+                    .map_err(|error| error.to_string())?
+                    .version
+                    == 1
+                {
+                    lease.settle_retained().map_err(|error| error.to_string())?
+                } else {
+                    lease
+                };
+                lease.retain_snapshot().map_err(|error| error.to_string())
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        let proof = SnapshotWorktreeProof(leases);
+        let proof = RetainedSnapshotProof(leases);
         cyber_server::runtime::SnapshotLocationGuard::verify(&proof)?;
         Ok(Box::new(proof))
     }

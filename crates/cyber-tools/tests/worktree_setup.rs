@@ -1981,9 +1981,60 @@ async fn lifetime_bound_checkout_host_preserves_context_and_refuses_foreign_requ
         bindings[0].lifetime,
         Some(lifetime.checkout_owner().unwrap())
     );
-    let proof = lease.settle_snapshot_retained().unwrap();
+    let original = std::fs::read(directory.join("op_bound.lock")).unwrap();
+    let mut proof = lease.settle_snapshot_retained().unwrap();
     proof.verify().unwrap();
     assert_eq!(proof.bindings().unwrap(), bindings);
+    assert_eq!(
+        std::fs::read(directory.join("op_bound.lock")).unwrap(),
+        original
+    );
+    // Host-adapter fixture: the runtime suites observe the actual consuming pair.
+    let restore = cyber_server::runtime::SnapshotRestoreReceipt {
+        origin: cyber_server::runtime::SnapshotOrigin {
+            version: 1,
+            session_id: info.id.clone(),
+            session_created_id: lifetime.owner.session_created_id.clone(),
+            activity_id: lifetime.owner.activity_id.clone(),
+            worktree_id: Some(managed.id.clone()),
+            binding: cyber_server::runtime::SnapshotBinding {
+                directory: managed.path.clone(),
+                root_identity: lifetime.root_identity.clone(),
+                namespace_identity: lifetime.namespace_identity.clone(),
+                journal_id: "restore_fixture".into(),
+                journal_identity: "fixture-journal".into(),
+                lock_identity: Some("fixture-lock".into()),
+            },
+        },
+        intent_digest: "b".repeat(64),
+        session_before: 8,
+        session_after: 9,
+        events_digest: "c".repeat(64),
+        checkout: Some(Box::new(cyber_server::runtime::SnapshotRestoreCheckout {
+            version: 1,
+            lifetime: lifetime.clone(),
+            resources_digest: lifetime.checkout_resources_digest(&bindings).unwrap(),
+        })),
+    };
+    let marker = directory.join("op_bound.snapshot-ack");
+    proof.prepare_restore_acknowledgement(&restore).unwrap();
+    assert!(!marker.exists());
+    proof.acknowledge_restore(&restore).unwrap();
+    let acknowledged = std::fs::read(&marker).unwrap();
+    proof.acknowledge_restore(&restore).unwrap();
+    assert_eq!(std::fs::read(&marker).unwrap(), acknowledged);
+    let native: serde_json::Value = serde_json::from_slice(&acknowledged).unwrap();
+    assert_eq!(
+        native["receipt_digest"],
+        restore.checkout_acknowledgement_digest().unwrap()
+    );
+    let mut different = restore.clone();
+    different.events_digest = "d".repeat(64);
+    assert!(proof.prepare_restore_acknowledgement(&different).is_err());
+    let mut legacy = restore;
+    legacy.checkout = None;
+    assert!(proof.acknowledge_restore(&legacy).is_err());
+
     drop(proof);
     let raw: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("op_bound.lock")).unwrap()).unwrap();
@@ -1991,8 +2042,12 @@ async fn lifetime_bound_checkout_host_preserves_context_and_refuses_foreign_requ
         raw["snapshot_binding"],
         serde_json::to_value(&bindings[0]).unwrap()
     );
-    assert_eq!(raw["settled"], true);
-    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before + 1);
+    assert_eq!(raw["settled"], false);
+    assert_eq!(
+        std::fs::read(directory.join("op_bound.lock")).unwrap(),
+        original
+    );
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before + 2);
     let mut exited = lifetime.clone();
     exited.owner.activity_id = "op_exited".into();
     let lease = flow

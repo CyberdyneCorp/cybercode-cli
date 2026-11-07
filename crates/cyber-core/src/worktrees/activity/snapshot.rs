@@ -45,11 +45,22 @@ pub struct CheckoutOwner {
     pub lifetime_digest: String,
 }
 
-/// Read-only reacquired evidence, deliberately separate from `CheckoutLease`.
+/// Retained owned or reacquired evidence, deliberately separate from `CheckoutLease`.
 /// No generic settlement, creation or source mutation capability is exposed.
 pub struct SnapshotClaim {
     lease: super::CheckoutLease,
     acknowledgement: Option<acknowledgement::Acknowledged>,
+}
+impl super::CheckoutLease {
+    /// Retain an owned snapshot claim without rewriting its unsettled evidence.
+    /// No generic settlement capability survives this conversion.
+    pub fn retain_snapshot(self) -> io::Result<SnapshotClaim> {
+        self.verify_snapshot()?;
+        Ok(SnapshotClaim {
+            lease: self,
+            acknowledgement: None,
+        })
+    }
 }
 impl SnapshotClaim {
     pub fn binding(&self) -> &CheckoutBinding {
