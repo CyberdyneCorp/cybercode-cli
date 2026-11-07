@@ -128,6 +128,11 @@ mod requests;
 mod rewind;
 mod rewind_preview;
 mod snapshot_lifetime;
+mod snapshot_preparation;
+pub use snapshot_preparation::{
+    SnapshotPreparation, SnapshotPreparationConfirmation, SnapshotPreparationReceipt,
+    SnapshotPreparationReview,
+};
 mod snapshot_recovery;
 mod snapshot_recovery_types;
 mod snapshot_restore_receipt;

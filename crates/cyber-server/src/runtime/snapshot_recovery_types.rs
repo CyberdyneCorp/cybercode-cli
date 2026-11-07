@@ -96,6 +96,7 @@ pub enum SnapshotRecoveryState {
     Unknown,
     Acknowledged,
     ResolvedByAnotherRequest,
+    CancelledBeforeOrigin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

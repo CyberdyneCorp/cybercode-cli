@@ -370,6 +370,22 @@ pub fn routes() -> Router<AppState> {
             &format!("{s}/rewind/restores/{{activity_id}}/acknowledge"),
             post(snapshot_restore_acknowledge),
         )
+        .route(
+            &format!("{s}/rewind/preparations"),
+            get(snapshot_preparations),
+        )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/review"),
+            post(snapshot_preparation_review),
+        )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/confirm"),
+            post(snapshot_preparation_confirm),
+        )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/requests/{{request_id}}"),
+            get(snapshot_preparation_lookup),
+        )
         .route(&format!("{s}/rewind/confirm"), post(rewind_confirm))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
@@ -1299,6 +1315,54 @@ async fn snapshot_restore_acknowledge(
             .runtime
             .snapshot_restore_acknowledge(&id, &activity_id)
             .await?,
+    }))
+}
+async fn snapshot_preparations(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<Vec<crate::runtime::SnapshotPreparation>>>> {
+    Ok(Json(Data {
+        data: state.runtime.snapshot_preparations(&id).await?,
+    }))
+}
+async fn snapshot_preparation_review(
+    State(state): State<AppState>,
+    Path((id, activity)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotPreparationReview>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparation_review(&id, &activity)
+            .await?,
+    }))
+}
+async fn snapshot_preparation_confirm(
+    State(state): State<AppState>,
+    Path((id, activity)): Path<(String, String)>,
+    Json(confirmation): Json<crate::runtime::SnapshotPreparationConfirmation>,
+) -> Result<Json<Data<crate::runtime::SnapshotPreparationReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparation_confirm(&id, &activity, &confirmation)
+            .await?,
+    }))
+}
+async fn snapshot_preparation_lookup(
+    State(state): State<AppState>,
+    Path((id, activity, request)): Path<(String, String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotPreparationReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparation_lookup(&id, &activity, &request)
+            .await?
+            .ok_or_else(|| {
+                ApiError::not_found(
+                    "PreparationRequestNotFoundError",
+                    "No retained preparation cancellation request",
+                )
+            })?,
     }))
 }
 async fn rewind_preview(

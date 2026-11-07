@@ -772,6 +772,14 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
         op("get", "/sessions/{sessionID}/rewind/restores/{activityID}", "v1.session.snapshotRestoreLookup", "Read the exact committed ordinary restore receipt without native access or replay")
             .ok::<Data<crate::runtime::SnapshotRestoreReceipt>>(g),
+        op("get", "/sessions/{sessionID}/rewind/preparations", "v1.session.snapshotPreparations", "List retained snapshot reservations without a published origin or native access")
+            .ok::<Data<Vec<crate::runtime::SnapshotPreparation>>>(g),
+        op("post", "/sessions/{sessionID}/rewind/preparations/{activityID}/review", "v1.session.snapshotPreparationReview", "Review cancellation of an exited preparation using its exact native lifetime proof")
+            .ok::<Data<crate::runtime::SnapshotPreparationReview>>(g),
+        op("post", "/sessions/{sessionID}/rewind/preparations/{activityID}/confirm", "v1.session.snapshotPreparationConfirm", "Cancel only a fingerprint-confirmed unstarted snapshot preparation without moving files or transcript")
+            .body::<crate::runtime::SnapshotPreparationConfirmation>(g).ok::<Data<crate::runtime::SnapshotPreparationReceipt>>(g),
+        op("get", "/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}", "v1.session.snapshotPreparationLookup", "Look up the original durable preparation cancellation pair without native access or replay")
+            .ok::<Data<crate::runtime::SnapshotPreparationReceipt>>(g),
         op("post", "/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge", "v1.session.snapshotRestoreAcknowledge", "Acknowledge the immutable ordinary restore intent after its paired Session commit without replaying source files")
             .ok::<Data<crate::runtime::SnapshotRestoreReceipt>>(g),
         op("post", "/sessions/{sessionID}/rewind/preview", "v1.session.rewindPreview", "Review a rewind without changing files or the active conversation")

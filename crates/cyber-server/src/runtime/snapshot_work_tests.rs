@@ -107,6 +107,23 @@ impl super::super::SnapshotLifetime for LifetimePermit {
     }
 }
 impl Snapshots for Lifetimes {
+    fn lock_worker(
+        &self,
+        binding: super::super::SnapshotLifetimeBinding,
+    ) -> futures::future::BoxFuture<'_, Result<Box<dyn super::super::SnapshotLifetime>, String>>
+    {
+        Box::pin(async move {
+            let permit = self
+                .permits
+                .clone()
+                .try_acquire_owned()
+                .map_err(|error| error.to_string())?;
+            Ok(Box::new(LifetimePermit {
+                binding,
+                _permit: permit,
+            }) as Box<dyn super::super::SnapshotLifetime>)
+        })
+    }
     fn reserve_worker(
         &self,
         mut request: super::super::SnapshotLifetimeRequest,
@@ -168,6 +185,338 @@ impl Snapshots for Lifetimes {
     ) -> futures::future::BoxFuture<'_, Result<Vec<String>, RestoreError>> {
         self.inner.restore(directory, before, after)
     }
+}
+
+fn crash_unstarted(owner: SnapshotWorker) -> String {
+    let id = owner.scope.id().to_owned();
+    let store = owner.runtime.inner.store.clone();
+    let target = id.clone();
+    store.transaction(move |tx| {
+        tx.execute_batch("CREATE TEMP TABLE preparation_cut(owner TEXT); CREATE TEMP TRIGGER preparation_cut BEFORE INSERT ON event WHEN EXISTS(SELECT 1 FROM preparation_cut WHERE owner=NEW.aggregate_id) BEGIN SELECT RAISE(ABORT,'simulated abrupt preparation death'); END;")?;
+        tx.execute("INSERT INTO preparation_cut(owner) VALUES (?1)", [target])?;
+        Ok(())
+    }).unwrap();
+    drop(owner); // Suppress only Drop's record to model an abrupt process boundary.
+    store
+        .transaction(|tx| {
+            tx.execute_batch("DROP TRIGGER preparation_cut; DROP TABLE preparation_cut;")?;
+            Ok(())
+        })
+        .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn preparation_lost_commit_reply_is_lookup_only_after_reopening_the_real_store() {
+    fn lost_reply(_: &rusqlite::hooks::Wal, _: i32) -> rusqlite::Result<()> {
+        Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("lost preparation reply".into()),
+        ))
+    }
+    let (temp, base, _, _, _) = super::super::binary_documents_tests::fixture().await;
+    let path = temp.path().join("preparation-pair.db");
+    let store = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        cyber_core::paths::DatabaseLocation::File(path.clone()),
+        Runtime::registry(),
+    ))
+    .unwrap();
+    let runtime = runtime_with_snapshots(
+        &base,
+        Arc::new(store),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            foreign: false,
+        }),
+    );
+    let session = runtime
+        .create_session(super::super::CreateSession {
+            directory: temp.path().to_str().unwrap().into(),
+            model: "test/main".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let id = crash_unstarted(worker(&runtime, &session).await);
+    let review = runtime
+        .snapshot_preparation_review(&session, &id)
+        .await
+        .unwrap();
+    let confirmation = super::super::SnapshotPreparationConfirmation {
+        confirmation: review.confirmation,
+        request_id: "lost-preparation".into(),
+    };
+    runtime
+        .inner
+        .store
+        .transaction(|tx| {
+            tx.wal_hook(Some(lost_reply));
+            Ok(())
+        })
+        .unwrap();
+    let notifications = runtime.inner.store.subscribe();
+    assert!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .is_err()
+    );
+    assert!(notifications.try_recv().is_err());
+    let receipt = runtime
+        .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    runtime.shutdown().await;
+    drop(runtime);
+    let reopened = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        cyber_core::paths::DatabaseLocation::File(path),
+        Runtime::registry(),
+    ))
+    .unwrap();
+    let reloaded = runtime_with_store(&base, Arc::new(reopened), temp.path());
+    // NoSnapshots cannot reacquire any proof. This must use only the original pair.
+    assert_eq!(
+        reloaded
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .unwrap(),
+        receipt
+    );
+    reloaded.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
+async fn preparation_cancellation_is_paired_and_retry_never_reopens_native_proof() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let permits = Arc::new(tokio::sync::Semaphore::new(1));
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: permits.clone(),
+            foreign: false,
+        }),
+    );
+    let owner = worker(&runtime, &session).await;
+    let id = owner.scope.id().to_owned();
+    assert!(
+        runtime
+            .snapshot_preparation_review(&session, &id)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        runtime.snapshot_preparations(&session).await.unwrap()[0].activity_id,
+        id
+    );
+    crash_unstarted(owner);
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    handle.mark_snapshot_uncertain(&id);
+    handle.mark_snapshot_uncertain("op_other");
+    legacy_generic_unknown(&runtime, &handle, &session);
+    let before = runtime.state(&session).await.unwrap().last_seq;
+    let review = runtime
+        .snapshot_preparation_review(&session, &id)
+        .await
+        .unwrap();
+    let confirmation = super::super::SnapshotPreparationConfirmation {
+        confirmation: review.confirmation,
+        request_id: "preparation-one".into(),
+    };
+    let receipt = runtime
+        .snapshot_preparation_confirm(&session, &id, &confirmation)
+        .await
+        .unwrap();
+    assert_eq!(receipt.lifetime, review.lifetime);
+    assert_eq!(runtime.state(&session).await.unwrap().last_seq, before);
+    assert!(handle.location_uncertain.load(Ordering::SeqCst));
+    assert!(!handle.snapshot_uncertain.lock().unwrap().contains(&id));
+    assert!(
+        handle
+            .snapshot_uncertain
+            .lock()
+            .unwrap()
+            .contains("op_other")
+    );
+    permits.close();
+    assert_eq!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        runtime
+            .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+            .await
+            .unwrap(),
+        Some(receipt)
+    );
+    assert!(
+        runtime
+            .snapshot_preparation_confirm(&session, "op_other", &confirmation)
+            .await
+            .is_err()
+    );
+    let mut changed = confirmation;
+    changed.confirmation = "0".repeat(64);
+    assert!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &changed)
+            .await
+            .is_err()
+    );
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
+async fn preparation_writer_failure_rolls_back_both_owners_and_changed_session_refuses_confirmation()
+ {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let permits = Arc::new(tokio::sync::Semaphore::new(1));
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: permits.clone(),
+            foreign: false,
+        }),
+    );
+    let id = crash_unstarted(worker(&runtime, &session).await);
+    let review = runtime
+        .snapshot_preparation_review(&session, &id)
+        .await
+        .unwrap();
+    let confirmation = super::super::SnapshotPreparationConfirmation {
+        confirmation: review.confirmation,
+        request_id: "preparation-failure".into(),
+    };
+    let notifications = runtime.inner.store.subscribe();
+    runtime.inner.store.transaction(|tx| { tx.execute_batch("CREATE TEMP TRIGGER preparation_pair_failure BEFORE INSERT ON event WHEN NEW.type='snapshot.preparation.cancelled.1' BEGIN SELECT RAISE(ABORT,'preparation pair failure'); END;")?; Ok(()) }).unwrap();
+    assert!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .is_err()
+    );
+    runtime
+        .inner
+        .store
+        .transaction(|tx| {
+            tx.execute_batch("DROP TRIGGER preparation_pair_failure;")?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(notifications.try_recv().is_err());
+    assert_eq!(latest(&runtime, &session)["status"], "pending");
+    assert!(
+        runtime
+            .snapshot_preparation_lookup(&session, &id, &confirmation.request_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let mut state = handle.state.lock().await;
+    runtime
+        .inner
+        .commit_locked(
+            &mut state,
+            vec![events::event(
+                events::TITLE_GENERATED,
+                &events::Titled {
+                    title: "later revision".into(),
+                    usage: None,
+                    cost: None,
+                    model: None,
+                },
+            )],
+        )
+        .unwrap();
+    drop(state);
+    assert!(
+        runtime
+            .snapshot_preparation_confirm(&session, &id, &confirmation)
+            .await
+            .is_err()
+    );
+    assert_eq!(permits.available_permits(), 1);
+    runtime.shutdown().await;
+    base.shutdown().await;
+}
+
+#[tokio::test]
+async fn cancelling_an_unstarted_resolution_keeps_its_original_failed_restore_fenced() {
+    let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+    let runtime = runtime_with_snapshots(
+        &base,
+        base.inner.store.clone(),
+        temp.path(),
+        Arc::new(Lifetimes {
+            inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+            permits: Arc::new(tokio::sync::Semaphore::new(1)),
+            foreign: false,
+        }),
+    );
+    let original = failed_snapshot(&runtime, &session, temp.path().canonicalize().unwrap()).await;
+    assert!(
+        runtime
+            .snapshot_preparation_review(&session, &original.activity_id)
+            .await
+            .is_err()
+    );
+    let request = recovery_request(original.clone());
+    let handle = runtime.inner.handle(&session).await.unwrap();
+    let state = handle.state.lock().await;
+    let owner = runtime
+        .snapshot_recovery_worker(&handle, &state, request.clone())
+        .await
+        .unwrap();
+    drop(state);
+    let id = crash_unstarted(owner);
+    let review = runtime
+        .snapshot_preparation_review(&session, &id)
+        .await
+        .unwrap();
+    runtime
+        .snapshot_preparation_confirm(
+            &session,
+            &id,
+            &super::super::SnapshotPreparationConfirmation {
+                confirmation: review.confirmation,
+                request_id: "cancel-resolution".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let lookup = runtime
+        .snapshot_recovery_lookup(&session, &request.confirmation.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        lookup.state,
+        super::super::SnapshotRecoveryState::CancelledBeforeOrigin
+    );
+    let source = original.activity_id.clone();
+    let status: String = runtime.inner.store.read(move |db| Ok(db.query_row("SELECT json_extract(data,'$.status') FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1", [source], |row| row.get(0))?)).unwrap();
+    assert_eq!(status, "unknown");
+    let state = handle.state.lock().await;
+    assert!(runtime.snapshot_worker(&handle, &state).await.is_err());
+    drop(state);
+    runtime.shutdown().await;
+    base.shutdown().await;
 }
 
 #[tokio::test]

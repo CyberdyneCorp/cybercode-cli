@@ -174,6 +174,25 @@ impl Runtime {
         }
         let state = match (record.status.as_str(), &record.snapshot_receipt) {
             ("pending", None) => super::SnapshotRecoveryState::Pending,
+            ("settled", None) if record.phase == "snapshot_preparation_cancelled" => {
+                let cancelled = record
+                    .snapshot_preparation_receipt
+                    .as_ref()
+                    .ok_or_else(|| {
+                        RuntimeError::Corrupt("Missing preparation cancellation receipt".into())
+                    })?;
+                if self
+                    .snapshot_preparation_lookup(session, &id, &cancelled.request_id)
+                    .await?
+                    .as_ref()
+                    != Some(cancelled)
+                {
+                    return Err(RuntimeError::Corrupt(
+                        "Preparation cancellation lacks its durable pair".into(),
+                    ));
+                }
+                super::SnapshotRecoveryState::CancelledBeforeOrigin
+            }
             ("unknown", None) | ("settled", None) => super::SnapshotRecoveryState::Unknown,
             ("settled", Some(receipt)) if receipt.request_id == request_id => {
                 super::SnapshotRecoveryState::Acknowledged
@@ -317,7 +336,7 @@ impl Runtime {
     }
 }
 
-fn validate_request_id(id: &str) -> Result<(), RuntimeError> {
+pub(super) fn validate_request_id(id: &str) -> Result<(), RuntimeError> {
     if id.is_empty() || id.len() > 256 || id.contains('\0') {
         return Err(RuntimeError::Invalid(
             "Recovery request ID must contain 1–256 bytes without NUL".into(),

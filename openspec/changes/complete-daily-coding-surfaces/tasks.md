@@ -90,9 +90,10 @@ The actual worker keeps it through resource teardown, and source authorization
 revalidates its native route. Lock metadata and orphan stages count toward the cap
 and conservatively protect GC. Native tests reacquire only after actual process
 death and preserve an interrupted pre-publication stage. This is a prerequisite,
-not completion of pre-origin recovery: its consuming operator path, positive
-source-admission phases, independent managed-checkout proof and Git equivalent
-remain open. No new acknowledgement admission or force-clear is enabled.
+not completion of all pre-origin recovery. The following continuation adds the
+consuming path only for a positively bound reservation with no published origin.
+Positive source-admission phases for origin-before-intent, independent managed-
+checkout proof and Git equivalence remain open; no force-clear is enabled.
 
 Implementation source map:
 
@@ -151,3 +152,13 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 - [ ] 7.2 Run affected Rust tests, format/Clippy, SDK typecheck/tests, TUI/real-binary acceptance, strict OpenSpec/lint and relevant native/platform CI. Record skips and unperformed external checks explicitly.
 - [ ] 7.3 Use the code-review skill for substantive review, address findings and deliver reviewable PRs. Merge only when authorized; archive after accepted merge and overlap reconciliation.
 - [ ] 7.4 Verify all approved first- and second-workstream outcomes against evidence before marking the combined goal complete.
+
+
+Reserved-before-origin continuation: list/review/confirm/lookup operations now
+consume the exact exited worker lifetime proof and atomically pair only that native
+acknowledgement with a retained cancellation request. A real service kill before
+origin publication preserves later symlink/owner edits and the transcript, supports
+retry after restart and admits a subsequent prompt in an unmanaged non-Git Location.
+Cancelling an unstarted resolution reports `cancelled_before_origin` without
+acknowledging its original failed restore. Origin-before-intent, independent checkout
+resources, complete clients, Git, reclamation and the remaining M8 cuts remain open.

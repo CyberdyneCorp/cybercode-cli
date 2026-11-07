@@ -70,6 +70,7 @@ pub(super) fn project_pending(
     if !record.snapshot_worker
         || record.binary_document.is_some()
         || record.snapshot_receipt.is_some()
+        || record.snapshot_preparation_receipt.is_some()
         || original.status == "settled"
         || request
             .original

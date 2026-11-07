@@ -792,6 +792,124 @@ fn managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_file
     managed_native_recovery_after_partial_kill("rollback");
 }
 
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_restart() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    let repo = env.root.join("repo");
+    std::fs::remove_dir_all(repo.join(".git")).unwrap();
+    let before = format!("b\0{}", "b".repeat(64 * 1024));
+    let after = format!("a\0{}", "a".repeat(64 * 1024));
+    for index in 0..1280 {
+        std::fs::write(repo.join(format!("bulk_{index:04}")), &before).unwrap();
+    }
+    let id = env.exec(None, "before snapshot");
+    let first = env.user_ids(&id)[0].clone();
+    for index in 0..1280 {
+        std::fs::write(repo.join(format!("bulk_{index:04}")), &after).unwrap();
+    }
+    env.exec(Some(&id), "after snapshot");
+    let messages = env.messages(&id);
+    let activity = kill_before_origin(&env, &id, &first);
+    let requests = model.requests().len();
+    let target = env.root.join("preparation-owner-target");
+    std::fs::write(&target, "later owner bytes").unwrap();
+    std::fs::remove_file(repo.join("bulk_0000")).unwrap();
+    std::os::unix::fs::symlink(&target, repo.join("bulk_0000")).unwrap();
+    let list =
+        json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/preparations")]))["data"]
+            .clone();
+    assert_eq!(list[0]["activity_id"], activity);
+    assert_eq!(list[0]["lifetime_available"], true);
+    let route = format!("/sessions/{id}/rewind/preparations/{activity}");
+    let review =
+        json(&env.cyber(&["api", "POST", &format!("{route}/review"), "-d", "{}"]))["data"].clone();
+    let body =
+        json!({"confirmation":review["confirmation"],"request_id":"before-origin"}).to_string();
+    let receipt =
+        json(&env.cyber(&["api", "POST", &format!("{route}/confirm"), "-d", &body]))["data"]
+            .clone();
+    kill_registered_service(&env);
+    let repeated =
+        json(&env.cyber(&["api", "POST", &format!("{route}/confirm"), "-d", &body]))["data"]
+            .clone();
+    assert_eq!(repeated, receipt);
+    let lookup =
+        json(&env.cyber(&["api", "GET", &format!("{route}/requests/before-origin")]))["data"]
+            .clone();
+    assert_eq!(lookup, receipt);
+    assert!(
+        std::fs::symlink_metadata(repo.join("bulk_0000"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "later owner bytes"
+    );
+    assert_eq!(env.file("bulk_1279"), Some(after));
+    assert_eq!(env.messages(&id), messages);
+    assert_eq!(model.requests().len(), requests);
+    env.exec(Some(&id), "after preparation cancellation");
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn kill_before_origin(env: &Env, id: &str, first: &str) -> String {
+    use rusqlite::OptionalExtension;
+    let selection = reviewed_selection(env, first, "both", "commit");
+    let preview = reviewed_preview(env, id, &selection);
+    let mut body = selection;
+    body["confirmation"] = preview["confirmation"].clone();
+    let path = format!("/sessions/{id}/rewind/confirm");
+    let mut pending = env
+        .command(&["api", "POST", &path, "-d", &body.to_string()])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let database = std::fs::read_dir(env.root.join("cyber-home/data"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "db"))
+        .unwrap();
+    let db =
+        rusqlite::Connection::open_with_flags(database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let activity = loop {
+        let found: Option<String> = db.query_row("SELECT aggregate_id FROM event e WHERE type='native.activity.changed.1' AND seq=0 AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 AND json_extract(data,'$.snapshot_origin') IS NULL AND json_extract(data,'$.snapshot_lifetime') IS NOT NULL AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)", [id], |row| row.get(0)).optional().unwrap();
+        if let Some(found) = found {
+            break found;
+        }
+        assert!(
+            pending.try_wait().unwrap().is_none(),
+            "restore exited before its reservation was observed"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "pre-origin reservation was never observed"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    kill_registered_service(env);
+    assert!(!pending.wait_with_output().unwrap().status.success());
+    let data: String = db
+        .query_row(
+            "SELECT data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+            [&activity],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let record: Value = serde_json::from_str(&data).unwrap();
+    assert!(
+        record["snapshot_origin"].is_null(),
+        "kill missed the pre-origin cut"
+    );
+    activity
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn managed_native_recovery_after_partial_kill(action: &str) {
     let model = scripted_model::ScriptedModel::start(reply);

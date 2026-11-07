@@ -71,3 +71,21 @@ test("ordinary restore lookup and acknowledgement preserve immutable paired rece
   assert.equal(calls[1]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/restores/op_ordinary/acknowledge");
   assert.ok(!calls[1]!.body);
 });
+
+test("preparation recovery lists, reviews, confirms and looks up an exact cancellation request", async () => {
+  const confirmation = { confirmation: "c".repeat(64), request_id: "cancel/with space" };
+  const receipt = { activity_id: "op_fixture", request_id: confirmation.request_id, confirmation: confirmation.confirmation };
+  const { client, calls } = mockClient(req => json(200, { data: req.url.pathname.endsWith("/preparations")
+    ? [{ activity_id: "op_fixture", status: "pending", lifetime_available: true }]
+    : req.url.pathname.endsWith("/review") ? { ...receipt, warning: "Checkout uncertainty remains independent" } : receipt }));
+  const list = await client.session.snapshotPreparations("ses_owner");
+  assert.equal(list[0]!.lifetime_available, true);
+  const review = await client.session.snapshotPreparationReview("ses_owner", "op_fixture");
+  assert.equal(review.confirmation, confirmation.confirmation);
+  assert.deepEqual(await client.session.snapshotPreparationConfirm("ses_owner", "op_fixture", confirmation), receipt);
+  assert.deepEqual(await client.session.snapshotPreparationLookup("ses_owner", "op_fixture", confirmation.request_id), receipt);
+  assert.deepEqual(calls.map(call => call.method), ["GET", "POST", "POST", "GET"]);
+  assert.ok(!calls[1]!.body);
+  assert.deepEqual(JSON.parse(calls[2]!.body!), confirmation);
+  assert.equal(calls[3]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/preparations/op_fixture/requests/cancel%2Fwith%20space");
+});

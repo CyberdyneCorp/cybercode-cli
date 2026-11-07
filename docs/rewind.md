@@ -230,9 +230,49 @@ prove an old worker has exited; older origins without this proof stay inspectabl
 and fenced. Retained file-copy evidence remains inspectable when capture is
 disabled or capture limits are lowered. Resolution writes still obey the cap.
 
-The native keep/rollback backend is implemented, but operator confirmation is not
-yet exposed: dedicated runtime admission, durable native acknowledgement and
-lost-reply reconciliation remain required. Created source directories and private
-payloads remain protected for acknowledged safe cleanup. Do not edit records or
-remove evidence to force a retry. Complete operator recovery, Git journaling,
-reclamation and broader native crash/platform acceptance remain unfinished.
+Confirm a reviewed keep/rollback using its exact fingerprint and a retained request ID:
+
+```sh
+cyber api POST /sessions/<session-id>/rewind/recovery/confirm \
+  -d '{"journal_id":"restore_...","action":"rollback","confirmation":"<fingerprint>","request_id":"<unique-request-id>"}'
+cyber api GET /sessions/<session-id>/rewind/recovery/requests/<request-id>
+```
+
+A repeated confirmation looks up that original request, including an incomplete
+outcome; it never runs the file changes again. Changed request content refuses.
+Lookup does not inspect native files, so `journal_acknowledged: null` means that
+response has not observed the journal acknowledgement. For an already committed
+recovery receipt, POST its `/acknowledge` child to reconcile only missing journal
+acknowledgements. Ordinary successful file-copy rewinds use GET
+`/sessions/<session-id>/rewind/restores/<activity-id>` and POST its `/acknowledge`
+child. These operations preserve later files, including unsupported replacements,
+and do not move the transcript. Historical receipts without immutable proof cannot
+authorize new journal writes.
+
+If a crash occurred before an origin or restore journal was published, list the
+retained preparations and review the selected activity:
+
+```sh
+cyber api GET /sessions/<session-id>/rewind/preparations
+cyber api POST /sessions/<session-id>/rewind/preparations/<activity-id>/review
+cyber api POST /sessions/<session-id>/rewind/preparations/<activity-id>/confirm \
+  -d '{"confirmation":"<fingerprint>","request_id":"<unique-cancellation-id>"}'
+cyber api GET /sessions/<session-id>/rewind/preparations/<activity-id>/requests/<request-id>
+```
+
+The SDK exposes `snapshotPreparations`, `snapshotPreparationReview`,
+`snapshotPreparationConfirm` and `snapshotPreparationLookup` on `client.session`.
+Review requires an exact retained lifetime lock proving that this worker exited,
+a positive unstarted reservation, and no published origin. Confirmation cancels
+only that preparation: source files and transcript remain unchanged. Live workers,
+foreign or changed evidence, published origins and legacy reservations without
+lifetime proof refuse. Checkout/process uncertainty remains independent. Cancelling
+an unstarted keep/rollback request leaves its original failed restore unresolved;
+that request's lookup reports `cancelled_before_origin`. Retrying a cancellation
+uses its original durable receipt without reopening native proof.
+
+Created source directories, private payloads and lifetime preparations remain
+protected for acknowledged safe cleanup. Do not edit records or remove evidence
+to force a retry. Origin-before-intent recovery, independent managed-checkout proof,
+Git journaling, reclamation, typed recovery clients and broader native crash/platform
+acceptance remain unfinished.

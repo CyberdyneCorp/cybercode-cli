@@ -68,6 +68,7 @@ const ALL: &[&str] = &[
     CHILD_INPUT_PAUSED,
     super::admission_authority::FENCED,
     super::activity::CHANGED,
+    super::snapshot_preparation::CANCELLED,
     super::child_ownership::CHANGED,
     super::subtree_stop::SETTLED,
     super::subtree_stop::STARTED,
@@ -538,6 +539,12 @@ pub fn registry() -> EventRegistry {
     registry
         .register(super::auto_statistics::RESET)
         .expect("valid auto statistics reset event");
+    registry
+        .register_with(
+            super::snapshot_preparation::CANCELLED,
+            super::snapshot_preparation::validate_event,
+        )
+        .expect("valid snapshot preparation cancellation receipt");
     registry
         .register_with(MESSAGING_UPDATED, |data| {
             serde_json::from_value::<MessagingUpdated>(data.clone())

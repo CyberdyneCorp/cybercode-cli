@@ -99,6 +99,12 @@
 - **AND** replacement, missing proof or a live lock refuses reacquisition; a privately staged incomplete publication remains retained and cannot grant acknowledgement authority
 - **AND** this evidence counts toward the Location cap, protects pending references from GC, and cannot settle a generic process, Session-owned checkout lease or historical reservation without that binding
 
+#### Scenario: Owner cancels an exited preparation with no published origin
+- **WHEN** the owner confirms a fingerprint review of a positive unstarted reservation under its exact reacquired native lifetime lock
+- **THEN** the writer atomically acknowledges only that activity and retains its cancellation request receipt, rechecking current Session/recovery authority without moving source files or transcript state
+- **AND** retry looks up the original durable pair without native access, changed or cross-owner request reuse refuses, and a lost commit reply does not dispatch another operation
+- **AND** live, legacy, generic, binary or already-launched owners refuse; independent checkout/process uncertainty remains fenced, and cancelling an unstarted resolution leaves its failed parent restore unresolved
+
 #### Scenario: Session changes before a source effect
 - **WHEN** the Session revision changes after preparation but before the next source mutation
 - **THEN** that mutation is refused and existing owner bytes remain unchanged

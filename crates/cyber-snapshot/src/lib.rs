@@ -237,6 +237,37 @@ impl GitSnapshots {
 }
 
 impl Snapshots for GitSnapshots {
+    fn lock_worker(
+        &self,
+        binding: cyber_server::runtime::SnapshotLifetimeBinding,
+    ) -> BoxFuture<'_, Result<Box<dyn cyber_server::runtime::SnapshotLifetime>, String>> {
+        Box::pin(async move {
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                let _ = binding;
+                Err("Native snapshot lifetime recovery is unavailable".into())
+            }
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            {
+                let directory = binding
+                    .owner
+                    .directory
+                    .to_str()
+                    .ok_or("Invalid snapshot lifetime Location")?;
+                self.recovery_location(directory)?;
+                let directory = directory.to_owned();
+                let options = self.recovery_options(&directory);
+                let data = self.data_dir.clone();
+                tokio::task::spawn_blocking(move || {
+                    let store = copy::Store::recover_existing(&data, &directory, options)?;
+                    Ok(Box::new(store.lock_lifetime(&binding)?)
+                        as Box<dyn cyber_server::runtime::SnapshotLifetime>)
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            }
+        })
+    }
     fn reserve_worker(
         &self,
         request: cyber_server::runtime::SnapshotLifetimeRequest,

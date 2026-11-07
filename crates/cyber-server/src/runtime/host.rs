@@ -1429,6 +1429,13 @@ pub struct SnapshotRecovery {
 
 /// Working-tree snapshots for a Location.
 pub trait Snapshots: Send + Sync {
+    /// Read-only acquisition of an existing exact worker lifetime lock.
+    fn lock_worker(
+        &self,
+        _binding: super::SnapshotLifetimeBinding,
+    ) -> BoxFuture<'_, Result<Box<dyn super::SnapshotLifetime>, String>> {
+        Box::pin(async { Err("Snapshot lifetime recovery is unavailable".into()) })
+    }
     /// Pure filesystem lifetime ownership, acquired before durable reservation.
     /// Legacy hosts omit it and cannot gain pre-origin acknowledgement authority.
     fn reserve_worker(

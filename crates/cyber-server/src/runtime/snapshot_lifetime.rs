@@ -27,6 +27,8 @@ pub struct SnapshotLifetimeBinding {
 /// It conveys no authority to settle checkout, process or binary-document owners.
 pub trait SnapshotLifetime: Send {
     fn binding(&self) -> &SnapshotLifetimeBinding;
+    /// Synchronous native metadata verification; may run inside the Store writer.
+    /// It must not call the runtime/Store, launch processes or perform source effects.
     fn verify(&self) -> Result<(), String>;
 }
 

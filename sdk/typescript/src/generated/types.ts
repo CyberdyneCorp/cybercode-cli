@@ -902,6 +902,10 @@ export type Data_Array_of_RemoteReach = {
   data: RemoteReach[];
 };
 
+export type Data_Array_of_SnapshotPreparation = {
+  data: SnapshotPreparation[];
+};
+
 export type Data_Array_of_SnapshotRecovery = {
   data: SnapshotRecovery[];
 };
@@ -1104,6 +1108,14 @@ export type Data_ShellResult = {
 
 export type Data_SideAnswer = {
   data: SideAnswer;
+};
+
+export type Data_SnapshotPreparationReceipt = {
+  data: SnapshotPreparationReceipt;
+};
+
+export type Data_SnapshotPreparationReview = {
+  data: SnapshotPreparationReview;
 };
 
 export type Data_SnapshotRecoveryResult = {
@@ -4707,6 +4719,23 @@ export type SnapshotBinding = {
   lock_identity?: string | null;
 };
 
+export type SnapshotLifetimeBinding = {
+  version: number;
+  owner: SnapshotLifetimeRequest;
+  root_identity: string;
+  namespace_identity: string;
+  directory_identity: string;
+  file_identity: string;
+};
+
+export type SnapshotLifetimeRequest = {
+  activity_id: string;
+  session_id: string;
+  session_created_id: string;
+  directory: string;
+  worktree_id?: string | null;
+};
+
 export type SnapshotOrigin = {
   version: number;
   session_id: string;
@@ -4714,6 +4743,35 @@ export type SnapshotOrigin = {
   activity_id: string;
   worktree_id?: string | null;
   binding: SnapshotBinding;
+};
+
+export type SnapshotPreparation = {
+  activity_id: string;
+  status: string;
+  lifetime_available: boolean;
+};
+
+export type SnapshotPreparationConfirmation = {
+  confirmation: string;
+  request_id: string;
+};
+
+export type SnapshotPreparationReceipt = {
+  activity_id: string;
+  request_id: string;
+  confirmation: string;
+  lifetime: SnapshotLifetimeBinding;
+  native_sequence: number;
+  session_sequence: number;
+};
+
+export type SnapshotPreparationReview = {
+  activity_id: string;
+  lifetime: SnapshotLifetimeBinding;
+  native_sequence: number;
+  session_sequence: number;
+  confirmation: string;
+  warning: string;
 };
 
 /** Retained filesystem evidence; completion does not acknowledge a Session/native receipt. */
@@ -4807,7 +4865,7 @@ export type SnapshotRecoverySelection = {
   action: SnapshotRecoveryAction;
 };
 
-export type SnapshotRecoveryState = "pending" | "unknown" | "acknowledged" | "resolved_by_another_request";
+export type SnapshotRecoveryState = "pending" | "unknown" | "acknowledged" | "resolved_by_another_request" | "cancelled_before_origin";
 
 /**
  * Exact native intent and Session batch consumed by an ordinary restore.

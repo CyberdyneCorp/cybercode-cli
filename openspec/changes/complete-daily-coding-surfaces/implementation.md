@@ -1006,3 +1006,91 @@ port separation is retained. No critical/major findings remain for this prerequi
 its explicitly missing consuming recovery protocol and broader acceptance gates
 are not accepted by these tests. This is local progress, not a merged delivery or
 completion of either issue.
+
+
+### Consuming an exited reservation before origin publication
+
+The owner can now list `/sessions/{id}/rewind/preparations`, POST the selected
+`/{activity_id}/review` and `/confirm` operations, and GET its
+`/requests/{request_id}` receipt. The matching typed SDK operations are generated.
+Review/confirmation require a positive sequence-zero filesystem-only snapshot
+reservation, an unchanged exact lifetime binding, no published origin, and at most
+its unlaunched unknown-disposal record. Acquiring the original native lifetime lock
+proves exit. Missing journal records are never used as evidence. Legacy, generic,
+binary, live, foreign, changed or already-launched owners refuse.
+
+Confirmation retains current recovery authority and Session revision without
+reopening closed boundaries. It atomically pairs settlement of that exact native
+activity with a separate Session-creation/request-derived cancellation receipt.
+The real proof, lifecycle and active owner stay retained through the writer's
+COMMIT and its observed reply. Cancellation changes no Session events or source
+files, clears only its exact cached snapshot reason, and preserves opaque and other
+snapshot uncertainty. Read-only lookup validates both durable owners before clearing
+that same cached reason after a lost reply. Changed request content or cross-activity
+reuse refuses before native access; repeat confirmation is lookup-only. Receipt
+validation bounds native sequences and fingerprints before interpreting persisted
+data, and ordinary refusal paths use conflict errors rather than generic failures.
+
+An unstarted resolution's own cancellation receipt does not acknowledge its failed
+parent restore. Recovery-request lookup reports `cancelled_before_origin`, no
+resolution origin/receipt and unobserved journal acknowledgement. The parent still
+requires its original keep/rollback recovery. Managed checkout/process uncertainty
+is neither inferred settled nor cleared by this operation.
+
+Runtime tests model an abrupt pre-origin cut by rejecting only the scope's disposal
+append with a writer-local SQLite trigger. They verify live refusal, exact paired
+settlement, independent uncertainty, closed native-port retry, content/cross-owner
+refusal and unchanged Session revision. A second trigger rejects insertion of the
+request receipt after the original native append, verifying rollback of both owners
+and absence of notifications. An actual file-backed Store WAL-hook case commits but
+loses the pair reply, reopens that Store under `NoSnapshots`, and finds the original
+receipt without native replay. The unstarted resolution test proves the parent
+restore stays unknown. These are runtime/Store fixtures, not process-kill proof.
+
+The real CLI/API test prepares 1280 binary files with shared 64 KiB images, starts a
+reviewed rewind, observes its durable reservation at sequence zero, kills the actual
+service and verifies no origin was published. After restart, it creates a later
+owner symlink, reviews/confirms cancellation, kills/restarts again, and checks the
+same receipt by retry and lookup. The symlink/target bytes, another source image,
+transcript and inference count are preserved; an explicit subsequent prompt is
+admitted. The cut uses actual service death without a restore fault hook. The first
+fixture used large text diffs and correctly hit the 4 MiB preview bound; binary
+images keep that reviewed preview bounded while retaining the native scan window.
+
+Origin-before-intent still needs explicit positive source-admission phases and its
+own consuming proof. Independent managed-checkout recovery, Git journaling,
+reclamation, typed CLI/TUI/App recovery and full platform/cut acceptance remain open.
+M2–M8 and both issues are incomplete; this does not make the whole feature merge-ready.
+
+
+Final local macOS arm64 verification: 413 server unit tests passed with one ignored
+existing subprocess fixture; all 22 affected integrations passed (4 idle-
+cancellation, 13 Location, 5 rewind-preview). All 77 snapshot cases passed (42 unit,
+18 file-copy, 17 Git), with its lifetime child fixture listed ignored and invoked
+by its real process-kill parents. All 15 real CLI branch/recovery cases passed,
+including the new pre-origin service kill and existing partial-exchange cuts.
+OpenAPI consistency, SDK generation/typecheck and 133 SDK tests passed; 10 configured
+SDK process tests were skipped because `CYBER_BIN` was unset. All-target
+server/snapshot/CLI Clippy with warnings denied, formatting and diff checks passed.
+Strict pinned OpenSpec passed 117 items; lint reports 0 errors/25 warnings and
+inventory stays 53 capabilities/1030 requirements. Sandbox deprecation and Darwin
+linker warnings were observed without assigning their origin to main. Linux/Windows,
+full-workspace and TUI/App recovery acceptance were not run here.
+
+The code-review skill was applied across all changed runtime/native/HTTP/test/docs
+and generated SDK files. It checks positive unstarted history, immutable native
+ownership and current authority, exact paired request identity and lookup, descriptor
+retention through COMMIT/reply, cancellation/Stop controls, sequence bounds, error
+contracts and separation from restore/binary/generic acknowledgements. Review adds
+strict receipt validation and validates the latest native event rather than
+filtering past a later foreign event. Native proof verification is explicitly
+restricted to synchronous metadata and cannot reenter the runtime/Store from the
+writer. The repository runtime-port/native-adapter split is preserved. No critical
+or major findings remain for this increment; complete early-resource recovery and
+other parent acceptance gaps remain open.
+
+The initial runtime fixture attempted to use `set_append_fault`, whose documented
+scope is ordinary `append`; it does not intercept checked/paired appends. Writer-local
+SQLite triggers now model the abrupt disposal and second-owner insertion cuts,
+and the final suites above pass. No production Store fault semantics were changed.
+This increment remains local and does not complete M2–M8, issue #93 or issue #92.
