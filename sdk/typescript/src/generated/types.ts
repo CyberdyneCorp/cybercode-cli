@@ -3694,6 +3694,11 @@ export type PrDescriptionRequest = {
   base?: string | null;
 };
 
+/** A discovery response always contains `data`, including an explicit absent receipt. */
+export type PreparationReceiptData = {
+  data: SnapshotPreparationReceipt | null;
+};
+
 /** Product telemetry is not implemented and always off. */
 export type ProductTelemetry = {
   enabled: boolean;

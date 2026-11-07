@@ -7733,6 +7733,81 @@
           "lifetime_available"
         ]
       },
+      "PreparationReceiptData": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotPreparationReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "A discovery response always contains `data`, including an explicit absent receipt.",
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotPreparationReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "activity_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "lifetime": {
+            "$ref": "#/components/schemas/SnapshotLifetimeBinding"
+          },
+          "native_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_admitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "checkout_resources_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "activity_id",
+          "request_id",
+          "confirmation",
+          "lifetime",
+          "native_sequence",
+          "session_sequence"
+        ]
+      },
       "Data_SnapshotPreparationReview": {
         "type": "object",
         "properties": {
@@ -7818,62 +7893,6 @@
         },
         "required": [
           "data"
-        ]
-      },
-      "SnapshotPreparationReceipt": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "activity_id": {
-            "type": "string"
-          },
-          "request_id": {
-            "type": "string"
-          },
-          "confirmation": {
-            "type": "string"
-          },
-          "lifetime": {
-            "$ref": "#/components/schemas/SnapshotLifetimeBinding"
-          },
-          "native_sequence": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "session_sequence": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "origin": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SnapshotOrigin"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "source_admitted": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "checkout_resources_digest": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "activity_id",
-          "request_id",
-          "confirmation",
-          "lifetime",
-          "native_sequence",
-          "session_sequence"
         ]
       },
       "RewindSelection": {
@@ -25073,6 +25092,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_cancelled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -25082,6 +25109,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_Array_of_SnapshotPreparation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/receipt": {
+      "get": {
+        "operationId": "v1.session.snapshotPreparationReceipt",
+        "summary": "Discover the exact committed preparation cancellation receipt without source access or native acknowledgement; absence is not pre-effect proof",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparationReceiptData"
                 }
               }
             }

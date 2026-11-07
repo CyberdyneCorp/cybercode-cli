@@ -3024,3 +3024,57 @@ workspace, Linux/Windows native or source-bound CI checks ran for this command-o
 continuation. Preparation TUI, partial constructors, managed Git source integration,
 reference-aware reclamation and broader acceptance remain open; no parent task,
 issue or Git availability guard is promoted. No PR/push is made by this local work.
+
+## Preparation recovery in the terminal and committed receipt discovery (2026-11-07)
+
+The rewind recovery panel now offers P for preparation candidates, including an
+opt-in history of committed cancellations scoped to the current Session creation.
+Default API listing remains pending-only. Candidate Enter discovers the original
+receipt using a new read-only route before requesting any pre-effect review.
+Absence itself grants no authority. Review/confirmation still require exact exited
+native worker proof; no source-admission or legacy-fence policy changes.
+
+The nested terminal controller uses the existing rewind Session/Location/UI
+generation guard. It validates activity/lifetime/origin and confirmation scope,
+retains the stable cancellation identity before POST, consumes the review and
+makes outcome Enter inert. R looks up that exact request; A explicitly reconciles
+native metadata only after a committed receipt. A receipt alone is never displayed
+as observed native acknowledgement. Independent restore/process/checkout
+uncertainty, draft, attachment payloads and conversation are preserved. J returns
+to journal recovery. The HTTP transport stays separate from controller/rendering.
+
+The new receipt endpoint discovers the retained activity request key and delegates
+to existing exact paired-receipt validation. Its always-present nullable data field
+is explicit in OpenAPI so the generated SDK returns the receipt or null. Discovery
+never calls native reconciliation or accesses source files. The existing native
+CLI crash fixtures now verify pending/history separation and receipt discovery
+after a real service restart, plus refusal for an existing foreign Session.
+
+Code-review skill inspection covered all changed controller/transport/rendering,
+HTTP/Store queries, generated artifacts, tests and docs. Scope guards, busy gates,
+consumed confirmation, ambiguous-reply behavior, native acknowledgement separation
+and explicit null handling were checked. No unresolved critical/major finding was
+identified in this increment. Rust complexity uses native Clippy because the
+cognitive-complexity skill dispatcher does not support Rust; 18/15 findings in
+the controller test and native CLI fixture were resolved by separating
+lookup/reconciliation and history checks, without lint allowances. The shared managed Git guard remains disabled. Native preparation
+recovery through an actual killed TUI process, full crash/platform cuts, partial
+constructors, reclamation and remaining #93/#92 work remain open.
+
+Local verification for this increment: all 675 TUI library tests passed (3 ignored
+cases: the separately driven pure-mode child fixture and two Linux protected-file
+agent/collaboration cases avoiding native vault writes on macOS); the native
+partial-journal interruption/reopen regression passed within that suite. All 80
+HTTP tests, the focused cancellation/history/independent-fence runtime regression,
+and the two real CLI native pre-effect service-kill cuts passed. The final SDK
+suite passed 144 tests with 2 Linux protected-file/native-vault platform skips;
+typechecking, generated SDK consistency, all-target server/TUI/CLI Clippy, pinned
+strict OpenSpec (117 items), and formatting/diff checks passed. Spec lint reported
+0 errors/25 warnings, without unchanged-main attribution. Every Cargo
+build/check/test/Clippy used CARGO_INCREMENTAL=0 and --locked. The nullable receipt
+schema has a dedicated regression and the SDK test statically admits null.
+C deprecation and oversized-unwind linker warnings were observed without origin
+attribution. Full workspace, native preparation TUI process-kill, additional
+Linux/macOS architectures, Windows and source-bound CI were not run here; this is
+local evidence, not complete M7/M8 or accepted delivery. No PR/push is made by this
+increment and no parent task or issue is closed.

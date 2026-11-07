@@ -379,6 +379,10 @@ pub fn routes() -> Router<AppState> {
             get(snapshot_preparations),
         )
         .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/receipt"),
+            get(snapshot_preparation_receipt),
+        )
+        .route(
             &format!("{s}/rewind/preparations/{{activity_id}}/review"),
             post(snapshot_preparation_review),
         )
@@ -1341,12 +1345,41 @@ async fn snapshot_restore_acknowledge(
             .await?,
     }))
 }
+#[derive(Default, Deserialize)]
+struct PreparationsQuery {
+    #[serde(default)]
+    include_cancelled: bool,
+}
 async fn snapshot_preparations(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<PreparationsQuery>,
 ) -> Result<Json<Data<Vec<crate::runtime::SnapshotPreparation>>>> {
     Ok(Json(Data {
-        data: state.runtime.snapshot_preparations(&id).await?,
+        data: state
+            .runtime
+            .snapshot_preparations_with_history(&id, query.include_cancelled)
+            .await?,
+    }))
+}
+/// A discovery response always contains `data`, including an explicit absent receipt.
+#[derive(Serialize, JsonSchema)]
+#[schemars(transform = preparation_receipt_required)]
+pub(super) struct PreparationReceiptData {
+    data: Option<crate::runtime::SnapshotPreparationReceipt>,
+}
+fn preparation_receipt_required(schema: &mut schemars::Schema) {
+    schema.insert("required".into(), serde_json::json!(["data"]));
+}
+async fn snapshot_preparation_receipt(
+    State(state): State<AppState>,
+    Path((id, activity)): Path<(String, String)>,
+) -> Result<Json<PreparationReceiptData>> {
+    Ok(Json(PreparationReceiptData {
+        data: state
+            .runtime
+            .snapshot_preparation_receipt(&id, &activity)
+            .await?,
     }))
 }
 async fn snapshot_preparation_review(

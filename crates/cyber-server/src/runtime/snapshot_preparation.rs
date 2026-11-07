@@ -531,11 +531,30 @@ impl Runtime {
         &self,
         session: &str,
     ) -> Result<Vec<SnapshotPreparation>, RuntimeError> {
+        self.snapshot_preparations_with_history(session, false)
+            .await
+    }
+    pub async fn snapshot_preparations_with_history(
+        &self,
+        session: &str,
+        include_cancelled: bool,
+    ) -> Result<Vec<SnapshotPreparation>, RuntimeError> {
         self.session_info(session).await?;
+        let created = self
+            .inner
+            .store
+            .read_events(session, -1, 1)?
+            .events
+            .first()
+            .ok_or_else(|| {
+                RuntimeError::Conflict("Preparation Session creation is missing".into())
+            })?
+            .id
+            .clone();
         let session = session.to_owned();
         self.inner.store.read(move |db| {
-            let mut query = db.prepare("SELECT aggregate_id,data FROM event e WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 AND json_extract(data,'$.status')<>'settled' AND COALESCE(json_extract(data,'$.snapshot_source_admitted'),0)=0 AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq) ORDER BY aggregate_id LIMIT 4097")?;
-            let rows = query.query_map([session], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+            let mut query = db.prepare("SELECT aggregate_id,data FROM event e WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 AND ((json_extract(data,'$.status')<>'settled' AND COALESCE(json_extract(data,'$.snapshot_source_admitted'),0)=0) OR (?2 AND json_extract(data,'$.status')='settled' AND json_extract(data,'$.phase')='snapshot_preparation_cancelled' AND json_extract(data,'$.snapshot_preparation_receipt.lifetime.owner.session_created_id')=?3)) AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq) ORDER BY aggregate_id LIMIT 4097")?;
+            let rows = query.query_map(rusqlite::params![session, include_cancelled, created], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
             let mut result = Vec::new();
             for row in rows {
                 let (activity_id, data) = row?;
@@ -756,6 +775,49 @@ impl Runtime {
         cancelled.disarm();
         result
     }
+    /// Discover an exact committed cancellation; never infer safety from absence.
+    pub async fn snapshot_preparation_receipt(
+        &self,
+        session: &str,
+        activity: &str,
+    ) -> Result<Option<SnapshotPreparationReceipt>, RuntimeError> {
+        self.session_info(session).await?;
+        let source = session.to_owned();
+        let owner = activity.to_owned();
+        let request = self
+            .inner
+            .store
+            .read(move |db| {
+                let record: Option<(String, String)> = db.query_row(
+                "SELECT type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+                [owner], |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?;
+                let Some((kind, data)) = record else {
+                    return Ok(None);
+                };
+                let record: activity::Record = serde_json::from_str(&data)
+                    .map_err(|_| invalid("Invalid preparation record"))?;
+                if kind != activity::CHANGED
+                    || !record.snapshot_worker
+                    || record.binary_document.is_some()
+                    || record.session_id != source
+                {
+                    return Err(invalid("Preparation discovery belongs to another owner"));
+                }
+                Ok(record
+                    .snapshot_preparation_receipt
+                    .map(|receipt| receipt.request_id))
+            })
+            .map_err(preparation_error)?;
+        match request {
+            Some(request) => {
+                self.snapshot_preparation_lookup(session, activity, &request)
+                    .await
+            }
+            None => Ok(None),
+        }
+    }
+
     pub async fn snapshot_preparation_lookup(
         &self,
         session: &str,

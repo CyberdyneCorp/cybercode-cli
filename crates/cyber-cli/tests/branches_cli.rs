@@ -844,6 +844,7 @@ fn cancelled_pre_effect_preparation(published: bool) {
         assert_preparation_tombstone(&env, &receipt);
     }
     kill_registered_service(&env);
+    assert_preparation_history(&env, &id, &activity, &receipt);
     assert_eq!(
         json(&preparation_confirm_cli(&env, &id, &activity, &body)),
         receipt
@@ -874,6 +875,41 @@ fn cancelled_pre_effect_preparation(published: bool) {
     assert_eq!(env.messages(&id), messages);
     assert_eq!(model.requests().len(), requests);
     env.exec(Some(&id), "after preparation cancellation");
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_preparation_history(env: &Env, session: &str, activity: &str, receipt: &Value) {
+    let current = json(&env.cyber(&[
+        "api",
+        "GET",
+        &format!("/sessions/{session}/rewind/preparations"),
+    ]));
+    assert!(
+        current["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|candidate| candidate["activity_id"] != activity)
+    );
+    let history = json(&env.cyber(&[
+        "api",
+        "GET",
+        &format!("/sessions/{session}/rewind/preparations?include_cancelled=true"),
+    ]));
+    assert!(
+        history["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate["activity_id"] == activity
+                && candidate["status"] == "settled")
+    );
+    let discovered = json(&env.cyber(&[
+        "api",
+        "GET",
+        &format!("/sessions/{session}/rewind/preparations/{activity}/receipt"),
+    ]));
+    assert_eq!(&discovered["data"], receipt);
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -929,6 +965,28 @@ fn assert_preparation_client_refusals(env: &Env, session: &str, activity: &str, 
         "{\"title\":\"foreign preparation\"}",
     ]));
     let foreign_id = foreign["data"]["id"].as_str().unwrap();
+    assert!(
+        !env.cyber(&[
+            "api",
+            "GET",
+            &format!("/sessions/{foreign_id}/rewind/preparations/{activity}/receipt")
+        ])
+        .status
+        .success()
+    );
+    let foreign_history = json(&env.cyber(&[
+        "api",
+        "GET",
+        &format!("/sessions/{foreign_id}/rewind/preparations?include_cancelled=true"),
+    ]));
+    assert!(
+        foreign_history["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|candidate| candidate["activity_id"] != activity)
+    );
+
     assert!(
         !env.cyber(&[
             "sessions",

@@ -784,7 +784,9 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         op("get", "/sessions/{sessionID}/rewind/restores/{activityID}", "v1.session.snapshotRestoreLookup", "Read the exact committed ordinary restore receipt without native access or replay")
             .ok::<Data<crate::runtime::SnapshotRestoreReceipt>>(g),
         op("get", "/sessions/{sessionID}/rewind/preparations", "v1.session.snapshotPreparations", "List retained preparation candidates without native access; review checks eligibility")
-            .ok::<Data<Vec<crate::runtime::SnapshotPreparation>>>(g),
+            .query(&["include_cancelled"]).ok::<Data<Vec<crate::runtime::SnapshotPreparation>>>(g),
+        op("get", "/sessions/{sessionID}/rewind/preparations/{activityID}/receipt", "v1.session.snapshotPreparationReceipt", "Discover the exact committed preparation cancellation receipt without source access or native acknowledgement; absence is not pre-effect proof")
+            .ok::<super::sessions::PreparationReceiptData>(g),
         op("post", "/sessions/{sessionID}/rewind/preparations/{activityID}/review", "v1.session.snapshotPreparationReview", "Review cancellation of an exited preparation using its exact native lifetime proof")
             .ok::<Data<crate::runtime::SnapshotPreparationReview>>(g),
         op("post", "/sessions/{sessionID}/rewind/preparations/{activityID}/confirm", "v1.session.snapshotPreparationConfirm", "Cancel only a fingerprint-confirmed pre-effect snapshot preparation without moving files or transcript")

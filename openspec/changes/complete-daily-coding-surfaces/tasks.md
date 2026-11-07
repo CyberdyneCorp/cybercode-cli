@@ -502,3 +502,18 @@ including stale/foreign refusal and preservation of later owner symlinks/files.
 This advances the preparation CLI portion of M7; preparation TUI, partial
 construction, managed Git integration, safe reclamation and complete acceptance
 remain open. No parent task is closed.
+
+Preparation terminal continuation: rewind recovery now offers P for preparation
+candidates and committed cancellation history, with J returning to journals.
+Candidate selection discovers a committed receipt before native-proof review;
+confirmation retains a fresh stable request before sending, consumes the review,
+and permits lookup rather than Enter replay after reply loss. A is explicit
+metadata reconciliation. Session/Location/generation guards preserve composer,
+attachments and conversation. Opt-in history keeps default pending listing intact;
+exact receipt discovery delegates to the validated original committed pair.
+Controller and actual HTTP transport coverage accompanies native CLI service-kill
+cuts before/after origin publication, including restarted history/discovery and
+foreign-Session refusal. Actual native preparation cancellation driven by a killed
+TUI process remains a separate acceptance gap. M7/M8 and their parent tasks stay
+open alongside partial constructors, managed Git admission, safe reclamation and
+complete compatibility/platform evidence.

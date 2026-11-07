@@ -1571,6 +1571,12 @@ export interface Operations {
     body: undefined;
     response: S.SnapshotPreparationReceipt;
   };
+  "v1.session.snapshotPreparationReceipt": {
+    path: { sessionID: string; activityID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotPreparationReceipt | null;
+  };
   "v1.session.snapshotPreparationReview": {
     path: { sessionID: string; activityID: string };
     query: Record<string, never>;
@@ -1579,7 +1585,9 @@ export interface Operations {
   };
   "v1.session.snapshotPreparations": {
     path: { sessionID: string };
-    query: Record<string, never>;
+    query: {
+      include_cancelled?: QueryValue;
+    };
     body: undefined;
     response: S.SnapshotPreparation[];
   };
@@ -4742,6 +4750,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.session.snapshotPreparationReceipt": {
+    tag: "session",
+    name: "snapshotPreparationReceipt",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/receipt",
+    pathParams: ["sessionID", "activityID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.snapshotPreparationReview": {
     tag: "session",
     name: "snapshotPreparationReview",
@@ -4760,7 +4780,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/rewind/preparations",
     pathParams: ["sessionID"],
-    query: [],
+    query: ["include_cancelled"],
     body: "none",
     located: false,
     unwrap: true,
@@ -6261,12 +6281,15 @@ export function createGroups(caller: Caller) {
       /** Look up the original durable preparation cancellation pair without native access or replay (`GET /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}`) */
       snapshotPreparationLookup: (sessionID: string, activityID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationLookup"]["response"]> =>
         caller.call("v1.session.snapshotPreparationLookup", { path: { sessionID, activityID, requestID } }, options),
+      /** Discover the exact committed preparation cancellation receipt without source access or native acknowledgement; absence is not pre-effect proof (`GET /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/receipt`) */
+      snapshotPreparationReceipt: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationReceipt"]["response"]> =>
+        caller.call("v1.session.snapshotPreparationReceipt", { path: { sessionID, activityID } }, options),
       /** Review cancellation of an exited preparation using its exact native lifetime proof (`POST /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/review`) */
       snapshotPreparationReview: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationReview"]["response"]> =>
         caller.call("v1.session.snapshotPreparationReview", { path: { sessionID, activityID } }, options),
       /** List retained preparation candidates without native access; review checks eligibility (`GET /api/v1/sessions/{sessionID}/rewind/preparations`) */
-      snapshotPreparations: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparations"]["response"]> =>
-        caller.call("v1.session.snapshotPreparations", { path: { sessionID } }, options),
+      snapshotPreparations: (sessionID: string, query?: Operations["v1.session.snapshotPreparations"]["query"], options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparations"]["response"]> =>
+        caller.call("v1.session.snapshotPreparations", { path: { sessionID }, query }, options),
       /** Inspect retained filesystem restore journals without acknowledging or replaying native effects (`GET /api/v1/sessions/{sessionID}/rewind/recovery`) */
       snapshotRecovery: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecovery"]["response"]> =>
         caller.call("v1.session.snapshotRecovery", { path: { sessionID } }, options),

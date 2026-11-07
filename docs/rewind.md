@@ -403,9 +403,8 @@ state with exit 0 because the read succeeded. Both commands support `--format js
 
 These commands expose the implemented managed file-copy recovery path on admitted
 Linux/macOS hosts. Ordinary managed Git source recovery remains disabled pending
-its remaining compatibility and runtime acceptance gates. Preparation cancellation
-is still available through its existing API; typed preparation/TUI recovery,
-reference-aware reclamation and complete native/platform acceptance remain open.
+its remaining compatibility and runtime acceptance gates. Reference-aware
+reclamation and complete native/platform acceptance remain open.
 
 ## Recovery in the terminal panel
 
@@ -433,8 +432,24 @@ Select a journal with Up/Down, then Enter to discover its retained requests.
 Recovery preserves the composer, attachments and conversation. Replies from an old
 Session, Location or UI generation are ignored. Missing legacy proof never enables
 confirmation, and failed request discovery cannot license a fresh attempt.
-Preparation cancellation still uses the existing preparation API; its typed panel
-and the remaining managed Git/cleanup/platform acceptance work are unfinished.
+Press **P** in recovery to inspect pre-effect preparations, including committed
+cancellations. Select a candidate and press Enter: the panel first discovers an
+existing cancellation receipt; otherwise it requests a fresh pre-effect review.
+Only a matching current review offers Enter to cancel. The panel retains the
+request identity before sending confirmation. After an ambiguous reply, **R**
+looks up that same request; Enter cannot repeat cancellation. **A** explicitly
+reconciles a committed receipt's native metadata. **J** returns to journals.
+A receipt alone does not establish observed native acknowledgement. Preparation
+cancellation preserves independent restore, process and checkout uncertainty.
+
+The panel uses the opt-in read
+`GET /api/v1/sessions/{id}/rewind/preparations?include_cancelled=true` and exact
+receipt discovery at `/rewind/preparations/{activity_id}/receipt`. Default listing
+continues to return pending candidates. History is scoped to the current Session
+creation; discovery validates the committed receipt pair and does not touch
+source files or perform native reconciliation. An absent receipt grants no
+cancellation authority: native proof must still pass review and confirmation.
+Managed Git, cleanup and complete crash/platform acceptance remain unfinished.
 
 `GET /api/v1/sessions/{id}/rewind/recovery/requests?journal_id=restore_example`
 provides the read-only discovery used by the panel. It requires an exact journal,

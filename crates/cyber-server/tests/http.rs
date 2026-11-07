@@ -1206,6 +1206,20 @@ fn openapi_document_is_current() {
     );
 }
 
+#[test]
+fn preparation_discovery_schema_requires_the_nullable_data_field() {
+    let document = http::openapi::document("1");
+    let schema = &document["components"]["schemas"]["PreparationReceiptData"];
+    assert_eq!(schema["required"], json!(["data"]));
+    assert!(
+        schema["properties"]["data"]["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|variant| variant["type"] == "null")
+    );
+}
+
 #[tokio::test]
 async fn websocket_json_rpc_calls_operations_and_streams_events() {
     use futures::{SinkExt, StreamExt};

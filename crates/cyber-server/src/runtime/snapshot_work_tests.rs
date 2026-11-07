@@ -1253,6 +1253,49 @@ async fn cancelling_an_unstarted_resolution_keeps_its_original_failed_restore_fe
         )
         .await
         .unwrap();
+    assert!(
+        runtime
+            .snapshot_preparations(&session)
+            .await
+            .unwrap()
+            .iter()
+            .all(|candidate| candidate.activity_id != id)
+    );
+    let history = runtime
+        .snapshot_preparations_with_history(&session, true)
+        .await
+        .unwrap();
+    assert!(
+        history
+            .iter()
+            .any(|candidate| candidate.activity_id == id && candidate.status == "settled")
+    );
+    let receipt = runtime
+        .snapshot_preparation_receipt(&session, &id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.request_id, "cancel-resolution");
+    assert_eq!(
+        runtime
+            .snapshot_preparation_lookup(&session, &id, &receipt.request_id)
+            .await
+            .unwrap(),
+        Some(receipt)
+    );
+    assert!(
+        runtime
+            .snapshot_preparation_receipt(&session, "op_missing")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        runtime
+            .snapshot_preparation_receipt("ses_foreign", &id)
+            .await
+            .is_err()
+    );
     let discovered = runtime
         .snapshot_recovery_requests(&session, &original.binding.journal_id)
         .await

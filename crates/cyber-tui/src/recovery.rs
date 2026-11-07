@@ -12,6 +12,8 @@ use cyber_server::runtime::{
 };
 #[path = "recovery_client.rs"]
 mod client;
+#[path = "preparation_recovery.rs"]
+mod preparation;
 pub use client::perform;
 #[path = "recovery_view.rs"]
 mod view;
@@ -21,6 +23,7 @@ pub use view::lines;
 pub enum Phase {
     #[default]
     Journals,
+    Preparation,
     Requests,
     Review,
     Outcome,
@@ -29,6 +32,7 @@ pub enum Phase {
 pub struct View {
     pub phase: Phase,
     pub busy: bool,
+    pub preparation: preparation::View,
     pub discovered: bool,
     pub journals: Vec<SnapshotRecovery>,
     pub requests: Vec<Confirmation>,
@@ -40,6 +44,7 @@ pub struct View {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    Preparation(preparation::Command),
     List,
     Discover(String),
     Review(Selection),
@@ -49,6 +54,7 @@ pub enum Command {
 }
 #[derive(Debug, Clone)]
 pub enum Reply {
+    Preparation(Box<preparation::Reply>),
     Journals(Vec<SnapshotRecovery>),
     Requests(Vec<Confirmation>),
     Review(Box<Review>),
@@ -63,7 +69,7 @@ impl App {
         self.rewind.scroll = 0;
         self.recovery_request(Command::List)
     }
-    fn recovery_request(&mut self, command: Command) -> Vec<Action> {
+    pub(crate) fn recovery_request(&mut self, command: Command) -> Vec<Action> {
         match &command {
             Command::Discover(_) => self.rewind.recovery.discovered = false,
             Command::Review(_) => self.rewind.recovery.review = None,
@@ -92,7 +98,11 @@ impl App {
         if self.rewind.recovery.busy {
             return vec![];
         }
+        if key == KeyCode::Char('p') {
+            return self.preparation_request(preparation::Command::List);
+        }
         match self.rewind.recovery.phase {
+            Phase::Preparation => self.preparation_key(key),
             Phase::Journals => self.recovery_journal_key(key),
             Phase::Requests => self.recovery_requests_key(key),
             Phase::Review => self.recovery_review_key(key),
@@ -258,6 +268,12 @@ pub(crate) fn apply(
     request: &rewind::Request,
     result: Result<rewind::Reply, String>,
 ) -> Vec<Action> {
+    if matches!(
+        request.command,
+        rewind::Command::Recovery(Command::Preparation(_))
+    ) {
+        return preparation::apply(app, request, result);
+    }
     app.rewind.recovery.busy = false;
     match result {
         Err(error) => {

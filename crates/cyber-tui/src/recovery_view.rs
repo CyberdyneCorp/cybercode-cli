@@ -5,6 +5,9 @@ use ratatui::text::Line;
 
 pub fn lines(app: &App) -> Vec<Line<'static>> {
     let view = &app.rewind.recovery;
+    if view.phase == Phase::Preparation {
+        return super::preparation::lines(app);
+    }
     let mut lines = vec![
         Line::from("SNAPSHOT RECOVERY · composer and conversation stay unchanged"),
         Line::from("Esc closes · PgUp/PgDn scroll · external effects remain retained"),
@@ -21,6 +24,7 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
         )));
     }
     match view.phase {
+        Phase::Preparation => unreachable!(),
         Phase::Journals => journals(view, &mut lines),
         Phase::Requests => requests(view, &mut lines),
         Phase::Review => review(view, &mut lines),
@@ -30,10 +34,12 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
 }
 fn journals(view: &View, lines: &mut Vec<Line<'static>>) {
     lines.push(Line::from(
-        "↑/↓ select journal · Enter discovers retained requests · R reloads",
+        "↑/↓ select journal · Enter discovers retained requests · R reloads · P preparations",
     ));
     if view.journals.is_empty() {
-        lines.push(Line::from("No retained journals. Pre-effect preparations may still need their preparation API; no fence is cleared."));
+        lines.push(Line::from(
+            "No retained journals. P opens preparation recovery; no fence is cleared.",
+        ));
     }
     for (index, journal) in view
         .journals

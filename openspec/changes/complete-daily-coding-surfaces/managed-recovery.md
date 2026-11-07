@@ -774,3 +774,16 @@ metadata through the existing route. Replies SHALL match the selected Session,
 activity and lifetime, and lookup SHALL NOT imply observed native acknowledgement.
 No missing journal, historical lifetime or completed filesystem work SHALL be
 promoted into cancellation authority by these clients.
+
+### Preparation recovery in a fresh terminal
+
+The terminal recovery panel SHALL expose preparation review/cancellation through
+its existing pre-effect protocol. An opt-in candidate history SHALL include exact
+committed cancellations for the current Session creation; default candidate listing
+SHALL remain unchanged. Exact activity receipt discovery SHALL validate the existing
+committed pair and SHALL NOT read source files or publish native acknowledgement.
+The panel SHALL discover an existing receipt before reviewing another cancellation,
+retain a request ID before confirmation, use lookup after reply loss, and keep
+native reconciliation explicit. Stale/foreign replies and missing current proof
+SHALL NOT enable cancellation; closing/navigation SHALL preserve drafts, attachments
+and all independent uncertainty.

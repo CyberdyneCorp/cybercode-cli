@@ -112,3 +112,13 @@ test("snapshot recovery request discovery is a scoped read without acknowledgeme
   assert.equal(calls[0]!.url.searchParams.get("journal_id"), request.journal_id);
   assert.ok(!calls[0]!.body);
 });
+
+test("preparation history and receipt discovery are opt-in reads without cancellation replay", async () => {
+  const { client, calls } = mockClient(() => json(200, { data: null }));
+  await client.request("v1.session.snapshotPreparations", { path: { sessionID: "ses_owner" }, query: { include_cancelled: true } });
+  const absent: Awaited<ReturnType<typeof client.session.snapshotPreparationReceipt>> = null;
+  assert.equal(await client.session.snapshotPreparationReceipt("ses_owner", "op_one"), absent);
+  assert.deepEqual(calls.map(call => call.method), ["GET", "GET"]);
+  assert.equal(calls[0]!.url.searchParams.get("include_cancelled"), "true");
+  assert.equal(calls[1]!.url.pathname, "/api/v1/sessions/ses_owner/rewind/preparations/op_one/receipt");
+});

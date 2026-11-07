@@ -4,7 +4,7 @@ use cyber_client::Client;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-fn segment(value: &str) -> String {
+pub(super) fn segment(value: &str) -> String {
     value
         .bytes()
         .map(|byte| {
@@ -16,7 +16,7 @@ fn segment(value: &str) -> String {
         })
         .collect()
 }
-fn data<T: DeserializeOwned>(reply: Value) -> Result<T, String> {
+pub(super) fn data<T: DeserializeOwned>(reply: Value) -> Result<T, String> {
     serde_json::from_value(reply["data"].clone())
         .map_err(|error| format!("Invalid recovery reply: {error}"))
 }
@@ -36,6 +36,11 @@ pub async fn perform(
     }
     let base = format!("/sessions/{}/rewind/recovery", segment(&request.session));
     match command {
+        Command::Preparation(command) => {
+            super::preparation::client::perform(client, request, command)
+                .await
+                .map(|reply| Reply::Preparation(Box::new(reply)))
+        }
         Command::List => {
             let journals: Vec<cyber_server::runtime::SnapshotRecovery> =
                 data(client.get(&base).await.map_err(|error| error.to_string())?)?;
