@@ -57,11 +57,15 @@ The provider catalog is the Location-scoped registry of LLM providers and models
 - **THEN** the provider is `openrouter`, the model is `meta/llama-4`, and the variant is `high`
 
 ### Requirement: Availability
-(P0) The system SHALL treat a provider as available when it is not disabled, is allowed by org policy, and has a resolvable credential (or requires none), and a model as available when it is enabled, its status is not `deprecated`, and its provider is available. Models with status `alpha` SHALL be hidden unless `CYBER_ENABLE_EXPERIMENTAL_MODELS` is truthy.
+(P0) The system SHALL treat a provider as available when it is not disabled, is allowed by org policy, and has a resolvable credential (or requires none), and a model as available when it is enabled, its status is not `deprecated`, and its provider is available. Models with status `alpha` SHALL be hidden unless `CYBER_ENABLE_EXPERIMENTAL_MODELS` is truthy. Unavailable models SHALL report exactly one reason, checked in this order: `provider_disabled`, `disabled`, `denied_by_policy`, `adapter_unsupported` (the provider's protocol has no native adapter in this build; P0 maps `@ai-sdk/openai` to `openai-responses`, `@ai-sdk/anthropic` to `anthropic`, and `@ai-sdk/openai-compatible` and `@openrouter/ai-sdk-provider` to `openai-compatible`), `missing_url`, `missing_credentials`, `deprecated` and `experimental`.
 
 #### Scenario: Provider without credentials
 - **WHEN** `anthropic` has no API key, OAuth credential, or environment variable
 - **THEN** its models are listed as unavailable with reason `missing_credentials`
+
+#### Scenario: Provider without a native adapter
+- **WHEN** the catalog lists a provider whose SDK has no P0 adapter, such as `@ai-sdk/google`
+- **THEN** its models are listed as unavailable with reason `adapter_unsupported` until the P1 adapter ships
 
 ### Requirement: Model roles
 (P0) The system SHALL resolve the roles `default`, `small`, `advisor`, `evaluator`, `compaction`, and `title` from `model_roles` config, using the canonical configuration fallback: `default` uses `model`; `small` uses `small_model` then `default`; `title` and `compaction` use `small` then `default`; `evaluator` uses `small` then `default`; an unset `advisor` is disabled. Workflows MAY define named tiers under `workflows.tiers` (for example `fast`, `strong`) that resolve to model references.
@@ -112,7 +116,19 @@ The provider catalog is the Location-scoped registry of LLM providers and models
 - **THEN** the error reason is `ContextOverflow`
 
 ### Requirement: Retry policy
-(P0) The system SHALL retry `RateLimit`, `ProviderInternal`, and `Transport` failures up to 4 times, waiting `retry-after-ms` or `retry-after` when present (capped at 60 seconds) and otherwise using jittered exponential backoff starting at 1 second (factor 2, cap 30 seconds), and SHALL never retry `ContextOverflow`, `Authentication`, `ContentPolicy`, or `InvalidRequest`. Each retry SHALL publish a live `session.retry` event with the attempt number and delay. Automatic request retries SHALL apply only before assistant output or tool dispatch. After partial output or dispatch, the Turn SHALL be settled as interrupted and tool outcomes reconciled before a new Turn; the system SHALL NOT replay the original request as though no work happened.
+(P0) The system SHALL retry `RateLimit`, `ProviderInternal`, and `Transport` failures up to 4 times, waiting `retry-after-ms` or `retry-after` when present (capped at 60 seconds) and otherwise using jittered exponential backoff starting at 1 second (factor 2, cap 30 seconds), and SHALL never retry `ContextOverflow`, `Authentication`, `ContentPolicy`, or `InvalidRequest`. Each retry SHALL publish a live `session.retry` event with the step's `message_id`, the attempt number, the delay, the error and `discarded`. Retries before and after assistant output SHALL share these 4 retries.
+
+A retryable failure after partial output SHALL discard that attempt and send the same request again, with `discarded: true`. Partial output covers text, reasoning, streamed tool-call arguments and complete tool calls of the answer. This replay SHALL apply only before protocol completion and before any tool call of the answer has been dispatched. The idle timeout and in-stream overload errors are such failures. The runtime SHALL NOT dispatch a tool call of an answer while its stream can still be replayed. Calls SHALL dispatch after the stream completes, and starting a call early (`tool-registry` → Eager execution during streaming) SHALL end replay for that answer.
+
+No event of a discarded attempt SHALL be recorded as part of the answer. Reasoning items, text and tool calls SHALL be recorded only when the stream completes or fails for good. A restart, the next request and every client SHALL see only the attempt that ended the step, with reasoning items numbered from 0.
+
+Usage that a discarded attempt reported SHALL be recorded as a failed `usage.recorded.1`, with purpose `turn` and the step's message ID as `call_id`, unless a budget reservation already billed that attempt. It SHALL count toward Session totals and budgets, but not toward the step's own usage or the context meter.
+
+Each attempt SHALL pass the same budget checks and reservation admission as a new request, and no attempt SHALL hold a reservation while another attempt of the same step does. The Turn's `x-codex-turn-state` value SHALL be kept across the replay.
+
+Clients SHALL drop the live text, reasoning and tool input of `message_id` when they receive `discarded: true`.
+
+When retries are exhausted, or a failure after partial output is not retryable, the Turn SHALL be settled as interrupted with the final attempt's partial output. Undispatched calls SHALL be settled as interrupted, and tool outcomes SHALL be reconciled before a new Turn. The system SHALL NOT replay a request after any of its tool calls was dispatched or after protocol completion.
 
 #### Scenario: Retry-after honored
 - **WHEN** a 429 response carries `retry-after: 7`
@@ -130,9 +146,21 @@ The provider catalog is the Location-scoped registry of LLM providers and models
 #### Scenario: Body interruption before protocol completion
 - **WHEN** an HTTP response body fails before protocol completion
 - **THEN** the transport diagnostic identifies the response-stream stage and received body-byte count without adding response content or credentials
-- **AND** failures before assistant output obey the bounded retry policy
-- **AND** partial text, reasoning, tool arguments or completed tool calls prevent automatic replay
-- **AND** completed tool outcomes and interrupted undispatched calls remain settled across restart and explicit continuation
+- **AND** failures before assistant output are retried within the bounded retry policy
+- **AND** after partial text, reasoning, tool arguments or completed but undispatched tool calls, the attempt is discarded and the same request is replayed within the same budget
+- **AND** once the budget is spent, the final attempt's partial output is kept, its undispatched calls are settled as interrupted, and completed tool outcomes stay settled across restart and explicit continuation
+
+#### Scenario: Partial answer replaced by the replay
+- **WHEN** a Turn streams "Here is the first half" and a completed `write` call, and then the connection resets
+- **AND** the replayed request answers "Done." and the same `write` call
+- **THEN** clients receive `session.retry` with `discarded: true` and drop the first half
+- **AND** the recorded step holds only "Done." and one `write` call, before and after a restart
+- **AND** `write` runs once
+
+#### Scenario: Usage of a discarded attempt
+- **WHEN** an attempt without a budget reservation reports 1,200 input tokens and then fails mid-answer with `ProviderInternal` `overloaded_error`
+- **THEN** a failed `usage.recorded.1` with purpose `turn` records the 1,200 input tokens and their cost
+- **AND** the step's `session.step.ended.1` usage and the context meter hold only the replayed attempt's usage
 
 ### Requirement: Prompt caching
 (P0) The system SHALL keep the system prompt baseline and tool definitions byte-stable within a Context Epoch, place provider cache breakpoints after them where the adapter supports explicit caching, and send a cache key derived from the Session ID where the adapter supports keyed caching (for example OpenAI `prompt_cache_key`). `cache: "none"` on a request SHALL disable caching hints.

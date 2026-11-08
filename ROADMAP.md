@@ -87,7 +87,7 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 
 **Sound alerts (`tui`, P1): Status: implemented** (change [`add-sound-alerts`](openspec/changes/add-sound-alerts/proposal.md); the check on real hardware remains). Six distinct alert sounds: input needed, done, error, workflow completed, workflow failed, and message. They play while the terminal is unfocused. There are four packs synthesized in code (`cyber`, `soft`, `retro` and `bell`), played through the OS player (`afplay`, `pw-play`/`paplay`/`aplay`, PowerShell), with a terminal-bell fallback over SSH or when no player is found. `/sounds` picks the pack and volume, toggles events and previews each sound. It also closes the gap where a permission or question request raised no attention notification. No native audio dependency.
 
-**Tool output redaction (`tool-registry`, `builtin-tools`, `configuration`, P1 security): Status: implemented** (change [`add-tool-output-redaction`](openspec/changes/add-tool-output-redaction/proposal.md)). Secrets in tool results no longer reach the model provider. Every result is redacted before truncation: built-in tools, MCP, browser and plugin tools, subagent results, and Job and workflow handbacks.
+**Tool output redaction (`tool-registry`, `builtin-tools`, `configuration`, P1 security): Status: implemented** (change [`add-tool-output-redaction`](openspec/changes/archive/2026-11-08-add-tool-output-redaction/proposal.md)). Secrets in tool results no longer reach the model provider. Every result is redacted before truncation: built-in tools, MCP, browser and plugin tools, subagent results, and Job and workflow handbacks.
 - Each secret becomes `[REDACTED:<kind>]`. Detection covers provider credential formats, the exact values of secret-named environment variables, provider keys and MCP secrets, and secret-looking assignments. It is never based on entropy.
 - The stored `session.tool.settled` output is the redacted text, so clients never show more than the model saw. Raw overflow files and Job logs stay local.
 - `write`, `edit`, `apply_patch` and shell input refuse markers.
@@ -95,13 +95,13 @@ The [current inventory](docs/implementation/spec-doc-reconciliation.md) contains
 - `redactions: {count, kinds}` reaches the TUI, dashboard, `exec` and SDK.
 - Fragments without a recognizable shape and tool input remain out of scope.
 
-**Usage limit waits (`session-runtime`, `configuration`, `exec-mode`, `tui`, `web-client`, P1; `goals`, `loops-scheduling`, `workflows`, P2): Status: implemented** (change [`add-usage-limit-wait`](openspec/changes/add-usage-limit-wait/proposal.md)). An unattended run (`cyber exec`, a Goal, a loop iteration, a workflow agent, a teammate, or their subagents) that hits a subscription usage limit with a known reset waits for it and retries the Turn instead of failing: within `usage_limit.max_wait` (default 6 h), 10 s after the reset plus per-Session jitter, as one new attempt from the same history. The wait is durable (`session.usage_limit.waiting|resumed|abandoned.1`), cancelled by the normal interrupt, resumed after a restart for top-level Sessions and ended cleanly for owned ones; wall deadlines (Session, run, Goal and loop `max_wall_seconds`, `exec --timeout`) win over waiting. `exec` reports `usage_limit` stream-json lines, the TUI offers `/resume-at-reset` and a footer badge, and the dashboard shows the wait. The model fallback chain, once implemented, runs first.
+**Usage limit waits (`session-runtime`, `configuration`, `exec-mode`, `tui`, `web-client`, P1; `goals`, `loops-scheduling`, `workflows`, P2): Status: implemented** (change [`add-usage-limit-wait`](openspec/changes/archive/2026-11-08-add-usage-limit-wait/proposal.md)). An unattended run (`cyber exec`, a Goal, a loop iteration, a workflow agent, a teammate, or their subagents) that hits a subscription usage limit with a known reset waits for it and retries the Turn instead of failing: within `usage_limit.max_wait` (default 6 h), 10 s after the reset plus per-Session jitter, as one new attempt from the same history. The wait is durable (`session.usage_limit.waiting|resumed|abandoned.1`), cancelled by the normal interrupt, resumed after a restart for top-level Sessions and ended cleanly for owned ones; wall deadlines (Session, run, Goal and loop `max_wall_seconds`, `exec --timeout`) win over waiting. `exec` reports `usage_limit` stream-json lines, the TUI offers `/resume-at-reset` and a footer badge, and the dashboard shows the wait. The model fallback chain, once implemented, runs first.
 
 **Daily coding (P1), in progress:** issue [#93](https://github.com/CyberdyneCorp/cybercode-cli/issues/93) is the current priority. [Reviewed rewind](docs/rewind.md) provides typed CLI previews and explicit confirmation, fresh snapshot/Session revalidation and branch preservation, plus the TUI menu, idle Esc-Esc and staged `/undo`/`/redo` with guarded composer restoration. A private BLAKE3 file-copy backend now supports admitted Linux/macOS non-Git Locations, with retained restore intents, preimages and read-only owner inspection. Managed recovery resolution, journal reclamation, legacy Git exclusion-history limits, broader native acceptance, path rules/context, root structured output and JSONL input remain unfinished. The retry-count contract is reconciled without claiming structured-output implementation.
 
 **Binary hex editor (P1), in progress:** [`add-binary-hex-editor`](openspec/changes/add-binary-hex-editor/proposal.md) now provides the [live binary workspace](docs/binary-editor.md): paged hex/ASCII inspection, literal search, exact goto, bookmarks, LE/BE interpretation and scoped owner API/SDK access. The user prioritized issue #94 on 2026-11-01 ahead of the unfinished plugins/hooks and daily-coding work. The native core and owner API/SDK now provide durable staged patches, draft undo/redo, byte review and explicit recovery on admitted Linux/macOS workspaces. The terminal now stages edits with draft undo/redo and explicit reviewed save/Restore Last Save through the same owner API. Acknowledged saves feed the native FileChanged producer. Authorized Sessions can review the shared saved-version catalog and Session diffs include binary references. The model-facing `binary` tool supports bounded inspect/read/search and expected-digest patches through separate invocation drafts and the retained native save engine. Model-operation discovery/receipt reconciliation stays separate from editable manual handles. Checkpoint/retention/rewind adapters and remaining acceptance are still open; this is not full editor acceptance.
 
-**Untrusted-content defense (`untrusted-content`, `permissions-modes`, `system-context`, P1): Status: implemented** (change [`add-untrusted-content-defense`](openspec/changes/add-untrusted-content-defense/proposal.md)). It carries the `workspace-trust` provenance rule through every tool that returns third-party content. `webfetch`, `websearch`, MCP tool results, browser pages and MCP resources are returned in one escape-safe `<untrusted_content>` frame that replaces the MCP-resource frame. Hidden characters become visible markers, and a deterministic detector flags instruction-like text with a notice in the TUI, `exec` and the dashboard, without dropping content. After a flagged result, risky actions (network egress, writes outside the Location, classifier-allowed commands, secret reads) ask until the next user prompt, or are denied with no user attached; `bypass` shows the notice or refuses when configured. The base prompts cover the frame (version 3), and a labeled fixture set gates recall and false positives, with scripted end-to-end scenarios for secret reads, permission widening and provider redirection. The TUI and dashboard state each notice's consequence from the Location's effective `taint`/`bypass` settings (task 5.3). What remains: acceptance by hand on the real binary.
+**Untrusted-content defense (`untrusted-content`, `permissions-modes`, `system-context`, P1): Status: implemented** (change [`add-untrusted-content-defense`](openspec/changes/archive/2026-11-08-add-untrusted-content-defense/proposal.md)). It carries the `workspace-trust` provenance rule through every tool that returns third-party content. `webfetch`, `websearch`, MCP tool results, browser pages and MCP resources are returned in one escape-safe `<untrusted_content>` frame that replaces the MCP-resource frame. Hidden characters become visible markers, and a deterministic detector flags instruction-like text with a notice in the TUI, `exec` and the dashboard, without dropping content. After a flagged result, risky actions (network egress, writes outside the Location, classifier-allowed commands, secret reads) ask until the next user prompt, or are denied with no user attached; `bypass` shows the notice or refuses when configured. The base prompts cover the frame (version 3), and a labeled fixture set gates recall and false positives, with scripted end-to-end scenarios for secret reads, permission widening and provider redirection. The TUI and dashboard state each notice's consequence from the Location's effective `taint`/`bypass` settings (task 5.3). What remains: acceptance by hand on the real binary.
 
 **Proposed repository map (`code-intelligence`, `system-context`, `provider-catalog`, P1):** [`add-repository-map`](openspec/changes/add-repository-map/proposal.md) adds a ranked overview of the repository's files and symbols. Symbols come from tree-sitter tag queries, ranked by PageRank over references and personalised by the Session's recent files. The map is fitted to a token budget set by the model profile, offered as a read-only `repo_map` tool, and optionally included as an Epoch-pinned `core/repo-map` Context Source in trusted checkouts. Pinning means it never breaks the cached prompt prefix. The index is a local cache shared across worktrees; inspection is through `cyber lsp map` and `/map`. Semantic code search is deferred. Specification only; the budget field depends on archiving `improve-model-protocol-fidelity`.
 
@@ -205,7 +205,7 @@ Local use never depends on CyberdyneAuth. Self-hosters can point `account.issuer
 
 ## Requirement inventory
 
-The table counts requirements in `openspec/specs` by phase tag (53 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
+The table counts requirements in `openspec/specs` by phase tag (54 capabilities, 0 untagged). It is generated from the first phase tag of each requirement; use `python3 scripts/spec_inventory.py` to refresh it. Later-phase extensions inside a requirement do not add another count.
 
 The editor deferral is already reflected in canonical phase tags: 14 editor requirements are P3 and one is P4. Its change directory remains open for archival; it does not imply another pending count shift. Counts include synchronized delivery contracts, not accepted features.
 
@@ -215,7 +215,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `agents-subagents` | 8 | 24 |  | 1 |  | 33 |
 | `background-tasks` |  | 15 |  |  |  | 15 |
 | `browser-verification` |  | 2 |  |  |  | 2 |
-| `builtin-tools` | 16 | 4 | 1 |  |  | 21 |
+| `builtin-tools` | 16 | 5 | 1 |  |  | 22 |
 | `channels` |  |  |  | 16 |  | 16 |
 | `cli-commands` | 18 | 3 | 2 | 3 |  | 26 |
 | `client-sdk` | 14 | 1 | 2 | 1 |  | 18 |
@@ -223,11 +223,11 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `compaction` | 15 | 3 | 1 |  |  | 19 |
 | `compat-import` | 1 | 19 | 1 |  |  | 21 |
 | `computer-use` |  |  | 4 |  |  | 4 |
-| `configuration` | 18 | 4 |  |  |  | 22 |
+| `configuration` | 18 | 5 |  |  |  | 23 |
 | `cross-session-messaging` |  | 21 | 5 | 2 |  | 28 |
 | `cyber-account` |  |  |  | 18 |  | 18 |
 | `editor-integration` |  |  |  | 14 | 1 | 15 |
-| `exec-mode` | 11 | 6 | 2 | 1 |  | 20 |
+| `exec-mode` | 11 | 7 | 2 | 1 |  | 21 |
 | `goals` |  |  | 22 |  |  | 22 |
 | `harness-evaluation` | 7 |  | 1 |  |  | 8 |
 | `hooks` |  | 20 | 2 |  |  | 22 |
@@ -239,7 +239,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `memory` |  | 13 |  | 1 |  | 14 |
 | `observability-costs` | 8 | 17 | 2 | 1 |  | 28 |
 | `org-policy` |  |  |  | 15 |  | 15 |
-| `permissions-modes` | 15 | 7 |  |  |  | 22 |
+| `permissions-modes` | 15 | 11 |  |  |  | 26 |
 | `plugins-marketplace` |  | 14 | 2 |  | 6 | 22 |
 | `project-collaboration` |  |  |  | 16 |  | 16 |
 | `provider-catalog` | 18 | 6 | 2 |  |  | 26 |
@@ -254,17 +254,18 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `skills-commands` | 14 | 5 | 1 |  |  | 20 |
 | `snapshots-checkpoints` | 12 | 3 | 1 |  |  | 16 |
 | `storage-events` | 18 | 2 |  | 2 |  | 22 |
-| `system-context` | 14 | 5 | 1 |  |  | 20 |
-| `tool-registry` | 15 | 4 |  |  |  | 19 |
-| `tui` | 21 | 43 | 5 | 1 | 1 | 71 |
+| `system-context` | 14 | 7 | 1 |  |  | 22 |
+| `tool-registry` | 15 | 8 |  |  |  | 23 |
+| `tui` | 21 | 44 | 5 | 1 | 1 | 72 |
+| `untrusted-content` |  | 6 |  |  |  | 6 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
 | `verified-integrations` |  |  | 4 |  |  | 4 |
 | `verified-workflows` |  |  | 5 |  |  | 5 |
-| `web-client` |  | 6 |  | 1 | 1 | 8 |
+| `web-client` |  | 7 |  | 1 | 1 | 9 |
 | `workflows` |  |  | 36 | 2 | 1 | 39 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 12 | 4 |  |  | 16 |
-| **Total** | **343** | **349** | **143** | **180** | **15** | **1030** |
+| **Total** | **343** | **370** | **143** | **180** | **15** | **1051** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.

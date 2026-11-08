@@ -553,11 +553,15 @@ The system SHALL copy selections with OSC 52 when the native clipboard is unavai
 - **THEN** activity is described in one sentence and no heatmap grid is printed
 
 ### Requirement: Update prompt
-(P0) The system SHALL check for updates at most once per 24 hours, unless `autoupdate` is `false` or `CYBER_DISABLE_AUTOUPDATE` is set. When a newer version exists, it SHALL show a non-blocking toast `cyber vX.Y.Z available — /upgrade`. It SHALL never restart a running Session to apply an update.
+(P0) The TUI SHALL show the server's update check (`installation-upgrade` → Background update policy), which runs at most once per 24 hours after the first check, unless `autoupdate` is `false` or `CYBER_DISABLE_AUTOUPDATE` is set. When a newer version exists, it SHALL show a non-blocking toast `cyber X.Y.Z is available — run "cyber upgrade"`, from `installation.update_available.1` or, when it attaches after the check, from `GET /api/v1/service/update`. After a silent upgrade (`installation.updated.1`) it SHALL show `cyber updated to X.Y.Z; restart cyber to use it`. It SHALL never restart a running Session to apply an update.
 
 #### Scenario: Update notice during a run
 - **WHEN** an update is found while a Drain is running
 - **THEN** the toast appears and the Drain continues uninterrupted
+
+#### Scenario: Attaching after the check
+- **WHEN** the server found 1.5.0 before the TUI attached
+- **THEN** the TUI shows the toast once on start, read from `GET /api/v1/service/update`
 
 ### Requirement: Remote control indicator and pairing
 (P3) The system SHALL show a `⇄ remote` footer indicator, with the count of connected Devices, while the Session is exposed through the Relay. `/remote` SHALL toggle exposure, as defined in `remote-control`. When pairing a new Device it SHALL render a QR code and a short pairing code in the terminal. Messages sent from a remote Device SHALL appear in the transcript labelled with the Device name.
@@ -1436,3 +1440,10 @@ Any key press, a change of the open panel, and a new pending request SHALL disar
 #### Scenario: Nothing to resume
 - **WHEN** the user runs `/resume-at-reset` after a Turn that ended normally
 - **THEN** a toast shows the server's refusal and nothing is scheduled
+
+### Requirement: Redaction notice on tool cards
+(P1) A tool card whose settlement hid secrets SHALL show one line under its header, `⊘ <n> secret(s) hidden from the model`, in the warning color (`tool-registry` → Redaction visibility). The output SHALL show the markers as they are.
+
+#### Scenario: Two secrets hidden
+- **WHEN** a settled `bash` call has `redactions.count: 2`
+- **THEN** its card shows `⊘ 2 secrets hidden from the model`
