@@ -245,7 +245,7 @@ async fn disposed_binary_request_retains_worker_ownership_until_actual_exit() {
         .unwrap()
         .unwrap();
     assert_eq!(paths.available_permits(), 1);
-    assert!(runtime.inner.activities.lock().unwrap().is_empty());
+    activities_drained(&runtime).await;
 }
 
 #[tokio::test]
@@ -377,7 +377,7 @@ async fn unwound_binary_worker_does_not_claim_file_success_or_poison_native_proc
             .location_uncertain
             .load(std::sync::atomic::Ordering::SeqCst)
     );
-    assert!(runtime.inner.activities.lock().unwrap().is_empty());
+    activities_drained(&runtime).await;
     runtime.shutdown().await;
 }
 
@@ -542,4 +542,18 @@ async fn recovery_requires_the_configured_exclusive_document_and_leaves_generic_
     assert_eq!(std::fs::read(owner.root.join("bytes")).unwrap(), [0, 255]);
     drop((generic, binary));
     runtime.shutdown().await;
+}
+
+/// The worker returns its path permit before its activity scope drops and deregisters
+/// on the worker's own thread, so the registry empties shortly after; wait for that
+/// rather than read it once.
+async fn activities_drained(runtime: &Runtime) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !runtime.inner.activities.lock().unwrap().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "an activity outlived its worker"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }
