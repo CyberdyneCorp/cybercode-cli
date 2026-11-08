@@ -2393,6 +2393,19 @@ impl App {
                 self.toast(crate::usage_wait::error_notice(data, text));
                 vec![Action::Refresh]
             }
+            k if k.starts_with("session.model.fallback.") => {
+                let text = |key: &str| data[key].as_str().unwrap_or_default().to_owned();
+                let notice = self.trf(
+                    "{from} failed ({kind}); continuing on {to}",
+                    &[
+                        ("from", &text("from")),
+                        ("kind", &text("kind")),
+                        ("to", &text("to")),
+                    ],
+                );
+                self.toast(notice);
+                vec![Action::Refresh]
+            }
             k if k.starts_with("session.usage_limit.") => {
                 self.toast(crate::usage_wait::wait_notice(k, data));
                 vec![Action::Refresh]

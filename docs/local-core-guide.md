@@ -76,7 +76,7 @@ Known error codes from HTTP bodies and in-stream errors map onto the usual reaso
 | Code | Reason | What you see |
 |---|---|---|
 | `context_length_exceeded` | `ContextOverflow` | the overflow path (compaction, then the error) |
-| `insufficient_quota`, `credit_balance_exhausted`, `*_spend_limit_exceeded` | `QuotaExceeded` | fallback models are tried |
+| `insufficient_quota`, `credit_balance_exhausted`, `*_spend_limit_exceeded` | `QuotaExceeded` | [fallback models](#model-fallback) are tried |
 | `usage_limit_reached` (ChatGPT plan) | `QuotaExceeded` | an unattended run [waits for the reset](#usage-limit-waits); otherwise `usage limit reached; resets at <local time>` in the TUI status and in `exec` errors, after any fallback |
 | `usage_not_included` | `Authentication` | `plan does not include this model` |
 | `server_is_overloaded`, `slow_down`, `policy_capacity_unavailable` | `ProviderInternal` | retried |
@@ -84,6 +84,26 @@ Known error codes from HTTP bodies and in-stream errors map onto the usual reaso
 | `invalid_prompt`, `*_policy` | `ContentPolicy` | not retried |
 
 A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s", capped at 60 seconds, in place of the usual backoff. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
+
+### Model fallback
+
+List backup models in `fallback_models`, and a Turn that fails on the Session's model is re-sent on the next one instead of failing:
+
+```jsonc
+// ~/.config/cyber/cyber.jsonc
+{
+  "fallback_models": ["anthropic/claude-sonnet", "openai/gpt-6"],
+  "fallback": { "sticky_minutes": 10 }
+}
+```
+
+- **When:** the request failed before any answer arrived, with an overload or server error (`ProviderInternal`), a rate limit or transport error after the four retries, a quota or plan usage limit (`QuotaExceeded`), or straight away with an `Authentication` error. Errors another model would repeat, such as a context overflow, an invalid request or a content policy refusal, never fall back. A stream that fails after part of the answer arrived is retried as described above, not sent to another model.
+- **Which model:** the next model of the list that resolves (known to the catalog, with credentials). If a fallback fails too, the one after it is tried; when the list is used up, the Turn fails with the last error, and a plan usage limit then [waits for its reset](#usage-limit-waits) in an unattended run.
+- **What is recorded:** each failure stays in the history, followed by `session.model.fallback.1` with `from`, `to`, the error `kind` and `reason`, and `until_ms`. The Session view (`GET /api/v1/sessions/{id}`) reports the active `fallback`. The TUI says `<model> failed (<kind>); continuing on <fallback>` and its footer shows `fallback: <model>` while it lasts.
+- **How long:** the Session stays on the fallback for `fallback.sticky_minutes` (1 to 1440, default 10), then switches back to its own model at the next Turn. Switching model yourself (`/model`, including back to your configured one) ends the fallback at once.
+- **Trust:** `fallback_models` in a project's `cyber.jsonc` only applies once the checkout is trusted, so a cloned repository cannot redirect your requests to another provider. Set it in your global configuration.
+
+Not yet: per-agent and per-workflow-tier `fallback_models`, and org policy on which models a fallback may select (org model policy is planned with Cyber Account).
 
 ### Usage limit waits
 

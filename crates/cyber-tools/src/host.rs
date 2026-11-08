@@ -1069,6 +1069,20 @@ impl ToolHost for BuiltinHost {
         cyber_core::locale::configured(&config)
     }
 
+    /// Through the full resolver when one is attached; a configuration that fails to
+    /// resolve has no chain, so the failure stands.
+    fn fallback(&self, directory: &str) -> cyber_core::model_fallback::FallbackSettings {
+        let location = Path::new(directory);
+        let config = match self.hook_config.get() {
+            Some(config) => match (config.resolve)(location) {
+                Ok(resolved) => resolved.value,
+                Err(_) => return Default::default(),
+            },
+            None => self.config_for(location),
+        };
+        cyber_core::model_fallback::FallbackSettings::from_config(&config).unwrap_or_default()
+    }
+
     /// A config that fails to load turns `CLAUDE.md` off rather than on: `config_for`'s
     /// `Null` fallback would read as the default `true` and override an opt-out.
     fn claude_compat(&self, directory: &str) -> Option<bool> {

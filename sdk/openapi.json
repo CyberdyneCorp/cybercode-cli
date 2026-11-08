@@ -5494,6 +5494,17 @@
               }
             ],
             "description": "The pending usage limit wait (`session-runtime` → Usage limit wait); null when the\nSession is not waiting for a limit to reset."
+          },
+          "fallback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelFallback"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model fallback in effect (`provider-catalog` → Model fallback chain)."
           }
         },
         "required": [
@@ -5738,6 +5749,45 @@
           "user"
         ],
         "description": "Who planned a wait: the runtime for an unattended Session, or the user's\n`/resume-at-reset`."
+      },
+      "ModelFallback": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The model whose request failed."
+          },
+          "to": {
+            "type": "string",
+            "description": "The model the request is re-sent on."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The error kind, such as `provider_internal` or `quota_exceeded`."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "until_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the Session returns to its configured model."
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "kind",
+          "reason",
+          "started_ms",
+          "until_ms"
+        ],
+        "description": "`session.model.fallback.1`, and the active fallback of the Session view."
       },
       "SetupStatus": {
         "oneOf": [
