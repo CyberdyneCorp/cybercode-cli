@@ -640,3 +640,49 @@ fn the_request_names_the_carrier_unless_nothing_is_replayed() {
     );
     assert_eq!(carrier("corp/deepseek-quiet"), ReasoningCarrier::None);
 }
+
+/// Regression: with no key and no `model`, the newest tool-capable model of a keyless
+/// local endpoint from the catalog (a loopback URL, like LM Studio's) was chosen, and a
+/// first `cyber exec` failed on a connection error instead of saying how to set up.
+#[test]
+fn keyless_local_endpoints_are_not_chosen_unless_configured() {
+    let mut data = data();
+    data["lmstudio"] = json!({ "id": "lmstudio", "npm": "@ai-sdk/openai-compatible",
+        "api": "http://127.0.0.1:1234/v1", "env": [], "models": {
+            "local-new": { "id": "local-new", "tool_call": true, "release_date": "2026-12-01" } } });
+    let build = |config: Value, e: &HashMap<String, String>| {
+        Catalog::build(&BuildInputs {
+            data: &data,
+            config: &config,
+            env: e,
+        })
+    };
+    let fresh = build(json!({}), &env(&[]));
+    assert!(fresh.is_available(&fresh.providers["lmstudio"].models["local-new"]));
+    let error = default_model(&fresh, &json!({}), &[]).unwrap_err();
+    assert!(matches!(error, CatalogError::ModelNotSelected));
+    assert!(error.to_string().contains("OPENAI_API_KEY"), "{error}");
+
+    let keyed = build(json!({}), &env(&[("OPENAI_API_KEY", "k")]));
+    let (chosen, _) = default_model(&keyed, &json!({}), &[]).unwrap();
+    assert_eq!(
+        chosen.to_string(),
+        "openai/gpt-6-mini",
+        "a provider with a key wins"
+    );
+
+    let configured = json!({"providers": {"lmstudio": {}}});
+    let local = build(configured.clone(), &env(&[]));
+    let (chosen, _) = default_model(&local, &configured, &[]).unwrap();
+    assert_eq!(
+        chosen.to_string(),
+        "lmstudio/local-new",
+        "a configured local server is chosen"
+    );
+    let (named, _) = default_model(&fresh, &json!({"model": "lmstudio/local-new"}), &[]).unwrap();
+    assert_eq!(
+        named.to_string(),
+        "lmstudio/local-new",
+        "and so is an explicit model"
+    );
+}

@@ -20,8 +20,16 @@ The first release is in preparation. It will contain:
 - **TUI:** command palette, themes, sidebar, file explorer, binary viewer and editor, rewind, Ctrl+R prompt history search, sound alerts, mouse support, accessibility and `NO_COLOR` modes.
 - **Extensibility:** MCP (stdio and HTTP, OAuth, tool search, resources and prompts), skills and custom commands, hooks, plugins, output styles, memory, code intelligence through LSP, and import of Claude Code, Codex and OpenCode settings.
 - **Orchestration:** subagents with worktree isolation, workflows with verified solve and integration queues, goals, session loops, and messaging between Sessions on one machine and between your own machines (direct peers).
+- **Model fallback:** `fallback_models` re-sends a Turn that failed before any output (overload, rate limit, quota, authentication) on the next model; the Session stays on it for `fallback.sticky_minutes`.
+- **Structured results:** `cyber exec --output-schema <file>` and a per-prompt JSON Schema; the validated object is the result, with up to two corrections.
+- **Driving exec over stdin:** `cyber exec --input-format stream-json` for programs that send several prompts, interrupt and answer permission requests in one run.
+- **Prompt history search:** Ctrl+R in the TUI composer.
 - **Languages:** the TUI in English, Brazilian Portuguese, Spanish and French, with model replies in the chosen language (`language`, `/language`).
 - **Install:** signed release archives for 8 targets, `install.sh`, verified `cyber upgrade` and `cyber uninstall`.
+
+### Fixed
+
+- A first run with no API key no longer picks an unreachable local server from the model catalog and fails with a connection error; it explains how to set up a provider.
 
 ### Experimental (off by default)
 

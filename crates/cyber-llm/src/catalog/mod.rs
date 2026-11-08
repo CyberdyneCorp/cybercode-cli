@@ -46,7 +46,9 @@ pub enum CatalogError {
         variant: String,
         available: String,
     },
-    #[error("ModelNotSelectedError: no available model; connect a provider or configure one")]
+    #[error(
+        "ModelNotSelectedError: no model is available; set an API key such as OPENAI_API_KEY or ANTHROPIC_API_KEY, sign in with `cyber providers login chatgpt` (or `copilot`), or set `model` in cyber.jsonc to a configured provider such as a local server"
+    )]
     ModelNotSelected,
     #[error("catalog source: {0}")]
     Source(String),

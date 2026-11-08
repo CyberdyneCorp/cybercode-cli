@@ -29,7 +29,7 @@ impl ModelSelection {
         };
         if reference.is_empty() {
             return Err(RuntimeError::Invalid(
-                "No model is configured; pass `model` or set an agent/default model in config"
+                "No model is configured: no provider has a key. Set an API key such as OPENAI_API_KEY or ANTHROPIC_API_KEY, sign in with `cyber providers login chatgpt` (or `copilot`), or set `model` in cyber.jsonc (a local server such as Ollama is configured under `providers`); `cyber doctor` shows what is missing"
                     .into(),
             ));
         }

@@ -88,8 +88,11 @@ pub fn tier_role_ref(config: &Value, role: ModelRole) -> Option<String> {
 }
 
 /// The configured default model when available, else the most recently used available
-/// model, else the newest available tool-capable model. Warnings name an unavailable
-/// configured model.
+/// model, else the newest available tool-capable model of a provider with a credential.
+/// A keyless local endpoint from the catalog (a loopback URL such as LM Studio's) is not
+/// picked on its own: nothing shows it is running, and a first run would fail on a
+/// connection error. It is picked once the user configures it under `providers`.
+/// Warnings name an unavailable configured model.
 pub fn default_model(
     catalog: &Catalog,
     config: &Value,
@@ -110,6 +113,7 @@ pub fn default_model(
         .values()
         .flat_map(|p| p.models.values())
         .filter(|m| m.capabilities.tools && catalog.is_available(m))
+        .filter(|m| chosen_provider(catalog, config, &m.provider_id))
         .max_by(|a, b| {
             a.released_at
                 .cmp(&b.released_at)
@@ -126,6 +130,15 @@ pub fn default_model(
         )),
         None => Err(CatalogError::ModelNotSelected),
     }
+}
+
+/// A provider the automatic choice may use: one with a real credential, or one the user
+/// configured.
+fn chosen_provider(catalog: &Catalog, config: &Value, provider: &str) -> bool {
+    let keyless = catalog
+        .credential(provider)
+        .is_some_and(|c| c.source == super::CredentialSource::NotRequired);
+    !keyless || config["providers"].get(provider).is_some()
 }
 
 fn usable(catalog: &Catalog, value: &str) -> Result<ModelRef, CatalogError> {
