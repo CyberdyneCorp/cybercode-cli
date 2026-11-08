@@ -504,7 +504,7 @@ async fn eligible(
         .unwrap_or_else(PoisonError::into_inner)
         .is_some();
     let state = handle.state.lock().await;
-    state.result.returned.is_none()
+    !state.result.blocks_drain()
         && (continue_tools
             || first
             || compaction
@@ -970,9 +970,12 @@ impl Inner {
             _ = cancel.cancelled() => return Ok(TurnEnd::Stopped),
             pre = self.take_snapshot(handle) => pre,
         };
-        let result = self.turn(handle, resolved, cancel, pre.clone()).await;
+        let mut result = self.turn(handle, resolved, cancel, pre.clone()).await;
         if matches!(result, Ok(TurnEnd::SelectionChanged)) {
             return result;
+        }
+        if matches!(result, Ok(TurnEnd::Done)) {
+            result = self.root_result_missing(handle).await;
         }
         tokio::select! {
             biased;
@@ -1099,6 +1102,9 @@ impl Inner {
                 cancel,
             )
             .await?;
+        if let Some(end) = self.root_result_end(handle).await? {
+            return Ok(end);
+        }
         if handle.state.lock().await.result.returned.is_some() {
             return Ok(TurnEnd::Stopped);
         }
@@ -1160,9 +1166,18 @@ impl Inner {
                 ..turn_context(&state, resolved)
             })
         };
-        defs.retain(|def| def.spec.name != "return_result");
-        if !limited && let Some(schema) = &state.result.schema {
-            defs.push(schema.definition());
+        defs.retain(|def| {
+            def.spec.name != super::structured::CHILD_TOOL
+                && def.spec.name != super::structured::ROOT_TOOL
+        });
+        let root = state.result.input.is_some();
+        let finalizer = state
+            .result
+            .schema
+            .as_ref()
+            .filter(|_| !limited && (!root || state.result.root_open()));
+        if let Some(schema) = finalizer {
+            defs.push(schema.definition(root));
         }
         let epoch = state
             .epoch
@@ -1176,6 +1191,12 @@ impl Inner {
                 .unwrap_or_else(|| context::base_prompt(resolved.family)),
             epoch.baseline.clone(),
         ];
+        // Only this request: the epoch's system text stays byte-stable.
+        if finalizer.is_some() && root {
+            request
+                .system
+                .push(super::structured::ROOT_INSTRUCTION.into());
+        }
         request.messages = view::messages(&state, &view::Replay::of(resolved));
         if view::thinking_guard(&mut request, resolved.profile.reasoning_carrier)
             && !handle
@@ -1732,10 +1753,17 @@ impl Inner {
     ) -> Option<(&'static str, &'static str)> {
         let state = handle.state.lock().await;
         if state.result.returned.is_some() {
-            return Some((
-                "Subagent already returned its result",
-                "not dispatched after return_result",
-            ));
+            return Some(if state.result.input.is_some() {
+                (
+                    "A valid structured result was already submitted",
+                    "not dispatched after structured_output",
+                )
+            } else {
+                (
+                    "Subagent already returned its result",
+                    "not dispatched after return_result",
+                )
+            });
         }
         (state.info.directory != turn.directory).then_some((
             "Not run: an earlier call moved the Session to another Location; issue it again if it is still needed",
@@ -1903,7 +1931,8 @@ impl Inner {
         }
         // The registration may have been removed or replaced since it was advertised.
         let current = self.tools.definitions(turn);
-        if def.spec.name != "return_result"
+        if def.spec.name != super::structured::CHILD_TOOL
+            && def.spec.name != super::structured::ROOT_TOOL
             && !current.iter().any(|d| {
                 d.spec.name == def.spec.name
                     && d.registration == def.registration
@@ -1971,12 +2000,16 @@ impl Inner {
     ) -> ToolRun {
         let call_id = invocation.call_id.clone();
         let read = self.read_target(&def, &invocation);
-        if invocation.name == "return_result" {
+        if invocation.name == super::structured::CHILD_TOOL
+            || invocation.name == super::structured::ROOT_TOOL
+        {
             let state = handle.state.lock().await;
-            let outcome = state.result.schema.as_ref().map_or_else(
-                || ToolOutcome::Failed("return_result requires an output schema".into()),
-                |schema| schema.outcome(invocation.input),
-            );
+            let outcome = match &state.result.schema {
+                Some(schema) if invocation.name == state.result.tool() => {
+                    schema.outcome(invocation.input)
+                }
+                _ => ToolOutcome::Failed(format!("{} is not available here", invocation.name)),
+            };
             return ToolRun {
                 call_id,
                 def,
@@ -2921,6 +2954,8 @@ mod queue_head_tests {
             admitted_seq: 0,
             promoted_seq: None,
             untrusted: None,
+            output_schema: None,
+            structured: None,
         }
     }
 

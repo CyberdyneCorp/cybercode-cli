@@ -32,10 +32,10 @@ Task 2.4 evidence now includes real service kill/reload/restage/clear, disabled 
 
 ## 5. Root structured output
 
-- [ ] 5.1 Add validated per-prompt root format admission, bounded schema compilation and durable schema/attempt ownership without changing existing child contracts.
-- [ ] 5.2 Add `structured_output` finalization, two correction retries, budget/interrupt handling and durable successful/error result settlement.
-- [ ] 5.3 Add `--output-schema`, API/SDK result fields and text/JSON/stream rendering; preserve unstructured commands and validate option combinations before admission.
-- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider.
+- [x] 5.1 Add validated per-prompt root format admission, bounded schema compilation and durable schema/attempt ownership without changing existing child contracts.
+- [x] 5.2 Add `structured_output` finalization, two correction retries, budget/interrupt handling and durable successful/error result settlement.
+- [x] 5.3 Add `--output-schema`, API/SDK result fields and text/JSON/stream rendering; preserve unstructured commands and validate option combinations before admission.
+- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider. Done: schema bounds and refusal before admission, malformed and invalid submissions, exhaustion without a fourth request, missing finalizer, a restart between independent queued prompts, retry identity with another schema, and the real binary (`cyber-cli/tests/exec_output_schema.rs`). Open: compaction during an attempt and budget exits.
 
 ## 6. Streaming JSONL input
 
