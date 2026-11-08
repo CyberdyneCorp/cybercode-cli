@@ -672,11 +672,17 @@ fn reviewed_recovery_busy_confirmation_requires_interrupt_ack_and_a_new_review()
         .command(&["exec", "--session", &id, "--format", "json", "GATE"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    // A loaded Windows runner can take well over 10 s to start exec and reach the model.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
     while model.held().is_empty() {
+        if let Some(status) = gated.try_wait().unwrap() {
+            let mut stderr = String::new();
+            std::io::Read::read_to_string(gated.stderr.as_mut().unwrap(), &mut stderr).unwrap();
+            panic!("exec ended before GATE reached the provider ({status}): {stderr}");
+        }
         assert!(
             std::time::Instant::now() < deadline,
             "GATE never reached provider"
