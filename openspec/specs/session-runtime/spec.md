@@ -94,11 +94,15 @@ The session runtime records Sessions and their durable input inbox, then runs ad
 - **THEN** it receives durable events through replay and live deltas from the reconnect point onward
 
 ### Requirement: Eager tool execution
-(P1) The system SHALL durably record each complete tool call and start it while the provider stream continues, when the tool is marked `concurrency_safe` and its permission evaluates to `allow`, await all started calls after the stream closes, and run non-safe calls sequentially in emitted order.
+(P1) The system SHALL start each complete tool call while the provider stream continues, when the tool is marked `concurrency_safe` and its permission evaluates to `allow`. Before starting it, the system SHALL durably record the answer streamed so far, which ends automatic replay of that answer (`provider-catalog` → Retry policy). It SHALL await all started calls after the stream closes, and run non-safe calls sequentially in emitted order.
 
 #### Scenario: Parallel reads during streaming
 - **WHEN** the model emits three `read` calls followed by more text
 - **THEN** all three reads start before the stream finishes
+
+#### Scenario: Started read ends replay
+- **WHEN** a `read` call has started during streaming and the stream then fails with a `Transport` error
+- **THEN** the request is not replayed and the Turn is settled as interrupted with the recorded `read` outcome
 
 ### Requirement: Unknown and stale tool calls
 (P0) The system SHALL settle a call to a tool not advertised in the Turn with `Unknown tool: <name>` and a call whose registration was removed before settlement with `Stale tool call: <name>`, without invoking any handler. A name that matches an advertised tool only after lowercasing SHALL be repaired to that tool.

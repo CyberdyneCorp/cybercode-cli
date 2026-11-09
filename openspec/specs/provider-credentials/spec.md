@@ -27,11 +27,19 @@ Provider credentials are the secrets Cyber Code uses to call LLM providers: API 
 - **THEN** the credential is written to `credentials.json` with mode 0600 and a one-time warning is printed
 
 ### Requirement: Credential precedence
-(P0) The system SHALL resolve a provider's credential in this order, first match wins: explicit `providers.<id>.api.settings.api_key` in config (supporting `{env:VAR}` and `{file:path}` placeholders), the active stored connection (most recently added unless one is marked active), environment variables declared for the provider, and the cloud IAM chain.
+(P0) The system SHALL resolve a provider's credential in this order, first match wins: explicit `providers.<id>.api.settings.api_key` in config (supporting `{env:VAR}` and `{file:path}` placeholders), the active stored connection (most recently added unless one is marked active), environment variables declared for the provider, and the cloud IAM chain. `CYBER_AUTH_CONTENT` takes the place of stored connections for its process. A provider SHALL require no credential when its effective URL is a loopback address (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`) or its config sets `api.settings.auth: "none"`; any other provider without a resolved credential is unavailable with reason `missing_credentials`.
 
 #### Scenario: Stored key beats environment
 - **WHEN** both `OPENAI_API_KEY` and a stored OpenAI key exist and config sets no key
 - **THEN** the stored key is used
+
+#### Scenario: Local server needs no key
+- **WHEN** a provider is configured with `api.url: "http://127.0.0.1:11434/v1"` and no key
+- **THEN** its models are available and requests carry no authorization header
+
+#### Scenario: Remote custom provider without a key
+- **WHEN** a provider is configured with `api.url: "https://llm.corp/v1"`, no key and no `auth: "none"`
+- **THEN** its models are unavailable with reason `missing_credentials`
 
 ### Requirement: Multiple connections per provider
 (P1) The system SHALL allow several labeled connections per provider, list them newest first with the active one marked, and let the user switch the active connection with `cyber providers use <provider> <label>` or `PATCH /api/v1/credentials/{id}`.
@@ -76,11 +84,15 @@ Provider credentials are the secrets Cyber Code uses to call LLM providers: API 
 - **THEN** each entry contains `id`, `provider_id`, `label`, `kind`, `status`, and `created_at` but no key or token material
 
 ### Requirement: Redaction
-(P0) The system SHALL redact credential values from logs, error messages, `cyber debug config`, exported sessions, telemetry, and tool output shown to the model, replacing them with `***`, including values found under keys matching `key|secret|token|password|authorization|cookie|credential`.
+(P0) The system SHALL redact credential values from logs, error messages, `cyber debug config`, exported sessions and telemetry, replacing them with `***`, including values found under keys matching `key|secret|token|password|authorization|cookie|credential`. Tool output shown to the model SHALL instead have each credential value replaced by its `[REDACTED:<kind>]` marker, with resolved provider keys matched as exact values (`tool-registry` → Tool output redaction).
 
 #### Scenario: Debug config output
 - **WHEN** the user runs `cyber debug config` with a key placed inline in config
 - **THEN** the printed value is `***`
+
+#### Scenario: Provider key in tool output
+- **WHEN** a tool prints the configured value of `providers.corp.api_key`
+- **THEN** the model receives `[REDACTED:known_secret]` in its place
 
 ### Requirement: Environment injection for CI
 (P0) The system SHALL accept `CYBER_AUTH_CONTENT` holding a JSON credential map that replaces stored credentials for the process without writing them to disk, ignoring the variable with a warning when the JSON is invalid.

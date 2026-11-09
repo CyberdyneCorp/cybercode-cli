@@ -41,7 +41,7 @@ Session loops (M2.4) implement fixed and self-paced iterations, `schedule_wakeup
 
 ## Agent teams (2026-10-20)
 
-[`implement-agent-teams`](../../openspec/changes/implement-agent-teams/proposal.md) (spec: `agent-teams`, P2; ROADMAP M2.5, teams part) is implemented in sections 1 to 8, each with its production-path test (the App over authenticated TCP in `crates/cyber-app/tests/teams.rs`, the real binary in `crates/cyber-cli/tests/teams_cli.rs`, the TUI against a real server in `crates/cyber-tui/src/screens_team.rs`, plus `crates/cyber-server/tests/teams.rs` and `sdk/typescript/test/teams.test.ts`). Everything is behind the experimental `teams` feature, off by default. It builds on same-server messaging (the resolver's team tier, `Messaging::send`, watches and `xsession_message`).
+[`implement-agent-teams`](../../openspec/changes/archive/2026-11-08-implement-agent-teams/proposal.md) (spec: `agent-teams`, P2; ROADMAP M2.5, teams part) is implemented in sections 1 to 8, each with its production-path test (the App over authenticated TCP in `crates/cyber-app/tests/teams.rs`, the real binary in `crates/cyber-cli/tests/teams_cli.rs`, the TUI against a real server in `crates/cyber-tui/src/screens_team.rs`, plus `crates/cyber-server/tests/teams.rs` and `sdk/typescript/test/teams.test.ts`). Everything is behind the experimental `teams` feature, off by default. It builds on same-server messaging (the resolver's team tier, `Messaging::send`, watches and `xsession_message`).
 
 ### End-to-end acceptance (task 9.1, by hand, macOS)
 

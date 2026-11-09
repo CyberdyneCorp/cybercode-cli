@@ -88,3 +88,10 @@ The web client is a browser UI for Cyber Code with the same surface as the TUI, 
 #### Scenario: Waiting Session in the dashboard
 - **WHEN** the browser attaches to a Session that waits for a usage limit to reset at 02:40
 - **THEN** the conversation shows the notice with the resume time and the Interrupt button is enabled
+
+### Requirement: Redaction badge on tool results
+(P1) The dashboard SHALL show an amber badge `<n> secret(s) hidden from the model` in the summary of a tool call whose settlement hid secrets (`tool-registry` → Redaction visibility), and no badge otherwise.
+
+#### Scenario: One secret hidden
+- **WHEN** a tool call has `redactions.count: 1`
+- **THEN** its summary shows the badge `1 secret hidden from the model`
