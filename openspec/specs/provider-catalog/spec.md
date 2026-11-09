@@ -75,7 +75,11 @@ The provider catalog is the Location-scoped registry of LLM providers and models
 - **THEN** session titles are generated with `openai/gpt-6-mini`
 
 ### Requirement: Default model resolution
-(P0) The system SHALL choose the default model as the configured `model` when available, otherwise the most recently used available model recorded in `~/.local/state/cyber/model.json`, otherwise the newest available model by `released_at`, and SHALL fail with `ModelNotSelectedError` when none is available.
+(P0) The system SHALL choose the default model as the configured `model` when available, otherwise the most recently used available model recorded in `~/.local/state/cyber/model.json`, otherwise the newest available model by `released_at` among providers with a credential or configured under `providers`, and SHALL fail with `ModelNotSelectedError` when none is available. A keyless local endpoint known only from the catalog (a loopback URL such as LM Studio's) SHALL NOT be chosen automatically, since nothing shows it is running; a configured `model`, a recent model or a `providers` entry selects it. The error, and a Session created without a model, SHALL say how to set up: an API key variable, `cyber providers login chatgpt` or `copilot`, or a `model` in `cyber.jsonc`.
+
+#### Scenario: First run without a provider
+- **WHEN** a user with no API key, login or `model` runs `cyber exec "say hi"`
+- **THEN** no local endpoint from the catalog is chosen, and the run exits 2 naming `OPENAI_API_KEY`, `cyber providers login chatgpt` and `model` in `cyber.jsonc`
 
 #### Scenario: Configured model unavailable
 - **WHEN** config sets `model: "anthropic/claude-opus"` but Anthropic has no credentials and the last used model is `openai/gpt-6`
