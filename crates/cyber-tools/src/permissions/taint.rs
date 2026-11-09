@@ -565,7 +565,14 @@ pub(crate) fn read_only_shell(req: &Request) -> bool {
             let Some(words) = words(command, is_powershell(req)) else {
                 return false;
             };
-            let words = command_words(&words);
+            // An environment assignment (`GIT_EXTERNAL_DIFF=…`, `LD_PRELOAD=…`) or a
+            // wrapper (`sudo`, `env`, `xargs`) can make any program run something else.
+            if command_words(&words).len() != words.len() {
+                return false;
+            }
+            if words.iter().any(|word| writes_or_runs(word)) {
+                return false;
+            }
             let Some(name) = words.first().map(|word| program(word)) else {
                 return false;
             };
@@ -575,6 +582,20 @@ pub(crate) fn read_only_shell(req: &Request) -> bool {
                         .get(1)
                         .is_some_and(|sub| READ_ONLY_GIT.contains(&sub.as_str())))
         })
+}
+
+/// Options of the read-only programs that write a file or run a command: git's
+/// `--output`, `--ext-diff` and `--textconv`, and ripgrep's `--pre`.
+fn writes_or_runs(word: &str) -> bool {
+    const OPTIONS: &[&str] = &[
+        "--output",
+        "--ext-diff",
+        "--textconv",
+        "--pre",
+        "--pre-glob",
+    ];
+    let name = word.split_once('=').map_or(word, |(name, _)| name);
+    OPTIONS.contains(&name)
 }
 
 #[cfg(test)]
@@ -803,6 +824,16 @@ mod tests {
             "git commit -m x",
             "python x.py",
             "",
+            // Regression: these run or write something although the program reads.
+            "GIT_EXTERNAL_DIFF=./evil git diff",
+            "LD_PRELOAD=./x.so cat README.md",
+            "sudo cat /etc/shadow",
+            "xargs cat",
+            "git diff --output=pwned",
+            "git log --ext-diff",
+            "git show --textconv HEAD",
+            "rg --pre ./evil foo",
+            "rg --pre=./evil foo",
         ] {
             assert!(!read_only_shell(&request("bash", &[command])), "{command}");
         }

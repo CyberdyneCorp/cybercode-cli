@@ -623,7 +623,19 @@ impl BuiltinHost {
             plugins: skills::PluginSkills::from_config(config),
         });
         found.diagnostics.extend(notes);
+        if !self.checkout_trusted(location) {
+            ignore_untrusted_allowed_tools(&mut found);
+        }
         found
+    }
+
+    /// Whether the Location's checkout configuration is trusted (`workspace-trust`). A host
+    /// without a resolver has no checkout trust: its embedder supplies the configuration
+    /// (the App always attaches one). A configuration that fails to resolve is untrusted.
+    fn checkout_trusted(&self, location: &Path) -> bool {
+        self.hook_config.get().is_none_or(|config| {
+            (config.resolve)(location).is_ok_and(|resolved| resolved.trust.trusted)
+        })
     }
 
     fn websearch_available(&self, location: &Path) -> bool {
@@ -2197,6 +2209,36 @@ impl Ctx<'_> {
         resolve_path(&self.location, &self.host.opts.home, path)
     }
 
+    /// [`Self::resolve`], then every symbolic link followed: the file a file tool reads or
+    /// writes, which its permission, protected-path and outside-workspace checks must see
+    /// (`builtin-tools` → Symbolic links in file tools). A committed `notes.md ->
+    /// ../.git/config` is checked, shown and written as `.git/config`.
+    pub fn resolve_target(&self, path: &str) -> PathBuf {
+        self.relative_to_location(follow_links(&self.resolve(path)))
+    }
+
+    /// [`Self::resolve_target`] for the directories only: the entry itself, which may be a
+    /// link, is what a delete removes.
+    pub fn resolve_entry(&self, path: &str) -> PathBuf {
+        let resolved = self.resolve(path);
+        match (resolved.parent(), resolved.file_name()) {
+            (Some(parent), Some(name)) => {
+                self.relative_to_location(follow_links(parent).join(name))
+            }
+            _ => resolved,
+        }
+    }
+
+    fn relative_to_location(&self, target: PathBuf) -> PathBuf {
+        // A Location reached through a link (`/var` → `/private/var`) keeps its own
+        // spelling, so Location-relative rules and resources still apply inside it.
+        let location = follow_links(&self.location);
+        match target.strip_prefix(&location) {
+            Ok(rest) if location != self.location => self.location.join(rest),
+            _ => target,
+        }
+    }
+
     /// The permission resource for a path: Location-relative inside, absolute outside.
     pub fn resource(&self, path: &Path) -> String {
         path.strip_prefix(&self.location)
@@ -2617,6 +2659,33 @@ fn unattended(mode: Mode) -> String {
     }
 }
 
+/// `allowed-tools` pre-approve tools, so a skill a repository ships (or names through
+/// `skills.paths`) grants nothing until its checkout is trusted (`skills-commands` →
+/// Skill tool permissions). Its `disallowed-tools` still apply.
+pub(crate) fn ignore_untrusted_allowed_tools(found: &mut skills::Discovery) {
+    for skill in found.skills.values_mut() {
+        let repository = matches!(
+            skill.origin,
+            skills::SkillOrigin::Project | skills::SkillOrigin::Config
+        );
+        if !repository || skill.allowed_tools.is_empty() {
+            continue;
+        }
+        skill.allowed_tools.clear();
+        found.diagnostics.push(skills::SkillDiagnostic {
+            path: skill
+                .directory()
+                .map_or_else(|| skill.name.clone(), |d| d.display().to_string()),
+            origin: skill.origin,
+            replaces: None,
+            message: format!(
+                "allowed-tools of skill \"{}\" are ignored until this checkout is trusted (cyber trust)",
+                skill.name
+            ),
+        });
+    }
+}
+
 /// Resolve a tool path against a Location (`~/` expands to home), lexically normalized.
 pub(crate) fn resolve_path(location: &Path, home: &Path, path: &str) -> PathBuf {
     let p = if let Some(rest) = path.strip_prefix("~/") {
@@ -2637,8 +2706,45 @@ const MCP_INSTRUCTIONS_KEY: &str = "core/mcp-instructions";
 const LEGACY_MCP_INSTRUCTIONS_KEY: &str = "mcp/instructions";
 
 /// Canonicalize the longest existing ancestor so symlinks cannot hide an escape.
+/// `path` with every symbolic link in it resolved, including a dangling last link, so a
+/// check sees the file a write or read will actually reach. A chain longer than 40 links
+/// is returned as far as it got; the open then fails on the loop.
+pub(crate) fn follow_links(path: &Path) -> PathBuf {
+    let mut pending: Vec<std::ffi::OsString> = path
+        .components()
+        .rev()
+        .map(|c| c.as_os_str().to_os_string())
+        .collect();
+    let mut out = PathBuf::new();
+    let mut hops = 0;
+    while let Some(part) = pending.pop() {
+        let next = out.join(&part);
+        let link = std::fs::symlink_metadata(&next).is_ok_and(|m| m.file_type().is_symlink());
+        if !link || hops >= 40 {
+            out = crate::bash_analysis::normalize(&next);
+            continue;
+        }
+        hops += 1;
+        let Ok(target) = std::fs::read_link(&next) else {
+            out = next;
+            continue;
+        };
+        // Resolve the target's own components next, then the rest of the path.
+        pending.extend(
+            target
+                .components()
+                .rev()
+                .map(|c| c.as_os_str().to_os_string()),
+        );
+        if target.is_absolute() {
+            out = PathBuf::new();
+        }
+    }
+    out
+}
+
 pub(crate) fn canonical(path: &Path) -> PathBuf {
-    let mut existing = path.to_path_buf();
+    let mut existing = follow_links(path);
     let mut rest = Vec::new();
     while !existing.exists() {
         match (

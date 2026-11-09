@@ -519,6 +519,17 @@ After a classifier block, use `/approve` in the TUI to review the original tool 
 
 Children also retain every effective auto-mode ancestor's gate. Eligible requests use each parent's policy and task context, and all gates must allow before execution. Any configured block or deny fallback prevents effects; independent manual approvals still prompt. Review decisions and usage are recorded on the executing child with the reviewed ancestor's identity.
 
+## What a repository cannot do before you trust it
+
+A cloned repository is untrusted until you approve its checkout (`cyber trust`). Besides holding its providers, hooks, MCP servers and permission widening, Cyber Code also guards against these:
+
+- **Skill grants:** a project skill's `allowed-tools` count only in a trusted checkout. Until then the skill loads but grants nothing, and `cyber skills` says so. A skill that grants tools is part of the checkout's trust digest, so widening its grant later needs approval again. `skills.paths` in a project config waits for trust too.
+- **Symbolic links:** `read`, `write`, `edit`, `apply_patch`, `notebook_edit` and file delivery follow links before any check. A committed `notes.md -> .git/config` is checked as `.git/config` (a protected path), and a dangling link to a file outside the project needs `external_directory` approval. Deleting removes the link itself.
+- **Shell writes:** every output redirection counts as a write (`1>> .git/config`, `2> log`, `&> out`), so protected paths still ask. A command with an environment assignment, a wrapper (`sudo`, `env`, `xargs`) or a writing option (`git diff --output`, `rg --pre`) is never treated as read-only. Choosing "always" for an interpreter, a shell, `find`, `sed` or `awk` approves that exact command, not every use of the program.
+- **Protected paths:** besides `.git/` and Cyber Code's config files, writes to shell and Git startup files (`~/.zshenv`, `~/.bash_profile`, `~/.gitconfig` …), `~/.netrc`, `~/.npmrc`, and Cyber Code's own config, state and data directories (also when `CYBER_HOME` or `XDG_*` move them, but not the managed worktrees in the data directory) always ask. On macOS and Windows the check ignores case.
+
+Provider keys are guarded as well. The downloaded model catalog cannot change where OpenAI and Anthropic keys go, or let another provider read `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Its endpoints are used only over HTTPS, or plain HTTP to a local server. Provider requests never follow redirects, so a key cannot travel to another host. Your own `providers` configuration still decides endpoints.
+
 ## Untrusted content
 
 Pages, search results, MCP and browser output can carry text written to steer the agent. Cyber Code frames that content, flags instruction-like text, and keeps risky actions behind a human for the rest of the run (`untrusted-content`, `permissions-modes`).
