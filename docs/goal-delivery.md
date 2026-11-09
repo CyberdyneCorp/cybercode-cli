@@ -51,11 +51,14 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    on the same loop that handles controls and lease renewal. Retire emitted
    payloads into bounded accounting and use a bounded output owner with explicit
    I/O-failure settlement; test long runs, slow readers and broken pipes.
-4. **Major: last-message publication uses a predictable temporary path.**
-   `write_atomically` truncates `.<name>.tmp` without exclusive creation, allowing
-   concurrent writers or a pre-created symlink to redirect/interfere with the
-   write. Use an exclusively created temporary file beside the destination and
-   test symlink pre-creation, concurrent writers and cleanup after failure.
+4. **Fixed locally: last-message publication used a predictable temporary path.**
+   Publication now uses an exclusively created sibling file, synchronizes it and
+   atomically replaces the destination, with automatic temporary-file cleanup on
+   failure. Three unit regressions cover pre-created temporary/destination links,
+   concurrent complete answers and cleanup after failed publication. All eight
+   real JSONL tests pass, including failed publication preserving the answer while
+   returning aggregate exit 1 and an `end` error. Interrupted/protocol exit codes
+   retain precedence. This does not complete the ownership/backpressure findings.
 
 Verification: three structured-output CLI tests, seven JSONL CLI tests, five
 structured-result server tests and six binary-worker ownership tests pass;

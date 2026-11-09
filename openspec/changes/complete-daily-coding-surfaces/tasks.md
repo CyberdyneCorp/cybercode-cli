@@ -722,3 +722,17 @@ separately preserved first-prompt startup stall. All-target Clippy for
 core/snapshot/server/App/CLI passes with warnings denied. Formatting, whitespace,
 strict OpenSpec (100 items) and lint (zero errors/25 warnings) pass. The complete
 CLI suite was not repeated for this typed-payload extension.
+
+JSONL last-message publication continuation (2026-11-09): exclusively created
+same-directory temporary files replace the predictable `.name.tmp` path, with
+synchronized bytes and cleanup after failed publication. Destination symlinks
+are replaced without writing their targets. Concurrent writers publish one
+complete answer. Publication failure preserves per-input results and produces
+aggregate exit 1 plus an `end` error when the run would otherwise succeed;
+interruption/protocol exit precedence is unchanged. Three unit and all eight
+real JSONL regressions pass; CLI all-target Clippy passes with warnings denied.
+Strict OpenSpec still passes all 100 items, lint zero errors/25 warnings.
+The native workflow now selects these regressions and builds the Linux sandbox
+helper after installing bubblewrap. External results for these edits are pending.
+Task 6.3 remains open for hook events and bounded output ownership/backpressure;
+6.2/6.4 and all parent acceptance obligations remain open.

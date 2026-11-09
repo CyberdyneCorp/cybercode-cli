@@ -10,7 +10,6 @@
 //! process exits once its inputs are answered and the Session is idle.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use cyber_client::{Client, Event};
@@ -571,7 +570,7 @@ impl Driver<'_> {
                 self.emit_result(input);
             }
         }
-        let code = if self.interrupted {
+        let mut code = if self.interrupted {
             EXIT_INTERRUPTED
         } else if self.fatal.is_some() {
             EXIT_PROTOCOL
@@ -583,16 +582,22 @@ impl Driver<'_> {
                 .or(self.run.error.as_ref().map(|_| EXIT_ERROR))
                 .unwrap_or(0)
         };
+        let mut final_error = self.fatal.or(self.run.error.clone());
         if let Some(path) = &self.args.output_last_message
-            && let Err(error) = write_atomically(path, &self.last_text)
+            && let Err(error) = super::last_message::write(path, &self.last_text)
         {
-            self.out.error(&format!("--output-last-message: {error}"));
+            let message = format!("--output-last-message: {error}");
+            self.out.error(&message);
+            final_error.get_or_insert(message);
+            if code == 0 {
+                code = EXIT_ERROR;
+            }
         }
         self.out.stream_line(
             "end",
             json!({
                 "exit_code": code,
-                "error": self.fatal.or(self.run.error.clone()),
+                "error": final_error,
                 "inputs": self.inputs.len(),
                 "usage": { "input": self.run.input_tokens, "output": self.run.output_tokens },
                 "cost_usd": self.run.combined_cost(),
@@ -601,15 +606,4 @@ impl Driver<'_> {
         );
         code
     }
-}
-
-/// Write `text` next to `path` and rename it over, so a reader never sees half a file.
-fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let temporary = path.with_file_name(format!(".{name}.tmp"));
-    std::fs::write(&temporary, text)?;
-    std::fs::rename(&temporary, path)
 }

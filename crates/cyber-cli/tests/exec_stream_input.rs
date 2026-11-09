@@ -248,6 +248,30 @@ fn unavailable_snapshots_do_not_fail_a_successful_jsonl_input() {
 }
 
 #[test]
+fn last_message_publication_failure_fails_the_run_without_losing_the_answer() {
+    let provider = Provider::start(&["text:completed answer"]);
+    let destination = tempfile::tempdir().unwrap();
+    let path = destination.path().display().to_string();
+    let mut run = Driven::start(&provider, &["--output-last-message", &path]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"one"}"#);
+    run.send(r#"{"type":"end"}"#);
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["result"], "completed answer");
+    assert_eq!(result["exit_code"], 0);
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["exit_code"], 1);
+    assert!(
+        end["error"]
+            .as_str()
+            .unwrap()
+            .contains("--output-last-message")
+    );
+    assert_eq!(run.exit(), Some(1));
+    assert_eq!(std::fs::read_dir(destination.path()).unwrap().count(), 0);
+}
+
+#[test]
 fn two_prompts_give_two_results_in_order_then_end() {
     let provider = Provider::start(&["text:first answer", "text:second answer"]);
     let last = tempfile::NamedTempFile::new().unwrap();

@@ -13,6 +13,7 @@ on:
       - crates/cyber-cli/Cargo.toml
       - crates/cyber-cli/src/**
       - crates/cyber-cli/tests/branches_cli.rs
+      - crates/cyber-cli/tests/exec_stream_input.rs
       - crates/cyber-cli/tests/support/**
       - crates/cyber-server/src/workspace.rs
       - crates/cyber-core/src/binary/native/**
@@ -51,6 +52,7 @@ jobs:
           sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
           # Ubuntu 24.04 restricts the user namespaces required by bubblewrap.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
       - name: Native storage, conflict and process-kill proof
         shell: bash
         run: |
@@ -72,6 +74,12 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_git_keep_and_rollback_after_real_partial_restore_kill -- --nocapture 2>&1 | tee git-cli-recovery-proof.log
+      - name: JSONL driver and atomic last-message regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::exec::last_message::tests -- --nocapture 2>&1 | tee jsonl-driver-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test exec_stream_input -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
       - name: Retain native evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -83,4 +91,5 @@ jobs:
             git-adapter-proof.log
             git-runtime-proof.log
             git-cli-recovery-proof.log
+            jsonl-driver-proof.log
           if-no-files-found: warn

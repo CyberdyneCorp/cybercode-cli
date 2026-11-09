@@ -10,3 +10,9 @@
 #### Scenario: EOF with a pending approval
 - **WHEN** the driver's input closes while one of its requests awaits a reply
 - **THEN** that request follows the defined disconnected/non-interactive policy and the process does not wait forever or fabricate approval
+
+#### Scenario: Last-message publication collides or fails
+- **WHEN** a driver publishes its final assistant text to `--output-last-message`
+- **THEN** it SHALL stage bytes in an exclusively created sibling file and atomically replace the destination without following a pre-existing temporary or destination link
+- **AND** concurrent writers SHALL publish complete answers and clean up their own temporary files, including after publication failure
+- **AND** a publication failure SHALL preserve per-input results, report the error in `end`, and fail an otherwise successful aggregate run without replacing an existing interruption or protocol exit code

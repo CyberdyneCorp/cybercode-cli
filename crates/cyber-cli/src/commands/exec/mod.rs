@@ -5,6 +5,7 @@ mod delegation;
 mod driver;
 mod frames;
 pub(crate) mod goals;
+mod last_message;
 pub(crate) mod report;
 mod review_run;
 mod schema;
