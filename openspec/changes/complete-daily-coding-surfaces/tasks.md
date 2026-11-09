@@ -137,7 +137,7 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 - [x] 5.1 Add validated per-prompt root format admission, bounded schema compilation and durable schema/attempt ownership without changing existing child contracts.
 - [x] 5.2 Add `structured_output` finalization, two correction retries, budget/interrupt handling and durable successful/error result settlement.
 - [x] 5.3 Add `--output-schema`, API/SDK result fields and text/JSON/stream rendering; preserve unstructured commands and validate option combinations before admission.
-- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider. Done: schema bounds and refusal before admission, malformed and invalid submissions, exhaustion without a fourth request, missing finalizer, a restart between independent queued prompts, retry identity with another schema, and the real binary (`cyber-cli/tests/exec_output_schema.rs`). Open: compaction during an attempt and budget exits.
+- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider. Done: schema bounds and refusal before admission, malformed and invalid submissions, exhaustion without a fourth request, missing finalizer, a restart between independent queued prompts, retry identity with another schema, the real binary (`cyber-cli/tests/exec_output_schema.rs`), runtime compaction during correction, durable interruption/budget outcomes, and shutdown/resume of an open result. Open: real CLI budget/SIGINT exit precedence and finalizer/terminal-settlement writer/restart cuts without redispatch.
 
 ## 6. Streaming JSONL input
 
@@ -759,3 +759,31 @@ of this change. Request/interrupt ownership, bounded background Job lookup,
 bounded output/backpressure, hook events and remaining 6.4 acceptance still remain
 required. Tasks 6.2–6.4 stay open. Native CI run 42693044871 is on the earlier
 9ac06c40 checkpoint; it is not native acceptance of this ledger extension.
+
+Structured terminal-result continuation (2026-11-09): new runtime regressions
+first reproduced absent input outcomes after interruption and budget exhaustion
+during correction (five existing tests passed, two regressions failed). Drain
+exit now records the matching open root input's outcome before releasing its
+entry or publishing idle. It preserves a durable valid finalizer, records the
+current submission count on error, and leaves shutdown attempts open for explicit
+restart resume. Metadata settlement failures remain execution failures. Pass
+execution/error classification is extracted to keep the existing cognitive
+complexity limit. Four added cases prove interrupted/budget outcomes and lookup
+after restart, schema/attempt preservation through actual overflow compaction,
+and shutdown followed by explicit resume without resetting the result attempt.
+
+Final local checks: 94 runtime regressions pass (13 budget, 19 context/compaction,
+53 runtime and nine structured-root); three structured-output CLI and nine JSONL
+tests pass. Server all-target Clippy passes with warnings denied, as do format,
+whitespace and strict OpenSpec (100 items; lint zero errors/25 warnings). An
+earlier Clippy run ran out of disk and the broader test command could not create
+its log; neither is a passing attempt. Cargo package cleanup removed 23.2 GiB of
+rebuildable server artifacts, and the checks above passed after cleanup with
+incremental compilation disabled. Finalizer/terminal-outcome writer/restart cuts
+and real CLI budget/SIGINT precedence remain open under 5.4. No new public receipt
+or API/SDK field was added by this correction.
+
+Native run 42693044871 passed all selected native, managed Git App/CLI and JSONL
+steps on Linux x64 and ARM for 9ac06c40. macOS Intel/ARM jobs remain queued at this
+audit; they have no passing result. The ledger and structured terminal-result
+extensions need their own current-source native acceptance before delivery.

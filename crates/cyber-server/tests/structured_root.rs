@@ -45,6 +45,192 @@ fn harness(main: Vec<Vec<cyber_llm::adapters::ScriptStep>>) -> Harness {
 }
 
 #[tokio::test]
+async fn interrupted_open_result_is_terminal_and_remains_bound_to_its_input_after_restart() {
+    let h = harness(vec![
+        tools(&[("work", "read", "{}")]),
+        text("later plain answer"),
+    ]);
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::UntilCancelled);
+    let id = h.session().await;
+    let started = h.tools.started.notified();
+    let message = ask(&h, &id, "audit", Some(schema())).await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), started)
+        .await
+        .unwrap();
+    h.runtime.interrupt(&id).await.unwrap();
+    h.settle(&id).await;
+    let outcome = result_of(&h, &id, &message)
+        .await
+        .expect("interrupted input must settle");
+    assert_eq!(outcome.value, None);
+    assert_eq!(
+        outcome.attempts, 0,
+        "ordinary tools are not result submissions"
+    );
+    assert!(outcome.error.as_deref().unwrap().contains("interrupted"));
+    assert_terminal_result_survives_restart(&h, &id, &message, &outcome).await;
+}
+
+#[tokio::test]
+async fn a_budget_ending_an_open_correction_records_a_terminal_input_result() {
+    let h = harness(vec![
+        structured("invalid", r#"{"wrong":1}"#),
+        text("must not dispatch"),
+    ]);
+    let id = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            budget: Some(cyber_core::budget::Budget {
+                max_turns: Some(1),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    let message = ask(&h, &id, "audit", Some(schema())).await;
+    h.settle(&id).await;
+    let outcome = result_of(&h, &id, &message)
+        .await
+        .expect("budget-ended input must settle");
+    assert_eq!(outcome.value, None);
+    assert_eq!(outcome.attempts, 1);
+    assert!(outcome.error.as_deref().unwrap().contains("budget"));
+    assert_terminal_result_survives_restart(&h, &id, &message, &outcome).await;
+}
+
+async fn assert_terminal_result_survives_restart(
+    h: &Harness,
+    id: &str,
+    message: &str,
+    outcome: &StructuredOutcome,
+) {
+    let events = h.store.read_events(id, -1, 200).unwrap().events;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "session.structured_output.settled.1"
+                && event.data["message_id"] == message)
+            .count(),
+        1
+    );
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    let restarted = h.restart();
+    let state = restarted.state(id).await.unwrap();
+    let recorded = state
+        .inbox
+        .iter()
+        .find(|row| row.message_id == message)
+        .unwrap();
+    assert_eq!(recorded.structured.as_ref(), Some(outcome));
+    assert_eq!(
+        h.models.requests("test/main").len(),
+        1,
+        "lookup never redispatches"
+    );
+}
+
+#[tokio::test]
+async fn shutdown_keeps_the_open_result_for_explicit_restart_resume() {
+    let h = harness(vec![
+        tools(&[("work", "read", "{}")]),
+        structured("final", r#"{"summary":"resumed"}"#),
+    ]);
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::UntilCancelled);
+    let id = h.session().await;
+    let started = h.tools.started.notified();
+    let message = ask(&h, &id, "audit", Some(schema())).await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), started)
+        .await
+        .unwrap();
+    h.runtime.shutdown().await;
+    h.settle(&id).await;
+    assert!(result_of(&h, &id, &message).await.is_none());
+    let restarted = h.restart();
+    restarted.resume(&id).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(30), restarted.wait_idle(&id))
+        .await
+        .unwrap();
+    let state = restarted.state(&id).await.unwrap();
+    let outcome = state
+        .inbox
+        .iter()
+        .find(|row| row.message_id == message)
+        .unwrap()
+        .structured
+        .clone()
+        .unwrap();
+    assert_eq!(outcome.value, Some(json!({"summary":"resumed"})));
+    assert_eq!(outcome.attempts, 1);
+    assert_eq!(h.models.requests("test/main").len(), 2);
+}
+
+#[tokio::test]
+async fn compaction_during_a_correction_keeps_the_input_schema_and_attempt_count() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![
+                    text("earlier answer"),
+                    structured("invalid", r#"{"wrong":1}"#),
+                    error(cyber_llm::ErrorKind::ContextOverflow, "prompt too long"),
+                    structured("final", r#"{"summary":"after compaction"}"#),
+                ],
+            ),
+            ("test/summary", vec![text("compressed earlier work")]),
+        ],
+        compaction: cyber_server::runtime::CompactionConfig {
+            auto: true,
+            buffer: 100,
+            keep_tokens: 10_000,
+            keep_turns: Some(1),
+            model: None,
+        },
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    ask(&h, &id, "before", None).await;
+    h.settle(&id).await;
+    let message = ask(&h, &id, "audit", Some(schema())).await;
+    h.settle(&id).await;
+    let outcome = result_of(&h, &id, &message).await.unwrap();
+    assert_eq!(outcome.value, Some(json!({"summary":"after compaction"})));
+    assert_eq!(outcome.attempts, 2);
+    assert!(h.state(&id).await.compacted.is_some());
+    assert_eq!(h.models.requests("test/summary").len(), 1);
+    let requests = h.models.requests("test/main");
+    assert_eq!(requests.len(), 4);
+    let retried = &requests[3];
+    assert_eq!(
+        retried
+            .tools
+            .iter()
+            .find(|tool| tool.name == "structured_output")
+            .unwrap()
+            .input_schema,
+        schema()
+    );
+    assert!(
+        retried
+            .system
+            .concat()
+            .contains("calling structured_output")
+    );
+}
+
+#[tokio::test]
 async fn a_valid_submission_is_the_inputs_result_and_ends_the_answer() {
     let h = harness(vec![structured("c1", r#"{"summary":"all good"}"#)]);
     let id = h.session().await;

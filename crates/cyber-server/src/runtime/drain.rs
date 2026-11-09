@@ -71,20 +71,7 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
     inner.member_status_changed(&id).await;
     let mut forced = forced;
     let ended = loop {
-        // A defect must not leave the Session registered as running forever. Boxed: the
-        // pass state would otherwise be copied through this frame, which nested
-        // foreground subagents stack up.
-        let outcome = std::panic::AssertUnwindSafe(Box::pin(pass(&inner, &id, forced, &cancel)))
-            .catch_unwind()
-            .await;
-        let failure = match outcome {
-            Ok(Ok(())) => None,
-            Ok(Err(e)) => Some((error_kind(&e).to_string(), e.to_string())),
-            Err(_) => Some((
-                "internal".to_string(),
-                "the Drain stopped on an internal error; see the log".to_string(),
-            )),
-        };
+        let failure = run_pass(&inner, &id, forced, &cancel).await;
         let succeeded = failure.is_none();
         // What idle notices report about this pass, read while its run still counts.
         let ended = (
@@ -114,6 +101,36 @@ pub(crate) async fn run(inner: Arc<Inner>, id: String, forced: bool, cancel: Can
         forced = false;
     };
     went_idle(super::Runtime { inner }, &id, ended).await;
+}
+
+/// Classify pass failures and finish root-result metadata before releasing the
+/// current Drain owner or publishing idle. Shutdown keeps resumable attempts open.
+async fn run_pass(
+    inner: &Arc<Inner>,
+    id: &str,
+    forced: bool,
+    cancel: &CancellationToken,
+) -> Option<(String, String)> {
+    // A defect must not leave the Session registered as running forever. Boxed:
+    // nested foreground subagents otherwise stack copies of this pass state.
+    let outcome = std::panic::AssertUnwindSafe(Box::pin(pass(inner, id, forced, cancel)))
+        .catch_unwind()
+        .await;
+    let mut failure = match outcome {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some((error_kind(&error).to_string(), error.to_string())),
+        Err(_) => Some((
+            "internal".into(),
+            "the Drain stopped on an internal error; see the log".into(),
+        )),
+    };
+    if let Err(error) = inner
+        .root_result_at_exit(id, failure.as_ref(), cancel.is_cancelled())
+        .await
+    {
+        failure = Some(("storage".into(), error.to_string()));
+    }
+    failure
 }
 
 /// The Session's Drain ended with `(hops, status)` for its idle notices.

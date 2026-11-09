@@ -13,6 +13,43 @@ use super::{Handle, Inner, RuntimeError, StructuredOutcome};
 const KIND: &str = "structured_output";
 
 impl Inner {
+    /// A terminal Drain exit must not strand its root input's result. Keep this
+    /// before releasing the Drain entry, so another pass cannot replace ownership.
+    /// Shutdown preserves an open attempt for recovery in the next process.
+    pub(crate) async fn root_result_at_exit(
+        &self,
+        session_id: &str,
+        failure: Option<&(String, String)>,
+        interrupted: bool,
+    ) -> Result<(), RuntimeError> {
+        if self.closed.is_cancelled() {
+            return Ok(());
+        }
+        let handle = self.handle(session_id).await?;
+        let mut state = handle.state.lock().await;
+        if self.closed.is_cancelled() || !state.result.root_open() {
+            return Ok(());
+        }
+        let result = &state.result;
+        let value = result.returned.as_ref().map(|(_, value)| value.clone());
+        let error = value.is_none().then(|| {
+            let why = match failure {
+                Some((kind, message)) => format!("{kind}: {message}"),
+                None if interrupted => "interrupted".into(),
+                None => "execution ended before structured_output".into(),
+            };
+            format!("StructuredOutputError: {why}")
+        });
+        let outcome = StructuredOutcome {
+            message_id: result.input.clone().expect("open root input"),
+            value,
+            error,
+            attempts: result.attempts,
+        };
+        self.commit_locked(&mut state, vec![event(SETTLED, &outcome)])?;
+        Ok(())
+    }
+
     /// After a Turn's calls settle: the input's valid result, or its last failure, ends
     /// the answer; otherwise the model goes on.
     pub(crate) async fn root_result_end(

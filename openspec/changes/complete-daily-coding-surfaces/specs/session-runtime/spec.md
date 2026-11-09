@@ -14,3 +14,13 @@
 #### Scenario: Restart between queued schemas
 - **WHEN** a Session restarts after completing one schema-governed prompt and before promoting another with a different schema
 - **THEN** each retained input has its own schema, retry count and result and the second cannot reuse the first's successful value
+
+#### Scenario: Interruption or budget stops an open result
+- **WHEN** execution is interrupted or an ordinary budget stops a root prompt before valid finalization
+- **THEN** the Drain SHALL durably record the matching input's terminal error and current submission count before releasing its owner or publishing idle
+- **AND** an already durable valid finalizer SHALL remain its successful value, result-settlement failure SHALL remain an execution failure, and lookup after restart SHALL NOT redispatch work
+- **AND** shutdown SHALL preserve an open attempt for explicit restart recovery rather than inventing terminal cancellation
+
+#### Scenario: Compaction between validation submissions
+- **WHEN** automatic compaction recovers an overflow during a root result correction
+- **THEN** the retried request SHALL retain the matching input schema and finalization instruction, without resetting the submitted-attempt count or counting overflow as a submission
