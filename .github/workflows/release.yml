@@ -63,10 +63,6 @@ jobs:
             target: x86_64-unknown-linux-musl
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-          - os: windows-2025
-            target: x86_64-pc-windows-msvc
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
     # No build cache: a release is built from the tagged sources alone.
     env:
@@ -147,7 +143,10 @@ jobs:
       - name: Sign
         # Keyless: the certificate names this workflow at refs/tags/v<version>, the
         # identity `cyber upgrade` requires.
+        # nullglob: a release without Windows has no .zip, and an unmatched pattern would
+        # reach cosign as a literal file name.
         run: |
+          shopt -s nullglob
           for file in dist/*.tar.gz dist/*.zip dist/SHA256SUMS; do
             cosign sign-blob --yes --bundle "$file.sigstore.json" "$file"
           done

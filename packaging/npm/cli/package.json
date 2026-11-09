@@ -11,8 +11,6 @@
     "@cyber-code/cli-darwin-arm64": "{{ version }}",
     "@cyber-code/cli-darwin-x64": "{{ version }}",
     "@cyber-code/cli-linux-arm64": "{{ version }}",
-    "@cyber-code/cli-linux-x64": "{{ version }}",
-    "@cyber-code/cli-win32-arm64": "{{ version }}",
-    "@cyber-code/cli-win32-x64": "{{ version }}"
+    "@cyber-code/cli-linux-x64": "{{ version }}"
   }
 }

@@ -35,8 +35,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BASE_URL = "https://github.com/CyberdyneCorp/cybercode-cli/releases/download"
 
-# The release targets, in `ci.yml` order, then Windows.
-TARGETS = [
+# Every target CI builds, in `ci.yml` order, then Windows.
+ALL_TARGETS = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
     "x86_64-unknown-linux-gnu",
@@ -46,6 +46,14 @@ TARGETS = [
     "x86_64-pc-windows-msvc",
     "aarch64-pc-windows-msvc",
 ]
+
+# Windows is not released until its sandbox passes the release gate (0.1.0 ships macOS
+# and Linux only). CI still builds and tests the Windows targets on every pull request;
+# flipping this adds their archives, npm packages and the Scoop/winget manifests back.
+WINDOWS_RELEASED = False
+
+# The targets a release publishes.
+TARGETS = [t for t in ALL_TARGETS if WINDOWS_RELEASED or "windows" not in t]
 
 # npm platform packages (`@cyber-code/cli-<key>`): `process.platform`/`process.arch` to
 # the target. Linux uses the static musl builds, so one package serves every libc.
@@ -57,6 +65,7 @@ NPM_PLATFORMS = {
     "win32-arm64": "aarch64-pc-windows-msvc",
     "win32-x64": "x86_64-pc-windows-msvc",
 }
+NPM_PLATFORMS = {k: t for k, t in NPM_PLATFORMS.items() if t in TARGETS}
 
 # Template (under packaging/) to the release asset it renders to.
 TEMPLATES = {
@@ -66,6 +75,8 @@ TEMPLATES = {
     "aur/PKGBUILD": "PKGBUILD",
     "nix/default.nix": "cyber.nix",
 }
+if not WINDOWS_RELEASED:
+    del TEMPLATES["scoop/cyber.json"], TEMPLATES["winget/cyber-code.cyber.yaml"]
 
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$")
 PLACEHOLDER = re.compile(r"\{\{ *([a-z0-9_.-]+) *\}\}")
@@ -164,7 +175,7 @@ def write_zip(path: Path, members: list[tuple[str, bytes, int]]) -> None:
 
 
 def package(version: str, target: str, bin_dir: Path, out: Path) -> Path:
-    if target not in TARGETS:
+    if target not in ALL_TARGETS:
         raise ReleaseError(f"unknown target {target}")
     members = archive_members(target, bin_dir)
     out.mkdir(parents=True, exist_ok=True)

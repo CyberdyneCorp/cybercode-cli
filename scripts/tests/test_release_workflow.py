@@ -44,16 +44,23 @@ class ReleaseWorkflow(unittest.TestCase):
             self.assertEqual(writes, name == "publish", name)
         self.assertIn("needs: [verify, build]", per_job["publish"])
 
-    def test_builds_the_eight_release_targets(self):
+    def test_builds_the_release_targets(self):
         targets = re.findall(r"^\s+target: ([a-z0-9_-]+)$", jobs(self.text)["build"], re.M)
         self.assertEqual(targets, ra.TARGETS)
+
+    def test_signing_tolerates_a_release_without_zip_archives(self):
+        """Regression: with Windows left out, `dist/*.zip` matched nothing and reached
+        cosign as a literal file name."""
+        publish = jobs(self.text)["publish"]
+        sign = publish[publish.index("name: Sign") :]
+        self.assertLess(sign.index("shopt -s nullglob"), sign.index("dist/*.zip"))
 
     def test_ci_builds_every_release_target_on_pull_requests(self):
         """Regression: a target only the release builds fails after the tag is pushed."""
         ci = (ra.ROOT / ".github" / "workflows" / "ci.yml").read_text()
         platforms = jobs(ci)["platforms"]
         targets = re.findall(r"^\s+target: ([a-z0-9_-]+)$", platforms, re.M)
-        self.assertEqual(targets, ra.TARGETS)
+        self.assertEqual(targets, ra.ALL_TARGETS)
         self.assertIn("--release --workspace --bins", platforms)
 
     def test_actions_are_pinned_by_commit(self):

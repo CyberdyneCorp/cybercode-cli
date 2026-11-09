@@ -14,7 +14,7 @@ The first release is in preparation. It will contain:
 - **Models:** OpenAI Responses, Anthropic Messages and OpenAI-compatible endpoints (including local servers such as Ollama), a models.dev catalog with an offline snapshot, usage and cost. Sign in with a ChatGPT Plus/Pro or GitHub Copilot subscription instead of an API key.
 - **Reliability:** retry of interrupted streams before any tool runs, and unattended runs that wait for a subscription usage limit to reset.
 - **Tools:** read, write, edit, `apply_patch`, bash (with background commands), glob, grep, web fetch and search, todo, question and skills, with output budgets.
-- **Safety:** permission rules and modes (`default`, `plan`, `accept-edits`, `auto`, `dont-ask`, `bypass`), workspace trust, a sandbox on macOS and Linux (preview on Windows), secrets redacted from tool output, and framing of untrusted content against prompt injection.
+- **Safety:** permission rules and modes (`default`, `plan`, `accept-edits`, `auto`, `dont-ask`, `bypass`), workspace trust, a sandbox on macOS and Linux, secrets redacted from tool output, and framing of untrusted content against prompt injection.
 - **Recovery:** Git snapshots, rewind of code, conversation or both, and staged undo/redo.
 - **Surfaces:** a terminal UI, `cyber exec` for scripts and CI, a local web dashboard, an OpenAPI server with a TypeScript SDK, and an MCP server mode.
 - **TUI:** command palette, themes, sidebar, file explorer, binary viewer and editor, rewind, Ctrl+R prompt history search, sound alerts, mouse support, accessibility and `NO_COLOR` modes.
@@ -25,7 +25,7 @@ The first release is in preparation. It will contain:
 - **Driving exec over stdin:** `cyber exec --input-format stream-json` for programs that send several prompts, interrupt and answer permission requests in one run.
 - **Prompt history search:** Ctrl+R in the TUI composer.
 - **Languages:** the TUI in English, Brazilian Portuguese, Spanish and French, with model replies in the chosen language (`language`, `/language`).
-- **Install:** signed release archives for 8 targets, `install.sh`, verified `cyber upgrade` and `cyber uninstall`.
+- **Install:** signed release archives for macOS and Linux (6 targets), `install.sh`, verified `cyber upgrade` and `cyber uninstall`. Windows is not part of 0.1.0: CI builds it, but no Windows archive, npm package, Scoop or WinGet manifest is published until the Windows sandbox is complete.
 
 ### Fixed
 
