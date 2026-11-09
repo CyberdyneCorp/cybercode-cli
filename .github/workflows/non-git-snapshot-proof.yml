@@ -45,6 +45,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: non-git-snapshot-proof
+      - name: Sandbox prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
+          # Ubuntu 24.04 restricts the user namespaces required by bubblewrap.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Native storage, conflict and process-kill proof
         shell: bash
         run: |

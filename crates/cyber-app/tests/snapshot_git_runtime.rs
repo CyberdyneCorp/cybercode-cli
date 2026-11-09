@@ -283,7 +283,7 @@ async fn managed_worktree_in_default_data_directory_restores_through_owned_worke
         config
     );
     reconcile_after_owner_edit(&f, &receipt).await;
-    reclaim_managed_restore(&f, &receipt).await;
+    reclaim_restore_payloads(&f, &receipt).await;
     assert_eq!(std::fs::read(&index_path).unwrap(), index);
     assert_eq!(
         std::fs::read(f.project.join(".git/config")).unwrap(),
@@ -292,7 +292,7 @@ async fn managed_worktree_in_default_data_directory_restores_through_owned_worke
     f.app.runtime.shutdown().await;
 }
 
-async fn reclaim_managed_restore(f: &Fixture, receipt: &SnapshotRestoreReceipt) {
+async fn reclaim_restore_payloads(f: &Fixture, receipt: &SnapshotRestoreReceipt) {
     use cyber_server::runtime::snapshot_reclamation::Receipt;
     let policy = cyber_app::snapshot_reclamation::policy(f.app.store.clone());
     let snapshots = cyber_snapshot::GitSnapshots::with_reclamation(
@@ -327,6 +327,7 @@ async fn reclaim_managed_restore(f: &Fixture, receipt: &SnapshotRestoreReceipt) 
             Ok(())
         })
         .unwrap();
+    assert_replaced_link_payload_refused(f, receipt, &snapshots, policy.as_ref()).await;
     assert!(
         snapshots
             .reclaim(f.directory.to_str().unwrap())
@@ -349,6 +350,47 @@ async fn reclaim_managed_restore(f: &Fixture, receipt: &SnapshotRestoreReceipt) 
     assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
     assert_eq!(std::fs::read_dir(journal).unwrap().count(), 1);
     assert_reclaimed_source_and_receipt(f, receipt, inference).await;
+}
+
+async fn assert_replaced_link_payload_refused(
+    f: &Fixture,
+    receipt: &SnapshotRestoreReceipt,
+    snapshots: &cyber_snapshot::GitSnapshots,
+    policy: &dyn cyber_snapshot::reclamation::Policy,
+) {
+    use cyber_server::runtime::snapshot_reclamation::Receipt;
+    let journal = f.journal(receipt);
+    let intent: Value =
+        serde_json::from_slice(&std::fs::read(journal.join("intent.json")).unwrap()).unwrap();
+    let slot = intent["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|change| change["before"]["kind"] == "symlink");
+    let Some(slot) = slot else { return };
+    let path = journal.join(format!("stage_{slot}"));
+    let target = std::fs::read_link(&path).unwrap();
+    assert!(
+        !path.exists(),
+        "journal link target must be dangling in this fixture"
+    );
+    let saved = f._temp.path().join("retained-link-payload");
+    std::fs::rename(&path, &saved).unwrap();
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    let error = snapshots
+        .reclaim(f.directory.to_str().unwrap())
+        .await
+        .unwrap_err();
+    assert!(error.contains("original inode changed"), "{error}");
+    assert!(
+        policy
+            .record(&Receipt::Restore(receipt.clone()))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(std::fs::read_link(&path).unwrap(), target);
+    std::fs::remove_file(&path).unwrap();
+    std::fs::rename(&saved, &path).unwrap();
 }
 
 async fn assert_reclaimed_source_and_receipt(
@@ -436,6 +478,16 @@ async fn actual_git_worker_commits_receipt_and_reconciles_without_source_replay(
         assert_eq!(intent["acknowledged"], true);
         assert_eq!(receipt.origin.binding.directory, f.directory);
         reconcile_after_owner_edit(&f, &receipt).await;
+        let intent: Value =
+            serde_json::from_slice(&std::fs::read(journal.join("intent.json")).unwrap()).unwrap();
+        assert!(
+            intent["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|change| change["before"]["kind"] == "symlink")
+        );
+        reclaim_restore_payloads(&f, &receipt).await;
         f.app.runtime.shutdown().await;
     }
 }

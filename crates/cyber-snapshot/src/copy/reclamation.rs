@@ -239,10 +239,8 @@ fn prepare(
             .as_ref()
             .and_then(|files| files.get(name.as_str()).copied());
         match (change.before.as_ref(), observed) {
-            (Some(before), Some(image))
-                if before.kind == super::ImageKind::File && image.entry == *before =>
-            {
-                let pin = storage::open(&journal, Path::new(&name))?;
+            (Some(before), Some(image)) if image.entry == *before => {
+                let pin = super::links::pin_image(&journal, std::ffi::OsStr::new(&name))?;
                 ownership.verify_original(index, &pin)?;
                 let file = Payload {
                     journal: None,
@@ -427,7 +425,7 @@ impl Prepared {
             Err(error) => return Err(storage::fail(error)),
             _ => {}
         }
-        let pin = storage::open(&self.journal, Path::new(&file.name))?;
+        let pin = super::links::pin_image(&self.journal, std::ffi::OsStr::new(&file.name))?;
         if storage::identity(&pin)? != file.identity
             || ownership::generation(&pin)? != file.generation
         {

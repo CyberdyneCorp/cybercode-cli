@@ -867,6 +867,7 @@ fn managed_git_partial_kill(action: &str) {
         std::fs::write(env.directory.join(format!("bulk_{index:04}")), "before").unwrap();
     }
     std::fs::write(env.directory.join("zz\nfixture"), "before").unwrap();
+    std::os::unix::fs::symlink("bulk_0000", env.directory.join("a_link")).unwrap();
     git_fixture(&env.directory, &["add", "--all"]);
     let index_path = PathBuf::from(git_fixture(
         &env.directory,
@@ -881,6 +882,8 @@ fn managed_git_partial_kill(action: &str) {
         std::fs::write(env.directory.join(format!("bulk_{index:04}")), "after").unwrap();
     }
     std::fs::write(env.directory.join("zz\nfixture"), "after").unwrap();
+    std::fs::remove_file(env.directory.join("a_link")).unwrap();
+    std::os::unix::fs::symlink("bulk_0001", env.directory.join("a_link")).unwrap();
     std::fs::write(env.directory.join("aa_removed"), "after-only source").unwrap();
     env.exec(Some(&id), "after snapshot");
     let messages = kill_partial_restore(&env, &id, &first);
@@ -942,39 +945,13 @@ fn assert_managed_git_reclamation(env: &Env, result: &Value) {
         serde_json::from_value(phase["checkout_bindings"].clone()).unwrap();
     assert!(!bindings.is_empty());
     let binding = &bindings[0];
-    let marker = binding
-        .common_dir
-        .join("cyber-worktree-activity")
-        .join(&binding.worktree_id)
-        .join(format!("{}.snapshot-ack", binding.owner_id));
-    let hidden = env.root.join("retained-checkout-marker");
     let source = env.file("bulk_0000");
+    let source_link = std::fs::read_link(env.directory.join("a_link")).unwrap();
     assert_eq!(maintenance.reclaim(&env.directory).unwrap(), 0);
     maintenance.age(checkout.resolution_origin.activity_id.clone());
     let resources = original.lifetime.checkout_owner().unwrap();
     let receipt = Receipt::Recovery(receipt.clone());
-    std::fs::rename(&marker, &hidden).unwrap();
-    let refused = maintenance.reclaim(&env.directory).unwrap_err();
-    assert!(
-        refused.contains("acknowledgement has not been published"),
-        "{refused}"
-    );
-    assert!(
-        !marker.exists(),
-        "cleanup must not publish a missing marker"
-    );
-    assert!(maintenance.policy.record(&receipt).unwrap().is_none());
-    std::fs::rename(&hidden, &marker).unwrap();
-    let locations =
-        cyber_core::worktrees::Repository::managed_locations_at(&env.directory).unwrap();
-    let live = locations[0]
-        .0
-        .reacquire_snapshot(&locations[0].1, binding, &resources)
-        .unwrap();
-    let refused = maintenance.reclaim(&env.directory).unwrap_err();
-    assert!(refused.contains("worker is still active"), "{refused}");
-    assert!(maintenance.policy.record(&receipt).unwrap().is_none());
-    drop(live);
+    let marker = assert_managed_cleanup_refusals(env, &maintenance, &receipt, binding, &resources);
     let cut = maintenance.plan_only(&env.directory).unwrap_err();
     assert!(
         cut.contains("fixture cut after durable paired plan"),
@@ -999,6 +976,10 @@ fn assert_managed_git_reclamation(env: &Env, result: &Value) {
     );
     assert_eq!(maintenance.reclaim(&env.directory).unwrap(), 0);
     assert_eq!(env.file("bulk_0000"), source);
+    assert_eq!(
+        std::fs::read_link(env.directory.join("a_link")).unwrap(),
+        source_link
+    );
     assert!(marker.exists());
 }
 
@@ -1006,7 +987,57 @@ fn assert_managed_git_reclamation(env: &Env, result: &Value) {
     feature = "native-git-acceptance",
     any(target_os = "macos", target_os = "linux")
 ))]
+fn assert_managed_cleanup_refusals(
+    env: &Env,
+    maintenance: &reclamation_support::Maintenance,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+    binding: &cyber_core::worktrees::CheckoutBinding,
+    resources: &cyber_core::worktrees::CheckoutOwner,
+) -> PathBuf {
+    let marker = binding
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&binding.worktree_id)
+        .join(format!("{}.snapshot-ack", binding.owner_id));
+    let hidden = env.root.join("retained-checkout-marker");
+    std::fs::rename(&marker, &hidden).unwrap();
+    let refused = maintenance.reclaim(&env.directory).unwrap_err();
+    assert!(
+        refused.contains("acknowledgement has not been published"),
+        "{refused}"
+    );
+    assert!(
+        !marker.exists(),
+        "cleanup must not publish a missing marker"
+    );
+    assert!(maintenance.policy.record(receipt).unwrap().is_none());
+    std::fs::rename(&hidden, &marker).unwrap();
+    let locations =
+        cyber_core::worktrees::Repository::managed_locations_at(&env.directory).unwrap();
+    let live = locations[0]
+        .0
+        .reacquire_snapshot(&locations[0].1, binding, resources)
+        .unwrap();
+    let refused = maintenance.reclaim(&env.directory).unwrap_err();
+    assert!(refused.contains("worker is still active"), "{refused}");
+    assert!(maintenance.policy.record(receipt).unwrap().is_none());
+    drop(live);
+    marker
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
 fn assert_managed_git_images(env: &Env, action: &str, partial: &[String]) {
+    assert_eq!(
+        std::fs::read_link(env.directory.join("a_link")).unwrap(),
+        PathBuf::from(if action == "rollback" {
+            "bulk_0001"
+        } else {
+            "bulk_0000"
+        })
+    );
     assert_eq!(
         env.file("bulk_0000").as_deref(),
         Some(if action == "rollback" {
@@ -2202,15 +2233,18 @@ fn kill_partial_restore(env: &Env, id: &str, first: &str) -> Vec<Value> {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    // Git materialization, native inventory checks and durable stage construction
+    // all precede the first source exchange, especially for mixed link/file images.
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
     while env.file("bulk_0000").as_deref() != Some("before") {
-        assert!(
-            pending.try_wait().unwrap().is_none(),
-            "restore exited before a source exchange"
-        );
+        if pending.try_wait().unwrap().is_some() {
+            let output = pending.wait_with_output().unwrap();
+            panic!("restore exited before a source exchange: {output:?}");
+        }
         assert!(
             std::time::Instant::now() < deadline,
-            "source exchange was never observed"
+            "source exchange was never observed: {}",
+            restore_preparation_status(env)
         );
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -2234,6 +2268,35 @@ fn kill_partial_restore(env: &Env, id: &str, first: &str) -> Vec<Value> {
         "failed restore moved the transcript"
     );
     messages
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn restore_preparation_status(env: &Env) -> String {
+    let root = env.root.join("cyber-home/data/snapshot/global");
+    let mut states = Vec::new();
+    for namespace in std::fs::read_dir(root).into_iter().flatten().flatten() {
+        let journals = namespace.path().join("journals");
+        for journal in std::fs::read_dir(journals).into_iter().flatten().flatten() {
+            let path = journal.path();
+            let intent = std::fs::read(path.join("intent.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+            let stages = std::fs::read_dir(&path)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("stage_"))
+                .count();
+            states.push(json!({
+                "journal": journal.file_name().to_string_lossy(),
+                "stages": stages,
+                "changes": intent.as_ref().and_then(|v| v["changes"].as_array()).map(Vec::len),
+                "applied": intent.as_ref().map(|v| &v["applied"]),
+                "completed": intent.as_ref().map(|v| &v["completed"]),
+            }));
+        }
+    }
+    json!(states).to_string()
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

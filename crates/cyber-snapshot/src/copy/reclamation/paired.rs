@@ -256,9 +256,8 @@ fn original_payloads(
         let file = expected
             .cloned()
             .map(|image| payload(owner, name.clone(), image));
-        if expected.is_some_and(|image| image.entry.kind != super::super::ImageKind::File)
-            || (actual.as_ref() != expected
-                && !(actual.is_none() && file.as_ref() == planned.get(name.as_str()).copied()))
+        if actual.as_ref() != expected
+            && !(actual.is_none() && file.as_ref() == planned.get(name.as_str()).copied())
         {
             return Err("Original recovery private slot differs from acknowledged outcome".into());
         }
@@ -287,10 +286,9 @@ fn resolution_payloads(
             ownership::observe_image(store, Some(&owner.journal), std::ffi::OsStr::new(&name))?;
         let previous = planned.get(name.as_str()).copied();
         match (&change.before, actual) {
-            (Some(before), Some(image))
-                if before.kind == super::super::ImageKind::File && image.entry == *before =>
-            {
-                let pin = storage::open(&owner.journal, Path::new(&name))?;
+            (Some(before), Some(image)) if image.entry == *before => {
+                let pin =
+                    super::super::links::pin_image(&owner.journal, std::ffi::OsStr::new(&name))?;
                 ownership.verify_original(index, &pin)?;
                 files.push(payload(owner, name, image));
             }
@@ -407,7 +405,7 @@ impl PreparedPair {
             Err(error) => return Err(storage::fail(error)),
             _ => {}
         }
-        let pin = storage::open(&owner.journal, Path::new(&file.name))?;
+        let pin = super::super::links::pin_image(&owner.journal, std::ffi::OsStr::new(&file.name))?;
         if storage::identity(&pin)? != file.identity
             || ownership::generation(&pin)? != file.generation
         {

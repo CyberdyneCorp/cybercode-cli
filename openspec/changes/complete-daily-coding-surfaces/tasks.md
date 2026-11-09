@@ -691,3 +691,34 @@ was terminated after preserving its Store/registration and samples under
 /tmp/cyber-goal-first-prompt-stall-20261109. Its isolated rerun passed. That run
 is not green and its startup-stall cause remains unassigned. SDK/plugin/full
 workspace and external native CI have not been rerun for this checkpoint.
+
+Typed acknowledged-payload continuation (2026-11-09): ordinary and paired cleanup
+now admits immutable symlink images through the existing no-follow native inode
+pins, retaining the same complete preflight, frozen plan and per-unlink identity,
+generation, route and checkout checks. App acceptance passes both managed restore
+and SHA-1/SHA-256 root/scoped cases, including dangling journal targets and refusal
+of equal-target replacement inodes before a plan exists. No source replay or
+receipt/schema change is introduced. Cancelled Git preparation, incomplete
+construction, CAS/metadata collection and parent acceptance remain open. Focused
+code/security review found no additional issue in this extension; it is not a
+review or acceptance of the whole branch.
+
+Native CI run 42684837811 on 3d3471f9 passed the snapshot adapter and exact core
+marker test on Linux x64/ARM, then failed managed App worktree creation because
+bubblewrap was not installed. The direct Git App worker case passed on both.
+The workflow now installs bubblewrap and applies the same Ubuntu user-namespace
+prerequisite as ci.yml. This workflow edit is not passing CI evidence; fresh
+source-bound platform results are still required.
+
+Typed-payload local checks: snapshot library 140 passed, six ignored subprocess
+fixtures; Git App acceptance two passed; exact managed Git real partial-kill
+keep/rollback passed (315.50 seconds). The first expanded mixed-image CLI run
+failed its 45-second first-exchange wait before reaching cleanup assertions.
+The helper now permits 120 seconds for bounded preparation, reports journal stage
+and intent state on timeout, and captures a prematurely exited command's output.
+The same partial-window and post-kill source assertions remain required. This
+retry does not establish the original timeout's precise cause or resolve the
+separately preserved first-prompt startup stall. All-target Clippy for
+core/snapshot/server/App/CLI passes with warnings denied. Formatting, whitespace,
+strict OpenSpec (100 items) and lint (zero errors/25 warnings) pass. The complete
+CLI suite was not repeated for this typed-payload extension.

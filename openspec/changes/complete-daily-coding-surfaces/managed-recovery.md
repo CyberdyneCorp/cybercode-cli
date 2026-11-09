@@ -994,3 +994,17 @@ claims against enclosing registrations and exact activity/Session creation/Locat
 Unowned callers SHALL refuse. Session policy lookup during native admission SHALL
 run without the Session projection mutex held; immutable captured revisions and
 existing per-effect/consuming writer checks SHALL fence concurrent changes.
+
+### Typed acknowledged payload cleanup
+
+Ordinary and paired acknowledged cleanup MAY include immutable symbolic-link
+images alongside regular images. The same journal inventory, original/prepared
+ownership, receipt, reference, lifetime and retained checkout requirements apply.
+Observe raw bounded link target bytes without following them, and pin each link
+inode using the platform's no-follow primitive. Before every private unlink,
+revalidate the frozen inode identity and metadata generation and retained parent
+route. Equal target bytes on a replacement inode SHALL NOT grant cleanup authority.
+Dangling journal targets are valid typed images; cleanup SHALL NOT dereference
+them or consult current source paths. Missing payloads require the exact committed
+plan for resumption. This extension grants no cleanup authority for incomplete
+construction, unsupported leaf kinds, cancelled Git preparation or unowned links.

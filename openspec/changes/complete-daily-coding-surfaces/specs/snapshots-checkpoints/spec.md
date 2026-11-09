@@ -483,3 +483,10 @@
 - **THEN** it SHALL retain every exited checkout claim and already published acknowledgement matching the exact lifetime, resource digest and consuming receipt through deletion
 - **AND** a missing acknowledgement, live claim or changed registration SHALL refuse before plan publication without repairing metadata
 - **AND** restart after plan publication SHALL use frozen native payload identities without source replay, preserving original claims, receipts and user Git metadata
+
+#### Scenario: Acknowledged private payload is a symbolic link
+- **GIVEN** an ordinary restore or settled recovery pair has immutable typed link images and exact private inode ownership
+- **WHEN** reference-aware maintenance prepares or resumes its receipt-bound cleanup plan
+- **THEN** it SHALL pin and unlink the journal link inode without opening its target, including dangling targets
+- **AND** an equal-target replacement inode or changed metadata SHALL refuse before deletion; a missing leaf SHALL require the exact previously committed plan
+- **AND** later owner source links, consuming receipts and native ownership metadata SHALL remain intact
