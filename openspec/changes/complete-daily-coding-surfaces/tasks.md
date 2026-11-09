@@ -134,17 +134,17 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 
 ## 5. Root structured output
 
-- [ ] 5.1 Add validated per-prompt root format admission, bounded schema compilation and durable schema/attempt ownership without changing existing child contracts.
-- [ ] 5.2 Add `structured_output` finalization, two correction retries, budget/interrupt handling and durable successful/error result settlement.
-- [ ] 5.3 Add `--output-schema`, API/SDK result fields and text/JSON/stream rendering; preserve unstructured commands and validate option combinations before admission.
-- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider.
+- [x] 5.1 Add validated per-prompt root format admission, bounded schema compilation and durable schema/attempt ownership without changing existing child contracts.
+- [x] 5.2 Add `structured_output` finalization, two correction retries, budget/interrupt handling and durable successful/error result settlement.
+- [x] 5.3 Add `--output-schema`, API/SDK result fields and text/JSON/stream rendering; preserve unstructured commands and validate option combinations before admission.
+- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider. Done: schema bounds and refusal before admission, malformed and invalid submissions, exhaustion without a fourth request, missing finalizer, a restart between independent queued prompts, retry identity with another schema, and the real binary (`cyber-cli/tests/exec_output_schema.rs`). Open: compaction during an attempt and budget exits.
 
 ## 6. Streaming JSONL input
 
-- [ ] 6.1 Define typed version-2 envelopes, correlation, resource bounds, aggregate exit rules and driver-owned interactive request lifetime; document compatibility and unsupported combinations.
-- [ ] 6.2 Implement concurrent bounded parsing/admission and exact owned permission/question replies, retained request lookup, interrupt and end/EOF draining without stopping unrelated work.
-- [ ] 6.3 Emit per-input results, optional partial/hook events and atomic last-message output with bounded backpressure and secret-safe errors.
-- [ ] 6.4 Test multiple inputs, steering/queueing, malformed/oversized input, capacity, stale/cross-request replies, EOF while awaiting input, slow stdout, SIGINT, server restart and lost admission acknowledgement.
+- [x] 6.1 Define typed version-2 envelopes, correlation, resource bounds, aggregate exit rules and driver-owned interactive request lifetime; document compatibility and unsupported combinations.
+- [x] 6.2 Implement concurrent bounded parsing/admission and exact owned permission/question replies, retained request lookup, interrupt and end/EOF draining without stopping unrelated work.
+- [ ] 6.3 Emit per-input results, optional partial/hook events and atomic last-message output with bounded backpressure and secret-safe errors. `--include-hook-events` is not implemented: hook receipts are deliberately not on the Session stream, so the lines would have nothing reliable to carry.
+- [ ] 6.4 Test multiple inputs, steering/queueing, malformed/oversized input, capacity, stale/cross-request replies, EOF while awaiting input, slow stdout, SIGINT, server restart and lost admission acknowledgement. Done: multiple inputs in order, per-input structured results, malformed input (exit 2), unknown request replies, EOF while a request waits, unsupported combinations, with the real binary (`cyber-cli/tests/exec_stream_input.rs`). Open: steering, capacity, slow stdout, SIGINT, server restart and lost admission acknowledgement.
 
 ## 7. Review and delivery
 

@@ -34,7 +34,7 @@ STALE_PORTS = {"4711", "4096"}  # OpenCode-era defaults; the cyber default is 47
 PORT_RE = re.compile(r":(\d{4,5})\b")
 
 # Values that are flags/placeholders after `cyber`, not commands.
-CMD_IGNORE = {"v", "sesions", "__complete", "server"}  # "cyber server listening" is output text
+CMD_IGNORE = {"v", "sesions", "__complete", "server", "updated"}  # "cyber server listening" and "cyber updated to X" are output text
 # Route segments that are singletons/streams and legitimately not plural.
 ROUTE_SINGLETONS = {"health", "config", "account", "policy", "vcs", "usage", "memory",
                     "lsp", "formatters", "ide", "event", "fs", "messaging", "ws",

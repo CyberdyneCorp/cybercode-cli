@@ -2303,6 +2303,10 @@ export type InboxRow = {
    * → Injection signal notices).
    */
   untrusted?: UntrustedRecord | null;
+  /** The JSON Schema this root prompt's answer must satisfy. */
+  output_schema?: unknown;
+  /** The structured result or error of a prompt with `output_schema`, once settled. */
+  structured?: StructuredOutcome | null;
 };
 
 /** An iteration that was admitted and has not ended. */
@@ -3330,6 +3334,20 @@ export type ModelBody = {
   model: string;
 };
 
+/** `session.model.fallback.1`, and the active fallback of the Session view. */
+export type ModelFallback = {
+  /** The model whose request failed. */
+  from: string;
+  /** The model the request is re-sent on. */
+  to: string;
+  /** The error kind, such as `provider_internal` or `quota_exceeded`. */
+  kind: string;
+  reason: string;
+  started_ms: number;
+  /** When the Session returns to its configured model. */
+  until_ms: number;
+};
+
 /** A model offered to clients. */
 export type ModelInfo = {
   /** `provider/model`. */
@@ -3717,6 +3735,17 @@ export type PromptBody = {
   resume?: boolean;
   /** `user` unless a client relays another source. */
   source?: string | null;
+  /** A structured answer for this root prompt (`session-runtime` → Structured output). */
+  format?: PromptFormat | null;
+};
+
+/**
+ * `{ type: "json_schema", schema }`: the answer is a JSON object the schema validates,
+ * submitted through the `structured_output` tool.
+ */
+export type PromptFormat = {
+  schema: unknown;
+  type: "json_schema";
 };
 
 /** One prompt part. */
@@ -4422,6 +4451,8 @@ export type Session = {
    * Session is not waiting for a limit to reset.
    */
   usage_limit?: UsageLimitWait | null;
+  /** The model fallback in effect (`provider-catalog` → Model fallback chain). */
+  fallback?: ModelFallback | null;
 };
 
 export type SessionContext = {
@@ -5073,6 +5104,18 @@ export type StopReason = "user" | "budget" | "lead_deleted";
 
 export type StopService = {
   id: string;
+};
+
+/** The terminal outcome of a root prompt's structured result, kept on its input. */
+export type StructuredOutcome = {
+  /** The input the result answers. */
+  message_id: string;
+  /** The validated object; absent when the prompt failed. */
+  value?: unknown;
+  /** `StructuredOutputError: <why>` when no valid result was submitted. */
+  error?: string | null;
+  /** Submissions counted, including Turns that ended without the finalizer. */
+  attempts: number;
 };
 
 /**

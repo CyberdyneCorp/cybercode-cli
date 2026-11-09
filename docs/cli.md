@@ -1972,6 +1972,10 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--accept-messages`: Let other Sessions message the Session this run creates (by default it refuses them with `non_interactive`)
 - `--command <COMMAND>`: Run a skill or custom command with the prompt as its arguments.
 - `--output-style <NAME>`: Use this output style for the Session (a name from `/output-style`); it must be listed at the Location, or the run exits 2 before any Session exists.
+- `--output-schema <FILE>`: A JSON Schema file the final answer must satisfy: the model ends with a validated object, which becomes `result` (printed as JSON in text mode). Three invalid submissions exit 1 with `StructuredOutputError`.
+- `--input-format <INPUT_FORMAT>`: `stream-json` reads JSON lines from stdin for the life of the process: prompts, `interrupt`, permission and question replies, and `end` (needs --format stream-json; each prompt gets its own `result` line) Values: `text`, `stream-json`. Default: `text`.
+- `--include-partial-messages`: With --input-format stream-json: add `text_delta` and `reasoning_delta` lines.
+- `--output-last-message <FILE>`: With --input-format stream-json: write the last answer's text to this file, atomically, when the run ends.
 - `--workflow <NAME|PATH>`: Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return value is the result.
 - `--args <JSON>`: The Workflow's `args` as a JSON object.
 - `--file <FILES>`: Attach a file (repeatable): an image or PDF as an attachment, read by a local server under the `read` permission (sent inline with --attach); others as text.

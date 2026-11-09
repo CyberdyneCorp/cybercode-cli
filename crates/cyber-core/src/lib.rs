@@ -20,6 +20,7 @@ pub mod locale;
 pub mod log;
 pub mod loops;
 pub mod memory;
+pub mod model_fallback;
 pub mod output_styles;
 pub mod paths;
 pub mod plugins;

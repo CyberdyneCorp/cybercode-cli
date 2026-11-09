@@ -276,6 +276,8 @@ mod tests {
                 admitted_seq: 0,
                 promoted_seq: *promoted,
                 untrusted: None,
+                output_schema: None,
+                structured: None,
             });
             if let Some(hops) = hops {
                 let chain = MessageChain {

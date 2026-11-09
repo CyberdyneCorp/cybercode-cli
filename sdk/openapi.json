@@ -5494,6 +5494,17 @@
               }
             ],
             "description": "The pending usage limit wait (`session-runtime` → Usage limit wait); null when the\nSession is not waiting for a limit to reset."
+          },
+          "fallback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelFallback"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model fallback in effect (`provider-catalog` → Model fallback chain)."
           }
         },
         "required": [
@@ -5738,6 +5749,45 @@
           "user"
         ],
         "description": "Who planned a wait: the runtime for an unattended Session, or the user's\n`/resume-at-reset`."
+      },
+      "ModelFallback": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "The model whose request failed."
+          },
+          "to": {
+            "type": "string",
+            "description": "The model the request is re-sent on."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The error kind, such as `provider_internal` or `quota_exceeded`."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "started_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "until_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the Session returns to its configured model."
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "kind",
+          "reason",
+          "started_ms",
+          "until_ms"
+        ],
+        "description": "`session.model.fallback.1`, and the active fallback of the Session view."
       },
       "SetupStatus": {
         "oneOf": [
@@ -6511,6 +6561,17 @@
               "null"
             ],
             "description": "`user` unless a client relays another source."
+          },
+          "format": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PromptFormat"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A structured answer for this root prompt (`session-runtime` → Structured output)."
           }
         },
         "required": [
@@ -6535,6 +6596,26 @@
             "description": "Recorded but not promotable until released."
           }
         ]
+      },
+      "PromptFormat": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "schema": true,
+              "type": {
+                "type": "string",
+                "const": "json_schema"
+              }
+            },
+            "required": [
+              "type",
+              "schema"
+            ]
+          }
+        ],
+        "description": "`{ type: \"json_schema\", schema }`: the answer is a JSON object the schema validates,\nsubmitted through the `structured_output` tool."
       },
       "Data_Receipt": {
         "type": "object",
@@ -9481,6 +9562,20 @@
               }
             ],
             "description": "Injection signals in an admitted message or Channel event (`untrusted-content`\n→ Injection signal notices)."
+          },
+          "output_schema": {
+            "description": "The JSON Schema this root prompt's answer must satisfy."
+          },
+          "structured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StructuredOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The structured result or error of a prompt with `output_schema`, once settled."
           }
         },
         "required": [
@@ -9492,6 +9587,37 @@
           "digest",
           "admitted_seq"
         ]
+      },
+      "StructuredOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "The input the result answers."
+          },
+          "value": {
+            "description": "The validated object; absent when the prompt failed."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`StructuredOutputError: <why>` when no valid result was submitted."
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Submissions counted, including Turns that ended without the finalizer."
+          }
+        },
+        "required": [
+          "message_id",
+          "attempts"
+        ],
+        "description": "The terminal outcome of a root prompt's structured result, kept on its input."
       },
       "InboxEditBody": {
         "type": "object",

@@ -41,6 +41,10 @@ pub struct Run {
     pub goals: Option<Vec<Value>>,
     /// When `--timeout` ends the run, in Unix milliseconds.
     pub deadline_ms: Option<i64>,
+    /// `--output-schema` was given: the run's result is the structured outcome.
+    pub wants_structured: bool,
+    /// The prompt's `session.structured_output.settled.1`, once it arrives.
+    pub structured: Option<Value>,
 }
 
 impl Run {
@@ -66,6 +70,8 @@ impl Run {
             max_cost: args.max_cost,
             goals: None,
             deadline_ms: None,
+            wants_structured: args.schema.is_some(),
+            structured: None,
         }
     }
 
@@ -122,7 +128,7 @@ impl Run {
             )
     }
 
-    fn combined_cost(&self) -> f64 {
+    pub(super) fn combined_cost(&self) -> f64 {
         self.cost
             + self
                 .children_usage
@@ -517,6 +523,11 @@ impl Out {
         self.delegation = Some((parent.into(), job.into()));
     }
 
+    /// One `stream-json` line of `kind` (nothing in other formats).
+    pub(super) fn stream_line(&self, kind: &str, payload: Value) {
+        self.line(kind, payload);
+    }
+
     fn line(&self, kind: &str, mut payload: Value) {
         if self.format != Format::StreamJson {
             return;
@@ -536,6 +547,11 @@ impl Out {
     }
 
     pub async fn init(&self, client: &Client, session: &Value) {
+        self.init_version(client, session, 1).await;
+    }
+
+    /// The `init` line; version 2 declares the streaming-input types.
+    pub async fn init_version(&self, client: &Client, session: &Value, version: u32) {
         if self.format != Format::StreamJson {
             return;
         }
@@ -555,7 +571,7 @@ impl Out {
             .collect();
         self.line(
             "system",
-            json!({ "subtype": "init", "schema_version": 1, "model": session["model"], "agent": agent, "mode": mode, "cwd": session["directory"], "tools": names, "mcp_servers": [] }),
+            json!({ "subtype": "init", "schema_version": version, "model": session["model"], "agent": agent, "mode": mode, "cwd": session["directory"], "tools": names, "mcp_servers": [] }),
         );
     }
 
@@ -620,6 +636,12 @@ impl Out {
             | "session.usage_limit.resumed"
             | "session.usage_limit.abandoned" => self.usage_limit(base, data),
             "session.step.failed" => {}
+            "session.structured_output.settled" if run.wants_structured => {
+                if let Some(error) = data["error"].as_str() {
+                    run.error.get_or_insert_with(|| error.to_owned());
+                }
+                run.structured = Some(data.clone());
+            }
             _ => {}
         }
     }
@@ -718,6 +740,7 @@ impl Out {
         let mut result = self.summary(run, code);
         let text = match self.review.take() {
             Some(review) => review.report(&mut result, &mut code, run, &self),
+            None if run.wants_structured => structured(run, &mut result, &mut code),
             None => run.text.clone(),
         };
         self.emit(result, &text, args, session);
@@ -781,6 +804,33 @@ impl Out {
         }
         if !args.ephemeral && !self.quiet && session["id"].is_string() {
             eprintln!("session: {}", self.session_id);
+        }
+    }
+}
+
+/// `--output-schema`: `result` is the validated object, printed as JSON in text mode. A
+/// run that ended without one, and was not stopped, fails with `StructuredOutputError`.
+fn structured(run: &Run, result: &mut Value, code: &mut u8) -> String {
+    match run
+        .structured
+        .as_ref()
+        .map(|s| &s["value"])
+        .filter(|v| !v.is_null())
+    {
+        Some(value) => {
+            result["result"] = value.clone();
+            serde_json::to_string_pretty(value).unwrap_or_default()
+        }
+        None => {
+            if *code == 0 {
+                *code = super::EXIT_ERROR;
+                result["exit_code"] = (*code).into();
+                result["error"] =
+                    "StructuredOutputError: the run ended without a structured result".into();
+                result["stop_reason"] = "error".into();
+            }
+            result["result"] = Value::Null;
+            String::new()
         }
     }
 }

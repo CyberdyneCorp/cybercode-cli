@@ -221,11 +221,15 @@ A singular alias of `sessions`, a standalone export command and a session-file i
 - **THEN** the CLI fails with `Error: this feature requires a Cyber Account` and `Hint: run "cyber login"`, exit code 6
 
 ### Requirement: Upgrade and uninstall commands
-(P0) `cyber upgrade [version] [--method <m>]` and `cyber uninstall [--keep-config] [--keep-data] [--dry-run] [--force]` SHALL behave as specified in `installation-upgrade`.
+(P0) `cyber upgrade [version] [--method <m>] [--channel <c>] [--dry-run]` and `cyber uninstall [--keep-config] [--keep-data] [--dry-run] [--force]` SHALL behave as specified in `installation-upgrade`. Both SHALL accept `--format json`, printing the upgrade result (`from`, `to`, `method`, `action`) or the uninstall plan (each entry's kind, path, size and whether it was removed).
 
 #### Scenario: Dry-run uninstall
 - **WHEN** the user runs `cyber uninstall --dry-run`
 - **THEN** the paths that would be removed are listed with sizes and nothing is deleted
+
+#### Scenario: Upgrade on another channel
+- **WHEN** the user runs `cyber upgrade --channel beta` on a stable `script` install
+- **THEN** the latest version is read from the `beta` channel manifest and installed after verification
 
 ### Requirement: Stats command
 (P0) `cyber stats [--days N] [--project <id>] [--models] [--tools] [--by origin] [--format json]` SHALL aggregate stored Sessions into totals of sessions, turns, tokens (input, output, reasoning, cache read, cache write), cost, tool usage, and per-model and per-workflow usage. (P1) Sessions, Turns, tokens, cost, streaks and the per-model table SHALL come from `GET /api/v1/usage/stats` of the shared server (`--days N` as `period=Nd`, 1 to 371; `--project <dir>` as `directory`, the project containing `<dir>`), so they match the TUI Stats tab. `--tools` SHALL count tool calls by name from the `tool_call` projection, for Sessions in scope that were active since the period's start. `--format json` SHALL print that response's `data` unchanged, plus `tools` when `--tools` is given. `--by origin` SHALL add one row per usage origin (`cross-session-messaging` → Usage attribution).

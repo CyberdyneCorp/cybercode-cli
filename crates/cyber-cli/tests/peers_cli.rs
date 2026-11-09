@@ -162,7 +162,13 @@ struct Machine {
 impl Machine {
     fn new(peers: Value) -> Self {
         let env = Env::new();
-        env.user_config(&json!({ "peers": peers }));
+        // Sessions need a model; these never call it, and a catalog's keyless local
+        // endpoint is no longer chosen on its own.
+        let local = json!({ "api": { "type": "openai-compatible", "url": "http://127.0.0.1:9/v1" },
+            "models": { "main": {} } });
+        env.user_config(
+            &json!({ "peers": peers, "providers": { "local": local }, "model": "local/main" }),
+        );
         Self {
             env,
             vars: Vec::new(),

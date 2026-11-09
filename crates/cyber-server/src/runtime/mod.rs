@@ -164,7 +164,8 @@ mod shutdown;
 pub mod side_chat;
 pub use side_chat::SideAnswer;
 mod structured;
-pub use structured::StructuredSchema;
+mod structured_turn;
+pub use structured::{StructuredOutcome, StructuredSchema, check_root_schema};
 mod recap;
 mod redaction;
 pub use recap::{NOTHING_TO_RECAP, Recap};
@@ -177,7 +178,9 @@ mod usage_ledger;
 mod usage_limits;
 mod usage_origin;
 pub use usage_limits::{LimitReading, UsageLimits, UsageWindow, WindowPeriod};
+mod fallback;
 mod usage_wait;
+pub use fallback::ModelFallback;
 pub use usage_wait::{SystemClock, UsageLimitWait, WaitClock, WaitedBy};
 mod usage_stats;
 pub use usage_breakdown::{BudgetLimit, BudgetScope, BudgetUsage, ModelUsage, SessionUsage};
@@ -624,6 +627,7 @@ impl CommandPlan {
             delivery,
             source: self.source.into(),
             resume: true,
+            output_schema: None,
         }
     }
 }
@@ -663,19 +667,27 @@ pub struct Admission {
     pub source: String,
     /// `false` admits without waking the Session.
     pub resume: bool,
+    /// A JSON Schema the answer to this root prompt must satisfy (`session-runtime` →
+    /// Structured output); validated before admission.
+    pub output_schema: Option<serde_json::Value>,
 }
 
 impl Admission {
     /// Exact-retry identity: computed from the parts (and the `file` parts) as
     /// submitted, before expansion.
     fn digest(&self, files: &[attachments::FilePart]) -> String {
-        digest(
+        let base = digest(
             &self.parts,
             self.delivery,
             self.skill_command.as_ref(),
             self.template.as_ref(),
             files,
-        )
+        );
+        // A retry with another schema is another prompt.
+        match &self.output_schema {
+            Some(schema) => format!("{base}+schema:{:x}", Sha256::digest(schema.to_string())),
+            None => base,
+        }
     }
 
     pub fn text(text: impl Into<String>, delivery: Delivery) -> Self {
@@ -687,6 +699,7 @@ impl Admission {
             delivery,
             source: "user".into(),
             resume: true,
+            output_schema: None,
         }
     }
 }
@@ -1642,6 +1655,7 @@ impl Runtime {
         check: PromptCheck,
         extra: Vec<NewEvent>,
     ) -> Result<Receipt, RuntimeError> {
+        self.check_output_schema(session_id, &admission).await?;
         self.admit_recorded(session_id, admission, attempt, check, extra, None)
             .await
     }
@@ -1668,6 +1682,28 @@ impl Runtime {
                     .await?,
             )),
         }
+    }
+
+    /// A prompt's `output_schema` is for root Sessions and must pass the root schema
+    /// bounds (`session-runtime` → Structured output).
+    pub(crate) async fn check_output_schema(
+        &self,
+        session_id: &str,
+        admission: &Admission,
+    ) -> Result<(), RuntimeError> {
+        let Some(schema) = &admission.output_schema else {
+            return Ok(());
+        };
+        let handle = self.inner.handle(session_id).await?;
+        if handle.state.lock().await.info.parent_id.is_some() {
+            return Err(RuntimeError::Invalid(
+                "output_schema applies to root prompts; a subagent has its own result schema"
+                    .into(),
+            ));
+        }
+        structured::check_root_schema(schema)
+            .map(drop)
+            .map_err(RuntimeError::Invalid)
     }
 
     /// Admit with the input's `untrusted` record. A Channel event is always scanned
@@ -1746,6 +1782,7 @@ impl Runtime {
                 hook_stop: effects.stop,
                 resources: attachments.resources,
                 untrusted: untrusted_input::merged([untrusted, attachments.untrusted]),
+                output_schema: admission.output_schema,
             };
             let mut events = Vec::new();
             if let Some(attempt) = attempt {

@@ -17,7 +17,7 @@ Configuration is the set of authored `cyber.json`/`cyber.jsonc` documents and `.
 - **THEN** a warning `unknown config key "colour"` is logged and shown by `cyber doctor`, and loading continues
 
 ### Requirement: Top-level keys
-(P0) The schema SHALL accept the top-level keys `$schema`, `model`, `small_model`, `model_roles`, `fallback_models`, `providers`, `agents`, `default_agent`, `mode`, `output_style` (`system-context` → Output style selection), `language` (`localization`), `permissions`, `sandbox`, `hooks`, `plugins`, `mcp`, `mcp_serve` (MCP serve; global configuration only), `skills`, `commands`, `instructions`, `references`, `memory`, `browser`, `computer`, `compaction`, `snapshots`, `worktrees`, `lsp`, `formatters`, `tool_output`, `workflows`, `goals`, `teams`, `loops`, `messaging`, `peers`, `remote`, `runners`, `channels`, `account`, `share`, `telemetry`, `budgets`, `policy`, `profiles`, `default_profile`, `shell`, `attachments`, `background`, `tools`, `git`, `ide`, `autofix`, `network`, `storage`, `compat`, `services`, `features`, `experimental` (deprecated alias of `features`) and `autoupdate` (`installation-upgrade`). Collection keys SHALL use plural names, and entries SHALL use `disabled: true` to turn off an inherited entry.
+(P0) The schema SHALL accept the top-level keys `$schema`, `model`, `small_model`, `model_roles`, `fallback_models`, `fallback` (`provider-catalog` → Model fallback chain), `providers`, `agents`, `default_agent`, `mode`, `output_style` (`system-context` → Output style selection), `language` (`localization`), `permissions`, `sandbox`, `hooks`, `plugins`, `mcp`, `mcp_serve` (MCP serve; global configuration only), `skills`, `commands`, `instructions`, `references`, `memory`, `browser`, `computer`, `compaction`, `snapshots`, `worktrees`, `lsp`, `formatters`, `tool_output`, `workflows`, `goals`, `teams`, `loops`, `messaging`, `peers`, `remote`, `runners`, `channels`, `account`, `share`, `telemetry`, `budgets`, `policy`, `profiles`, `default_profile`, `shell`, `attachments`, `background`, `tools`, `git`, `ide`, `autofix`, `network`, `storage`, `compat`, `services`, `features`, `experimental` (deprecated alias of `features`) and `autoupdate` (`installation-upgrade`). Collection keys SHALL use plural names, and entries SHALL use `disabled: true` to turn off an inherited entry.
 
 #### Scenario: Disabling an inherited MCP server
 - **WHEN** the global config defines `mcp.github` and the project config sets `mcp.github.disabled = true`
@@ -185,10 +185,10 @@ A PATCH that would change a key locked by managed policy SHALL fail with 403 `Po
 - **THEN** `teams experimental off (default)` and the other entries are printed with their sources
 
 ### Requirement: Command-line overrides
-(P0) `-c`/`--config <key=value>` SHALL set one config value for the process, where `key` is a dotted path and `value` is parsed as JSON5 when it parses and as a string otherwise. Overrides SHALL merge as a layer above the selected profile and below other CLI flags, SHALL be validated against the schema, and SHALL NOT be able to set `policy` or `profiles`. `cyber debug config` SHALL show the source `cli:-c` for overridden values.
+(P0) `--config <key=value>` (long form only; `-c` is `--continue`) SHALL set one config value for the process, where `key` is a dotted path and `value` is parsed as JSON5 when it parses and as a string otherwise. Overrides SHALL merge as a layer above the selected profile and below other CLI flags, SHALL be validated against the schema, and SHALL NOT be able to set `policy` or `profiles`. `cyber debug config` SHALL show the source `cli:--config` for overridden values.
 
 #### Scenario: One-off override
-- **WHEN** the user runs `cyber exec -c compaction.auto=false -c 'sandbox.allowed_domains=["example.org"]' "..."`
+- **WHEN** the user runs `cyber exec --config compaction.auto=false --config 'sandbox.allowed_domains=["example.org"]' "..."`
 - **THEN** the Session runs without automatic compaction, with `example.org` allowed, and nothing is written to any config file
 
 ### Requirement: References
@@ -223,3 +223,28 @@ Any other field, another `mode` value, or a `max_wait` that is not such a durati
 #### Scenario: Invalid duration
 - **WHEN** the global config sets `usage_limit.max_wait` to `"2 weeks"`
 - **THEN** validation reports `usage_limit.max_wait: expected a duration from 1s to 7d, such as 30m or 6h`
+
+### Requirement: Tool output redaction settings
+(P1) The system SHALL read `tool_output.redact` as `{ enabled?: boolean (default true), patterns?: [string], allow?: [string] }` (`tool-registry` → Tool output redaction).
+
+- **`patterns`** are extra regexes, each whole match redacted as `custom`.
+- **`allow` entries** are values never redacted: an entry written `/re/` is a regex the whole value must match, and anything else is a literal.
+
+The settings SHALL be validated:
+- at most 32 `patterns` and 64 `allow` entries;
+- each a non-empty string of at most 1024 bytes;
+- each regex compiling within a 256 KiB program and 1 MiB DFA size limit;
+- no regex matching empty text;
+- no unknown keys.
+
+Invalid settings SHALL fail loading with `tool_output.redact.<key>[<index>]: <reason>`.
+
+A project or plugin layer, trusted or not, and including its `profiles`, SHALL only tighten redaction. Its `enabled` (unless `true`) and `allow` SHALL be dropped with a warning, and its `patterns` SHALL apply. `tool_output.redact.patterns` and `tool_output.redact.allow` SHALL concatenate across layers, so no layer can drop another's entries.
+
+#### Scenario: Project cannot disable redaction
+- **WHEN** a trusted project's `cyber.jsonc` sets `tool_output.redact.enabled: false`, `allow: ["/.+/"]`, a pattern, and a default profile that sets `enabled: false`
+- **THEN** redaction stays on, the allow list holds only the user's entries, the user's and the project's patterns both apply, and a warning names the ignored settings
+
+#### Scenario: Invalid pattern
+- **WHEN** config sets `tool_output.redact.patterns: ["(unclosed"]`
+- **THEN** loading fails with an issue starting `tool_output.redact.patterns[0]:`

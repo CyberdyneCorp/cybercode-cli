@@ -99,6 +99,7 @@
   "every branch of this session; check one out or label it": "todas las ramas de esta sesión; haz checkout de una o etiquétala",
   "expand or collapse long tool output": "expandir o contraer la salida de herramientas larga",
   "expand or collapse tool output": "expandir o contraer la salida de herramientas",
+  "fallback: {model}": "respaldo: {model}",
   "filter": "filtrar",
   "find literal bytes": "buscar bytes literales",
   "focus the sidebar": "enfocar la barra lateral",
@@ -233,6 +234,7 @@
   "write this session to a file in the Location": "guardar esta sesión en un archivo en la Ubicación",
   "write this session to an HTML page in the Location": "guardar esta sesión como página HTML en la Ubicación",
   "write this session to an HTML, Markdown or JSON file": "guardar esta sesión en un archivo HTML, Markdown o JSON",
+  "{from} failed ({kind}); continuing on {to}": "{from} falló ({kind}); continuando con {to}",
   "{older} older · ↓ newer · enter edit · esc cancel": "{older} anterior · ↓ más reciente · enter editar · esc cancelar",
   "{source} sets the language here; your default applies elsewhere": "{source} define el idioma aquí; tu predeterminado se aplica en otros lugares",
   "↑↓ select · enter apply · esc close": "↑↓ seleccionar · enter aplicar · esc cerrar"

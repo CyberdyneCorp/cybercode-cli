@@ -55,6 +55,9 @@ pub struct Session {
     /// The pending usage limit wait (`session-runtime` → Usage limit wait); null when the
     /// Session is not waiting for a limit to reset.
     pub usage_limit: Option<crate::runtime::UsageLimitWait>,
+    /// The model fallback in effect (`provider-catalog` → Model fallback chain).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<crate::runtime::ModelFallback>,
 }
 
 /// A history entry with the tool calls it made.
@@ -186,6 +189,16 @@ pub struct PromptBody {
     pub resume: bool,
     /// `user` unless a client relays another source.
     pub source: Option<String>,
+    /// A structured answer for this root prompt (`session-runtime` → Structured output).
+    pub format: Option<PromptFormat>,
+}
+
+/// `{ type: "json_schema", schema }`: the answer is a JSON object the schema validates,
+/// submitted through the `structured_output` tool.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PromptFormat {
+    JsonSchema { schema: serde_json::Value },
 }
 
 fn steer() -> Delivery {
@@ -445,6 +458,7 @@ pub(super) fn session(state: &AppState, s: SessionState) -> Session {
         context,
         untrusted_content,
         usage_limit: s.usage_wait.pending.clone(),
+        fallback: state.runtime.model_fallback(&s),
         effective_mode,
         pending_mode,
         status: status.into(),
@@ -721,6 +735,9 @@ pub(crate) async fn submit_prompt(
         delivery: body.delivery,
         source: body.source.unwrap_or_else(|| "user".into()),
         resume: body.resume,
+        output_schema: body
+            .format
+            .map(|PromptFormat::JsonSchema { schema }| schema),
     };
     let receipt: Receipt = match state
         .runtime
@@ -1471,6 +1488,8 @@ mod tests {
             admitted_seq: 1,
             promoted_seq: Some(2),
             untrusted,
+            output_schema: None,
+            structured: None,
         }
     }
 

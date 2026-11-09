@@ -104,9 +104,16 @@ impl Inner {
         handle: &Handle,
         model: &str,
     ) -> Result<(), RuntimeError> {
+        // Switching to the configured model while a fallback is active ends the fallback.
+        let now = self.now_ms();
+        let unchanged = |state: &super::model::SessionState| {
+            !state.model_selection.agent_default
+                && state.model_selection.reference == model
+                && state.active_fallback(now).is_none()
+        };
         let pre = {
             let state = handle.state.lock().await;
-            if !state.model_selection.agent_default && state.model_selection.reference == model {
+            if unchanged(&state) {
                 return Ok(());
             }
             let fields = json!({"from": state.info.model, "to": model, "automatic": false});
@@ -125,7 +132,7 @@ impl Inner {
         }
         let post = {
             let mut state = handle.state.lock().await;
-            if !state.model_selection.agent_default && state.model_selection.reference == model {
+            if unchanged(&state) {
                 return Ok(());
             }
             let payload = Switched {
@@ -143,9 +150,10 @@ impl Inner {
     /// Apply the profile-derived model at a Safe Boundary. Both hooks only observe
     /// an automatic switch: the Session follows its profile and is never refused.
     pub(crate) async fn automatic_model_switch(&self, handle: &Handle) -> Result<(), RuntimeError> {
+        let now = self.now_ms();
         let pre = {
             let state = handle.state.lock().await;
-            let selected = self.resolve_selection(&state.info, &state.model_selection)?;
+            let selected = self.resolve_selection(&state.info, &state.effective_selection(now))?;
             if state.info.model == selected.reference {
                 return Ok(());
             }
@@ -156,7 +164,7 @@ impl Inner {
         self.observe_lifecycle(pre).await;
         let post = {
             let mut state = handle.state.lock().await;
-            let selected = self.resolve_selection(&state.info, &state.model_selection)?;
+            let selected = self.resolve_selection(&state.info, &state.effective_selection(now))?;
             if state.info.model == selected.reference {
                 return Ok(());
             }

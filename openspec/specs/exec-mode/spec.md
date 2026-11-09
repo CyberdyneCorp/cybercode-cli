@@ -139,17 +139,22 @@ Attachments SHALL obey the server's `attachments.max_bytes` (default 20 MiB). A 
 | `reasoning` | reasoning text | finished reasoning parts, only with `--thinking` |
 | `tool_use` | call ID, tool, input | — |
 | `tool_result` | call ID, status, output (truncated to 2,000 chars) | — |
+| `retry` | message ID, attempt, delay_ms, error, discarded | each provider retry |
 | `permission_denied` | — | each denial |
 | `goal_verdict` | — | goal-driven runs |
 | `workflow_progress` | — | workflow runs |
 | `error` | — | — |
 | `result` | same shape as the json-mode result | last |
 
-The schema SHALL be versioned by `schema_version` in the `init` event (starting at `1`), and changes SHALL be additive within a major version.
+The schema SHALL be versioned by `schema_version` in the `init` event (starting at `1`), and changes SHALL be additive within a major version. Only recorded content SHALL produce `assistant_text`, `reasoning` and `tool_use` lines, so an attempt the retry policy discarded never appears.
 
 #### Scenario: Event order
 - **WHEN** a stream-json run makes one bash call and finishes
 - **THEN** stdout lines are, in order: `system`, `tool_use`, `tool_result`, `assistant_text`, `result`
+
+#### Scenario: Answer replayed after a dropped connection
+- **WHEN** the provider connection drops after part of the answer and the replayed request completes
+- **THEN** stdout has one `retry` line with `discarded: true`, then a single `assistant_text` holding only the replayed answer
 
 ### Requirement: Structured final output
 (P1) The system SHALL accept `--output-schema <file.json>`, a JSON Schema the final answer must satisfy. It SHALL be enforced through the structured-output mechanism from `session-runtime`. On success, the `result` field SHALL hold the validated JSON object (text mode prints it pretty-printed). After one initial submission and at most two failed validation corrections the run SHALL exit with code 1 and a `StructuredOutputError`; it SHALL NOT make a fourth submission.
@@ -247,3 +252,10 @@ SIGINT SHALL interrupt the Drain gracefully, flush the `result` event, and then 
 #### Scenario: Timeout before the reset
 - **WHEN** `cyber exec --timeout 10m` hits a usage limit that resets in 40 minutes
 - **THEN** exec stops the run right after the `waiting` event with `stop_reason: "timeout"` and exit code 4
+
+### Requirement: Redaction notes in exec output
+(P1) A `tool_result` line of `--format stream-json` SHALL carry the settlement's `redactions` when it hid anything (`tool-registry` → Redaction visibility). In text mode without `--quiet`, `cyber exec` SHALL print `<tool>: <n> secret(s) hidden from the model` to stderr.
+
+#### Scenario: Stream line
+- **WHEN** a `bash` call settles with two values hidden
+- **THEN** its `tool_result` line has `"redactions": {"count": 2, "kinds": […]}`

@@ -10,6 +10,7 @@ const KNOWN_KEYS: &[&str] = &[
     "small_model",
     "model_roles",
     "fallback_models",
+    "fallback",
     "providers",
     "agents",
     "default_agent",
@@ -152,6 +153,7 @@ fn settings_issues(value: &Value) -> Vec<String> {
         super::AttachmentSettings::from_config(value).err(),
         crate::redact::RedactSettings::from_config(value).err(),
         crate::usage_limit::UsageLimitSettings::from_config(value).err(),
+        crate::model_fallback::FallbackSettings::from_config(value).err(),
     ];
     let mut issues: Vec<String> = sections.into_iter().flatten().collect();
     issues.extend(crate::budget::validate_config(value));

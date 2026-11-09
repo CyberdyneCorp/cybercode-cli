@@ -181,6 +181,10 @@ pub struct Admitted {
     /// events written before the field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
+    /// The JSON Schema a root prompt's answer must satisfy (`session-runtime` →
+    /// Structured output).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -553,6 +557,13 @@ pub fn registry() -> EventRegistry {
         })
         .expect("valid messaging override event");
     super::snapshot_reclamation::register(&mut registry);
+    registry
+        .register_with(super::structured::SETTLED, |data| {
+            serde_json::from_value::<super::StructuredOutcome>(data.clone())
+                .map(drop)
+                .map_err(|e| e.to_string())
+        })
+        .expect("valid structured outcome event");
     super::branches::register(&mut registry);
     super::budget::register(&mut registry);
     super::reservations::register(&mut registry);
@@ -568,6 +579,7 @@ pub fn registry() -> EventRegistry {
     super::teams::records::register(&mut registry);
     super::goals::records::register(&mut registry);
     super::usage_wait::register(&mut registry);
+    super::fallback::register(&mut registry);
     super::workflows::register(&mut registry);
     registry.projector(project);
     registry.projector(super::messaging::records::project);

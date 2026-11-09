@@ -48,6 +48,12 @@ pub struct InboxRow {
     /// → Injection signal notices).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
+    /// The JSON Schema this root prompt's answer must satisfy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    /// The structured result or error of a prompt with `output_schema`, once settled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured: Option<super::StructuredOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -567,6 +573,9 @@ pub struct SessionState {
     /// `session.usage_limit.*` and step events.
     #[serde(skip)]
     pub(crate) usage_wait: super::usage_wait::UsageWaitState,
+    /// The last model fallback; [`SessionState::active_fallback`] says whether it holds.
+    #[serde(skip)]
+    pub(crate) fallback: Option<super::fallback::ModelFallback>,
     /// Every projected message with its parent; `entries` is its active path.
     #[serde(skip)]
     pub(super) branches: super::branches::BranchTree,
@@ -771,6 +780,7 @@ impl SessionState {
             loop_coalesced: BTreeSet::new(),
             goals: Default::default(),
             usage_wait: Default::default(),
+            fallback: None,
             branches: Default::default(),
             taint: Default::default(),
         }
@@ -970,6 +980,19 @@ impl SessionState {
             "session.context.epoch_started" => self.on_epoch(decode(e)?),
             "session.context.updated" => self.on_context_updated(decode(e)?),
             "session.system.added" => self.on_system(decode(e)?),
+            "session.structured_output.settled" => {
+                let outcome: super::StructuredOutcome = decode(e)?;
+                if self.result.input.as_deref() == Some(outcome.message_id.as_str()) {
+                    self.result.settled = true;
+                }
+                if let Some(row) = self
+                    .inbox
+                    .iter_mut()
+                    .find(|row| row.message_id == outcome.message_id)
+                {
+                    row.structured = Some(outcome);
+                }
+            }
             "session.hooks.session_started" => {
                 let marker: super::events::SessionStarted = decode(e)?;
                 self.session_started = true;
@@ -1164,8 +1187,10 @@ impl SessionState {
                 self.info.messaging = decode::<super::events::MessagingUpdated>(e)?.messaging;
             }
             "session.agent.switched" => self.info.agent = decode::<Switched>(e)?.to,
+            "session.model.fallback" => super::fallback::fold(&mut self.fallback, e)?,
             "session.model.switched" => {
                 let switched: Switched = decode(e)?;
+                super::fallback::switched(&mut self.fallback, &switched);
                 self.info.model = switched.to.clone();
                 if !switched.automatic {
                     self.model_selection = super::selection::ModelSelection::explicit(switched.to);
@@ -1215,6 +1240,8 @@ impl SessionState {
             admitted_seq: seq,
             promoted_seq: None,
             untrusted: a.untrusted,
+            output_schema: a.output_schema,
+            structured: None,
         });
     }
 
@@ -1291,6 +1318,21 @@ impl SessionState {
         };
         row.status = InputStatus::Promoted;
         row.promoted_seq = Some(seq);
+        // A root input's schema governs the Turns that answer it, and only those.
+        if self.info.parent_id.is_none() {
+            let schema = row
+                .output_schema
+                .clone()
+                .and_then(|schema| super::StructuredSchema::new(schema).ok());
+            match schema {
+                Some(schema) => {
+                    self.result =
+                        super::structured::ResultState::root(schema, p.message_id.clone());
+                }
+                None if self.result.input.is_some() => self.result = Default::default(),
+                None => {}
+            }
+        }
         // Only the user's own prompt re-anchors the run; every other source keeps the
         // taint. The input's record (a message with signals, or a user prompt's framed
         // attachments) adds to it after that, so attachments taint the run they start.
@@ -1362,6 +1404,9 @@ impl SessionState {
     }
 
     fn on_system(&mut self, s: SystemAdded) {
+        if s.reason == super::structured::MISSING_REASON && self.result.root_open() {
+            self.result.attempts += 1;
+        }
         self.push_entry(Entry::System {
             id: s.message_id,
             text: s.text,

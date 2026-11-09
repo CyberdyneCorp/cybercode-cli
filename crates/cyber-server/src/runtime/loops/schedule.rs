@@ -287,6 +287,7 @@ impl Runtime {
             message_id: message_id.clone(),
             source: "loop".into(),
             resume: true,
+            output_schema: None,
             ..Admission::text(iteration.prompt.clone(), Delivery::Queue)
         };
         let Some(command) = iteration.prompt.strip_prefix('/') else {

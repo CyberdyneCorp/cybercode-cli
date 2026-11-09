@@ -40,6 +40,9 @@ pub struct Session {
     /// When a pending usage limit wait resumes the Session, in Unix milliseconds
     /// (`tui` → Resume at usage limit reset).
     pub usage_wait: Option<i64>,
+    /// The model fallback in effect and when it ends, in Unix milliseconds
+    /// (`provider-catalog` → Model fallback chain).
+    pub fallback: Option<(String, i64)>,
 }
 
 /// A teammate's team and member name, as `SessionInfo.team` carries it.
@@ -154,6 +157,10 @@ impl Session {
             untrusted_policy: serde_json::from_value(v["untrusted_content"].clone())
                 .unwrap_or_default(),
             usage_wait: v["usage_limit"]["resume_at_ms"].as_i64(),
+            fallback: v["fallback"]["to"]
+                .as_str()
+                .zip(v["fallback"]["until_ms"].as_i64())
+                .map(|(to, until)| (to.to_owned(), until)),
         }
     }
 }

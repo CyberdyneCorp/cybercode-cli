@@ -161,6 +161,7 @@ impl Runtime {
                     let admission = Admission {
                         source: NOTICE_SOURCE.into(),
                         resume: true,
+                        output_schema: None,
                         ..Admission::text(resume_line(&task.id, &task.title), Delivery::Queue)
                     };
                     self.admit_message(&member.session_id, admission, Vec::new(), None)
