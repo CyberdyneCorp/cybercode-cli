@@ -412,6 +412,14 @@ impl Driver<'_> {
                     json!({ "message_id": event.data["message_id"], "text": event.data["text"] }),
                 );
             }
+            "session.error" if event.data["kind"] == "snapshot" => {
+                eprintln!(
+                    "snapshot warning: {}",
+                    event.data["message"]
+                        .as_str()
+                        .unwrap_or("code rewind unavailable")
+                );
+            }
             "session.error" => self.failed(&event.data),
             "session.retry" => self.out.retry(&event.data),
             _ => self.out.durable(&mut self.run, kind, &event.data),

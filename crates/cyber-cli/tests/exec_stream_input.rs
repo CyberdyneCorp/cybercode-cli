@@ -231,6 +231,23 @@ impl Driven {
 }
 
 #[test]
+fn unavailable_snapshots_do_not_fail_a_successful_jsonl_input() {
+    let provider = Provider::start(&["text:completed without snapshots"]);
+    // Driven creates an invalid Git marker: capture warns, but inference succeeds.
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"one","id":"warning"}"#);
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["id"], "warning");
+    assert_eq!(result["result"], "completed without snapshots");
+    assert_eq!(result["error"], Value::Null, "{seen:#?}");
+    assert_eq!(result["exit_code"], 0, "{seen:#?}");
+    run.send(r#"{"type":"end"}"#);
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0);
+    assert_eq!(run.exit(), Some(0));
+}
+
+#[test]
 fn two_prompts_give_two_results_in_order_then_end() {
     let provider = Provider::start(&["text:first answer", "text:second answer"]);
     let last = tempfile::NamedTempFile::new().unwrap();
@@ -245,7 +262,7 @@ fn two_prompts_give_two_results_in_order_then_end() {
         (first["id"].as_str(), first["result"].as_str()),
         (Some("a"), Some("first answer"))
     );
-    assert_eq!(first["exit_code"], 0);
+    assert_eq!(first["exit_code"], 0, "{seen:#?}");
     run.send(r#"{"type":"user","text":"two","id":"b"}"#);
     run.send(r#"{"type":"end"}"#);
     let second = run.until("result", &mut seen);
