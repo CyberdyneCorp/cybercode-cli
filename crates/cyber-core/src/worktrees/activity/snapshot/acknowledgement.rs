@@ -200,6 +200,23 @@ impl CheckoutAcknowledgement {
             Err(error) => Err(error),
         }
     }
+    /// Retain a previously published exact disposition without creating one.
+    /// Maintenance requires this stronger check: missing metadata is not an
+    /// acknowledgement and must never be repaired as a side effect of cleanup.
+    pub fn require_existing(&self, claim: &mut SnapshotClaim) -> io::Result<()> {
+        self.retain_existing(claim)?;
+        if claim.acknowledgement.is_none() {
+            return Err(invalid("Checkout acknowledgement has not been published"));
+        }
+        // An exited publisher may have died after rename and before its final
+        // directory sync. Flush the exact retained marker before maintenance
+        // consumes it; this never creates or rewrites acknowledgement metadata.
+        let acknowledged = claim.acknowledgement.as_ref().expect("existing marker");
+        let pins = claim.lease.snapshot_pins.as_ref().expect("retained pins");
+        super::publication::sync_file(&acknowledged.file)?;
+        super::publication::sync_directory(&pins.directory)?;
+        claim.verify()
+    }
     fn matches(&self, record: &Record) -> io::Result<()> {
         if record.binding != self.binding
             || record.resources_digest != self.resources_digest

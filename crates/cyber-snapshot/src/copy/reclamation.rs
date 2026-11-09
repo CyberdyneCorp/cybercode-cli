@@ -1,5 +1,6 @@
 //! Reclaim only exact acknowledged displaced images; keep intent/lifetime receipts.
 mod cancelled;
+mod checkouts;
 mod paired;
 use super::{
     Store, ownership,
@@ -20,6 +21,7 @@ use std::{
 };
 
 struct Prepared {
+    checkouts: checkouts::Checkouts,
     store: Store,
     journal: Dir,
     intent: MetadataPin,
@@ -82,11 +84,7 @@ fn ordinary(record: &Journal) -> bool {
         && record.origin.is_some()
         && record.resolution.is_none()
         && record.settled_by.is_none()
-        && record
-            .context
-            .as_ref()
-            .is_some_and(|context| context.git.is_none())
-        && record.backend != Some(JournalBackend::Git)
+        && record.context.is_some()
         && record
             .changes
             .iter()
@@ -213,15 +211,13 @@ fn prepare(
         .as_ref()
         .ok_or("Legacy restore has no cleanup checkout proof")?;
     let lifetime = store.lock_lifetime(&checkout.lifetime)?;
-    let resources = lifetime
-        .checkout_bindings()?
-        .ok_or("Missing acquired checkout inventory")?;
-    if !resources.is_empty()
-        || checkout.resources_digest != checkout.lifetime.checkout_resources_digest(&resources)?
-    {
-        return Err("Managed checkout reclamation requires retained resource guards".into());
-    }
-    unmanaged(&store)?;
+    let checkouts = checkouts::Checkouts::acquire(
+        &store,
+        &lifetime,
+        &checkout.lifetime,
+        &checkout.resources_digest,
+        &checkouts::receipt_digest(&receipt)?,
+    )?;
     let ownership = record
         .ownership
         .as_ref()
@@ -315,6 +311,7 @@ fn prepare(
         true,
     )?;
     Ok(Prepared {
+        checkouts,
         store,
         journal,
         intent,
@@ -328,15 +325,6 @@ fn prepare(
         settled_at_ms: settlement.settled_at_ms,
         intent_digest,
     })
-}
-fn unmanaged(store: &Store) -> Result<(), String> {
-    if !cyber_core::worktrees::Repository::managed_locations_at(&store.root)
-        .map_err(storage::fail)?
-        .is_empty()
-    {
-        return Err("Snapshot cleanup checkout inventory changed".into());
-    }
-    Ok(())
 }
 impl Prepared {
     fn verify_routes(&self) -> Result<(), String> {
@@ -359,7 +347,7 @@ impl Prepared {
                 .as_deref()
                 .ok_or("Missing source phase route")?,
         )?;
-        unmanaged(&self.store)
+        self.checkouts.verify(&self.store)
     }
     fn verify(&self) -> Result<(), String> {
         self.verify_routes()?;
@@ -401,7 +389,7 @@ impl Prepared {
         {
             return Err("Unknown journal entry appeared before reclamation".into());
         }
-        unmanaged(&self.store)
+        self.checkouts.verify(&self.store)
     }
     fn delete(self) -> Result<u64, String> {
         self.verify()?;

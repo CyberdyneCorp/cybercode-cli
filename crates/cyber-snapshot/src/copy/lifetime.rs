@@ -274,7 +274,6 @@ impl Store {
             .ok_or("Missing acquired reclamation resources")?;
         if phase.admitted != admitted
             || phase.origin.as_ref() != admitted.then_some(origin)
-            || !resources.is_empty()
             || binding.checkout_resources_digest(resources)? != resources_digest
         {
             return Err("Reclamation source phase contradicts committed restore evidence".into());
@@ -669,6 +668,20 @@ mod tests {
             Some(super::super::ownership::Ownership::prepare(&store, &directory, &[]).unwrap());
         Store::record(&directory, &journal).unwrap();
         lifetime.admit_source(&origin).unwrap();
+        let digest = binding.checkout_resources_digest(&resources).unwrap();
+        store
+            .verify_reclamation_phase(&binding, &origin, &digest)
+            .unwrap();
+        assert!(
+            store
+                .verify_reclamation_phase(&binding, &origin, &"f".repeat(64))
+                .is_err()
+        );
+        assert!(
+            store
+                .verify_reclamation_phase_admission(&binding, &origin, &digest, false)
+                .is_err()
+        );
         assert!(
             store
                 .record_checkout_bindings(&binding, &resources)

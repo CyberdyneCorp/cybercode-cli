@@ -159,6 +159,31 @@ finish acknowledged payload reclamation but must not delete unacknowledged evide
 or replay filesystem resolution. Unknown files, aliases and identity changes refuse
 cleanup visibly. No direct user removal of private journal directories is required.
 
+## Managed checkout payload reclamation
+
+Reclamation of acknowledged regular-file Git journal payloads SHALL reacquire
+the complete persisted checkout set for each consumed worker lifetime before
+preparing a durable deletion plan. Each claim SHALL bind the exact original
+creation and lifetime, exclude a live worker, and retain an already published
+checkout acknowledgement matching both the resource digest and the complete
+consuming receipt digest. Synchronize those exact retained markers and their
+directories before consuming them, covering publisher death after rename but
+before its final sync. Cleanup SHALL NOT create or repair a missing marker.
+
+Retain all original/resolution native claim and acknowledgement pins through
+the serialized writer callback and every private unlink. Revalidate the current
+complete managed-location inventory and registrations, retained claim routes,
+journal ownership and retention policy before deletion. An absent/foreign marker,
+live claim, changed registration or incomplete inventory SHALL refuse cleanup
+before publishing a plan. Source contents, Git index/configuration and original
+native evidence SHALL remain unchanged. Restart after a durable plan SHALL use
+the same frozen payload identities and complete-resource proof, never source
+replay. Existing receipt and reclamation event formats remain unchanged.
+
+Typed link payloads, incomplete construction, legacy missing proof, CAS/metadata
+collection and the complete platform/cut matrix remain separate obligations.
+This extension does not enable default owned Git restore admission.
+
 ## Compatibility and migration
 
 Historical bare Git trees remain readable with explicit unknown exclusion history.

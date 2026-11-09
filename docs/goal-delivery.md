@@ -1,5 +1,74 @@
 # Active implementation goal and delivery rules
 
+## Current audit: 2026-11-09
+
+The user has set the active objective to complete implementation, verification
+and accepted delivery of **#93**. #92 remains a separate unfinished workstream;
+preserve its accepted behavior and dependency gates without assuming its missing
+guarantees or selecting its pending policies. The owner's closed #94 is outside
+this objective. The #92 rows below retain dependency context from the earlier
+combined audit; they are not additional scope for the current goal.
+
+Main `8266db6c` is integrated into `feat/managed-recovery-owner` at `2fcd745d`.
+The merge retains snapshot admission/reclamation and the incoming root-schema
+validation/settlement events, plus the binary-worker activity-drain wait. The
+seven pre-existing uncommitted files were restored from a retained backup stash.
+The branch still contains substantial undelivered recovery work; it must not be
+confused with accepted main behavior. GitHub reported both issues open and no
+open PRs at audit time. The issue #93 checklist trails the repository's merged
+section 5/6 implementation state; reconcile it at delivery.
+
+| Area | Evidence and remaining work |
+| --- | --- |
+| #93 rewind/snapshots, tasks 2.4/3.2–3.4 and M2–M8 | Local worker origins, reviewed keep/rollback, paired Store settlement, native acknowledgements, CLI/TUI recovery and several payload-reclamation paths exist. Managed Git partial-kill acceptance passes locally, but default Git admission remains gated. Finish partial resource construction, complete reference/CAS/metadata and managed/Git reclamation, remaining crash cuts, platform/client acceptance and delivery. Preserve legacy unknown fences. |
+| #93 rules/context, tasks 4.1–4.4 | Implement trusted path-rule discovery/precedence/bounds and authorized-operation reminders with Epoch provenance. Extend the existing `/sessions/:id/context` endpoint beyond epoch/baseline/summary/task to effective source inventory, estimates/status/pending changes; add the owner-facing `/context` flow and leakage/restart/revocation acceptance. The sidebar meter is not that inspection feature. |
+| #93 structured results, tasks 5.1–5.4 | #116 merged admission/schema bounds, finalization, retries, durable per-input outcomes and CLI/API/SDK rendering. Three real CLI and five server tests pass after integration. Compaction during an open attempt and budget/interrupt terminal outcomes still need acceptance; do not infer them from restart between completed prompts. |
+| #93 JSONL, tasks 6.1–6.4 | #117 merged basic typed parsing, correlation, replies and EOF draining. Complete exact driver ownership, bounded retained state and output backpressure, hook-event output, safe atomic last-message publication, and steering/capacity/SIGINT/restart/lost-ack/shared-Session acceptance. Task 6.2 is reopened on inspected code evidence below. |
+| #92 native enforcement, tasks 2/N/R | Foundation/probe evidence exists, but production launch still uses the legacy sandbox route. Finish generation/image-bound native admission, revocation/quarantine/lifetime, independently intersected capabilities, real tool execution and native runtime/platform positives/denials. Linux R1 direction/support review and later R6 activation remain distinct gates. |
+| #92 protocol/callbacks/producers, tasks 3–6/S/D | Finish contribution ownership, hooks/providers/catalog transforms and TypeScript kit, durable scoped callbacks (`session/prompt` still explicitly refuses), Setup and DirectoryAdded plus combined producer acceptance. Preserve accepted FileChanged and CwdChanged fixes. Complete S1 epoch/directory-key/legacy-deletion and D1 directory-admission/Safe Boundary/child-policy review before their dependent code. |
+
+### Focused code-review findings and next actions
+
+This review covers incoming JSONL behavior and merge overlap, not acceptance of
+the entire recovery branch. Rust integration tests are executable; native
+cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
+
+1. **Integration regression: optional snapshot capture fails JSONL results.**
+   Unchanged main passes all six JSONL tests. The integrated candidate initially
+   fails four because `Driver::failed` treats `kind: snapshot` as a failed input,
+   despite successful inference and ordinary exec's nonfatal warning handling.
+   The local fix keeps these diagnostics nonfatal and adds a real-binary
+   regression with unavailable Git snapshots. All seven JSONL tests and all
+   three structured-output CLI tests pass after the fix.
+2. **Major: request and interruption ownership is Session-wide.**
+   `Driver::asked` accepts every matching Session request and `interrupt` targets
+   the Session without binding to the driver's admitted messages. Track exact
+   input/request authority and test two drivers/owner clients sharing a Session,
+   including unrelated work present before driver startup.
+3. **Major: long runs retain completed payloads and output blocks the loop.**
+   `inputs` retains every completed text/structured result; the pending-input cap
+   does not bound that history. `Out::line` writes/flushes stdout synchronously
+   on the same loop that handles controls and lease renewal. Retire emitted
+   payloads into bounded accounting and use a bounded output owner with explicit
+   I/O-failure settlement; test long runs, slow readers and broken pipes.
+4. **Major: last-message publication uses a predictable temporary path.**
+   `write_atomically` truncates `.<name>.tmp` without exclusive creation, allowing
+   concurrent writers or a pre-created symlink to redirect/interfere with the
+   write. Use an exclusively created temporary file beside the destination and
+   test symlink pre-creation, concurrent writers and cleanup after failure.
+
+Verification: three structured-output CLI tests, seven JSONL CLI tests, five
+structured-result server tests and six binary-worker ownership tests pass;
+formatting and whitespace
+checks pass. CI-pinned OpenSpec 1.13.2 validates 100 items after the incoming
+archives; spec lint reports zero errors and 25 warnings. The preparation case now
+passes with an independent staging deadline. A separate unconstrained-run
+first-prompt startup stall remains unresolved; its isolated rerun and the complete
+suite with four parallel threads pass. The stalled fixture's diagnostics are
+retained rather than counted as a passing run.
+The integration regression is locally corrected; finish the current recovery
+delivery increment before starting another broad implementation stream.
+
 The full approved scope from PRs #53/#54 remains required. Its original delivery order was:
 
 1. [Plugins and hooks](../openspec/changes/complete-plugin-hook-runtime/tasks.md):

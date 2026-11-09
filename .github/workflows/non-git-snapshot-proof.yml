@@ -10,9 +10,14 @@ on:
       - crates/cyber-server/src/runtime/rewind*.rs
       - crates/cyber-server/src/http/sessions.rs
       - crates/cyber-app/tests/snapshot_git_runtime.rs
+      - crates/cyber-cli/Cargo.toml
+      - crates/cyber-cli/src/**
+      - crates/cyber-cli/tests/branches_cli.rs
+      - crates/cyber-cli/tests/support/**
       - crates/cyber-server/src/workspace.rs
       - crates/cyber-core/src/binary/native/**
       - crates/cyber-core/src/binary/native.rs
+      - crates/cyber-core/src/worktrees/**
       - Cargo.lock
       - .github/workflows/non-git-snapshot-proof.yml
   workflow_dispatch:
@@ -23,7 +28,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   native:
-    name: File-copy snapshots (${{ matrix.os }})
+    name: Snapshot native (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -45,12 +50,22 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-snapshot -- --nocapture 2>&1 | tee non-git-snapshot-proof.log
+      - name: Read-only checkout acknowledgement requirement
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-core --lib worktrees::activity::snapshot::acknowledgement::tests::maintenance_requires_an_existing_acknowledgement_without_publishing_one -- --exact --nocapture 2>&1 | tee managed-checkout-ack-proof.log
       - name: Owned Git runtime acceptance candidate
         shell: bash
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-snapshot --features native-git-acceptance -- --nocapture 2>&1 | tee git-adapter-proof.log
           cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_git_runtime -- --nocapture 2>&1 | tee git-runtime-proof.log
+      - name: Managed Git CLI process-death recovery candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_git_keep_and_rollback_after_real_partial_restore_kill -- --nocapture 2>&1 | tee git-cli-recovery-proof.log
       - name: Retain native evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -58,6 +73,8 @@ jobs:
           name: non-git-snapshot-proof-${{ matrix.os }}
           path: |
             non-git-snapshot-proof.log
+            managed-checkout-ack-proof.log
             git-adapter-proof.log
             git-runtime-proof.log
+            git-cli-recovery-proof.log
           if-no-files-found: warn

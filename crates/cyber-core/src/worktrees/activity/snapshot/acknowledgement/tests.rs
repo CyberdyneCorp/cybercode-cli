@@ -51,6 +51,35 @@ fn authority(binding: &CheckoutBinding) -> CheckoutAcknowledgement {
 }
 
 #[test]
+fn maintenance_requires_an_existing_acknowledgement_without_publishing_one() {
+    let temp = tempfile::tempdir().unwrap();
+    let managed = fixture(&temp.path().canonicalize().unwrap());
+    let binding = original(&managed);
+    let mut proof = claim(&managed, &binding);
+    let authority = authority(&binding);
+    let marker = directory(&managed).join("op_fixture.snapshot-ack");
+    let original_path = directory(&managed).join("op_fixture.lock");
+    let bytes = std::fs::read(&original_path).unwrap();
+    assert!(authority.require_existing(&mut proof).is_err());
+    assert!(!marker.exists());
+    assert_eq!(std::fs::read(&original_path).unwrap(), bytes);
+    authority.publish(&mut proof).unwrap();
+    drop(proof);
+    let mut reloaded = claim(&managed, &binding);
+    authority.require_existing(&mut reloaded).unwrap();
+    let foreign = CheckoutAcknowledgement::new(&binding, &"a".repeat(64), &"c".repeat(64)).unwrap();
+    assert!(foreign.require_existing(&mut reloaded).is_err());
+    let hidden = temp.path().join("retained-marker");
+    std::fs::rename(&marker, &hidden).unwrap();
+    assert!(reloaded.verify().is_err());
+    assert!(
+        !marker.exists(),
+        "verification must not recreate the marker"
+    );
+    assert_eq!(std::fs::read(&original_path).unwrap(), bytes);
+}
+
+#[test]
 fn acknowledgement_is_exact_idempotent_and_preserves_original_and_independent_unknown_bytes() {
     let temp = tempfile::tempdir().unwrap();
     let managed = fixture(&temp.path().canonicalize().unwrap());

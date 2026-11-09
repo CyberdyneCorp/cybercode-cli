@@ -93,17 +93,17 @@ fn prepare(
         .ok_or("Missing preparation journal origin")?;
     store.verify_worker_namespace(origin)?;
     let lifetime = store.lock_lifetime(&receipt.lifetime)?;
-    let resources = lifetime
-        .checkout_bindings()?
-        .ok_or("Missing preparation checkout inventory")?;
     let digest = receipt
         .checkout_resources_digest
         .as_deref()
         .ok_or("Missing consumed preparation resources")?;
-    if !resources.is_empty() || receipt.lifetime.checkout_resources_digest(&resources)? != digest {
-        return Err("Managed preparation cleanup requires resource guards".into());
-    }
-    unmanaged(&store)?;
+    let checkouts = checkouts::Checkouts::acquire(
+        &store,
+        &lifetime,
+        &receipt.lifetime,
+        digest,
+        &checkouts::receipt_digest(&settlement.receipt)?,
+    )?;
     let workers = storage::existing_child(&store.namespace, "workers", true)?;
     let phase_name = receipt
         .lifetime
@@ -133,6 +133,7 @@ fn prepare(
         return Err("Preparation cleanup differs from retained plan".into());
     }
     let prepared = Prepared {
+        checkouts,
         store,
         journal,
         intent,

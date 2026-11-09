@@ -463,3 +463,23 @@
 - **WHEN** native checkout admission reads Session policy during an owned restore or recovery
 - **THEN** the caller SHALL release the Session projection mutex before that host call and retain an immutable captured revision
 - **AND** a changed revision SHALL refuse worker admission or subsequent source effects, preserving existing native evidence
+
+#### Scenario: Repeated immutable Git blobs within a native handoff
+- **WHEN** multiple paths or target/recorded/expected images refer to one verified Git blob
+- **THEN** the handoff MAY reuse its verified bytes without retaining another payload cache
+- **AND** each image SHALL retain its own path/mode, verify its object digest and consume its full per-file/combined image budget
+- **AND** reuse SHALL remain local to that handoff; a later handoff SHALL detect corrupt object storage rather than using earlier bytes
+
+#### Scenario: Managed Git recovery after actual partial replacement and process death
+- **GIVEN** the real CLI/service has replaced some managed Git source files while other files retain their pre-restore images
+- **WHEN** the service is killed and restarted and the owner confirms keep or rollback against the native review
+- **THEN** keep SHALL preserve the observed partial namespace and later owner edits, and rollback SHALL restore proven displaced preimages
+- **AND** both SHALL retain exact original/resolution checkout resource receipts, preserve unrelated owner files and the transcript, and leave user Git index/configuration unchanged
+- **AND** repeated request lookup and explicit metadata acknowledgement after restart SHALL NOT replay source changes or start inference
+
+#### Scenario: Reclaiming acknowledged managed Git payloads
+- **GIVEN** an aged acknowledged Git restore or recovery pair has exact committed receipts, persisted checkout sets and regular-file payload ownership
+- **WHEN** maintenance prepares and consumes a durable reclamation plan
+- **THEN** it SHALL retain every exited checkout claim and already published acknowledgement matching the exact lifetime, resource digest and consuming receipt through deletion
+- **AND** a missing acknowledgement, live claim or changed registration SHALL refuse before plan publication without repairing metadata
+- **AND** restart after plan publication SHALL use frozen native payload identities without source replay, preserving original claims, receipts and user Git metadata

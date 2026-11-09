@@ -142,7 +142,7 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 ## 6. Streaming JSONL input
 
 - [x] 6.1 Define typed version-2 envelopes, correlation, resource bounds, aggregate exit rules and driver-owned interactive request lifetime; document compatibility and unsupported combinations.
-- [x] 6.2 Implement concurrent bounded parsing/admission and exact owned permission/question replies, retained request lookup, interrupt and end/EOF draining without stopping unrelated work.
+- [ ] 6.2 Implement concurrent bounded parsing/admission and exact owned permission/question replies, retained request lookup, interrupt and end/EOF draining without stopping unrelated work. Basic parsing/admission merged in #117. The 2026-11-09 code review found that request collection and interrupt target the Session without checking the driver's admitted message ownership, and completed inputs retain their full result payloads indefinitely. Complete those ownership/resource bounds and their shared-Session/long-run regressions before accepting this task.
 - [ ] 6.3 Emit per-input results, optional partial/hook events and atomic last-message output with bounded backpressure and secret-safe errors. `--include-hook-events` is not implemented: hook receipts are deliberately not on the Session stream, so the lines would have nothing reliable to carry.
 - [ ] 6.4 Test multiple inputs, steering/queueing, malformed/oversized input, capacity, stale/cross-request replies, EOF while awaiting input, slow stdout, SIGINT, server restart and lost admission acknowledgement. Done: multiple inputs in order, per-input structured results, malformed input (exit 2), unknown request replies, EOF while a request waits, unsupported combinations, with the real binary (`cyber-cli/tests/exec_stream_input.rs`). Open: steering, capacity, slow stdout, SIGINT, server restart and lost admission acknowledgement.
 
@@ -613,3 +613,81 @@ reopened metadata acknowledgement without source replay. This is an ordinary
 managed restore positive, not complete managed keep/rollback/process-death,
 construction/reclamation/platform acceptance. Default Git admission remains off;
 M2–M8 and all parent tasks remain open.
+
+Managed Git CLI process-death continuation: the explicit native-git-acceptance
+binary creates a ready managed linked checkout in default application storage,
+observes a genuinely partial namespace during a 1,280-file restore and kills the
+registered service. Fresh services review/confirm keep and rollback, consume
+non-empty original/resolution checkout bindings and reconcile metadata without
+source replay. Verify all bulk file images, an early deletion, unrelated/later
+owner files, escaped newline paths, stale/foreign requests, unchanged transcript
+and user index/configuration, and no inference during recovery. Reuse verified
+blob bytes only within one bounded image handoff while charging/verifying every
+placement; SHA-1/SHA-256 tests retain mode, byte-limit and later-corruption refusal.
+The four native workflow jobs now select this candidate, but workflow edits are
+not execution evidence. These two source-kill cuts do not close the full cut,
+resource construction, reclamation or platform matrix; default Git admission and
+all parent acceptance remain unchanged.
+
+Resume verification (2026-11-08, macOS ARM): the repeated-blob regression passes
+for SHA-1/SHA-256, snapshot all-target Clippy with `-D warnings` passes, and
+format/whitespace checks pass. The candidate CLI suite reports 19 passes and one
+preparation timeout in
+`fully_prepared_pre_effect_cancellation_reclaims_only_persisted_target_inodes`;
+that case passes alone (60.54 seconds). Managed Git keep/rollback passes, now
+including an explicit assertion for the newline-containing path. This is not a
+green complete-suite result. Strict validation with CI-pinned OpenSpec 1.13.2
+passes all 117 items; spec lint reports zero errors and 25 warnings. The default
+CLI run was stopped before execution; native CI/platform runs remain unperformed.
+Fetched main is now `8266db6c`, including merged structured-output PR #116 and
+stream-input PR #117. Integrate and audit their remaining acceptance obligations
+before continuing sections 5/6; both issues remain open. These observations do
+not close parent tasks or establish the preparation timeout's origin.
+
+Main integration audit (2026-11-09): main `8266db6c` is merged at `2fcd745d`,
+retaining the recovery branch and all seven uncommitted files. Incoming #116/#117
+are now included; task 6.2 is reopened for exact driver ownership and bounded
+retained state. Unchanged main passes its six JSONL tests. The integrated branch
+initially fails four because optional snapshot warnings are treated as failed
+inputs. After matching ordinary exec's nonfatal warning handling and adding a
+real-binary regression, all seven JSONL and three structured-output CLI tests
+pass. Five structured-result server and six binary-worker ownership tests also
+pass, as do formatting/whitespace checks and strict OpenSpec (100 items after
+incoming archives; lint zero errors/25 warnings). The focused review and remaining
+scope are recorded in docs/goal-delivery.md. Full workspace/SDK/plugin/native CI
+were not rerun; the prior preparation timeout and all parent acceptance gates
+remain open. No goal implementation PR is open and no issue was closed.
+
+Managed regular-file Git payload reclamation continuation (2026-11-09): ordinary
+restores and both recovery owners now reacquire their complete persisted checkout
+sets, require the exact already published consuming acknowledgements, synchronize
+those retained markers/directories and hold all native pins through private
+deletion. Missing markers never create metadata or a reclamation plan. Live
+claims, changed registrations/resource digests and foreign dispositions refuse.
+The existing plan/receipt formats are retained; data-only validation no longer
+mistakes a managed resource set for an unsupported shape. Native phase checks
+still require exact admission/origin and resource-digest evidence. Git restore
+default admission remains off; typed link payloads, incomplete construction,
+CAS/metadata collection and the full native/cut matrix remain open with M2–M8.
+
+The real managed CLI keep/rollback cases now remove an acknowledgement and hold a
+live claim to prove precise pre-plan refusals, then interrupt after durable plan
+publication and resume reclamation without source replay. The App verifies aged
+ordinary managed cleanup, reopened receipt lookup, preserved later owner symlink,
+no inference and unchanged user index/configuration. The core read-only marker
+requirement and persisted source-phase/digest cases pass. The native workflow
+selects the new core requirement on all four platforms; edits are not CI evidence.
+
+Local checks: all 20 candidate CLI branch/recovery tests pass with four parallel
+threads; both Git App acceptance tests pass. Snapshot library: 140 passed and six
+ignored subprocess fixtures; focused final marker and source-phase tests pass.
+All-target Clippy for core/snapshot/server/App/CLI passes with warnings denied,
+as do formatting/whitespace and strict OpenSpec (100 items; lint zero errors and
+25 warnings). The preparation kill helper now gives staging an independent
+bounded deadline; the service-kill probe matches the recorded server instance
+rather than any listener at a reused port. An unconstrained parallel run passed
+19 cases but stalled before conversation-test prompt admission; that attempt
+was terminated after preserving its Store/registration and samples under
+/tmp/cyber-goal-first-prompt-stall-20261109. Its isolated rerun passed. That run
+is not green and its startup-stall cause remains unassigned. SDK/plugin/full
+workspace and external native CI have not been rerun for this checkpoint.

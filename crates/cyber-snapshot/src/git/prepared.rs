@@ -185,7 +185,11 @@ impl Shadow {
             })
             .transpose()?;
         let mut remaining = max_total;
-        let mut trees = Vec::new();
+        let mut trees: Vec<PreparedTree> = Vec::new();
+        // References into already charged images avoid another byte cache and
+        // repeated helper launches for the same immutable blob. Every placement
+        // still consumes its full handoff budget and is hash-verified below.
+        let mut blobs = BTreeMap::new();
         for (index, id) in ids.into_iter().enumerate() {
             let mut entries = BTreeMap::new();
             if ImageSource::for_id(id)? == ImageSource::Copy {
@@ -213,14 +217,18 @@ impl Shadow {
                 let limit = usize::try_from(max_file.min(remaining).min(64 * 1024 * 1024))
                     .map_err(|_| "Git journal image limit overflow")?;
                 let bytes = self
-                    .run_bounded(&["cat-file", "blob", object], limit)
+                    .restore_blob(object, &blobs, &trees, &entries, limit)
                     .await?;
                 images::verify(object, &bytes)?;
                 remaining = remaining
                     .checked_sub(bytes.len() as u64)
                     .ok_or("Git journal image handoff exceeds limit")?;
+                let relative = relative(prefix, path)?;
+                blobs
+                    .entry(object.clone())
+                    .or_insert_with(|| (trees.len(), relative.clone()));
                 entries.insert(
-                    relative(prefix, path)?,
+                    relative,
                     Image {
                         source: ImageSource::Git,
                         mode: mode.clone(),
@@ -249,6 +257,29 @@ impl Shadow {
             ignore,
             expected_policy,
         })
+    }
+
+    async fn restore_blob(
+        &self,
+        object: &str,
+        blobs: &BTreeMap<String, (usize, String)>,
+        trees: &[PreparedTree],
+        current: &BTreeMap<String, Image>,
+        limit: usize,
+    ) -> Result<Vec<u8>, String> {
+        let Some((tree, path)) = blobs.get(object) else {
+            return self.run_bounded(&["cat-file", "blob", object], limit).await;
+        };
+        let images = if *tree == trees.len() {
+            current
+        } else {
+            &trees.get(*tree).ok_or("Missing prepared Git tree")?.images
+        };
+        let image = images.get(path).ok_or("Missing prepared Git blob")?;
+        if image.bytes.len() > limit {
+            return Err("Git journal image handoff exceeds limit".into());
+        }
+        Ok(image.bytes.clone())
     }
 
     async fn git_image_exclusions(

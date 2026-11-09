@@ -11,6 +11,69 @@ struct Repo {
     snapshots: Arc<crate::GitSnapshots>,
 }
 
+#[tokio::test]
+async fn repeated_git_blob_images_charge_every_placement_and_do_not_survive_a_new_handoff() {
+    for format in ["sha1", "sha256"] {
+        let repo = Repo::with_format(format);
+        for index in 0..16 {
+            std::fs::write(repo.root.join(format!("entry_{index:02}")), b"same").unwrap();
+        }
+        std::fs::set_permissions(
+            repo.root.join("entry_00"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        let tree = repo.track(&repo.root).await;
+        let shadow = repo.snapshots.shadow(repo.root.to_str().unwrap()).unwrap();
+        let request = SnapshotRestoreRequest {
+            directory: repo.root.to_str().unwrap().into(),
+            target: tree.clone(),
+            recorded: tree.clone(),
+            expected: tree,
+            paths: None,
+        };
+        let prepared = shadow
+            .prepare_restore(&request, 4, 16 * 4 * 3)
+            .await
+            .unwrap();
+        for tree in [&prepared.target, &prepared.recorded, &prepared.expected] {
+            assert_eq!(tree.images.len(), 16);
+            assert_eq!(tree.images["entry_00"].mode, "100755");
+            assert_eq!(tree.images["entry_01"].mode, "100644");
+            for image in tree.images.values() {
+                assert_eq!(image.bytes, b"same");
+                image.verify().unwrap();
+            }
+        }
+        assert!(
+            shadow
+                .prepare_restore(&request, 4, 16 * 4 * 3 - 1)
+                .await
+                .is_err()
+        );
+        assert!(
+            shadow
+                .prepare_restore(&request, 3, 16 * 4 * 3)
+                .await
+                .is_err()
+        );
+        let object = &prepared.target.images["entry_00"].object;
+        let path = shadow
+            .git_dir
+            .join("objects")
+            .join(&object[..2])
+            .join(&object[2..]);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(path, b"corrupt after earlier handoff").unwrap();
+        assert!(
+            shadow
+                .prepare_restore(&request, 4, 16 * 4 * 3)
+                .await
+                .is_err()
+        );
+    }
+}
+
 #[test]
 fn unsupported_native_config_environment_keeps_ordinary_git_capture_available() {
     let output = std::process::Command::new(std::env::current_exe().unwrap())

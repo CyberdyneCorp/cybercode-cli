@@ -45,6 +45,7 @@ struct Env {
     _dir: tempfile::TempDir,
     root: PathBuf,
     catalog: PathBuf,
+    directory: PathBuf,
 }
 
 impl Env {
@@ -69,6 +70,7 @@ impl Env {
             _dir: dir,
             root,
             catalog,
+            directory: repo,
         }
     }
 
@@ -81,7 +83,7 @@ impl Env {
             .env("CYBER_HOME", self.root.join("cyber-home"))
             .env("CYBER_MODELS_PATH", &self.catalog)
             .env("PATH", std::env::var("PATH").unwrap_or_default())
-            .current_dir(self.root.join("repo"));
+            .current_dir(&self.directory);
         #[cfg(windows)]
         if let Some(system) = std::env::var_os("SystemRoot") {
             command.env("SystemRoot", system);
@@ -94,7 +96,7 @@ impl Env {
     }
 
     fn file(&self, name: &str) -> Option<String> {
-        std::fs::read_to_string(self.root.join("repo").join(name)).ok()
+        std::fs::read_to_string(self.directory.join(name)).ok()
     }
 
     /// Run one prompt in `session` (a new Session when `None`); returns the Session ID.
@@ -496,7 +498,7 @@ fn conversation_rewind_works_without_git_and_stale_context_never_applies() {
 /// Use the same authenticated reviewed actions as the TUI, through the actual CLI.
 fn reviewed_selection(env: &Env, message: &str, target: &str, action: &str) -> Value {
     json!({"message_id":message,"target":target,"action":action,
-        "expected_directory":env.root.join("repo").display().to_string()})
+        "expected_directory":env.directory.display().to_string()})
 }
 fn reviewed_preview(env: &Env, id: &str, selection: &Value) -> Value {
     json(&env.cyber(&[
@@ -541,13 +543,18 @@ fn kill_registered_service(env: &Env) {
         .output()
         .unwrap();
     assert!(killed.status.success(), "{killed:?}");
-    let address = registration["url"]
-        .as_str()
-        .unwrap()
-        .trim_start_matches("http://")
-        .trim_end_matches('/');
+    let registration: cyber_app::Registration = serde_json::from_value(registration).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::net::TcpStream::connect(address).is_ok() {
+    // Parallel fixtures may reuse an ephemeral TCP port after this process
+    // exits. Probe the recorded server ID, never the presence of any listener.
+    while runtime
+        .block_on(cyber_app::probe_registration(&registration))
+        .is_some_and(|probe| probe.id.as_deref() == Some(registration.id.as_str()))
+    {
         assert!(
             std::time::Instant::now() < deadline,
             "killed fixture service still answers"
@@ -789,6 +796,242 @@ fn managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_file
 {
     managed_native_recovery_after_partial_kill("keep");
     managed_native_recovery_after_partial_kill("rollback");
+}
+
+#[test]
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn managed_git_keep_and_rollback_after_real_partial_restore_kill() {
+    for action in ["keep", "rollback"] {
+        managed_git_partial_kill(action);
+    }
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn git_fixture(directory: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(directory)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn managed_git_partial_kill(action: &str) {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let mut env = Env::new(&model);
+    git_fixture(
+        &env.directory,
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "--quiet",
+            "-m",
+            "Initial",
+        ],
+    );
+    let created = json(&env.cyber(&[
+        "api",
+        "POST",
+        "/worktrees",
+        "-d",
+        r#"{"name":"managed","session":{"model":"test/main","mode":"accept-edits"}}"#,
+    ]));
+    let id = created["data"]["session"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    env.directory = PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap());
+    assert!(
+        env.directory
+            .starts_with(env.root.join("cyber-home/data/worktrees"))
+    );
+    for index in 0..1280 {
+        std::fs::write(env.directory.join(format!("bulk_{index:04}")), "before").unwrap();
+    }
+    std::fs::write(env.directory.join("zz\nfixture"), "before").unwrap();
+    git_fixture(&env.directory, &["add", "--all"]);
+    let index_path = PathBuf::from(git_fixture(
+        &env.directory,
+        &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+    ));
+    let index = std::fs::read(&index_path).unwrap();
+    let config_path = env.root.join("repo/.git/config");
+    let config = std::fs::read(&config_path).unwrap();
+    env.exec(Some(&id), "before snapshot");
+    let first = env.user_ids(&id)[0].clone();
+    for index in 0..1280 {
+        std::fs::write(env.directory.join(format!("bulk_{index:04}")), "after").unwrap();
+    }
+    std::fs::write(env.directory.join("zz\nfixture"), "after").unwrap();
+    std::fs::write(env.directory.join("aa_removed"), "after-only source").unwrap();
+    env.exec(Some(&id), "after snapshot");
+    let messages = kill_partial_restore(&env, &id, &first);
+    let requests = model.requests().len();
+    std::fs::write(env.directory.join("unrelated-owner"), "owner data").unwrap();
+    if action == "keep" {
+        std::fs::write(env.directory.join("bulk_1279"), "later owner image").unwrap();
+    }
+    let partial: Vec<_> = (0..1280)
+        .map(|index| env.file(&format!("bulk_{index:04}")).unwrap())
+        .collect();
+    let (journal, review) = reviewed_recovery_cli(&env, &id, action);
+    assert_eq!(
+        review["origin"]["worktree_id"],
+        created["data"]["worktree"]["id"]
+    );
+    let request_id = format!("managed-git-kill-{action}");
+    let request = json!({"journal_id":journal,"action":action,"confirmation":review["confirmation"],"request_id":request_id});
+    let mut stale = request.clone();
+    stale["confirmation"] = "0".repeat(64).into();
+    assert!(!recovery_confirm_cli(&env, &id, &stale).status.success());
+    let result = json(&recovery_confirm_cli(&env, &id, &request));
+    assert_eq!(result["state"], "acknowledged");
+    assert_eq!(result["journal_acknowledged"], true);
+    assert_managed_git_images(&env, action, &partial);
+    assert_foreign_recovery_request_refused(&env, &request);
+    assert_eq!(env.messages(&id), messages);
+    assert_native_settlement_link(&env, &journal, &result);
+    assert_recovery_lookup_does_not_replay(&env, &id, &request_id, &request, &result, &messages);
+    assert_managed_git_reclamation(&env, &result);
+    assert_eq!(std::fs::read(index_path).unwrap(), index);
+    assert_eq!(std::fs::read(config_path).unwrap(), config);
+    assert_eq!(model.requests().len(), requests);
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn assert_managed_git_reclamation(env: &Env, result: &Value) {
+    use cyber_server::runtime::{SnapshotRecoveryReceipt, snapshot_reclamation::Receipt};
+    exits(&env.cyber(&["service", "stop"]), 0);
+    let maintenance = reclamation_support::Maintenance::open(&env.root.join("cyber-home"));
+    let receipt: SnapshotRecoveryReceipt =
+        serde_json::from_value(result["receipt"].clone()).unwrap();
+    let checkout = receipt.checkout.as_ref().unwrap();
+    let original = checkout.original.as_ref().unwrap();
+    let phase: Value = serde_json::from_slice(
+        &std::fs::read(
+            maintenance
+                .namespace
+                .join("workers")
+                .join(original.lifetime.source_phase.as_ref().unwrap()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let bindings: Vec<cyber_core::worktrees::CheckoutBinding> =
+        serde_json::from_value(phase["checkout_bindings"].clone()).unwrap();
+    assert!(!bindings.is_empty());
+    let binding = &bindings[0];
+    let marker = binding
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&binding.worktree_id)
+        .join(format!("{}.snapshot-ack", binding.owner_id));
+    let hidden = env.root.join("retained-checkout-marker");
+    let source = env.file("bulk_0000");
+    assert_eq!(maintenance.reclaim(&env.directory).unwrap(), 0);
+    maintenance.age(checkout.resolution_origin.activity_id.clone());
+    let resources = original.lifetime.checkout_owner().unwrap();
+    let receipt = Receipt::Recovery(receipt.clone());
+    std::fs::rename(&marker, &hidden).unwrap();
+    let refused = maintenance.reclaim(&env.directory).unwrap_err();
+    assert!(
+        refused.contains("acknowledgement has not been published"),
+        "{refused}"
+    );
+    assert!(
+        !marker.exists(),
+        "cleanup must not publish a missing marker"
+    );
+    assert!(maintenance.policy.record(&receipt).unwrap().is_none());
+    std::fs::rename(&hidden, &marker).unwrap();
+    let locations =
+        cyber_core::worktrees::Repository::managed_locations_at(&env.directory).unwrap();
+    let live = locations[0]
+        .0
+        .reacquire_snapshot(&locations[0].1, binding, &resources)
+        .unwrap();
+    let refused = maintenance.reclaim(&env.directory).unwrap_err();
+    assert!(refused.contains("worker is still active"), "{refused}");
+    assert!(maintenance.policy.record(&receipt).unwrap().is_none());
+    drop(live);
+    let cut = maintenance.plan_only(&env.directory).unwrap_err();
+    assert!(
+        cut.contains("fixture cut after durable paired plan"),
+        "{cut}"
+    );
+    assert!(
+        !maintenance
+            .policy
+            .record(&receipt)
+            .unwrap()
+            .unwrap()
+            .completed
+    );
+    assert!(maintenance.reclaim(&env.directory).unwrap() > 0);
+    assert!(
+        maintenance
+            .policy
+            .record(&receipt)
+            .unwrap()
+            .unwrap()
+            .completed
+    );
+    assert_eq!(maintenance.reclaim(&env.directory).unwrap(), 0);
+    assert_eq!(env.file("bulk_0000"), source);
+    assert!(marker.exists());
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn assert_managed_git_images(env: &Env, action: &str, partial: &[String]) {
+    assert_eq!(
+        env.file("bulk_0000").as_deref(),
+        Some(if action == "rollback" {
+            "after"
+        } else {
+            "before"
+        })
+    );
+    assert_eq!(env.file("unrelated-owner").as_deref(), Some("owner data"));
+    assert_eq!(env.file("zz\nfixture").as_deref(), Some("after"));
+    for (index, before) in partial.iter().enumerate() {
+        assert_eq!(
+            env.file(&format!("bulk_{index:04}")).as_deref(),
+            Some(if action == "rollback" {
+                "after"
+            } else {
+                before
+            }),
+            "{action}: bulk_{index:04}"
+        );
+    }
+    assert_eq!(
+        env.file("aa_removed").as_deref(),
+        (action == "rollback").then_some("after-only source")
+    );
 }
 
 #[test]
@@ -1474,6 +1717,10 @@ fn kill_after_prepared_images(env: &Env, id: &str, first: &str) -> String {
         .join("journals")
         .join(journal_id)
         .join("intent.json");
+    // Origin publication and staging 80 MiB are separate bounded phases. A
+    // loaded runner may spend most of the origin-observation deadline before
+    // staging starts. The SQLite writer still fences every source admission.
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
     loop {
         let prepared = std::fs::read(&intent)
             .ok()
@@ -1485,9 +1732,16 @@ fn kill_after_prepared_images(env: &Env, id: &str, first: &str) -> String {
         if prepared {
             break;
         }
+        if let Some(status) = pending.try_wait().unwrap() {
+            let output = pending.wait_with_output().unwrap();
+            panic!(
+                "restore exited before publishing prepared identities ({status}): {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         assert!(
-            pending.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline,
-            "prepared identities were not published"
+            std::time::Instant::now() < deadline,
+            "prepared identities were not published within the staging deadline"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -2034,10 +2288,21 @@ fn assert_recovery_checkout_lifetimes(namespace: &std::path::Path, receipt: &Val
         )
         .unwrap();
         assert_eq!(phase["lifetime"], evidence["lifetime"]);
-        assert_eq!(phase["checkout_bindings"], serde_json::json!([]));
+        let bindings: Vec<cyber_core::worktrees::CheckoutBinding> =
+            serde_json::from_value(phase["checkout_bindings"].clone()).unwrap();
+        if let Some(worktree) = &lifetime.owner.worktree_id {
+            assert!(!bindings.is_empty());
+            assert!(
+                bindings
+                    .iter()
+                    .any(|binding| &binding.worktree_id == worktree)
+            );
+        } else {
+            assert!(bindings.is_empty());
+        }
         assert_eq!(
             evidence["resources_digest"],
-            lifetime.checkout_resources_digest(&[]).unwrap()
+            lifetime.checkout_resources_digest(&bindings).unwrap()
         );
     }
 }
@@ -2051,7 +2316,7 @@ fn assert_recovery_lookup_does_not_replay(
     result: &Value,
     messages: &[Value],
 ) {
-    let repo = env.root.join("repo");
+    let repo = &env.directory;
     std::fs::write(repo.join("bulk_0000"), "new owner edit after recovery").unwrap();
     let retry = json(&recovery_confirm_cli(env, id, request));
     assert_eq!(retry["state"], "acknowledged");
@@ -2128,7 +2393,7 @@ fn reconcile_missing_journal_acknowledgement(
     }
     let target = env.root.join("ack-owner-target");
     std::fs::write(&target, "new owner edit after recovery").unwrap();
-    let source = env.root.join("repo/bulk_0000");
+    let source = env.directory.join("bulk_0000");
     std::fs::remove_file(&source).unwrap();
     std::os::unix::fs::symlink(&target, &source).unwrap();
     let reconciled = json(&env.cyber(&[

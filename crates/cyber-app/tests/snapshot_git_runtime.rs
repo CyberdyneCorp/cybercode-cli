@@ -283,7 +283,94 @@ async fn managed_worktree_in_default_data_directory_restores_through_owned_worke
         config
     );
     reconcile_after_owner_edit(&f, &receipt).await;
+    reclaim_managed_restore(&f, &receipt).await;
+    assert_eq!(std::fs::read(&index_path).unwrap(), index);
+    assert_eq!(
+        std::fs::read(f.project.join(".git/config")).unwrap(),
+        config
+    );
     f.app.runtime.shutdown().await;
+}
+
+async fn reclaim_managed_restore(f: &Fixture, receipt: &SnapshotRestoreReceipt) {
+    use cyber_server::runtime::snapshot_reclamation::Receipt;
+    let policy = cyber_app::snapshot_reclamation::policy(f.app.store.clone());
+    let snapshots = cyber_snapshot::GitSnapshots::with_reclamation(
+        f.paths.data.clone(),
+        Arc::new(|_| json!({"snapshots":{"retention_days":7}})),
+        vec![
+            f.paths.config.clone(),
+            f.paths.state.clone(),
+            f.paths.cache.clone(),
+        ],
+        None,
+        Some(policy.clone()),
+    );
+    let journal = f.journal(receipt);
+    let intent = std::fs::read(journal.join("intent.json")).unwrap();
+    let inference = f.model.requests().len();
+    assert_eq!(
+        snapshots
+            .reclaim(f.directory.to_str().unwrap())
+            .await
+            .unwrap(),
+        0
+    );
+    let owner = receipt.origin.activity_id.clone();
+    f.app
+        .store
+        .transaction(move |db| {
+            db.execute(
+                "UPDATE event SET time=time-?1 WHERE aggregate_id=?2",
+                rusqlite::params![8i64 * 86400000, owner],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        snapshots
+            .reclaim(f.directory.to_str().unwrap())
+            .await
+            .unwrap()
+            > 0
+    );
+    let record = policy
+        .record(&Receipt::Restore(receipt.clone()))
+        .unwrap()
+        .unwrap();
+    assert!(record.completed);
+    assert_eq!(
+        snapshots
+            .reclaim(f.directory.to_str().unwrap())
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
+    assert_eq!(std::fs::read_dir(journal).unwrap().count(), 1);
+    assert_reclaimed_source_and_receipt(f, receipt, inference).await;
+}
+
+async fn assert_reclaimed_source_and_receipt(
+    f: &Fixture,
+    receipt: &SnapshotRestoreReceipt,
+    inference: usize,
+) {
+    let reopened = build(&f.paths, &f.directory, f._temp.path()).await;
+    let client = Client::embedded(reopened.embedded()).at(f.directory.to_str().unwrap());
+    receipt_roundtrip(&client, &f.session, receipt).await;
+    assert!(
+        std::fs::symlink_metadata(f.directory.join("tracked"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        std::fs::read_to_string(f._temp.path().join("later-owner")).unwrap(),
+        "later owner bytes"
+    );
+    assert_eq!(f.model.requests().len(), inference);
+    reopened.runtime.shutdown().await;
 }
 
 #[tokio::test]

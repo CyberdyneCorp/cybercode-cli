@@ -5,6 +5,7 @@ use cyber_server::runtime::{
 };
 
 struct Owner {
+    checkouts: checkouts::Checkouts,
     origin: SnapshotOrigin,
     journal: Dir,
     intent: MetadataPin,
@@ -27,11 +28,7 @@ pub(super) fn eligible(record: &Journal) -> bool {
         && record.resolution.is_some()
         && record.settled_by.is_none()
         && record.origin.is_some()
-        && record
-            .context
-            .as_ref()
-            .is_some_and(|context| context.git.is_none())
-        && record.backend != Some(JournalBackend::Git)
+        && record.context.is_some()
 }
 pub(super) fn reclaim(
     store: Store,
@@ -71,24 +68,24 @@ fn owner(
     store: &Store,
     workers: &Dir,
     origin: &SnapshotOrigin,
-    checkout: &SnapshotRestoreCheckout,
+    evidence: (&SnapshotRestoreCheckout, &str),
     journal: Dir,
     digest: String,
     admitted: bool,
 ) -> Result<Owner, String> {
+    let (checkout, receipt_digest) = evidence;
     store.verify_worker_namespace(origin)?;
     if store.worker_digest(Some(origin))?.as_ref() != Some(&digest) {
         return Err("Recovery cleanup intent differs".into());
     }
     let lifetime = store.lock_lifetime(&checkout.lifetime)?;
-    let resources = lifetime
-        .checkout_bindings()?
-        .ok_or("Missing recovery checkout inventory")?;
-    if !resources.is_empty()
-        || checkout.resources_digest != checkout.lifetime.checkout_resources_digest(&resources)?
-    {
-        return Err("Managed recovery cleanup requires retained resource guards".into());
-    }
+    let checkouts = checkouts::Checkouts::acquire(
+        store,
+        &lifetime,
+        &checkout.lifetime,
+        &checkout.resources_digest,
+        receipt_digest,
+    )?;
     let name = checkout
         .lifetime
         .source_phase
@@ -104,6 +101,7 @@ fn owner(
     phase.verify(workers, name)?;
     let intent = MetadataPin::open(&journal, "intent.json")?;
     Ok(Owner {
+        checkouts,
         origin: origin.clone(),
         journal,
         intent,
@@ -144,20 +142,17 @@ fn prepare(
     if !eligible(&record)
         || parent.origin.as_ref() != Some(&receipt.original)
         || parent.settled_by.as_deref() != Some(receipt.resolution_id.as_str())
-        || parent
-            .context
-            .as_ref()
-            .is_none_or(|context| context.git.is_some())
+        || parent.context.is_none()
     {
         return Err("Recovery cleanup pair or backend changed".into());
     }
-    unmanaged(&store)?;
+    let receipt_digest = receipt.checkout_acknowledgement_digest()?;
     let workers = storage::existing_child(&store.namespace, "workers", true)?;
     let original = owner(
         &store,
         &workers,
         &receipt.original,
-        original_checkout,
+        (original_checkout, &receipt_digest),
         parent_dir,
         resolution.original_digest.clone(),
         true,
@@ -166,7 +161,7 @@ fn prepare(
         &store,
         &workers,
         &checkout.resolution_origin,
-        &checkout.resolution,
+        (&checkout.resolution, &receipt_digest),
         journal,
         receipt
             .resolution_digest
@@ -324,8 +319,8 @@ impl PreparedPair {
         if !due(self.config.as_ref(), &self.store.root, self.settled_at_ms) {
             return Err("Recovery retention no longer permits cleanup".into());
         }
-        unmanaged(&self.store)?;
         for owner in &self.owners {
+            owner.checkouts.verify(&self.store)?;
             owner.lifetime.verify()?;
             self.store.verify_worker_namespace(&owner.origin)?;
             owner.intent.verify(&owner.journal, "intent.json")?;

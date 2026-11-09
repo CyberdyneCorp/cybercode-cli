@@ -166,19 +166,10 @@ impl Plan {
     }
     pub fn validate(&self) -> Result<(), StoreError> {
         let owners = self.receipt.owners()?;
-        for owner in &owners {
-            if owner.origin.worktree_id.is_some()
-                || owner.resources_digest
-                    != owner
-                        .lifetime
-                        .checkout_resources_digest(&[])
-                        .map_err(invalid)?
-            {
-                return Err(invalid(
-                    "Managed reclamation requires retained resource guards",
-                ));
-            }
-        }
+        // Receipt validation binds the resource digest. Its actual complete
+        // native checkout set and published dispositions are retained by the
+        // adapter's deletion closure, alongside namespace and lifetime pins.
+        // Shape validation alone never grants a filesystem capability.
         let version = match &self.receipt {
             Receipt::Restore(_) => 1,
             Receipt::Recovery(_) => 2,
