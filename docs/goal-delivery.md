@@ -45,12 +45,17 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    the Session without binding to the driver's admitted messages. Track exact
    input/request authority and test two drivers/owner clients sharing a Session,
    including unrelated work present before driver startup.
-3. **Major: long runs retain completed payloads and output blocks the loop.**
-   `inputs` retains every completed text/structured result; the pending-input cap
-   does not bound that history. `Out::line` writes/flushes stdout synchronously
-   on the same loop that handles controls and lease renewal. Retire emitted
-   payloads into bounded accounting and use a bounded output owner with explicit
-   I/O-failure settlement; test long runs, slow readers and broken pipes.
+3. **Partly fixed locally: completed history and blocking output.**
+   Inputs now occupy at most 32 pending message-ID slots; emitted text/structured
+   results retire into bounded counters and first-failure accounting. Admission
+   ordinals preserve pending result order on premature termination. The reporter
+   releases completed answer/tool/denial payloads, and background tracking retains
+   one exact fork-handback bit rather than every observed admission. Thirty-one
+   exec unit tests, 17 delegation tests, five forked-command tests and nine JSONL
+   tests pass, including 65 sequential prompts. `Out::line` still writes/flushes
+   stdout synchronously on the control/lease loop. Complete bounded output
+   ownership with explicit I/O-failure settlement, bounded background Job lookup,
+   slow-reader/broken-pipe acceptance and exact shared-Session ownership.
 4. **Fixed locally: last-message publication used a predictable temporary path.**
    Publication now uses an exclusively created sibling file, synchronizes it and
    atomically replaces the destination, with automatic temporary-file cleanup on

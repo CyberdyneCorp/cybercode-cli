@@ -16,3 +16,9 @@
 - **THEN** it SHALL stage bytes in an exclusively created sibling file and atomically replace the destination without following a pre-existing temporary or destination link
 - **AND** concurrent writers SHALL publish complete answers and clean up their own temporary files, including after publication failure
 - **AND** a publication failure SHALL preserve per-input results, report the error in `end`, and fail an otherwise successful aggregate run without replacing an existing interruption or protocol exit code
+
+#### Scenario: Completed inputs do not consume pending capacity
+- **WHEN** a driver emits terminal results across a run longer than its pending-input limit
+- **THEN** it SHALL release completed text, structured results and correlation records, retaining only bounded aggregate accounting
+- **AND** the limit SHALL apply before each HTTP admission to pending inputs, completion SHALL preserve the exact identities of other pending inputs, and `end.inputs` SHALL still count retired attempts
+- **AND** retiring a failed input SHALL NOT erase its aggregate failure; premature termination SHALL emit a terminal result for every remaining pending input

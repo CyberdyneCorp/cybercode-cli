@@ -248,6 +248,34 @@ fn unavailable_snapshots_do_not_fail_a_successful_jsonl_input() {
 }
 
 #[test]
+fn completed_inputs_release_slots_and_keep_run_accounting_and_correlation() {
+    const COUNT: usize = 65;
+    let provider = Provider::start(&["text:completed"; COUNT]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    let mut messages = std::collections::BTreeSet::new();
+    for index in 0..COUNT {
+        let id = format!("input-{index}");
+        run.send(&json!({"type":"user","text":"next","id":id}).to_string());
+        let input = run.until("input", &mut seen);
+        assert_eq!(input["id"], id);
+        assert_eq!(input["status"], "admitted");
+        let result = run.until("result", &mut seen);
+        assert_eq!(result["id"], id);
+        assert_eq!(result["message_id"], input["message_id"]);
+        assert!(messages.insert(result["message_id"].as_str().unwrap().to_owned()));
+        assert_eq!(result["result"], "completed");
+        assert_eq!(result["exit_code"], 0);
+        seen.clear();
+    }
+    run.send(r#"{"type":"end"}"#);
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["inputs"], COUNT);
+    assert_eq!(end["exit_code"], 0);
+    assert_eq!(run.exit(), Some(0));
+}
+
+#[test]
 fn last_message_publication_failure_fails_the_run_without_losing_the_answer() {
     let provider = Provider::start(&["text:completed answer"]);
     let destination = tempfile::tempdir().unwrap();

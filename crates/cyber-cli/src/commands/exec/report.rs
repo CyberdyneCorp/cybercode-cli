@@ -48,6 +48,15 @@ pub struct Run {
 }
 
 impl Run {
+    /// JSONL already emitted these payloads. Keep billing and aggregate status,
+    /// while releasing the previous answer's text, tool inputs and denials.
+    pub(super) fn retire_driver_answer(&mut self) {
+        self.text = String::new();
+        self.structured = None;
+        self.calls = HashMap::new();
+        self.denials = Vec::new();
+    }
+
     pub fn new(args: &ExecArgs, started: Instant) -> Self {
         Self {
             started,
@@ -1171,6 +1180,32 @@ mod tests {
             (0, &json!(true)),
             "inline override"
         );
+    }
+
+    #[test]
+    fn retiring_a_driver_answer_releases_payloads_without_losing_run_totals_or_error() {
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut run = Run::new(&args, Instant::now());
+        run.input_tokens = 12;
+        run.output_tokens = 3;
+        run.cost = 0.5;
+        run.turns = 2;
+        run.error = Some("earlier failure".into());
+        run.text = "completed answer".repeat(1024);
+        run.structured = Some(json!({"answer":"completed"}));
+        run.calls.insert(
+            "call_1".into(),
+            ("bash".into(), json!({"command":"exit 1"})),
+        );
+        run.denials.push(json!({"message":"denied"}));
+        run.retire_driver_answer();
+        assert!(run.text.is_empty());
+        assert!(run.structured.is_none());
+        assert!(run.calls.is_empty());
+        assert!(run.denials.is_empty());
+        assert_eq!((run.input_tokens, run.output_tokens, run.turns), (12, 3, 2));
+        assert_eq!(run.cost, 0.5);
+        assert_eq!(run.error.as_deref(), Some("earlier failure"));
     }
 
     /// A discarded attempt is reported as a `retry` line; only recorded content becomes

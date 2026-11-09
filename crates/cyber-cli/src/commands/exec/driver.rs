@@ -20,14 +20,13 @@ use tokio::sync::mpsc;
 
 use super::background::{Owned, Settle};
 use super::frames::{self, Frame, MAX_LINE};
+use super::inputs::{Input, Inputs};
 use super::report::{Out, Run};
 use super::{EXIT_ERROR, EXIT_INTERRUPTED, ExecArgs, NO_APPROVER, api, safe_id};
 use crate::error::CliError;
 
 /// How often the interactive lease (45 s) is renewed.
 const LEASE_RENEWAL: Duration = Duration::from_secs(15);
-/// Inputs admitted and not yet answered, at most.
-const MAX_PENDING: usize = 32;
 /// A fatal protocol error.
 const EXIT_PROTOCOL: u8 = 2;
 
@@ -37,23 +36,6 @@ enum Line {
     /// A line that is not a valid envelope: fatal, as the stream can no longer be trusted.
     Invalid(String),
     Eof,
-}
-
-/// One admitted input and its outcome.
-struct Input {
-    /// The driver's correlation ID, when the line had one.
-    id: Option<String>,
-    message_id: String,
-    answered: bool,
-    text: String,
-    error: Option<String>,
-    structured: Option<Value>,
-}
-
-impl Input {
-    fn exit_code(&self) -> u8 {
-        if self.error.is_some() { EXIT_ERROR } else { 0 }
-    }
 }
 
 /// A permission or question request this Session raised, with the Session to reply to.
@@ -69,9 +51,9 @@ struct Driver<'a> {
     out: &'a mut Out,
     run: Run,
     owned: Owned,
-    inputs: Vec<Input>,
-    /// Indexes of promoted inputs whose answer is in progress.
-    answering: Vec<usize>,
+    inputs: Inputs,
+    /// Exact message identities of promoted inputs whose answer is in progress.
+    answering: Vec<String>,
     /// The last finished step ended the answer (no tool calls followed).
     answer_done: bool,
     asks: BTreeMap<String, Ask>,
@@ -115,7 +97,7 @@ pub async fn execute(
         out: &mut out,
         run,
         owned,
-        inputs: Vec::new(),
+        inputs: Inputs::default(),
         answering: Vec::new(),
         answer_done: false,
         asks: BTreeMap::new(),
@@ -234,13 +216,13 @@ impl Driver<'_> {
     /// Admit a prompt under a message ID chosen here; a lost acknowledgement is retried
     /// once with the same ID, which the server answers with the original receipt.
     async fn admit(&mut self, id: Option<String>, parts: Vec<Value>, delivery: &str) {
-        let open = self.inputs.iter().filter(|i| !i.answered).count();
-        if open >= MAX_PENDING {
-            self.protocol_error("more than 32 inputs waiting for an answer");
-            self.fatal = Some("protocol error: input over capacity".into());
+        let message_id = cyber_core::ids::new_id("msg");
+        let input = Input::new(id, message_id.clone());
+        if let Err(error) = self.inputs.admit(input) {
+            self.protocol_error(error);
+            self.fatal = Some(format!("protocol error: {error}"));
             return self.close().await;
         }
-        let message_id = cyber_core::ids::new_id("msg");
         let mut body = json!({ "id": message_id, "parts": parts, "delivery": delivery });
         if let Some(schema) = &self.args.schema {
             body["format"] = json!({ "type": "json_schema", "schema": schema });
@@ -250,14 +232,7 @@ impl Driver<'_> {
         if matches!(&sent, Err(cyber_client::ClientError::Transport(_))) {
             sent = self.client.post(&path, body).await;
         }
-        let mut input = Input {
-            id,
-            message_id,
-            answered: false,
-            text: String::new(),
-            error: None,
-            structured: None,
-        };
+        let input = self.inputs.get_mut(&message_id).expect("reserved input");
         match sent {
             Ok(_) => {
                 self.idle = false;
@@ -268,15 +243,14 @@ impl Driver<'_> {
             }
             Err(error) => {
                 input.error = Some(error.to_string());
-                input.answered = true;
                 self.out.stream_line(
                     "input",
                     json!({ "id": input.id, "message_id": input.message_id, "status": "refused", "error": input.error }),
                 );
+                let input = self.inputs.complete(&message_id).expect("refused input");
                 self.emit_result(&input);
             }
         }
-        self.inputs.push(input);
     }
 
     async fn interrupt(&mut self) {
@@ -387,8 +361,10 @@ impl Driver<'_> {
             "session.text.ended" => {
                 self.out.durable(&mut self.run, kind, &event.data);
                 self.last_text = self.run.text.clone();
-                for &index in &self.answering {
-                    self.inputs[index].text = self.run.text.clone();
+                for message_id in &self.answering {
+                    if let Some(input) = self.inputs.get_mut(message_id) {
+                        input.text = self.run.text.clone();
+                    }
                 }
             }
             "session.structured_output.settled" => self.structured(&event.data),
@@ -428,27 +404,28 @@ impl Driver<'_> {
     /// A promoted input of this run joins the answer in progress, or starts the next one
     /// once the previous answer has ended.
     fn promoted(&mut self, data: &Value) {
-        let Some(index) = self
-            .inputs
-            .iter()
-            .position(|i| data["message_id"] == i.message_id.as_str())
-        else {
+        let Some(message_id) = data["message_id"].as_str() else {
             return;
         };
+        if !self.inputs.contains(message_id) {
+            return;
+        }
         if self.answer_done {
             self.flush_answers();
+        }
+        if !self.inputs.contains(message_id) || self.answering.iter().any(|id| id == message_id) {
+            return;
         }
         self.answer_done = false;
         self.idle = false;
         self.run.text.clear();
-        self.answering.push(index);
+        self.answering.push(message_id.to_owned());
     }
 
     fn structured(&mut self, data: &Value) {
-        let Some(input) = self
-            .inputs
-            .iter_mut()
-            .find(|i| data["message_id"] == i.message_id.as_str())
+        let Some(input) = data["message_id"]
+            .as_str()
+            .and_then(|id| self.inputs.get_mut(id))
         else {
             return;
         };
@@ -462,10 +439,10 @@ impl Driver<'_> {
     fn failed(&mut self, data: &Value) {
         let message = data["message"].as_str().unwrap_or("error").to_owned();
         self.out.error(&message);
-        for &index in &self.answering {
-            self.inputs[index]
-                .error
-                .get_or_insert_with(|| message.clone());
+        for message_id in &self.answering {
+            if let Some(input) = self.inputs.get_mut(message_id) {
+                input.error.get_or_insert_with(|| message.clone());
+            }
         }
     }
 
@@ -501,11 +478,12 @@ impl Driver<'_> {
 
     /// Emit the results of the inputs whose answer ended.
     fn flush_answers(&mut self) {
-        for index in std::mem::take(&mut self.answering) {
-            self.inputs[index].answered = true;
-            let input = &self.inputs[index];
-            self.emit_result(input);
+        for message_id in std::mem::take(&mut self.answering) {
+            if let Some(input) = self.inputs.complete(&message_id) {
+                self.emit_result(&input);
+            }
         }
+        self.run.retire_driver_answer();
         self.answer_done = false;
     }
 
@@ -539,7 +517,7 @@ impl Driver<'_> {
             return false;
         }
         // An input admitted but not yet promoted keeps the run open.
-        if self.inputs.iter().any(|i| !i.answered) && self.fatal.is_none() && !self.interrupted {
+        if !self.inputs.is_empty() && self.fatal.is_none() && !self.interrupted {
             return false;
         }
         match self
@@ -559,16 +537,8 @@ impl Driver<'_> {
     /// The aggregate exit: 130 for SIGINT, 2 for a fatal protocol error, else the first
     /// failed input's code in admission order. Ends with one `end` line.
     fn finish(mut self) -> u8 {
-        for input in self.inputs.iter_mut().filter(|i| !i.answered) {
-            input
-                .error
-                .get_or_insert_with(|| "not answered before the run ended".into());
-            input.answered = true;
-        }
-        for input in &self.inputs {
-            if input.error.as_deref() == Some("not answered before the run ended") {
-                self.emit_result(input);
-            }
+        for input in self.inputs.unfinished() {
+            self.emit_result(&input);
         }
         let mut code = if self.interrupted {
             EXIT_INTERRUPTED
@@ -576,9 +546,7 @@ impl Driver<'_> {
             EXIT_PROTOCOL
         } else {
             self.inputs
-                .iter()
-                .map(Input::exit_code)
-                .find(|code| *code != 0)
+                .failure_code()
                 .or(self.run.error.as_ref().map(|_| EXIT_ERROR))
                 .unwrap_or(0)
         };
@@ -598,7 +566,7 @@ impl Driver<'_> {
             json!({
                 "exit_code": code,
                 "error": final_error,
-                "inputs": self.inputs.len(),
+                "inputs": self.inputs.total(),
                 "usage": { "input": self.run.input_tokens, "output": self.run.output_tokens },
                 "cost_usd": self.run.combined_cost(),
                 "duration_ms": self.run.started.elapsed().as_millis() as u64,

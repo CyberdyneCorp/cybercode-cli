@@ -736,3 +736,26 @@ The native workflow now selects these regressions and builds the Linux sandbox
 helper after installing bubblewrap. External results for these edits are pending.
 Task 6.3 remains open for hook events and bounded output ownership/backpressure;
 6.2/6.4 and all parent acceptance obligations remain open.
+
+Pending-input ledger continuation (2026-11-09): the JSONL driver now reserves an
+exact message-ID slot before HTTP admission, retains at most 32 pending inputs,
+and releases each terminal payload after emission. Promoted answers use stable
+message IDs instead of indices into completed history. Refused admissions retire
+their reserved slot; bounded aggregate counters retain input totals and failure
+after payload retirement. Premature termination emits every pending result even
+when an input already has an error. Two unit tests pass, including 4,096 payload
+retirements and capacity/reused-slot identity checks. All nine real JSONL tests
+pass, including 65 sequential correlated prompts and exact final input count.
+Admission ordinals preserve pending terminal result order and the first failure
+independently of completion order. The reporter also releases emitted completed
+answer/tool/denial payloads while preserving billing and aggregate status. Owned
+background tracking retains only its exact fork's handback-admitted bit rather
+than every observed prompt ID; unrelated/foreign Session admissions cannot set
+that bit. Thirty-one exec unit, 17 real delegation, five forked-command and nine
+JSONL tests pass. CLI all-target Clippy passes with warnings denied; strict
+OpenSpec passes 100 items and lint reports zero errors/25 warnings. Focused review
+found the pending-output ordering regression and corrected it before acceptance
+of this change. Request/interrupt ownership, bounded background Job lookup,
+bounded output/backpressure, hook events and remaining 6.4 acceptance still remain
+required. Tasks 6.2–6.4 stay open. Native CI run 42693044871 is on the earlier
+9ac06c40 checkpoint; it is not native acceptance of this ledger extension.
