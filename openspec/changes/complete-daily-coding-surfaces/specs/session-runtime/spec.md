@@ -24,3 +24,9 @@
 #### Scenario: Compaction between validation submissions
 - **WHEN** automatic compaction recovers an overflow during a root result correction
 - **THEN** the retried request SHALL retain the matching input schema and finalization instruction, without resetting the submitted-attempt count or counting overflow as a submission
+
+#### Scenario: Durable finalization precedes a failed terminal outcome append
+- **GIVEN** a root prompt's valid finalizer or exhausted submissions are durable but its terminal outcome append failed
+- **WHEN** an explicit resume recovers that unfinished result after restart
+- **THEN** it SHALL settle the original value or exhausted error before model dispatch, preserving its exact input and attempt count without another provider request
+- **AND** any new queued prompt SHALL be promoted only after that reconciliation, retaining its own schema and result; ordinary result lookup SHALL never redispatch work

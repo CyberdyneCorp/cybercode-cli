@@ -328,6 +328,12 @@ async fn start_pass(
         let depth = super::messaging::hops::restored_depth(&state);
         inner.raise_mcp_depth(&state.info.id, depth);
     }
+    // A finalizer or exhausted correction may be durable while its terminal
+    // outcome append was interrupted. Reconcile it before any model dispatch;
+    // queued new input can still run, but recovery does not force another Turn.
+    if inner.root_result_end(handle).await?.is_some() {
+        return Ok(Some(false));
+    }
     Ok(match resume_after_wait(inner, handle, cancel).await? {
         Some(false) => None,
         Some(true) => Some(true),

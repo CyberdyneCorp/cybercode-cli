@@ -4,7 +4,9 @@
 
 mod support;
 
-use cyber_server::runtime::{Admission, Delivery, RuntimeError, StructuredOutcome};
+use cyber_server::runtime::{
+    Admission, Delivery, Runtime, RuntimeError, SessionState, StructuredOutcome,
+};
 use serde_json::{Value, json};
 use support::*;
 
@@ -29,6 +31,10 @@ async fn ask(h: &Harness, id: &str, text: &str, schema: Option<Value>) -> String
 
 async fn result_of(h: &Harness, id: &str, message: &str) -> Option<StructuredOutcome> {
     let state = h.state(id).await;
+    outcome_from_state(&state, message)
+}
+
+fn outcome_from_state(state: &SessionState, message: &str) -> Option<StructuredOutcome> {
     let row = state
         .inbox
         .iter()
@@ -42,6 +48,197 @@ fn harness(main: Vec<Vec<cyber_llm::adapters::ScriptStep>>) -> Harness {
         scripts: vec![("test/main", main)],
         ..Setup::default()
     })
+}
+
+#[tokio::test]
+async fn a_durable_finalizer_reconciles_a_terminal_writer_cut_without_another_request() {
+    assert_terminal_writer_cut(true).await;
+}
+
+#[tokio::test]
+async fn exhausted_submissions_reconcile_a_terminal_writer_cut_without_a_fourth_request() {
+    assert_terminal_writer_cut(false).await;
+}
+
+fn prevent_terminal_outcome(h: &Harness) {
+    h.store.transaction(|db| {
+        db.execute_batch("CREATE TRIGGER reject_structured_terminal BEFORE INSERT ON event WHEN NEW.type='session.structured_output.settled.1' BEGIN SELECT RAISE(ABORT,'fixture before structured terminal'); END")?;
+        Ok(())
+    }).unwrap();
+}
+
+fn allow_terminal_outcome(h: &Harness) {
+    h.store
+        .transaction(|db| {
+            db.execute_batch("DROP TRIGGER reject_structured_terminal")?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[tokio::test]
+async fn writer_cut_recovery_settles_the_previous_result_before_promoting_a_new_schema() {
+    let h = harness(vec![
+        structured("old", r#"{"summary":"original"}"#),
+        structured("new", r#"{"count":2}"#),
+    ]);
+    prevent_terminal_outcome(&h);
+    let id = h.session().await;
+    let first = ask(&h, &id, "first", Some(schema())).await;
+    h.settle(&id).await;
+    assert!(result_of(&h, &id, &first).await.is_none());
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    h.runtime.shutdown().await;
+    allow_terminal_outcome(&h);
+    let restarted = h.restart();
+    let other =
+        json!({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]});
+    let mut next = Admission::text("second", Delivery::Queue);
+    next.output_schema = Some(other.clone());
+    next.resume = false;
+    let second = restarted.admit(&id, next).await.unwrap().message_id;
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    restarted.resume(&id).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(30), restarted.wait_idle(&id))
+        .await
+        .unwrap();
+    let state = restarted.state(&id).await.unwrap();
+    let old = outcome_from_state(&state, &first).unwrap();
+    let new = outcome_from_state(&state, &second).unwrap();
+    assert_eq!(old.value, Some(json!({"summary":"original"})));
+    assert_eq!(new.value, Some(json!({"count":2})));
+    assert_eq!((old.attempts, new.attempts), (1, 1));
+    assert_eq!((&old.error, &new.error), (&None, &None));
+    let requests = h.models.requests("test/main");
+    assert_eq!(
+        requests.len(),
+        2,
+        "only the new prompt dispatches after recovery"
+    );
+    assert_eq!(
+        requests[1]
+            .tools
+            .iter()
+            .find(|tool| tool.name == "structured_output")
+            .unwrap()
+            .input_schema,
+        other
+    );
+    let events = h.store.read_events(&id, -1, 200).unwrap().events;
+    let settled = events
+        .iter()
+        .find(|event| {
+            event.kind == "session.structured_output.settled.1" && event.data["message_id"] == first
+        })
+        .unwrap();
+    let promoted = events
+        .iter()
+        .find(|event| {
+            event.kind == "session.prompt.promoted.1" && event.data["message_id"] == second
+        })
+        .unwrap();
+    assert!(settled.seq < promoted.seq);
+    restarted.shutdown().await;
+}
+
+async fn prepare_terminal_writer_cut(valid: bool) -> (Harness, String, String, usize) {
+    let mut script = if valid {
+        vec![structured("valid", r#"{"summary":"durable value"}"#)]
+    } else {
+        vec![
+            structured("bad1", r#"{"wrong":1}"#),
+            structured("bad2", r#"{"summary":3}"#),
+            structured("bad3", "{}"),
+        ]
+    };
+    script.push(text("fresh prompt answer"));
+    let h = harness(script);
+    prevent_terminal_outcome(&h);
+    let id = h.session().await;
+    let message = ask(&h, &id, "audit", Some(schema())).await;
+    h.settle(&id).await;
+    let attempts = if valid { 1 } else { 3 };
+    assert_eq!(h.models.requests("test/main").len(), attempts);
+    assert!(result_of(&h, &id, &message).await.is_none());
+    let state = h.state(&id).await;
+    if valid {
+        assert_eq!(
+            state.structured_result(),
+            Some(&json!({"summary":"durable value"}))
+        );
+    } else {
+        assert!(state.structured_result_error().contains("Invalid result"));
+    }
+    h.runtime.shutdown().await;
+    allow_terminal_outcome(&h);
+    (h, id, message, attempts)
+}
+
+async fn assert_terminal_writer_cut(valid: bool) {
+    let (h, id, message, attempts) = prepare_terminal_writer_cut(valid).await;
+    let restarted = h.restart();
+    restarted.resume(&id).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(30), restarted.wait_idle(&id))
+        .await
+        .unwrap();
+    assert_eq!(
+        h.models.requests("test/main").len(),
+        attempts,
+        "metadata recovery must not reopen inference"
+    );
+    let state = restarted.state(&id).await.unwrap();
+    let outcome = outcome_from_state(&state, &message).expect("reconciled result");
+    assert_reconciled_outcome(&outcome, valid, attempts);
+    let events = h.store.read_events(&id, -1, 200).unwrap().events;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "session.structured_output.settled.1")
+            .count(),
+        1
+    );
+    assert_fresh_plain_prompt(&h, &restarted, &id, &message, &outcome, attempts).await;
+    restarted.shutdown().await;
+}
+
+fn assert_reconciled_outcome(outcome: &StructuredOutcome, valid: bool, attempts: usize) {
+    assert_eq!(outcome.attempts as usize, attempts);
+    if valid {
+        assert_eq!(outcome.value, Some(json!({"summary":"durable value"})));
+        assert_eq!(outcome.error, None);
+    } else {
+        assert_eq!(outcome.value, None);
+        assert!(outcome.error.as_deref().unwrap().contains("Invalid result"));
+    }
+}
+
+async fn assert_fresh_plain_prompt(
+    h: &Harness,
+    restarted: &Runtime,
+    id: &str,
+    message: &str,
+    outcome: &StructuredOutcome,
+    attempts: usize,
+) {
+    restarted
+        .admit(id, Admission::text("new plain prompt", Delivery::Queue))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(30), restarted.wait_idle(id))
+        .await
+        .unwrap();
+    assert_eq!(h.models.requests("test/main").len(), attempts + 1);
+    assert!(
+        h.models
+            .requests("test/main")
+            .last()
+            .unwrap()
+            .tools
+            .iter()
+            .all(|tool| tool.name != "structured_output")
+    );
+    let state = restarted.state(id).await.unwrap();
+    assert_eq!(outcome_from_state(&state, message).as_ref(), Some(outcome));
 }
 
 #[tokio::test]

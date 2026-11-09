@@ -137,7 +137,7 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 - [x] 5.1 Add validated per-prompt root format admission, bounded schema compilation and durable schema/attempt ownership without changing existing child contracts.
 - [x] 5.2 Add `structured_output` finalization, two correction retries, budget/interrupt handling and durable successful/error result settlement.
 - [x] 5.3 Add `--output-schema`, API/SDK result fields and text/JSON/stream rendering; preserve unstructured commands and validate option combinations before admission.
-- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider. Done: schema bounds and refusal before admission, malformed and invalid submissions, exhaustion without a fourth request, missing finalizer, a restart between independent queued prompts, retry identity with another schema, the real binary (`cyber-cli/tests/exec_output_schema.rs`), runtime compaction during correction, durable interruption/budget outcomes, and shutdown/resume of an open result. Open: real CLI budget/SIGINT exit precedence and finalizer/terminal-settlement writer/restart cuts without redispatch.
+- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider. Done: schema bounds and refusal before admission, malformed and invalid submissions, exhaustion without a fourth request, missing finalizer, restart between independent queued prompts, retry identity with another schema, runtime compaction during correction, durable interruption/budget outcomes, shutdown/resume of an open result, failed terminal-append recovery before another dispatch/queued schema promotion, and real CLI budget/timeout exit 4 and Unix SIGINT exit 130. Open: post-commit terminal acknowledgement loss, steering ownership and current-source platform acceptance.
 
 ## 6. Streaming JSONL input
 
@@ -787,3 +787,33 @@ Native run 42693044871 passed all selected native, managed Git App/CLI and JSONL
 steps on Linux x64 and ARM for 9ac06c40. macOS Intel/ARM jobs remain queued at this
 audit; they have no passing result. The ledger and structured terminal-result
 extensions need their own current-source native acceptance before delivery.
+
+Structured terminal-write recovery continuation (2026-11-09): a new fault fixture
+first reproduced two extra provider requests when a validated finalizer was
+durable but its terminal append had failed. Start-of-pass recovery now settles
+that valid result or the exhausted correction error before model dispatch; new
+queued input remains eligible after reconciliation. Three runtime cases prove
+valid/exhausted recovery without another request, preservation of later plain
+prompt behavior, and old-result settlement before promoting a queued different
+schema. The initial exhausted fixture repeated identical invalid calls and hit
+the existing doom-loop approval (confirmed by its persisted permission event),
+then timed out. Distinct invalid submissions now reach the intended boundary;
+the repeated-tool safeguard is unchanged.
+
+Real CLI cases now gate a correction at the provider and verify max-token and
+wall-time termination retain exit 4, while Unix SIGINT retains 130 despite the
+structured terminal error. The direct unsafe signal call was rejected by the
+configured unsafe-code lint and replaced with the existing owned-child `kill
+-INT` fixture pattern. Fixture helpers are split by preparation, reconciliation
+and new-input checks to satisfy the cognitive complexity limit. These are
+resolved intermediate failures, not passing attempts.
+
+Final checks: 111 regressions pass in one server/CLI feature-unified run (97
+runtime cases and 14 real CLI cases); combined server/CLI all-target Clippy passes
+with warnings denied, as do formatting, whitespace and strict OpenSpec (100
+items; lint zero errors/25 warnings). The native workflow selects all exec units
+plus the structured-root/CLI-stop cases on its four hosts and retains their log.
+This edit is not current-source external acceptance: run 42693044871 remains on
+9ac06c40 (Linux x64/ARM passed; macOS jobs queued at the preceding audit). No new
+API/SDK field or CLI flag was added. SDK/plugin/full-workspace checks and Windows
+execution were not rerun here; the SIGINT case is explicitly Unix-only.

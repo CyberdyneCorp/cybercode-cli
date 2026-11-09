@@ -8,12 +8,17 @@ on:
       - crates/cyber-app/tests/support/scripted_model.rs
       - crates/cyber-server/src/runtime/snapshot*.rs
       - crates/cyber-server/src/runtime/rewind*.rs
+      - crates/cyber-server/src/runtime/drain.rs
+      - crates/cyber-server/src/runtime/structured*.rs
+      - crates/cyber-server/src/runtime/model.rs
+      - crates/cyber-server/tests/structured_root.rs
       - crates/cyber-server/src/http/sessions.rs
       - crates/cyber-app/tests/snapshot_git_runtime.rs
       - crates/cyber-cli/Cargo.toml
       - crates/cyber-cli/src/**
       - crates/cyber-cli/tests/branches_cli.rs
       - crates/cyber-cli/tests/exec_stream_input.rs
+      - crates/cyber-cli/tests/exec_output_schema.rs
       - crates/cyber-cli/tests/support/**
       - crates/cyber-server/src/workspace.rs
       - crates/cyber-core/src/binary/native/**
@@ -78,8 +83,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::exec::last_message::tests -- --nocapture 2>&1 | tee jsonl-driver-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::exec:: -- --nocapture 2>&1 | tee jsonl-driver-proof.log
           cargo test --locked -p cyber-cli --features native-git-acceptance --test exec_stream_input -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
+      - name: Root structured result recovery and CLI stop regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-server -p cyber-cli --features cyber-cli/native-git-acceptance --test structured_root --test exec_output_schema -- --nocapture 2>&1 | tee structured-result-proof.log
       - name: Retain native evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -92,4 +102,5 @@ jobs:
             git-runtime-proof.log
             git-cli-recovery-proof.log
             jsonl-driver-proof.log
+            structured-result-proof.log
           if-no-files-found: warn
