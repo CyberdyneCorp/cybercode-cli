@@ -30,7 +30,9 @@ pub(crate) fn retire(
         return Ok(0);
     }
     for owner in receipt.owners().map_err(storage::fail)? {
-        if owner.lifetime.checkout_resources_digest(&[])? != owner.resources_digest {
+        if owner.lifetime.owner.worktree_id.is_some()
+            || owner.lifetime.checkout_resources_digest(&[])? != owner.resources_digest
+        {
             return Err("Managed checkout metadata retirement is not yet available".into());
         }
     }

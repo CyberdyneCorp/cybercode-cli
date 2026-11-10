@@ -104,6 +104,24 @@ jobs:
           set -euo pipefail
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli preparation_ -- --nocapture --test-threads=1 2>&1 | tee preparation-client-proof.log
+      - name: Prepared cancellation metadata retirement
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli fully_prepared_pre_effect_cancellation_reclaims_only_persisted_target_inodes -- --exact --nocapture --test-threads=1 2>&1 | tee preparation-retirement-proof.log
+      - name: Paired metadata retirement after native source kill
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay -- --exact --nocapture --test-threads=1 2>&1 | tee paired-retirement-proof.log
       - name: JSONL driver and atomic last-message regressions
         if: ${{ !cancelled() }}
         shell: bash
@@ -130,6 +148,8 @@ jobs:
             fallback-collection-proof.log
             git-cli-recovery-proof.log
             preparation-client-proof.log
+            preparation-retirement-proof.log
+            paired-retirement-proof.log
             jsonl-driver-proof.log
             structured-result-proof.log
           if-no-files-found: warn

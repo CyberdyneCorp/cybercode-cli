@@ -1153,3 +1153,42 @@ path selection now also covers App snapshot support fixtures and nested Store
 reclamation protocol files. Full branch review, workspace/SDK runtime, other
 CLI/TUI scenarios and fresh source-bound platform acceptance remain required;
 this does not complete the Intel acceptance failure, M6 or issue #93.
+
+Native receipt-kind retirement continuation (2026-11-10): existing actual CLI
+preparation and partial-source-kill keep/rollback fixtures now invoke metadata
+retirement only after observed payload completion. Prepared cancellation retains
+its immutable five-file plan; paired recovery retains eight semantic leaves for
+two exact owners. Tests require journal removal, no-follow absence of each lifetime
+and source-phase path, observed completion, zero-effect repeat retirement, and the
+original receipt through restarted real CLI acknowledgement. Existing later-owner
+symlink/bytes, transcript, model-request and source-result assertions remain.
+The native matrix now selects these two full cases in independent steps even after
+another step fails, retains separate logs and preserves failed fixture directories.
+
+The new managed-preparation refusal assertion initially fails on the error text:
+empty-set digest validation returned a generic incomplete-resource error before
+the adapter's intended unsupported-managed diagnostic. Its local fixture remains
+at .tmpskmwRM. The adapter now explicitly refuses managed ownership before that
+empty-set calculation; complete receipt verification and every native/Store fence
+remain mandatory. The regression requires the specific unavailable result, no
+metadata plan, and retained intent/cancellation files. This grants no managed
+retirement authority. Managed claims, zero-payload and partial construction,
+old/deleted Location maintenance and complete crash/platform acceptance remain
+required before M6 or its parent tasks can close.
+
+Final receipt-kind checks pass: all three exact CLI cases run serially and pass
+with final no-follow worker-file absence assertions and the explicit managed
+refusal. The cases cover prepared cancellation, managed Git cancellation (retained
+unsupported metadata) and both actual partial-kill keep/rollback actions. The
+corrected run reports 220.47 seconds, including an early fixture pause to let the
+previous run finish; that elapsed time is not a performance benchmark. Its native
+origin observations occur after resumption under the original deadline. The prior
+run's two positives and one diagnostic mismatch are retained as failures rather
+than counted as a green suite. Snapshot/CLI all-target Clippy with warnings denied,
+formatting/whitespace, strict OpenSpec (100 items), spec lint (0 errors/25 warnings)
+and Ruby YAML parsing pass. Code-review-skill review finds no additional issue in
+the typed receipt-based assertions or the refusal-only guard correction. No new
+HTTP/generated contract changes. Full workspace, SDK runtime, other CLI/TUI cases,
+all receipt-kind crash cuts and new-source platform acceptance remain unperformed
+here and required by their parent tasks. No M6, issue, PR or delivery completion is
+claimed. The preserved original pre-main-integration stash remains intact.

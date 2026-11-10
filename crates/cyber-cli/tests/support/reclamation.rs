@@ -1,4 +1,4 @@
-//! Stop after a durable plan; native payload deletion is deliberately not run.
+//! Real Store/native maintenance and a plan-only wrapper for interruption tests.
 use cyber_server::runtime::{
     SnapshotOrigin,
     snapshot_reclamation::{Plan, Receipt, Record},
@@ -91,6 +91,10 @@ impl Maintenance {
     pub fn reclaim(&self, source: &Path) -> Result<u64, String> {
         self.runtime
             .block_on(self.snapshots.reclaim(source.to_str().unwrap()))
+    }
+    pub fn retire(&self, source: &Path, receipt: Receipt) -> Result<u64, String> {
+        self.runtime
+            .block_on(self.snapshots.retire(source.to_str().unwrap(), receipt))
     }
     pub fn plan_only(&self, source: &Path) -> Result<u64, String> {
         let cut = Self::snapshots(

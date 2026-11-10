@@ -1431,6 +1431,62 @@ fn assert_prepared_payload_cleanup(env: &Env, reply: &Value) {
         std::fs::read_to_string(env.root.join("preparation-owner-target")).unwrap(),
         "later owner bytes"
     );
+    assert_prepared_metadata_retirement(&maintenance, &source, &journal, &receipt);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_prepared_metadata_retirement(
+    maintenance: &reclamation_support::Maintenance,
+    source: &std::path::Path,
+    journal: &std::path::Path,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+) {
+    let owner = receipt.owners().unwrap().remove(0);
+    if owner.lifetime.owner.worktree_id.is_some() {
+        let error = maintenance.retire(source, receipt.clone()).unwrap_err();
+        assert!(
+            error.contains("Managed checkout metadata retirement is not yet available"),
+            "{error}"
+        );
+        assert!(
+            maintenance
+                .policy
+                .record(receipt)
+                .unwrap()
+                .unwrap()
+                .metadata
+                .is_none()
+        );
+        assert!(journal.join("intent.json").exists() && journal.join("preparation.json").exists());
+        return;
+    }
+    assert!(maintenance.retire(source, receipt.clone()).unwrap() > 0);
+    let record = maintenance.policy.record(receipt).unwrap().unwrap();
+    assert!(record.completed && record.retired);
+    assert_eq!(record.metadata.unwrap().files.len(), 5);
+    assert!(!journal.exists());
+    assert_retired_worker_files(&maintenance.namespace, receipt);
+    assert_eq!(maintenance.retire(source, receipt.clone()).unwrap(), 0);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_retired_worker_files(
+    namespace: &std::path::Path,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+) {
+    for owner in receipt.owners().unwrap() {
+        for name in [
+            owner.lifetime.owner.activity_id.as_str(),
+            owner.lifetime.source_phase.as_deref().unwrap(),
+        ] {
+            let error = namespace
+                .join("workers")
+                .join(name)
+                .symlink_metadata()
+                .unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        }
+    }
 }
 
 #[cfg(all(
@@ -2275,6 +2331,41 @@ fn assert_paired_payload_cleanup(env: &Env, result: &Value) {
     assert_eq!(
         std::fs::read_to_string(target).unwrap(),
         "later owner target"
+    );
+    assert_paired_metadata_retirement(&runtime, &snapshots, &policy, &receipt, &journals);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_paired_metadata_retirement(
+    runtime: &tokio::runtime::Runtime,
+    snapshots: &cyber_snapshot::GitSnapshots,
+    policy: &std::sync::Arc<dyn cyber_snapshot::reclamation::Policy>,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+    journals: &[PathBuf; 2],
+) {
+    let source = receipt
+        .origin()
+        .unwrap()
+        .binding
+        .directory
+        .to_str()
+        .unwrap();
+    assert!(
+        runtime
+            .block_on(snapshots.retire(source, receipt.clone()))
+            .unwrap()
+            > 0
+    );
+    let record = policy.record(receipt).unwrap().unwrap();
+    assert!(record.completed && record.retired);
+    assert_eq!(record.metadata.unwrap().files.len(), 8);
+    assert!(journals.iter().all(|journal| !journal.exists()));
+    assert_retired_worker_files(journals[0].parent().unwrap().parent().unwrap(), receipt);
+    assert_eq!(
+        runtime
+            .block_on(snapshots.retire(source, receipt.clone()))
+            .unwrap(),
+        0
     );
 }
 
