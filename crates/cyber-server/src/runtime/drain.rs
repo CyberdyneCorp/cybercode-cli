@@ -646,7 +646,11 @@ async fn promote(
     let depth = super::messaging::hops::promoted_depth(&state, &ids);
     let mut events = Vec::new();
     let mut stops = Vec::new();
+    let mut outcomes = super::structured_turn::promotion_outcomes(&state, &ids);
     for message_id in ids {
+        if let Some(outcome) = outcomes.remove(&message_id) {
+            events.push(outcome);
+        }
         // UserPromptSubmit context and stop request land immediately before their
         // prompt in the same commit.
         if let Some(text) = state.hook_contexts.get(&message_id) {

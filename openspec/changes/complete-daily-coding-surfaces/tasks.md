@@ -137,14 +137,14 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 - [x] 5.1 Add validated per-prompt root format admission, bounded schema compilation and durable schema/attempt ownership without changing existing child contracts.
 - [x] 5.2 Add `structured_output` finalization, two correction retries, budget/interrupt handling and durable successful/error result settlement.
 - [x] 5.3 Add `--output-schema`, API/SDK result fields and text/JSON/stream rendering; preserve unstructured commands and validate option combinations before admission.
-- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider. Done: schema bounds and refusal before admission, malformed and invalid submissions, exhaustion without a fourth request, missing finalizer, restart between independent queued prompts, retry identity with another schema, runtime compaction during correction, durable interruption/budget outcomes, shutdown/resume of an open result, failed terminal-append recovery before another dispatch/queued schema promotion, and real CLI budget/timeout exit 4 and Unix SIGINT exit 130. Open: post-commit terminal acknowledgement loss, steering ownership and current-source platform acceptance.
+- [ ] 5.4 Test valid/invalid schemas, malformed results, retry exhaustion, missing finalizer, compaction, restart/retry identity, budget exits and independent queued prompts with a real server/scripted provider. Local functional cases pass: schema bounds, admission refusal, malformed/invalid submissions, retry exhaustion, missing finalizer, compaction during correction, independent queued schemas, shutdown/resume, interruption/budget outcomes, terminal writer cuts, post-commit acknowledgement loss, steering ownership, and CLI budget/timeout exit 4 and Unix SIGINT exit 130. Current-source platform acceptance remains required; this task is not accepted from local results alone.
 
 ## 6. Streaming JSONL input
 
 - [x] 6.1 Define typed version-2 envelopes, correlation, resource bounds, aggregate exit rules and driver-owned interactive request lifetime; document compatibility and unsupported combinations.
 - [ ] 6.2 Implement concurrent bounded parsing/admission and exact owned permission/question replies, retained request lookup, interrupt and end/EOF draining without stopping unrelated work. Basic parsing/admission merged in #117. The 2026-11-09 code review found that request collection and interrupt target the Session without checking the driver's admitted message ownership, and completed inputs retain their full result payloads indefinitely. Complete those ownership/resource bounds and their shared-Session/long-run regressions before accepting this task.
 - [ ] 6.3 Emit per-input results, optional partial/hook events and atomic last-message output with bounded backpressure and secret-safe errors. `--include-hook-events` is not implemented: hook receipts are deliberately not on the Session stream, so the lines would have nothing reliable to carry.
-- [ ] 6.4 Test multiple inputs, steering/queueing, malformed/oversized input, capacity, stale/cross-request replies, EOF while awaiting input, slow stdout, SIGINT, server restart and lost admission acknowledgement. Done: multiple inputs in order, per-input structured results, malformed input (exit 2), unknown request replies, EOF while a request waits, unsupported combinations, with the real binary (`cyber-cli/tests/exec_stream_input.rs`). Open: steering, capacity, slow stdout, SIGINT, server restart and lost admission acknowledgement.
+- [ ] 6.4 Test multiple inputs, steering/queueing, malformed/oversized input, capacity, stale/cross-request replies, EOF while awaiting input, slow stdout, SIGINT, server restart and lost admission acknowledgement. Done: multiple inputs in order, per-input structured results, structured/plain steering while inference is gated, long-run slot retirement, malformed input (exit 2), unknown request replies, EOF while a request waits, unsupported combinations, with the real binary (`cyber-cli/tests/exec_stream_input.rs`). Open: shared-Session ownership, capacity, slow stdout, SIGINT, server restart and lost admission acknowledgement.
 
 ## 7. Review and delivery
 
@@ -817,3 +817,33 @@ This edit is not current-source external acceptance: run 42693044871 remains on
 9ac06c40 (Linux x64/ARM passed; macOS jobs queued at the preceding audit). No new
 API/SDK field or CLI flag was added. SDK/plugin/full-workspace checks and Windows
 execution were not rerun here; the SIGINT case is explicitly Unix-only.
+
+Structured steering and committed-reply continuation (2026-11-09): two new
+runtime regressions first failed because a steered promotion discarded the prior
+input's open result. Promotion now freezes displaced outcomes and commits each
+immediately before its replacement in the same append. A valid durable finalizer
+wins; otherwise each displaced structured input gets an explicit superseded
+error with its own attempt count, including zero-attempt intermediate schemas.
+Child result behavior and unstructured input semantics are unchanged. A shared
+pure result constructor also preserves the same terminal rules at Drain exit.
+
+Runtime cases prove multiple steered schemas and replacement by plain input.
+Two real JSONL cases gate inference, admit steering concurrently over stdin, and
+verify exact per-input outcomes plus aggregate failure for a superseded schema.
+Two SQLite WAL-hook cases lose the acknowledgement only after the exact target
+terminal commit is visible through an independent read-only connection. They
+prove the writer fences, cached terminal state does not advance, and reopening
+the physical Store recovers the original result or committed new input without
+replaying old inference/tools or duplicating promotion. The native workflow now
+watches the fault helper. Manual proof dispatches queue behind an active matrix
+rather than cancelling it; obsolete pull-request heads still cancel normally.
+
+Checks: 115 broad runtime/CLI regressions pass, followed by both added WAL-ack
+cases. The final targeted run passes all 16 structured-root, five output-schema
+CLI and 11 JSONL tests; combined server/CLI all-target Clippy passes with warnings
+denied. Formatting, whitespace and strict OpenSpec pass (100 items; lint zero
+errors/25 warnings). Focused code/security review confirms state stays unchanged
+until the atomic promotion append succeeds and no request/reply or interruption
+authority is inferred from these result records. No new API/SDK fields were
+added. Current-source native/platform acceptance and global SDK/plugin/full
+workspace checks remain open. This does not complete tasks 6.2–6.4 or M2–M8.

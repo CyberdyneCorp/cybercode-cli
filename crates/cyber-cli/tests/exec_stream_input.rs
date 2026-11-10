@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -22,6 +22,13 @@ struct Provider {
     turns: Arc<Mutex<Vec<Value>>>,
     done: Arc<AtomicBool>,
     server: Option<thread::JoinHandle<()>>,
+    gate: Arc<Gate>,
+}
+
+#[derive(Default)]
+struct Gate {
+    reached: AtomicBool,
+    released: AtomicBool,
 }
 
 impl Provider {
@@ -33,11 +40,13 @@ impl Provider {
             Arc::new(Mutex::new(script.iter().map(|s| (*s).to_owned()).collect()));
         let turns = Arc::new(Mutex::new(Vec::new()));
         let done = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new(Gate::default());
+        let held = gate.clone();
         let (seen, stop) = (turns.clone(), done.clone());
         let server = thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
-                    Ok((stream, _)) => answer(stream, &seen, &script),
+                    Ok((stream, _)) => answer(stream, &seen, &script, &held, &stop),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
                     }
@@ -50,11 +59,27 @@ impl Provider {
             turns,
             done,
             server: Some(server),
+            gate,
         }
     }
 
     fn turns(&self) -> Vec<Value> {
         self.turns.lock().unwrap().clone()
+    }
+
+    fn wait_for_gate(&self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !self.gate.reached.load(Ordering::SeqCst) {
+            assert!(
+                Instant::now() < deadline,
+                "provider request did not reach its gate"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn release(&self) {
+        self.gate.released.store(true, Ordering::SeqCst);
     }
 }
 
@@ -67,7 +92,13 @@ impl Drop for Provider {
     }
 }
 
-fn answer(mut stream: TcpStream, turns: &Mutex<Vec<Value>>, script: &Mutex<VecDeque<String>>) {
+fn answer(
+    mut stream: TcpStream,
+    turns: &Mutex<Vec<Value>>,
+    script: &Mutex<VecDeque<String>>,
+    gate: &Gate,
+    done: &AtomicBool,
+) {
     stream.set_nonblocking(false).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -86,6 +117,16 @@ fn answer(mut stream: TcpStream, turns: &Mutex<Vec<Value>>, script: &Mutex<VecDe
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| "text:extra".into());
+        let next = match next.strip_prefix("gate:") {
+            Some(text) => {
+                gate.reached.store(true, Ordering::SeqCst);
+                while !gate.released.load(Ordering::SeqCst) && !done.load(Ordering::SeqCst) {
+                    thread::sleep(Duration::from_millis(5));
+                }
+                text
+            }
+            None => next.as_str(),
+        };
         match next.strip_prefix("text:") {
             Some(text) => {
                 json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":"stop"}]})
@@ -228,6 +269,82 @@ impl Driven {
         let _ = self.child.kill();
         panic!("cyber exec did not exit");
     }
+}
+
+#[test]
+fn steering_a_structured_input_reports_its_superseded_error_and_the_new_inputs_value() {
+    let provider = Provider::start(&[
+        "gate:structured_output {\"wrong\":1}",
+        "structured_output {\"summary\":\"latest\"}",
+    ]);
+    let mut schema = tempfile::NamedTempFile::new().unwrap();
+    schema.write_all(br#"{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}"#).unwrap();
+    let path = schema.path().display().to_string();
+    let mut run = Driven::start(&provider, &["--output-schema", &path]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"one","id":"first"}"#);
+    let first_input = run.until("input", &mut seen);
+    provider.wait_for_gate();
+    run.send(r#"{"type":"user","text":"replace it","id":"next","delivery":"steer"}"#);
+    let next_input = run.until("input", &mut seen);
+    assert_eq!(
+        next_input["status"], "admitted",
+        "stdin stays live during inference"
+    );
+    run.send(r#"{"type":"end"}"#);
+    provider.release();
+    let first = run.until("result", &mut seen);
+    assert_eq!(first["id"], "first");
+    assert_eq!(first["message_id"], first_input["message_id"]);
+    assert_eq!(first["result"], Value::Null);
+    assert_eq!(
+        first["error"],
+        format!(
+            "StructuredOutputError: superseded by input {}",
+            next_input["message_id"].as_str().unwrap()
+        )
+    );
+    assert_eq!(first["exit_code"], 1);
+    let next = run.until("result", &mut seen);
+    assert_eq!(next["id"], "next");
+    assert_eq!(next["message_id"], next_input["message_id"]);
+    assert_eq!(next["result"], json!({"summary":"latest"}));
+    assert_eq!(next["error"], Value::Null);
+    assert_eq!(next["exit_code"], 0);
+    let end = run.until("end", &mut seen);
+    assert_eq!(
+        (end["inputs"].as_u64(), end["exit_code"].as_u64()),
+        (Some(2), Some(1))
+    );
+    assert_eq!(run.exit(), Some(1));
+    assert_eq!(provider.turns().len(), 2);
+}
+
+#[test]
+fn unstructured_steering_keeps_each_completed_answer_correlated() {
+    let provider = Provider::start(&["gate:text:first answer", "text:steered answer"]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"one","id":"first"}"#);
+    run.until("input", &mut seen);
+    provider.wait_for_gate();
+    run.send(r#"{"type":"user","text":"refine","id":"next","delivery":"steer"}"#);
+    assert_eq!(run.until("input", &mut seen)["status"], "admitted");
+    run.send(r#"{"type":"end"}"#);
+    provider.release();
+    let first = run.until("result", &mut seen);
+    assert_eq!(
+        (first["id"].as_str(), first["result"].as_str()),
+        (Some("first"), Some("first answer"))
+    );
+    let next = run.until("result", &mut seen);
+    assert_eq!(
+        (next["id"].as_str(), next["result"].as_str()),
+        (Some("next"), Some("steered answer"))
+    );
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0);
+    assert_eq!(run.exit(), Some(0));
+    assert_eq!(provider.turns().len(), 2);
 }
 
 #[test]

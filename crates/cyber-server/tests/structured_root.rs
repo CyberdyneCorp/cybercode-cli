@@ -3,6 +3,8 @@
 //! `structured_output` finalizer, its corrections and limits, and its durable outcome.
 
 mod support;
+#[path = "support/structured_terminal_fault.rs"]
+mod terminal_fault;
 
 use cyber_server::runtime::{
     Admission, Delivery, Runtime, RuntimeError, SessionState, StructuredOutcome,
@@ -48,6 +50,275 @@ fn harness(main: Vec<Vec<cyber_llm::adapters::ScriptStep>>) -> Harness {
         scripts: vec![("test/main", main)],
         ..Setup::default()
     })
+}
+
+#[tokio::test]
+async fn lost_terminal_commit_ack_reopens_the_original_outcome_without_dispatch() {
+    use std::sync::atomic::Ordering;
+    let h = harness(vec![structured("final", r#"{"summary":"committed"}"#)]);
+    let id = h.session().await;
+    let mut admission = Admission::text("audit", Delivery::Queue);
+    admission.output_schema = Some(schema());
+    admission.resume = false;
+    let message = h.runtime.admit(&id, admission).await.unwrap().message_id;
+    let path = h.dir.path().join("cyber.db");
+    let reached = terminal_fault::install(&h.store, &path, &id, &message);
+    assert!(!reached.load(Ordering::SeqCst));
+    h.runtime.resume(&id).await.unwrap();
+    h.settle(&id).await;
+    assert!(
+        reached.load(Ordering::SeqCst),
+        "the terminal outcome must actually commit"
+    );
+    assert!(
+        h.store.has_failed(),
+        "lost COMMIT acknowledgement fences the writer"
+    );
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    assert!(
+        result_of(&h, &id, &message).await.is_none(),
+        "unacknowledged state is not published as success"
+    );
+    let committed = input_event_seq(&h, &id, "session.structured_output.settled.1", &message);
+    tokio::time::timeout(std::time::Duration::from_secs(10), h.runtime.shutdown())
+        .await
+        .unwrap();
+    let (reopened_store, reopened) = reopened_runtime(&h);
+    for _ in 0..2 {
+        let state = reopened.state(&id).await.unwrap();
+        let outcome =
+            outcome_from_state(&state, &message).expect("committed outcome survives reopen");
+        assert_eq!(outcome.value, Some(json!({"summary":"committed"})));
+        assert_eq!((outcome.error, outcome.attempts), (None, 1));
+    }
+    assert_eq!(
+        h.models.requests("test/main").len(),
+        1,
+        "lookup cannot redispatch"
+    );
+    assert_eq!(reopened_store.aggregate_seq(&id).unwrap(), Some(committed));
+    reopened.shutdown().await;
+}
+
+fn reopened_runtime(h: &Harness) -> (std::sync::Arc<cyber_store::Store>, Runtime) {
+    let store = std::sync::Arc::new(open_store(&h.dir.path().join("cyber.db")));
+    let replayed = runtime(
+        &store,
+        &h.models,
+        &h.tools,
+        h.dir.path(),
+        cyber_server::runtime::CompactionConfig::default(),
+        None,
+    );
+    (store, replayed)
+}
+
+#[tokio::test]
+async fn a_lost_steering_promotion_ack_reopens_the_new_owner_without_replaying_the_old() {
+    use std::sync::atomic::Ordering;
+    let h = harness(vec![
+        tools(&[("work", "read", "{}")]),
+        structured("final", r#"{"count":2}"#),
+    ]);
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Gated);
+    let id = h.session().await;
+    let started = h.tools.started.notified();
+    let first = ask(&h, &id, "first", Some(schema())).await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), started)
+        .await
+        .unwrap();
+    let other =
+        json!({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]});
+    let next = steer(&h, &id, "next", Some(other)).await;
+    let reached = terminal_fault::install(&h.store, &h.dir.path().join("cyber.db"), &id, &first);
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    assert!(reached.load(Ordering::SeqCst));
+    assert!(h.store.has_failed());
+    assert_eq!(
+        h.models.requests("test/main").len(),
+        1,
+        "failed writer must not admit the next request"
+    );
+    assert_eq!(h.tools.executed.lock().unwrap().len(), 1);
+    assert!(
+        input_event_seq(&h, &id, "session.structured_output.settled.1", &first)
+            < input_event_seq(&h, &id, "session.prompt.promoted.1", &next)
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), h.runtime.shutdown())
+        .await
+        .unwrap();
+    let (store, replayed) = reopened_runtime(&h);
+    let before = replayed.state(&id).await.unwrap();
+    let original = outcome_from_state(&before, &first).unwrap();
+    assert_superseded(&original, 0, &next);
+    assert!(outcome_from_state(&before, &next).is_none());
+    replayed.resume(&id).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(30), replayed.wait_idle(&id))
+        .await
+        .unwrap();
+    let after = replayed.state(&id).await.unwrap();
+    assert_eq!(outcome_from_state(&after, &first), Some(original));
+    let completed = outcome_from_state(&after, &next).unwrap();
+    assert_eq!(completed.value, Some(json!({"count":2})));
+    assert_eq!((completed.error, completed.attempts), (None, 1));
+    assert_eq!(h.models.requests("test/main").len(), 2);
+    assert_eq!(
+        h.tools.executed.lock().unwrap().len(),
+        1,
+        "recovery must not replay the old tool"
+    );
+    let events = store.read_events(&id, -1, 200).unwrap().events;
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "session.prompt.promoted.1"
+                && event.data["message_id"] == next)
+            .count(),
+        1
+    );
+    replayed.shutdown().await;
+}
+
+async fn steer(h: &Harness, id: &str, text: &str, format: Option<Value>) -> String {
+    let mut admission = Admission::text(text, Delivery::Steer);
+    admission.output_schema = format;
+    admission.resume = false;
+    h.runtime.admit(id, admission).await.unwrap().message_id
+}
+
+fn assert_superseded(outcome: &StructuredOutcome, attempts: u32, next: &str) {
+    assert_eq!(outcome.value, None);
+    assert_eq!(outcome.attempts, attempts);
+    assert_eq!(
+        outcome.error.as_deref(),
+        Some(format!("StructuredOutputError: superseded by input {next}").as_str())
+    );
+}
+
+fn input_event_seq(h: &Harness, id: &str, kind: &str, message: &str) -> i64 {
+    h.store
+        .read_events(id, -1, 200)
+        .unwrap()
+        .events
+        .into_iter()
+        .find(|event| event.kind == kind && event.data["message_id"] == message)
+        .unwrap()
+        .seq
+}
+
+#[tokio::test]
+async fn steering_seals_each_displaced_result_before_promoting_its_replacement() {
+    let h = harness(vec![
+        structured("invalid", r#"{"wrong":1}"#),
+        tools(&[("work", "read", "{}")]),
+        structured("new", r#"{"count":2}"#),
+    ]);
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Gated);
+    let id = h.session().await;
+    let started = h.tools.started.notified();
+    let first = ask(&h, &id, "first", Some(schema())).await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), started)
+        .await
+        .unwrap();
+    let middle = steer(&h, &id, "middle", Some(schema())).await;
+    let other =
+        json!({"type":"object","properties":{"count":{"type":"integer"}},"required":["count"]});
+    let last = steer(&h, &id, "last", Some(other.clone())).await;
+    assert!(
+        result_of(&h, &id, &first).await.is_none(),
+        "admission alone does not replace an open result"
+    );
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert_superseded(
+        &outcome_from_state(&state, &first).expect("first outcome"),
+        1,
+        &middle,
+    );
+    assert_superseded(
+        &outcome_from_state(&state, &middle).expect("middle outcome"),
+        0,
+        &last,
+    );
+    let outcome = outcome_from_state(&state, &last).expect("last outcome");
+    assert_eq!(outcome.value, Some(json!({"count":2})));
+    assert_eq!((outcome.error, outcome.attempts), (None, 1));
+    assert_eq!(h.models.requests("test/main").len(), 3);
+    assert!(
+        input_event_seq(&h, &id, "session.structured_output.settled.1", &first)
+            < input_event_seq(&h, &id, "session.prompt.promoted.1", &middle)
+    );
+    assert!(
+        input_event_seq(&h, &id, "session.structured_output.settled.1", &middle)
+            < input_event_seq(&h, &id, "session.prompt.promoted.1", &last)
+    );
+    let restarted = h.restart();
+    let loaded = restarted.state(&id).await.unwrap();
+    assert_eq!(
+        outcome_from_state(&loaded, &first),
+        outcome_from_state(&state, &first)
+    );
+    assert_eq!(
+        outcome_from_state(&loaded, &middle),
+        outcome_from_state(&state, &middle)
+    );
+    assert_eq!(
+        h.models
+            .requests("test/main")
+            .last()
+            .unwrap()
+            .tools
+            .iter()
+            .find(|tool| tool.name == "structured_output")
+            .unwrap()
+            .input_schema,
+        other
+    );
+}
+
+#[tokio::test]
+async fn plain_steering_ends_the_prior_schema_without_applying_it_to_the_new_prompt() {
+    let h = harness(vec![tools(&[("work", "read", "{}")]), text("plain answer")]);
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Gated);
+    let id = h.session().await;
+    let started = h.tools.started.notified();
+    let first = ask(&h, &id, "first", Some(schema())).await;
+    tokio::time::timeout(std::time::Duration::from_secs(10), started)
+        .await
+        .unwrap();
+    let next = steer(&h, &id, "plain", None).await;
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    assert_superseded(
+        &result_of(&h, &id, &first)
+            .await
+            .expect("superseded outcome"),
+        0,
+        &next,
+    );
+    assert!(result_of(&h, &id, &next).await.is_none());
+    let requests = h.models.requests("test/main");
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests[1]
+            .tools
+            .iter()
+            .all(|tool| tool.name != "structured_output")
+    );
 }
 
 #[tokio::test]

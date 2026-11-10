@@ -2,13 +2,15 @@
 //! output): a valid `structured_output` call ends the answer, a Turn that ends without
 //! one is asked again, and three failed submissions end it with `StructuredOutputError`.
 
-use std::sync::Arc;
+use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
+
+use cyber_store::NewEvent;
 
 use super::bus::LiveEvent;
 use super::drain::TurnEnd;
 use super::events::{SYSTEM_ADDED, SystemAdded, event};
-use super::structured::{MISSING_REASON, ROOT_ATTEMPTS, ROOT_TOOL, SETTLED};
-use super::{Handle, Inner, RuntimeError, StructuredOutcome};
+use super::structured::{MISSING_REASON, ROOT_ATTEMPTS, ROOT_TOOL, ResultState, SETTLED};
+use super::{Handle, Inner, RuntimeError, SessionState, StructuredOutcome, StructuredSchema};
 
 const KIND: &str = "structured_output";
 
@@ -30,23 +32,14 @@ impl Inner {
         if self.closed.is_cancelled() || !state.result.root_open() {
             return Ok(());
         }
-        let result = &state.result;
-        let value = result.returned.as_ref().map(|(_, value)| value.clone());
-        let error = value.is_none().then(|| {
-            let why = match failure {
-                Some((kind, message)) => format!("{kind}: {message}"),
-                None if interrupted => "interrupted".into(),
-                None => "execution ended before structured_output".into(),
-            };
-            format!("StructuredOutputError: {why}")
-        });
-        let outcome = StructuredOutcome {
-            message_id: result.input.clone().expect("open root input"),
-            value,
-            error,
-            attempts: result.attempts,
+        let why = match failure {
+            Some((kind, message)) => format!("{kind}: {message}"),
+            None if interrupted => "interrupted".into(),
+            None => "execution ended before structured_output".into(),
         };
-        self.commit_locked(&mut state, vec![event(SETTLED, &outcome)])?;
+        if let Some(outcome) = state.result.terminal_outcome(&why) {
+            self.commit_locked(&mut state, vec![event(SETTLED, &outcome)])?;
+        }
         Ok(())
     }
 
@@ -143,4 +136,35 @@ impl Inner {
             message,
         })
     }
+}
+
+/// Freeze each replaced root input's outcome without changing live state. The
+/// caller inserts it immediately before its replacement's promotion in one append.
+pub(crate) fn promotion_outcomes(
+    state: &SessionState,
+    inputs: &[String],
+) -> BTreeMap<String, NewEvent> {
+    let mut outcomes = BTreeMap::new();
+    if state.info.parent_id.is_some() {
+        return outcomes;
+    }
+    let mut previous = Cow::Borrowed(&state.result);
+    for input in inputs {
+        if let Some(outcome) = previous.terminal_outcome(&format!("superseded by input {input}")) {
+            outcomes.insert(input.clone(), event(SETTLED, &outcome));
+        }
+        // Match on_promoted's schema selection for an intermediate input in this
+        // batch. Uncompilable historical schemas grant no new result ownership.
+        previous = Cow::Owned(
+            state
+                .inbox
+                .iter()
+                .find(|row| row.message_id == *input)
+                .and_then(|row| row.output_schema.clone())
+                .and_then(|schema| StructuredSchema::new(schema).ok())
+                .map(|schema| ResultState::root(schema, input.clone()))
+                .unwrap_or_default(),
+        );
+    }
+    outcomes
 }

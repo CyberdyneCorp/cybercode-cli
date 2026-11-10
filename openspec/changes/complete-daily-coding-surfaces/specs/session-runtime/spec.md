@@ -30,3 +30,14 @@
 - **WHEN** an explicit resume recovers that unfinished result after restart
 - **THEN** it SHALL settle the original value or exhausted error before model dispatch, preserving its exact input and attempt count without another provider request
 - **AND** any new queued prompt SHALL be promoted only after that reconciliation, retaining its own schema and result; ordinary result lookup SHALL never redispatch work
+
+#### Scenario: Steering replaces an unfinished structured input
+- **WHEN** a Safe Boundary promotes another root input while a structured result remains open
+- **THEN** the previous input SHALL retain its durable valid finalizer or receive a terminal `StructuredOutputError` naming the superseding input, with its original submission count
+- **AND** that outcome and the replacement promotion SHALL commit atomically in order; several steered schema inputs promoted together SHALL each retain their own outcome, including zero-submission superseded inputs
+- **AND** a new unstructured input SHALL not inherit the previous schema, and a different schema SHALL not borrow the previous result or retry count
+
+#### Scenario: Terminal or steering commit acknowledgement is lost
+- **WHEN** SQLite commits a terminal outcome or outcome/promotion batch but its commit acknowledgement fails
+- **THEN** the failed writer SHALL remain fenced and cached terminal state SHALL NOT be advanced on an unacknowledged reply
+- **AND** reopening the physical database SHALL recover the exact committed outcome and attempt count without inference; a committed steering promotion SHALL resume only its new input without replaying the displaced input or tool

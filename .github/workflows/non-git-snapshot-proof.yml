@@ -12,6 +12,7 @@ on:
       - crates/cyber-server/src/runtime/structured*.rs
       - crates/cyber-server/src/runtime/model.rs
       - crates/cyber-server/tests/structured_root.rs
+      - crates/cyber-server/tests/support/structured_terminal_fault.rs
       - crates/cyber-server/src/http/sessions.rs
       - crates/cyber-app/tests/snapshot_git_runtime.rs
       - crates/cyber-cli/Cargo.toml
@@ -31,7 +32,9 @@ permissions:
   contents: read
 concurrency:
   group: non-git-snapshots-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Let explicit native proofs finish and retain evidence while a newer run waits.
+  # Pull-request checks still cancel obsolete heads.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   native:
     name: Snapshot native (${{ matrix.os }})
