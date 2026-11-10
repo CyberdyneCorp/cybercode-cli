@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 /// Top-level keys that configure executable integrations, endpoints or boundaries.
 const SENSITIVE_KEYS: &[&str] = &[
     "budgets",
+    "instruction_limits",
     "providers",
     "mcp",
     "browser",

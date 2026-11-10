@@ -76,6 +76,13 @@ impl ToolHost for AppHost {
         self.builtin.claude_compat(directory)
     }
 
+    fn instruction_limits(
+        &self,
+        directory: &str,
+    ) -> Result<cyber_core::config::InstructionLimits, String> {
+        self.builtin.instruction_limits(directory)
+    }
+
     fn language(&self, directory: &str) -> Option<cyber_core::locale::Locale> {
         self.builtin.language(directory)
     }

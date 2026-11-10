@@ -909,6 +909,15 @@ pub trait ToolHost: Send + Sync {
         None
     }
 
+    /// Validated byte budgets from the same resolved Location configuration.
+    /// A resolution error must not fall back to reading with different limits.
+    fn instruction_limits(
+        &self,
+        _directory: &str,
+    ) -> Result<cyber_core::config::InstructionLimits, String> {
+        Ok(Default::default())
+    }
+
     /// The Location's `read` permission rules as a gate on project instruction files and
     /// their imports; `None` (a host without a permission policy) loads every one.
     fn instruction_read_gate(&self, _directory: &str) -> Option<super::instructions::ReadGate> {

@@ -944,7 +944,8 @@ impl Inner {
     pub(crate) fn instruction_settings(
         &self,
         directory: &str,
-    ) -> super::instructions::InstructionSettings {
+    ) -> Result<super::instructions::InstructionSettings, String> {
+        let limits = self.tools.instruction_limits(directory)?;
         let compat = self
             .tools
             .claude_compat(directory)
@@ -954,7 +955,8 @@ impl Inner {
             &cyber_core::env::ProcessEnv,
         );
         settings.read_gate = self.tools.instruction_read_gate(directory);
-        settings
+        settings.set_limits(limits);
+        Ok(settings)
     }
 
     pub(crate) fn context_inputs(&self, directory: &str) -> context::ContextInputs {
@@ -2071,7 +2073,7 @@ impl Inner {
             return None;
         }
         let path = invocation.input.get("path")?.as_str()?;
-        let settings = self.instruction_settings(&invocation.directory);
+        let settings = self.instruction_settings(&invocation.directory).ok()?;
         let location = std::path::PathBuf::from(&invocation.directory);
         Some(ReadTarget {
             file: super::instructions::read_target(&location, settings.home.as_deref(), path),

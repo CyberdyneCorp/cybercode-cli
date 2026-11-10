@@ -490,6 +490,88 @@ fn instructions_concatenate_global_first() {
     );
 }
 
+#[test]
+fn instruction_limits_layer_by_member_without_changing_instruction_arrays() {
+    use config::InstructionLimits;
+    let f = Fixture::new();
+    assert_eq!(
+        InstructionLimits::from_config(&f.load().unwrap().value).unwrap(),
+        InstructionLimits::default()
+    );
+    f.write("global:cyber.json", r#"{"instructions":["global.md"],"instruction_limits":{"max_file_bytes":16,"max_total_bytes":64}}"#);
+    f.write("cyber.jsonc", r#"{"instructions":["project.md"],"instruction_limits":{"max_total_bytes":32},"profiles":{"small":{"instruction_limits":{"max_file_bytes":12}}}}"#);
+    let held = f.load().unwrap();
+    assert!(!held.trust.trusted);
+    assert_eq!(
+        InstructionLimits::from_config(&held.value).unwrap(),
+        InstructionLimits {
+            max_file_bytes: 16,
+            max_total_bytes: 64
+        }
+    );
+    f.approve_current();
+    let layered = f.load().unwrap();
+    assert_eq!(
+        InstructionLimits::from_config(&layered.value).unwrap(),
+        InstructionLimits {
+            max_file_bytes: 16,
+            max_total_bytes: 32
+        }
+    );
+    assert_eq!(
+        layered.value["instructions"],
+        json!(["global.md", "project.md"])
+    );
+    assert!(
+        !layered
+            .warnings
+            .iter()
+            .any(|s| s.contains("unknown config key \"instruction_limits\""))
+    );
+    assert!(layered.sources["/instruction_limits/max_total_bytes"].starts_with("project:"));
+    let mut request = f.request(&f.repo, &[]);
+    request.profile = Some("small");
+    assert_eq!(
+        InstructionLimits::from_config(&config::load(&request).unwrap().value)
+            .unwrap()
+            .max_file_bytes,
+        12
+    );
+    let overrides = vec!["instruction_limits.max_file_bytes=8".into()];
+    let resolved = config::load(&f.request(&f.repo, &overrides)).unwrap();
+    assert_eq!(
+        InstructionLimits::from_config(&resolved.value).unwrap(),
+        InstructionLimits {
+            max_file_bytes: 8,
+            max_total_bytes: 32
+        }
+    );
+}
+
+#[test]
+fn instruction_limits_reject_invalid_values_before_configuration_is_usable() {
+    let f = Fixture::new();
+    for value in [
+        Value::Null,
+        json!(false),
+        json!([]),
+        json!(0),
+        json!({"max_file_bytes":0}),
+        json!({"max_total_bytes":-1}),
+        json!({"max_file_bytes":"16"}),
+        json!({"max_file_bytes":1.5}),
+        json!({"max_bytes":16}),
+        json!({"max_file_bytes":33,"max_total_bytes":32}),
+    ] {
+        f.write(
+            "global:cyber.json",
+            &json!({"instruction_limits":value}).to_string(),
+        );
+        let error = f.load().unwrap_err().to_string();
+        assert!(error.contains("instruction_limits"), "{value}: {error}");
+    }
+}
+
 /// `provider-catalog` → Model behavior profiles: an invalid value warns and is ignored.
 #[test]
 fn an_invalid_model_profile_value_warns_naming_the_key() {

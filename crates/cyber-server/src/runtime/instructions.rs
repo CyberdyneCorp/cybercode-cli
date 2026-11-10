@@ -25,10 +25,10 @@ pub const GLOBAL_FILES: [&str; 2] = ["AGENTS.md", "CYBER.md"];
 /// Takes the `AGENTS.md` slot and replaces every file in [`OVERRIDDEN`] of its directory.
 pub const OVERRIDE_FILE: &str = "AGENTS.override.md";
 const OVERRIDDEN: [&str; 3] = ["AGENTS.md", "CLAUDE.md", "CYBER.md"];
-/// `instructions.max_bytes`: each file is truncated here with a notice.
-pub const DEFAULT_MAX_BYTES: usize = 32 * 1024;
+/// `instruction_limits.max_file_bytes`: each file is truncated here with a notice.
+pub const DEFAULT_MAX_BYTES: usize = cyber_core::config::DEFAULT_MAX_FILE_BYTES;
 /// All baseline instruction text together, imports included, stops here.
-pub const DEFAULT_MAX_TOTAL_BYTES: usize = 4 * DEFAULT_MAX_BYTES;
+pub const DEFAULT_MAX_TOTAL_BYTES: usize = cyber_core::config::DEFAULT_MAX_TOTAL_BYTES;
 /// The instruction text one nested read reminder carries; the rest is named, not attached.
 pub const NESTED_MAX_TOTAL_BYTES: usize = DEFAULT_MAX_BYTES;
 const MAX_IMPORT_DEPTH: usize = 5;
@@ -86,6 +86,11 @@ impl PartialEq for ReadGate {
 impl Eq for ReadGate {}
 
 impl InstructionSettings {
+    pub fn set_limits(&mut self, limits: cyber_core::config::InstructionLimits) {
+        self.max_bytes = limits.max_file_bytes;
+        self.max_total_bytes = limits.max_total_bytes;
+    }
+
     pub fn from_env(claude_compat: bool, env: &dyn EnvSource) -> Self {
         Self {
             claude_md: claude_compat
@@ -263,7 +268,7 @@ pub fn load_nested(
     let mut loader = Loader::new(settings, settings.max_total_bytes);
     let _ = fill_baseline(&mut loader, global_dir, &location);
     loader.out = Instructions::default();
-    loader.remaining = NESTED_MAX_TOTAL_BYTES;
+    loader.remaining = NESTED_MAX_TOTAL_BYTES.min(settings.max_total_bytes);
     loader.seen.extend(attached.iter().map(PathBuf::from));
     let root = canonical(&cyber_core::config::project_root(&location));
     for file in dirs.iter().flat_map(|dir| directory_files(dir, settings)) {
@@ -413,11 +418,11 @@ impl<'a> Loader<'a> {
             let (notice, warning) = if limit == max {
                 (
                     format!(
-                        "[Truncated: {} exceeds instructions.max_bytes ({max} bytes); {omitted} bytes omitted]",
+                        "[Truncated: {} exceeds instruction_limits.max_file_bytes ({max} bytes); {omitted} bytes omitted]",
                         path.display()
                     ),
                     format!(
-                        "{} exceeds instructions.max_bytes ({max} bytes) and was truncated",
+                        "{} exceeds instruction_limits.max_file_bytes ({max} bytes) and was truncated",
                         path.display()
                     ),
                 )
@@ -524,7 +529,7 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Bounded, String> {
         return Err(irregular());
     }
     let mut bytes = Vec::new();
-    file.take(limit as u64 + 1)
+    file.take((limit as u64).saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|e| error(&e))?;
     let cut = bytes.len() > limit;
@@ -811,7 +816,11 @@ mod tests {
             text.contains(&format!("\n{}\n[Truncated: ", "é".repeat(5))),
             "{text}"
         );
-        assert!(text.contains("exceeds instructions.max_bytes (11 bytes); 70 bytes omitted]"));
+        assert!(
+            text.contains(
+                "exceeds instruction_limits.max_file_bytes (11 bytes); 70 bytes omitted]"
+            )
+        );
         assert_eq!(loaded.warnings.len(), 1);
     }
 
@@ -980,6 +989,8 @@ mod tests {
         assert_eq!(read.text, "x".repeat(10));
         assert_eq!(read.omitted, 990);
         let read = read_bounded(&path, 1000).unwrap();
+        assert_eq!((read.text.len(), read.omitted), (1000, 0));
+        let read = read_bounded(&path, usize::MAX).unwrap();
         assert_eq!((read.text.len(), read.omitted), (1000, 0));
     }
 

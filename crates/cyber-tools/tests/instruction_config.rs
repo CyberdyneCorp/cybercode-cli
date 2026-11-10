@@ -44,6 +44,7 @@ fn a_config_that_fails_to_load_turns_claude_md_off_and_refuses_project_files() {
     let file = root.join("CYBER.md");
     let broken = host(&root, Err("ConfigParseError: cyber.json:1:3".into()));
     assert_eq!(broken.claude_compat(&directory), Some(false));
+    assert!(broken.instruction_limits(&directory).is_err());
     let gate = broken.instruction_read_gate(&directory).unwrap();
     assert!(!gate.allows(&file, &file));
     let valid = host(&root, Ok(json!({})));
@@ -52,4 +53,27 @@ fn a_config_that_fails_to_load_turns_claude_md_off_and_refuses_project_files() {
     assert!(gate.allows(&file, &file));
     let env = root.join(".env");
     assert!(!gate.allows(&env, &env));
+}
+
+#[test]
+fn the_host_reports_configured_limits_and_refuses_invalid_limits() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let directory = root.to_str().unwrap();
+    let valid = host(
+        &root,
+        Ok(json!({"instruction_limits":{"max_file_bytes":16,"max_total_bytes":24}})),
+    );
+    assert_eq!(
+        valid.instruction_limits(directory).unwrap(),
+        cyber_core::config::InstructionLimits {
+            max_file_bytes: 16,
+            max_total_bytes: 24
+        }
+    );
+    let invalid = host(
+        &root,
+        Ok(json!({"instruction_limits":{"max_file_bytes":0}})),
+    );
+    assert!(invalid.instruction_limits(directory).is_err());
 }

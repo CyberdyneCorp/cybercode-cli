@@ -187,6 +187,7 @@ pub enum Behavior {
 }
 
 pub struct Tools {
+    pub instruction_limits: Mutex<Result<cyber_core::config::InstructionLimits, String>>,
     pub inference: Mutex<AgentInference>,
     pub required_failure: Mutex<Option<String>>,
     pub defs: Mutex<Vec<ToolDef>>,
@@ -252,6 +253,7 @@ impl Tools {
             ("write".to_string(), Behavior::Return("written".into())),
         ]);
         Arc::new(Self {
+            instruction_limits: Mutex::new(Ok(Default::default())),
             inference: Mutex::new(AgentInference::default()),
             required_failure: Mutex::new(None),
             defs: Mutex::new(defs),
@@ -299,6 +301,13 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn instruction_limits(
+        &self,
+        _directory: &str,
+    ) -> Result<cyber_core::config::InstructionLimits, String> {
+        self.instruction_limits.lock().unwrap().clone()
+    }
+
     fn redact_model_text(
         &self,
         _directory: &str,

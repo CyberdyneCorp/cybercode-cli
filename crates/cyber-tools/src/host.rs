@@ -1137,6 +1137,14 @@ impl ToolHost for BuiltinHost {
         ))
     }
 
+    fn instruction_limits(
+        &self,
+        directory: &str,
+    ) -> Result<cyber_core::config::InstructionLimits, String> {
+        let (config, _) = (self.opts.config)(Path::new(directory))?;
+        cyber_core::config::InstructionLimits::from_config(&config)
+    }
+
     fn finalize_skill_output(
         &self,
         directory: &str,

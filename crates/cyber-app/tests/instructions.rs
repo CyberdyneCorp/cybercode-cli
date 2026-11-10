@@ -41,6 +41,35 @@ fn reply(body: &Value) -> Value {
     json!({"content": "ok"})
 }
 
+#[tokio::test]
+async fn configured_instruction_limits_bound_baseline_and_nested_provider_text() {
+    let f = Fixture::start_with(
+        json!({"instruction_limits":{"max_file_bytes":16,"max_total_bytes":24}}),
+    )
+    .await;
+    f.write("AGENTS.md", &"λ".repeat(20));
+    f.write("CYBER.md", &"Ж".repeat(20));
+    f.write("web/AGENTS.md", &"Ψ".repeat(20));
+    f.write("web/CYBER.md", &"Ω".repeat(20));
+    f.write("web/src/app.ts", "export const app = true;");
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let body = f.last_request();
+    let baseline = system_prompt(&body);
+    assert!(baseline.contains(&"λ".repeat(8)), "{baseline}");
+    assert!(!baseline.contains(&"λ".repeat(9)), "{baseline}");
+    assert!(baseline.contains(&"Ж".repeat(4)), "{baseline}");
+    assert!(!baseline.contains(&"Ж".repeat(5)), "{baseline}");
+    assert!(baseline.contains("instruction_limits.max_file_bytes (16 bytes)"));
+    let nested = last_tool_result(&body);
+    assert!(nested.contains(&"Ψ".repeat(8)), "{nested}");
+    assert!(!nested.contains(&"Ψ".repeat(9)), "{nested}");
+    assert!(nested.contains(&"Ω".repeat(4)), "{nested}");
+    assert!(!nested.contains(&"Ω".repeat(5)), "{nested}");
+    assert!(nested.contains("total budget"));
+    f.app.runtime.shutdown().await;
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     repo: PathBuf,

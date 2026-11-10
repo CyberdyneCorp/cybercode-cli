@@ -15,7 +15,8 @@ pub struct ContextInputs {
     pub directory: PathBuf,
     pub global_config_dir: PathBuf,
     pub shell: String,
-    pub instructions: super::instructions::InstructionSettings,
+    /// A configuration failure withholds instruction reads, independently of date/env.
+    pub instructions: Result<super::instructions::InstructionSettings, String>,
     pub today: Option<String>,
 }
 
@@ -199,11 +200,17 @@ fn environment(inputs: &ContextInputs) -> String {
 /// `core/instructions` (see [`super::instructions::load_baseline`]), plus the files read,
 /// in load order.
 fn instructions(inputs: &ContextInputs) -> (Observed, Vec<String>) {
-    let loaded = super::instructions::load_baseline(
-        &inputs.global_config_dir,
-        &inputs.directory,
-        &inputs.instructions,
-    );
+    let loaded = inputs
+        .instructions
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|settings| {
+            super::instructions::load_baseline(
+                &inputs.global_config_dir,
+                &inputs.directory,
+                settings,
+            )
+        });
     match loaded {
         Err(reason) => (Observed::Unavailable(reason), Vec::new()),
         Ok(loaded) => {
@@ -247,14 +254,14 @@ mod tests {
             directory: dir.to_path_buf(),
             global_config_dir: dir.join("no-global"),
             shell: "zsh".into(),
-            instructions: super::super::instructions::InstructionSettings {
+            instructions: Ok(super::super::instructions::InstructionSettings {
                 claude_md: true,
                 project: true,
                 max_bytes: super::super::instructions::DEFAULT_MAX_BYTES,
                 max_total_bytes: super::super::instructions::DEFAULT_MAX_TOTAL_BYTES,
                 home: None,
                 read_gate: None,
-            },
+            }),
             today: Some("2026-10-03".into()),
         }
     }
@@ -269,6 +276,28 @@ mod tests {
             panic!()
         };
         assert!(text.contains("use pnpm") && !text.contains("use npm"));
+    }
+
+    #[test]
+    fn unavailable_limits_withhold_files_without_hiding_date_or_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("AGENTS.md")).unwrap();
+        let mut inputs = inputs(dir.path());
+        inputs.instructions = Err("instruction_limits unavailable".into());
+        let observed = observe(&inputs);
+        assert_eq!(
+            observed.sources["core/instructions"],
+            Observed::Unavailable("instruction_limits unavailable".into())
+        );
+        assert_eq!(
+            observed.sources["core/date"],
+            Observed::Value("Today's date: 2026-10-03".into())
+        );
+        assert!(matches!(
+            observed.sources["core/environment"],
+            Observed::Value(_)
+        ));
+        assert!(observed.files["core/instructions"].is_empty());
     }
 
     /// Regression: InstructionsLoaded `file_paths` came from parsing rendered text,

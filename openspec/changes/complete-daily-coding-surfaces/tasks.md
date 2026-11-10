@@ -1535,3 +1535,44 @@ managed metadata process-death selection passes locally after this correction
 (two entries, including the inert child entry and parent exercising both cuts).
 Formatting and diff checks pass. Linker unwind and native C deprecation warnings
 were observed without assigning origin. Linux execution remains required.
+
+Instruction budget continuation (2026-11-10): the approved additive
+`instruction_limits` object now validates positive integer file/total limits
+(defaults 32768/131072, file <= total), rejects nonobjects/unknown members, and
+uses normal member layering, profiles and CLI overrides. Project definitions
+(including profile members) use the existing sensitive-definition trust digest;
+held definitions cannot change trusted global limits. `instructions` array
+concatenation is preserved. No managed-policy namespace is added or widened.
+
+The typed limits flow through ToolHost, BuiltinHost and AppHost into baseline and
+nested loading and doctor. Nested text honors a configured total below its 32 KiB
+ceiling. Configuration failure withholds instruction reads without hiding date
+or environment; first-epoch initialization keeps input retryable with no model
+call, and repair resumes it. Diagnostic names now identify the actual setting.
+The maximum-integer read limit saturates its lookahead instead of overflowing.
+
+Review/regressions caught and resolved a missing AppHost forwarding method,
+Serde accepting an empty array for a defaulted struct, missing project trust
+gating and maximum-limit overflow. The real-App regression inspects actual
+provider baseline and nested text, including UTF-8/file/total cuts. Verification:
+88 configuration tests; 444 server library tests with one explicit subprocess
+fixture ignored; 20 context/compaction tests; 9 instruction App tests; the AppHost
+forwarding check; 2 host configuration tests; and the doctor regression pass. The
+focused maximum-limit read test passes after the arithmetic fix. All-target
+Clippy for core/server/tools/App/CLI passes with warnings denied after moving the
+doctor test module to the end of the file; no allowance is added. Native C and
+linker unwind warnings were observed without assigning origin.
+
+Formatting, diff checks, SDK generation consistency and workflow YAML/independent
+step/log checks pass. CI-pinned OpenSpec 1.13.2 validates 100/100 items; lint reports
+0 errors/25 warnings. No HTTP/CLI envelope or generated artifact changed; SDK
+runtime tests and full workspace tests were not rerun for this continuation. The
+native workflow now selects and retains these instruction/context regressions.
+Current-source native/platform acceptance remains required.
+
+Focused code-review-skill review finds no unresolved finding in this settings
+wiring. Full rendered assembly accounting (labels/notices/omitted inventories),
+trusted path-rule discovery/globs, successful-operation/Epoch/digest-bound
+reminders, changed/revoked definitions, effective context inspection and the TUI
+flow remain required. Task 4.1 and all other parent tasks stay open; this does not
+accept rules/context, the recovery branch or issue #93.

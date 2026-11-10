@@ -219,6 +219,30 @@ async fn unreadable_instructions_block_the_first_turn_and_keep_the_prompt() {
 }
 
 #[tokio::test]
+async fn unavailable_instruction_limits_keep_the_first_input_retryable_without_inference() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("ok")])],
+        ..Setup::default()
+    });
+    std::fs::write(h.repo.join("AGENTS.md"), "configured instructions").unwrap();
+    *h.tools.instruction_limits.lock().unwrap() = Err("instruction_limits unavailable".into());
+    let mut live = h.runtime.subscribe();
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("hi")).await.unwrap();
+    h.settle(&id).await;
+    let (kind, _) = next_error(&mut live).await;
+    assert_eq!(kind, "context_initialization_blocked");
+    assert!(h.models.requests("test/main").is_empty());
+    assert!(h.state(&id).await.epoch.is_none());
+    assert_eq!(h.state(&id).await.inbox[0].status, InputStatus::Pending);
+    *h.tools.instruction_limits.lock().unwrap() = Ok(Default::default());
+    h.runtime.wake(&id).await.unwrap();
+    h.settle(&id).await;
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    assert_eq!(h.state(&id).await.inbox[0].status, InputStatus::Promoted);
+}
+
+#[tokio::test]
 async fn provider_family_switch_starts_a_new_epoch() {
     let h = Harness::new(Setup {
         scripts: vec![

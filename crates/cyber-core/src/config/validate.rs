@@ -27,6 +27,7 @@ const KNOWN_KEYS: &[&str] = &[
     "skills",
     "commands",
     "instructions",
+    "instruction_limits",
     "references",
     "memory",
     "browser",
@@ -132,6 +133,7 @@ fn settings_issues(value: &Value) -> Vec<String> {
     .err()
     .map(|error| error.to_string());
     let sections = [
+        super::InstructionLimits::from_config(value).err(),
         crate::worktrees::Settings::from_config(value).err(),
         super::AutoModeSettings::from_config(value).err(),
         crate::untrusted::UntrustedSettings::from_config(value).err(),

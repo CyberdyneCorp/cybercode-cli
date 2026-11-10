@@ -128,14 +128,27 @@ fn commands_check(catalog: &Value) -> Check {
 
 /// The instruction files the next Session at this Location loads, in load order, with a
 /// warning for truncated files and unresolved or refused imports. `config` is `None` when
-/// the Location's config failed to load: like the runtime, `CLAUDE.md` is then off and no
-/// project file passes the read gate.
+/// the Location's config failed to load: like the runtime, no instruction file is read
+/// using fallback limits.
 fn instructions(ctx: &Context, config: Option<&cyber_core::config::Resolved>) -> Check {
     use cyber_server::runtime::instructions::{InstructionSettings, load_baseline};
     // The same per-Location `compat.claude` and `read` rules the runtime reads through its
     // tool host.
     let compat = config.is_some_and(|c| cyber_core::config::claude_compat(&c.value));
     let mut settings = InstructionSettings::from_env(compat, &ctx.env);
+    let limits = config
+        .ok_or_else(|| "configuration unavailable".to_owned())
+        .and_then(|c| cyber_core::config::InstructionLimits::from_config(&c.value));
+    match limits {
+        Ok(limits) => settings.set_limits(limits),
+        Err(reason) => {
+            return check(
+                "instructions",
+                Status::Warn,
+                format!("unavailable: {reason}"),
+            );
+        }
+    }
     settings.read_gate = Some(cyber_tools::permissions::instruction_read_gate(
         config.map(|c| (&c.value, &c.sources)),
         &ctx.location,
@@ -493,5 +506,58 @@ async fn account_check(ctx: &Context) -> Check {
             "not logged in; local use needs no account",
         ),
         Err(error) => check("account", Status::Warn, error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod instruction_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn doctor_uses_configured_limits_and_does_not_load_without_configuration() {
+        let temp = tempfile::tempdir().unwrap();
+        let env = std::collections::HashMap::from([(
+            "CYBER_HOME".to_owned(),
+            temp.path().join("cyber").display().to_string(),
+        )]);
+        let cli = crate::cli::Cli::try_parse_from(["cyber", "doctor"]).unwrap();
+        let mut ctx = Context::existing(&cli.global).unwrap();
+        ctx.home = temp.path().join("home");
+        ctx.paths = cyber_core::paths::Paths::resolve(&env, &ctx.home);
+        ctx.paths.ensure().unwrap();
+        ctx.location = temp.path().join("repo");
+        std::fs::create_dir_all(ctx.location.join(".git")).unwrap();
+        std::fs::write(ctx.paths.config.join("AGENTS.md"), "λ".repeat(40)).unwrap();
+        std::fs::write(
+            ctx.paths.config.join("cyber.json"),
+            r#"{"instruction_limits":{"max_file_bytes":16,"max_total_bytes":24}}"#,
+        )
+        .unwrap();
+        let resolved = cyber_core::config::load(&cyber_core::config::LoadRequest {
+            location: &ctx.location,
+            paths: &ctx.paths,
+            env: &env,
+            home: &ctx.home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .unwrap();
+        let check = instructions(&ctx, Some(&resolved));
+        assert_eq!(check.status, Status::Warn);
+        assert!(
+            check
+                .detail
+                .contains("instruction_limits.max_file_bytes (16 bytes)"),
+            "{}",
+            check.detail
+        );
+        // An unreadable instruction must not be inspected when configuration fails.
+        std::fs::remove_file(ctx.paths.config.join("AGENTS.md")).unwrap();
+        std::fs::create_dir(ctx.paths.config.join("AGENTS.md")).unwrap();
+        let check = instructions(&ctx, None);
+        assert_eq!(check.status, Status::Warn);
+        assert_eq!(check.detail, "unavailable: configuration unavailable");
     }
 }

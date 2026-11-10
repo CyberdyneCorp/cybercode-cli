@@ -25,6 +25,16 @@ on:
       - crates/cyber-server/src/http/sessions.rs
       - crates/cyber-app/tests/snapshot_git_runtime.rs
       - crates/cyber-app/tests/snapshot_reclamation.rs
+      - crates/cyber-app/tests/instructions.rs
+      - crates/cyber-core/src/config/**
+      - crates/cyber-core/tests/config.rs
+      - crates/cyber-tools/src/host.rs
+      - crates/cyber-tools/tests/instruction_config.rs
+      - crates/cyber-server/src/runtime/context.rs
+      - crates/cyber-server/src/runtime/instructions.rs
+      - crates/cyber-server/src/runtime/host.rs
+      - crates/cyber-server/tests/context_compaction.rs
+      - crates/cyber-server/tests/support/mod.rs
       - crates/cyber-cli/Cargo.toml
       - crates/cyber-cli/src/**
       - crates/cyber-cli/tests/branches_cli.rs
@@ -174,6 +184,20 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-server -p cyber-cli --features cyber-cli/native-git-acceptance --test structured_root --test exec_output_schema -- --nocapture 2>&1 | tee structured-result-proof.log
+      - name: Instruction limits and context observation regressions
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-core --test config instruction_limits -- --nocapture 2>&1 | tee instruction-limits-proof.log
+          cargo test --locked -p cyber-server --lib runtime::context:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --test context_compaction -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-app --features native-git-acceptance --test instructions -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-tools --test instruction_config -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::doctor::instruction_tests:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
       - name: Retain native evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -193,6 +217,7 @@ jobs:
             zero-payload-retirement-proof.log
             jsonl-driver-proof.log
             structured-result-proof.log
+            instruction-limits-proof.log
           if-no-files-found: warn
       - name: Retain failed CLI fixture evidence
         if: ${{ failure() && !cancelled() }}
