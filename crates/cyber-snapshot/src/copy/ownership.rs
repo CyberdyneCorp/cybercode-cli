@@ -260,7 +260,7 @@ fn parent_paths(changes: &[Change]) -> Result<BTreeSet<String>> {
     Ok(paths)
 }
 
-fn valid_identity(value: &str) -> bool {
+pub(super) fn valid_identity(value: &str) -> bool {
     if value.is_empty() || value.len() > storage::IDENTITY_MAX_BYTES {
         return false;
     }

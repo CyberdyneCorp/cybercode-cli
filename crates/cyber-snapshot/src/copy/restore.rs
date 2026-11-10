@@ -33,7 +33,10 @@ pub(super) struct Journal {
     // Version 4 binds Git context. Version 5 adds explicit backend and link kinds;
     // older records retain their original file-only encoding and digest framing.
     // Version 6 binds mixed copy/Git image provenance without relabeling IDs.
+    // Version 7 binds two preallocated update inodes and the original image format.
     pub version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updates: Option<super::intent_slots::Binding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend: Option<JournalBackend>,
     pub location: std::path::PathBuf,
@@ -56,6 +59,18 @@ pub(super) struct Journal {
     pub context: Option<RestoreContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
+}
+
+impl Journal {
+    pub(super) fn format_version(&self) -> Result<u32> {
+        match (self.version, &self.updates) {
+            (7, Some(binding)) if self.origin.is_some() && self.ownership.is_some() => {
+                binding.format()
+            }
+            (1..=6, None) => Ok(self.version),
+            _ => Err("Invalid journal intent-slot version".into()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,16 +113,20 @@ impl Store {
         let record: Journal =
             serde_json::from_slice(&storage::read(&dir, "intent.json", RECORD_LIMIT)?)
                 .map_err(fail)?;
+        let format = record.format_version()?;
+        if let Some(binding) = &record.updates {
+            binding.verify(&dir)?;
+        }
         if !matches!(
-            (record.version, record.origin.is_some()),
+            (format, record.origin.is_some()),
             (1, false) | (2, true) | (3, _) | (4, _) | (5, _) | (6, _)
-        ) || (record.version == 4
+        ) || (format == 4
             && !record
                 .context
                 .as_ref()
                 .is_some_and(|context| context.git.is_some()))
-            || (record.version < 5 && record.backend.is_some())
-            || (record.version >= 5
+            || (format < 5 && record.backend.is_some())
+            || (format >= 5
                 && match &record.backend {
                     Some(JournalBackend::Git) => !record
                         .context
@@ -119,10 +138,10 @@ impl Store {
                         .is_some_and(|context| context.git.is_some()),
                     None => true,
                 })
-            || (record.version == 6 && record.backend != Some(JournalBackend::Git))
+            || (format == 6 && record.backend != Some(JournalBackend::Git))
             || record.location != self.root
             || record.root != self.root_id
-            || (record.version < 5
+            || (format < 5
                 && (record.changes.iter().any(|change| {
                     [&change.before, &change.after]
                         .into_iter()
@@ -154,8 +173,8 @@ impl Store {
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
             })
-            || (record.version < 3 && record.ownership.is_some())
-            || (record.version >= 3
+            || (format < 3 && record.ownership.is_some())
+            || (format >= 3
                 && record.ownership.is_none()
                 && (record.completed || !record.applied.is_empty()))
         {
@@ -168,7 +187,7 @@ impl Store {
             resolution.validate(id, &record)?;
         }
         if let Some(context) = &record.context {
-            context.validate(&self.root, record.version)?;
+            context.validate(&self.root, format)?;
         }
         if let Some(origin) = &record.origin {
             let binding = &origin.binding;
@@ -425,7 +444,15 @@ impl Store {
             .map_err(RestoreError::Failed)?;
         journal.origin = origin;
 
-        Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+        let construction = if worker.is_some() {
+            Some(
+                super::intent_slots::Construction::create(&dir, journal)
+                    .map_err(RestoreError::Failed)?,
+            )
+        } else {
+            Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+            None
+        };
         let preimages = self
             .resolution_preimages(journal.resolution.as_ref())
             .map_err(RestoreError::Failed)?;
@@ -452,7 +479,19 @@ impl Store {
         storage::sync(&dir).map_err(RestoreError::Failed)?;
         journal.ownership =
             Some(Ownership::prepare(self, &dir, &journal.changes).map_err(RestoreError::Failed)?);
-        Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+        if let Some(construction) = &construction {
+            journal.updates = Some(
+                construction
+                    .binding(&dir, journal.version)
+                    .map_err(RestoreError::Failed)?,
+            );
+            journal.version = 7;
+            construction
+                .publish(&dir, journal)
+                .map_err(RestoreError::Failed)?;
+        } else {
+            Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+        }
         if let Some(preimages) = &preimages {
             preimages
                 .verify_review(self)
@@ -585,6 +624,7 @@ impl Store {
         };
         let mut journal = Journal {
             version,
+            updates: None,
             backend: (version >= 5).then(|| {
                 if context
                     .as_ref()
@@ -610,6 +650,10 @@ impl Store {
             context,
             resolution,
         };
+        if worker.is_some() {
+            journal.updates = Some(super::intent_slots::Binding::budget(version));
+            journal.version = 7;
+        }
         let bytes = serde_json::to_vec(&journal).map_err(fail)?.len() as u64;
         if bytes > RECORD_LIMIT {
             return Err("Restore journal exceeds limit".into());
@@ -645,6 +689,8 @@ impl Store {
                 |sum, length| sum.checked_add(length).ok_or("Restore size overflow"),
             )?;
         self.reserve(reserve)?;
+        journal.version = version;
+        journal.updates = None;
         journal.applied.clear();
         journal.origin = None;
         journal.acknowledged = false;
@@ -766,6 +812,10 @@ impl Store {
         storage::sync_file(file)
     }
     pub(super) fn record(dir: &cap_std::fs::Dir, journal: &Journal) -> Result<()> {
+        journal.format_version()?;
+        if journal.updates.is_some() {
+            return super::intent_slots::write(dir, journal);
+        }
         let bytes = serde_json::to_vec(journal).map_err(fail)?;
         if bytes.len() as u64 > RECORD_LIMIT {
             return Err("Restore journal exceeds limit".into());
@@ -1003,6 +1053,7 @@ mod tests {
             &Journal {
                 backend: None,
                 version: 2,
+                updates: None,
                 location: store.root.clone(),
                 root: store.root_id.clone(),
                 created: now(),

@@ -91,6 +91,15 @@ jobs:
           set -euo pipefail
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_git_ -- --nocapture --test-threads=1 2>&1 | tee git-cli-recovery-proof.log
+      - name: Pre-effect preparation and TUI lost-reply reconciliation
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli preparation_ -- --nocapture --test-threads=1 2>&1 | tee preparation-client-proof.log
       - name: JSONL driver and atomic last-message regressions
         if: ${{ !cancelled() }}
         shell: bash
@@ -116,6 +125,7 @@ jobs:
             git-runtime-proof.log
             fallback-collection-proof.log
             git-cli-recovery-proof.log
+            preparation-client-proof.log
             jsonl-driver-proof.log
             structured-result-proof.log
           if-no-files-found: warn

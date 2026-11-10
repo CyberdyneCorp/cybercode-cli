@@ -348,7 +348,11 @@ async fn reclaim_restore_payloads(f: &Fixture, receipt: &SnapshotRestoreReceipt)
         0
     );
     assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
-    assert_eq!(std::fs::read_dir(journal).unwrap().count(), 1);
+    let header: Value = serde_json::from_slice(&intent).unwrap();
+    assert_eq!(header["version"], 7);
+    assert!(header["updates"].is_object());
+    assert!(journal.join("intent.next").is_file());
+    assert_eq!(std::fs::read_dir(journal).unwrap().count(), 2);
     assert_reclaimed_source_and_receipt(f, receipt, inference).await;
 }
 

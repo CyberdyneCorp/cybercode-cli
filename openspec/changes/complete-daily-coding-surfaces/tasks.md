@@ -933,3 +933,38 @@ Independent JSONL/structured checks run unless cancelled even after an earlier
 recovery failure, without relaxing the overall job gate. The native workflow also
 selects the complete App reclamation suite. These edits provide diagnostics and
 coverage, not a fix or passing acceptance for the macOS construction failure.
+
+Owned intent-update continuation (2026-11-10): runtime-owned prepared journals
+now publish version 7 with an immutable binding to two preallocated native intent
+inodes and the original copy/Git image format. Progress, completion and native
+acknowledgement overwrite/sync the spare, exchange the two names and sync the
+directory; they allocate no anonymous source-phase temporary intent. Reopen and
+updates reject missing, replaced, aliased or invalid bindings. Ordinary, paired
+and prepared-cancellation payload cleanup retain both slots, recognize the spare
+only through its binding and recheck both metadata generations before unlinks.
+Legacy digest framing and unknown construction fences remain unchanged.
+
+Local evidence: five intent-slot cases pass, including an actual subprocess kill
+during a torn spare write and physical Store reopen; its ignored child is invoked
+by the parent proof. The complete snapshot candidate run passes 197 cases with
+eight intentional subprocess/diagnostic skips, before the final malformed-version
+writer guard; the slot cases pass again with that guard. Eighteen App reclamation
+and two App Git runtime cases pass with both metadata pins. Three real managed Git
+CLI cases pass before the extra spare-generation pin; the full final serial CLI
+run is pending. Four non-Git CLI cases pass after correcting the old version-3
+assertions. The broad four-thread CLI run records six failures: those three
+version assertions, two pre-origin observation deadlines and one typed storage-busy
+TUI acknowledgement. The three preparation/TUI cases pass serially in 124.39s;
+the parallel failure causes remain unestablished, and no safety fence or deadline
+was relaxed. Six structured CLI cases pass, including a separate timeout with a
+verified in-flight correction; short deadlines may legitimately expire before
+main inference. All-target snapshot/App/CLI Clippy passes after extracting the
+copy-intent header assertions. Focused code/security review finds no additional
+issue in this increment; full-branch review and delivery acceptance remain open.
+
+Native run 42733865471 passes all four Linux/macOS jobs at e2b3ba18. It predates
+these changes and accepts only that checkpoint. The workflow now selects the
+preparation/TUI client cases serially in addition to managed Git recovery; fresh
+source-bound platform evidence remains required. Partial construction, complete
+reference/CAS/metadata retirement, default Git admission and M2–M8/parent task
+acceptance remain open. No public API or SDK schema changes in this increment.

@@ -21,6 +21,7 @@ struct Prepared {
     store: Store,
     journal: Dir,
     intent: MetadataPin,
+    spare: Option<MetadataPin>,
     cancellation: Option<MetadataPin>,
     phase: MetadataPin,
     workers: Dir,
@@ -45,6 +46,16 @@ impl MetadataPin {
             generation: ownership::generation(&file)?,
             file,
         })
+    }
+    fn spare(dir: &Dir, record: &Journal) -> Result<Option<Self>, String> {
+        record
+            .updates
+            .as_ref()
+            .map(|binding| {
+                binding.verify(dir)?;
+                Self::open(dir, super::intent_slots::SPARE)
+            })
+            .transpose()
     }
     fn verify(&self, dir: &Dir, name: &str) -> Result<(), String> {
         let route = storage::open(dir, Path::new(name))?;
@@ -226,6 +237,10 @@ fn prepare(
             .collect::<BTreeMap<_, _>>()
     });
     let mut known = BTreeSet::from(["intent.json".to_owned()]);
+    if let Some(binding) = &record.updates {
+        binding.verify(&journal)?;
+        known.insert(super::intent_slots::SPARE.to_owned());
+    }
     for (index, change) in record.changes.iter().enumerate() {
         let name = format!("stage_{index}");
         known.insert(name.clone());
@@ -281,6 +296,7 @@ fn prepare(
         return Err("Reclamation plan differs from retained tombstone".into());
     }
     let intent = MetadataPin::open(&journal, "intent.json")?;
+    let spare = MetadataPin::spare(&journal, &record)?;
     let workers = storage::existing_child(&store.namespace, "workers", true)?;
     let binding = lifetime.binding();
     let name = binding
@@ -309,6 +325,7 @@ fn prepare(
         store,
         journal,
         intent,
+        spare,
         cancellation: None,
         phase,
         workers,
@@ -330,6 +347,9 @@ impl Prepared {
             return Err("Snapshot retention no longer permits reclamation".into());
         }
         self.intent.verify(&self.journal, "intent.json")?;
+        if let Some(spare) = &self.spare {
+            spare.verify(&self.journal, super::intent_slots::SPARE)?;
+        }
         if let Some(pin) = &self.cancellation {
             pin.verify(&self.journal, super::preparation::FILE)?;
         }
@@ -376,6 +396,7 @@ impl Prepared {
             .map(|file| file.name.as_str())
             .chain(std::iter::once("intent.json"))
             .chain(self.cancellation.iter().map(|_| super::preparation::FILE))
+            .chain(record.updates.iter().map(|_| super::intent_slots::SPARE))
             .collect::<BTreeSet<_>>();
         if storage::names(&self.journal, super::ENTRY_LIMIT * 3)?
             .iter()

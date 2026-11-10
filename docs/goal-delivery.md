@@ -1,6 +1,6 @@
 # Active implementation goal and delivery rules
 
-## Current audit: 2026-11-09
+## Current audit: 2026-11-10
 
 The user has set the active objective to complete implementation, verification
 and accepted delivery of **#93**. #92 remains a separate unfinished workstream;
@@ -76,6 +76,26 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    are retained/uploaded, and independent structured/JSONL checks no longer depend
    on earlier recovery success. This is an open construction/acceptance failure,
    not a timeout or an accepted native result.
+
+6. **Owned intent updates now avoid untracked source-phase temporary files.**
+   Version-7 prepared journals bind two preallocated native inodes before source
+   admission. Updates synchronize the spare, exchange the known names and sync
+   the directory; reopen and cleanup verify both identities. Cleanup also pins
+   both metadata generations across its durable plan and every payload unlink.
+   A real subprocess kill during a torn spare write preserves the active record
+   and permits exact metadata continuation after reopening. Legacy unknown files
+   remain fenced; this is not complete construction or metadata retirement.
+   The broad parallel CLI run failed three old-version assertions (corrected),
+   two preparation observation deadlines and one typed storage-busy TUI response.
+   The three preparation/TUI cases pass serially; this does not establish the
+   cause of the parallel failures. The complete serial CLI rerun is pending.
+
+Native run [42733865471](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42733865471)
+passes Linux x64/ARM and macOS ARM/Intel at `e2b3ba18`, including the earlier
+managed Git cleanup and structured CLI cases. It predates the owned intent-slot
+changes and is not evidence for them. The workflow now also selects the three
+pre-effect preparation/TUI client cases serially and retains their log; that
+workflow addition still requires source-bound platform acceptance.
 
 Verification: three structured-output CLI tests, seven JSONL CLI tests, five
 structured-result server tests and six binary-worker ownership tests pass;

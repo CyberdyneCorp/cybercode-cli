@@ -9,6 +9,7 @@ mod git;
 pub(crate) mod git_capture;
 mod git_images;
 pub(crate) mod git_rules;
+mod intent_slots;
 mod inventory;
 pub(crate) use collection::gc;
 mod links;

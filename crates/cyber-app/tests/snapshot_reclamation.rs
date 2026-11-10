@@ -364,6 +364,7 @@ struct Cut {
     inner: Arc<dyn Policy>,
     after_delete: bool,
     pause: Option<PathBuf>,
+    tamper: Option<PathBuf>,
 }
 impl Policy for Cut {
     fn receipt(
@@ -378,9 +379,14 @@ impl Policy for Cut {
     fn reclaim(&self, plan: records::Plan, delete: Delete) -> Result<u64, String> {
         let after = self.after_delete;
         let pause = self.pause.clone();
+        let tamper = self.tamper.clone();
         self.inner.reclaim(
             plan,
             Box::new(move || {
+                if let Some(path) = tamper {
+                    std::fs::write(path, b"later metadata owner bytes").unwrap();
+                    return delete();
+                }
                 if after {
                     delete()?;
                 }
@@ -409,6 +415,7 @@ async fn durable_plan_survives_interruption_before_and_after_private_deletion() 
         let policy = Arc::new(Cut {
             inner: cyber_app::snapshot_reclamation::policy(f.app.store.clone()),
             after_delete,
+            tamper: None,
             pause: None,
         });
         let cut = maintenance(&f.paths, f.config.clone(), policy);
@@ -444,6 +451,7 @@ async fn reclamation_process_worker() {
     let policy = Arc::new(Cut {
         inner: cyber_app::snapshot_reclamation::policy(f.app.store.clone()),
         after_delete: std::env::var("CYBER_RECLAMATION_AFTER_DELETE").unwrap() == "true",
+        tamper: None,
         pause: Some(control.join("ready")),
     });
     let cut = maintenance(&f.paths, f.config.clone(), policy);
@@ -730,6 +738,7 @@ async fn planned_without_deletion(f: &Fixture) {
     let policy = Arc::new(Cut {
         inner: cyber_app::snapshot_reclamation::policy(f.app.store.clone()),
         after_delete: false,
+        tamper: None,
         pause: None,
     });
     assert!(
@@ -964,4 +973,70 @@ fn age_fallback_collection_images(namespace: &std::path::Path) -> Vec<(PathBuf, 
         }
     }
     retained
+}
+
+#[tokio::test]
+async fn a_foreign_intent_spare_refuses_cleanup_before_plan_without_touching_source() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new().await;
+    f.age();
+    let active = std::fs::read(f.journal.join("intent.json")).unwrap();
+    let spare = f.journal.join("intent.next");
+    let bytes = std::fs::read(&spare).unwrap();
+    let retained = f.paths.tmp.join("retained-original-spare");
+    std::fs::rename(&spare, &retained).unwrap();
+    std::fs::write(&spare, &bytes).unwrap();
+    std::fs::set_permissions(&spare, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let inference = f.model.requests().len();
+    let error = f.reclaim().await.unwrap_err();
+    assert!(error.contains("Intent slot identity changed"), "{error}");
+    assert!(f.record().is_none());
+    assert!(f.journal.join("stage_0").exists());
+    assert_eq!(std::fs::read(&spare).unwrap(), bytes);
+    assert_eq!(
+        std::fs::read(f.journal.join("intent.json")).unwrap(),
+        active
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.project.join("file_0")).unwrap(),
+        "before\n".repeat(4096)
+    );
+    std::fs::remove_file(&spare).unwrap();
+    std::fs::rename(retained, &spare).unwrap();
+    assert!(f.reclaim().await.unwrap() > 0);
+    assert_eq!(std::fs::read(spare).unwrap(), bytes);
+    assert_eq!(f.model.requests().len(), inference);
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_spare_metadata_change_after_planning_refuses_before_private_unlinks() {
+    let f = Fixture::new().await;
+    f.age();
+    let spare = f.journal.join("intent.next");
+    let original = std::fs::read(&spare).unwrap();
+    let cut = maintenance(
+        &f.paths,
+        f.config.clone(),
+        Arc::new(Cut {
+            inner: cyber_app::snapshot_reclamation::policy(f.app.store.clone()),
+            after_delete: false,
+            pause: None,
+            tamper: Some(spare.clone()),
+        }),
+    );
+    let error = cut.reclaim(f.project.to_str().unwrap()).await.unwrap_err();
+    assert!(
+        error.contains("metadata inode or generation changed"),
+        "{error}"
+    );
+    assert!(!f.record().unwrap().completed);
+    assert!(f.journal.join("stage_0").exists() && f.journal.join("stage_1").exists());
+    assert_eq!(
+        std::fs::read(&spare).unwrap(),
+        b"later metadata owner bytes"
+    );
+    std::fs::write(&spare, original).unwrap();
+    assert!(f.reclaim().await.unwrap() > 0);
+    f.app.runtime.shutdown().await;
 }

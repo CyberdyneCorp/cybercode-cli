@@ -504,3 +504,10 @@
 - **AND** unknown object entries and unsupported temporary-file aliases SHALL refuse before any manifest unlink; an already empty namespace SHALL remain a no-op
 - **AND** disabled snapshots or zero retention SHALL preserve those bytes, and orphan/temporary aging SHALL use the configured retention duration
 - **AND** a changed policy SHALL refuse before the next unlink, preserving remaining manifests and objects even if earlier eligible manifests were already removed
+
+#### Scenario: Owned intent update is interrupted after source admission
+- **GIVEN** the immutable prepared intent binds two preallocated native intent inodes before source admission
+- **WHEN** a worker stops while writing progress, completion or acknowledgement into the spare slot
+- **THEN** the active intent SHALL remain complete and its native slot binding SHALL permit inspection or exact metadata reconciliation without trusting partial spare bytes
+- **AND** source-phase updates SHALL create no anonymous temporary intent file; cleanup SHALL retain both known metadata slots
+- **AND** equal-byte replacement inodes, aliases, missing slots and legacy unknown entries SHALL refuse without deletion or source replay

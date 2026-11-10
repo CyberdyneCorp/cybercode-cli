@@ -114,6 +114,7 @@ fn prepare(
         .ok_or("Missing prepared intent digest")?;
     let files = payloads(&store, &journal, &record, frozen.as_ref())?;
     let intent = MetadataPin::open(&journal, "intent.json")?;
+    let spare = MetadataPin::spare(&journal, &record)?;
     let cancellation = Some(MetadataPin::open(
         &journal,
         super::super::preparation::FILE,
@@ -133,6 +134,7 @@ fn prepare(
         store,
         journal,
         intent,
+        spare,
         cancellation,
         phase,
         workers,

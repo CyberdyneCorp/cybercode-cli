@@ -157,7 +157,8 @@ fn resolution_id(original: &SnapshotOrigin, request: &str) -> Result<String> {
     let key = serde_json::to_vec(&(original.session_created_id.as_str(), request)).map_err(fail)?;
     Ok(format!("restore_resolution_{}", storage::digest(&key)))
 }
-fn immutable_digest(record: &Journal) -> Result<String> {
+pub(super) fn immutable_digest(record: &Journal) -> Result<String> {
+    let format = record.format_version()?;
     let legacy = storage::digest(
         &serde_json::to_vec(&(
             record.version,
@@ -173,11 +174,11 @@ fn immutable_digest(record: &Journal) -> Result<String> {
         .map_err(fail)?,
     );
     // Existing writer receipts keep exactly their original digest framing.
-    match &record.backend {
-        None => Ok(legacy),
-        Some(backend) => Ok(storage::digest(
+    let digest = match &record.backend {
+        None => legacy,
+        Some(backend) => storage::digest(
             &serde_json::to_vec(&(
-                if record.version == 6 {
+                if format == 6 {
                     "snapshot-journal-v6"
                 } else {
                     "snapshot-journal-v5"
@@ -186,7 +187,13 @@ fn immutable_digest(record: &Journal) -> Result<String> {
                 legacy,
             ))
             .map_err(fail)?,
+        ),
+    };
+    match &record.updates {
+        Some(binding) => Ok(storage::digest(
+            &serde_json::to_vec(&("snapshot-journal-v7", binding, digest)).map_err(fail)?,
         )),
+        None => Ok(digest),
     }
 }
 

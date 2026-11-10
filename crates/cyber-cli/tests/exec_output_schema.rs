@@ -201,7 +201,6 @@ fn collect(mut child: Child) -> Output {
     panic!("structured exec did not settle after cancellation: {output:?}");
 }
 
-#[cfg(unix)]
 fn wait_for_turns(provider: &Provider, child: &mut Child, count: usize) {
     for _ in 0..2000 {
         if provider.turns() >= count {
@@ -219,7 +218,7 @@ fn wait_for_turns(provider: &Provider, child: &mut Child, count: usize) {
 }
 
 #[test]
-fn budgets_and_timeouts_keep_exit_4_when_the_open_structured_attempt_is_interrupted() {
+fn budgets_and_short_timeouts_preserve_exit_4_before_or_during_inference() {
     for (stopping, reason) in [
         (["--max-tokens", "1"], "budget_exceeded"),
         (["--timeout", "2s"], "timeout"),
@@ -237,14 +236,50 @@ fn budgets_and_timeouts_keep_exit_4_when_the_open_structured_attempt_is_interrup
                 .spawn()
                 .unwrap(),
         );
-        assert_eq!(output.status.code(), Some(4), "{output:?}");
-        let result: Value = serde_json::from_str(stdout(&output).trim()).unwrap();
-        assert_eq!(result["exit_code"], 4, "{result}");
-        assert_eq!(result["stop_reason"], reason, "{result}");
-        assert_eq!(result["result"], Value::Null);
-        assert!(result["error"].as_str().is_some(), "{result}");
-        assert!((1..=2).contains(&provider.turns()));
+        assert_stopped_schema(&output, reason);
+        // Auxiliary usage or the wall deadline may stop an admitted schema
+        // before its first main turn. Neither requires inference after the stop.
+        assert!(
+            provider.turns() <= 2,
+            "{reason}: {} main turns; {output:?}",
+            provider.turns()
+        );
     }
+}
+
+fn assert_stopped_schema(output: &Output, reason: &str) {
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    let result: Value = serde_json::from_str(stdout(output).trim()).unwrap();
+    assert_eq!(result["exit_code"], 4, "{result}");
+    assert_eq!(result["stop_reason"], reason, "{result}");
+    assert_eq!(result["result"], Value::Null);
+    assert!(result["error"].as_str().is_some(), "{result}");
+}
+
+#[test]
+fn a_wall_timeout_during_a_verified_structured_correction_keeps_exit_4() {
+    let provider = Provider::start(&[r#"{"wrong":1}"#, "wait"]);
+    let env = Env::new(&provider);
+    let mut child = env
+        .command(&[
+            "--output-schema",
+            &env.schema(),
+            "--format",
+            "json",
+            "--timeout",
+            "10s",
+            "audit",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // This separate case proves the in-flight correction precondition instead
+    // of assuming startup completed before a short wall deadline.
+    wait_for_turns(&provider, &mut child, 2);
+    let output = collect(child);
+    assert_stopped_schema(&output, "timeout");
+    assert_eq!(provider.turns(), 2);
 }
 
 #[cfg(unix)]

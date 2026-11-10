@@ -147,6 +147,27 @@ native proof, admit a recovery operation or implement a resolution receipt.
 
 ## Safe reclamation
 
+### Owned intent update slots
+
+New runtime-owned prepared journals SHALL use version 7, retaining the original
+copy/Git image format as an explicit base version. Before source admission the
+worker SHALL create and retain two unique regular intent inodes, synchronize
+them, and publish their native creation identities in the immutable prepared
+intent. This binding SHALL enter the consuming intent digest. Progress,
+completion and acknowledgement updates SHALL overwrite only the retained spare
+inode, synchronize it, atomically exchange the two known names, and synchronize
+the journal directory. Source-phase updates SHALL NOT allocate anonymous
+temporary intent files.
+
+The active intent SHALL always contain a complete published record; interrupted
+spare contents are mutable metadata, never source-effect or acknowledgement
+authority. Reopen and every update SHALL verify both exact unique inode routes.
+Reclamation SHALL retain both metadata slots and recognize the spare only with
+this immutable ownership proof. Missing, replaced or aliased slots SHALL refuse;
+existing journals and unknown temporary/construction files gain no ownership.
+Pre-admission construction without durable slot identities and other worker or
+cancellation-record construction cuts remain independently fenced.
+
 Only records with both the durable owner resolution receipt and matching journal
 acknowledgement are eligible. Reference/reader accounting protects staged baselines,
 inactive branches, leases, binary saved versions and any unresolved intent. A missing

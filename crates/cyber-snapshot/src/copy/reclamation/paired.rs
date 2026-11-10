@@ -9,6 +9,7 @@ struct Owner {
     origin: SnapshotOrigin,
     journal: Dir,
     intent: MetadataPin,
+    spare: Option<MetadataPin>,
     digest: String,
     phase: MetadataPin,
     lifetime: super::super::lifetime::Lifetime,
@@ -100,11 +101,14 @@ fn owner(
     )?;
     phase.verify(workers, name)?;
     let intent = MetadataPin::open(&journal, "intent.json")?;
+    let (_, record) = store.journal(&origin.binding.journal_id)?;
+    let spare = MetadataPin::spare(&journal, &record)?;
     Ok(Owner {
         checkouts,
         origin: origin.clone(),
         journal,
         intent,
+        spare,
         digest,
         phase,
         lifetime,
@@ -199,11 +203,19 @@ fn prepare(
     Ok(prepared)
 }
 
-fn inventory(journal: &Dir, count: usize) -> Result<(), String> {
-    let known = (0..count)
+fn inventory(
+    journal: &Dir,
+    count: usize,
+    binding: Option<&super::super::intent_slots::Binding>,
+) -> Result<(), String> {
+    let mut known = (0..count)
         .map(|index| format!("stage_{index}"))
         .chain(std::iter::once("intent.json".into()))
         .collect::<BTreeSet<_>>();
+    if let Some(binding) = binding {
+        binding.verify(journal)?;
+        known.insert(super::super::intent_slots::SPARE.to_owned());
+    }
     if let Some(name) = storage::names(journal, super::super::ENTRY_LIMIT * 3)?
         .into_iter()
         .find(|name| !known.contains(name))
@@ -248,7 +260,11 @@ fn original_payloads(
     if outcome.files.len() != parent.changes.len() {
         return Err("Incomplete recovery slot inventory".into());
     }
-    inventory(&owner.journal, parent.changes.len())?;
+    inventory(
+        &owner.journal,
+        parent.changes.len(),
+        parent.updates.as_ref(),
+    )?;
     let mut files = Vec::new();
     let planned = planned(frozen, owner);
     for (index, slots) in outcome.files.iter().enumerate() {
@@ -276,7 +292,11 @@ fn resolution_payloads(
     record: &Journal,
     frozen: Option<&Plan>,
 ) -> Result<Vec<Payload>, String> {
-    inventory(&owner.journal, record.changes.len())?;
+    inventory(
+        &owner.journal,
+        record.changes.len(),
+        record.updates.as_ref(),
+    )?;
     let ownership = record
         .ownership
         .as_ref()
@@ -325,6 +345,9 @@ impl PreparedPair {
             owner.lifetime.verify()?;
             self.store.verify_worker_namespace(&owner.origin)?;
             owner.intent.verify(&owner.journal, "intent.json")?;
+            if let Some(spare) = &owner.spare {
+                spare.verify(&owner.journal, super::super::intent_slots::SPARE)?;
+            }
             owner.phase.verify(
                 &self.workers,
                 owner
@@ -343,6 +366,7 @@ impl PreparedPair {
             if self.store.worker_digest(Some(&owner.origin))?.as_ref() != Some(&owner.digest) {
                 return Err("Paired cleanup intent changed".into());
             }
+            let (_, record) = self.store.journal(&owner.origin.binding.journal_id)?;
             let known = self
                 .plan
                 .files
@@ -352,6 +376,12 @@ impl PreparedPair {
                 })
                 .map(|file| file.name.as_str())
                 .chain(std::iter::once("intent.json"))
+                .chain(
+                    record
+                        .updates
+                        .iter()
+                        .map(|_| super::super::intent_slots::SPARE),
+                )
                 .collect::<BTreeSet<_>>();
             if storage::names(&owner.journal, super::super::ENTRY_LIMIT * 3)?
                 .iter()
@@ -428,7 +458,7 @@ mod tests {
         let dir = Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
         let name = "foreign\nowner";
         storage::create(&dir, name, b"unknown owner bytes").unwrap();
-        let error = inventory(&dir, 0).unwrap_err();
+        let error = inventory(&dir, 0, None).unwrap_err();
         assert_eq!(
             error,
             format!("Unknown recovery payload or construction entry: {name:?}")

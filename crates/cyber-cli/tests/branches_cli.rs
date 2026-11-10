@@ -1420,7 +1420,7 @@ fn assert_prepared_payload_cleanup(env: &Env, reply: &Value) {
         std::fs::read(journal.join("preparation.json")).unwrap(),
         cancellation
     );
-    assert_eq!(std::fs::read_dir(&journal).unwrap().count(), 2);
+    assert_retained_intent_slots(&journal, &intent, 1);
     assert!(
         std::fs::symlink_metadata(source.join("bulk_0000"))
             .unwrap()
@@ -1463,6 +1463,19 @@ fn assert_prepared_managed_guards(
         receipt.clone(),
     ));
     assert_managed_cleanup_refusals(env, maintenance, &receipt, &bindings[0], &owner);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_retained_intent_slots(journal: &std::path::Path, intent: &[u8], extra_metadata: usize) {
+    assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
+    let header: Value = serde_json::from_slice(intent).unwrap();
+    assert_eq!(header["version"], 7);
+    assert!(header["updates"].is_object());
+    assert!(journal.join("intent.next").is_file());
+    assert_eq!(
+        std::fs::read_dir(journal).unwrap().count(),
+        2 + extra_metadata
+    );
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -2240,12 +2253,7 @@ fn assert_paired_payload_cleanup(env: &Env, result: &Value) {
         records::Plan::id(&receipt).unwrap()
     );
     for (journal, intent) in journals.iter().zip(intents) {
-        assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
-        assert_eq!(
-            std::fs::read_dir(journal).unwrap().count(),
-            1,
-            "only the acknowledged intent remains"
-        );
+        assert_retained_intent_slots(journal, &intent, 0);
     }
     assert_eq!(
         runtime
@@ -2855,14 +2863,7 @@ fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
         .unwrap(),
     )
     .unwrap();
-    assert_eq!(intent["version"], 3);
-    assert_eq!(intent["ownership"]["version"], 1);
-    assert_eq!(
-        intent["ownership"]["files"].as_array().unwrap().len(),
-        intent["changes"].as_array().unwrap().len()
-    );
-    assert_eq!(intent["completed"], true);
-    assert_eq!(intent["acknowledged"], true);
+    assert_copy_restore_intent(&intent);
     let origin = &intent["origin"];
     assert_eq!(origin["session_id"], session);
     assert_eq!(origin["binding"]["journal_id"], journal);
@@ -2902,6 +2903,20 @@ fn assert_owned_snapshot_receipt(env: &Env, session: &str, journal: &str) {
         )
         .unwrap();
     assert_eq!(origin["session_created_id"], created);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_copy_restore_intent(intent: &Value) {
+    assert_eq!(intent["version"], 7);
+    assert_eq!(intent["updates"]["version"], 1);
+    assert_eq!(intent["updates"]["format"], 3);
+    assert_eq!(intent["ownership"]["version"], 1);
+    assert_eq!(
+        intent["ownership"]["files"].as_array().unwrap().len(),
+        intent["changes"].as_array().unwrap().len()
+    );
+    assert_eq!(intent["completed"], true);
+    assert_eq!(intent["acknowledged"], true);
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
