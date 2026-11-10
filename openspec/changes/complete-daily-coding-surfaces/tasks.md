@@ -1114,3 +1114,42 @@ has a test gap: native preparation/paired retirement needs direct cases, and man
 retirement remains unsupported. These are required before accepting M6/delivery.
 Full workspace, SDK runtime, current-source CLI/TUI and cross-platform acceptance
 were not rerun for this checkpoint. No PR, merge or parent completion is claimed.
+
+Intel cancellation investigation (2026-11-10): downloaded the retained failed
+fixture from native run 42759434324, artifact 13741826409. Its original archive
+remains untouched. A separate read-only SQLite inspection finds no published
+snapshot preparation origin; server logs show the preceding rewind preview took
+40,253 ms. This narrows the failure to the pre-origin request path but does not
+prove the final cause or acceptance. The confirmation client previously discarded
+its output when the observation assertion failed; its stdout/stderr now remain
+inside the retained fixture, with exit status and observed-origin timing in logs.
+The existing 45-second origin, 120-second staging and native pre-effect assertions
+are unchanged.
+
+Raw graph publication was starting one hash-object process per path even for
+identical immutable captured bytes. The new isolated real-Git regression initially
+fails with 65 calls for two contents. An exact-byte borrowed map now writes each
+distinct blob once per capture while preserving every path/mode/tree record and
+Git hash verification. The cache never crosses captures or source observations.
+The regression passes for SHA-1 and SHA-256, binary bytes, literal newline paths,
+executable/regular/link entries, equal bytes across different modes, repeated
+capture and changed content (2/4/7 cumulative writes). It does not replace source
+identity/policy capture checks or per-placement handoff quota accounting.
+
+Final local raw-publication verification: the real managed Git prepared-cancellation
+case passes in 130.51 seconds with origin observation at 14.5746 seconds. All original
+45/120-second deadlines and actual source-admission/cancellation/payload assertions
+remain. The feature snapshot package passes 154 library, 31 file-copy and 22 Git
+cases; nine library subprocess fixtures and one Git subprocess fixture are ignored
+at top level. The new process-accounting child actually runs both formats through
+its parent. Windows-only/doc binaries select zero on this host. Snapshot/CLI all-target Clippy passes with warnings denied
+following a test-helper split (the initial helper exceeded 15); no lint allowance
+was added. Formatting, whitespace, strict OpenSpec (100 items) and spec lint
+(0 errors/25 warnings) pass. Native C sandbox deprecations and a linker unwind-size
+warning were observed without assigning their origin. Code/security review finds
+no additional issue in this exact-byte, operation-local optimization: no source
+observation, path/mode placement, hash check or quota proof is removed. Native CI
+path selection now also covers App snapshot support fixtures and nested Store
+reclamation protocol files. Full branch review, workspace/SDK runtime, other
+CLI/TUI scenarios and fresh source-bound platform acceptance remain required;
+this does not complete the Intel acceptance failure, M6 or issue #93.

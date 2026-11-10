@@ -625,6 +625,12 @@ silently promote canonical blobs into raw-state evidence. This does not admit
 ordinary Git workers or resolve their lifetime, acknowledgement, configuration
 race, reclamation or complete compatibility/acceptance gates.
 
+Raw graph publication MAY reuse one written Git blob for exactly equal immutable
+bytes within one capture. Every path and mode SHALL retain its own tree entry;
+source observation, complete-capture revalidation and per-placement image bounds
+remain mandatory. The write cache SHALL NOT survive the capture or confer later
+object integrity, source admission or native recovery authority.
+
 Managed Git preview SHALL use the same native raw-image planner as restore,
 including expected-state/policy revalidation, historical exclusions, allowed paths
 and all-plan conflict refusal. Preview SHALL publish no journal or source effects.

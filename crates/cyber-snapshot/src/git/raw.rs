@@ -23,18 +23,28 @@ impl Shadow {
         files: &BTreeMap<String, RawImage>,
     ) -> Result<String, String> {
         let mut directories: BTreeMap<String, Vec<u8>> = BTreeMap::from([(String::new(), vec![])]);
+        // Borrow exact bytes from this already bounded, verified capture. Keep
+        // every path/mode entry, but write shared blob contents only once here.
+        let mut blobs = BTreeMap::<&[u8], String>::new();
         for (path, image) in files {
             images::validate_path(path)?;
-            let object = String::from_utf8(
-                self.input(
-                    &["hash-object", "-w", "--stdin", "--no-filters"],
-                    &image.bytes,
-                )
-                .await?,
-            )
-            .map_err(|_| "Invalid raw Git blob identity")?
-            .trim()
-            .to_owned();
+            let object = match blobs.get(image.bytes.as_slice()) {
+                Some(object) => object.clone(),
+                None => {
+                    let object = String::from_utf8(
+                        self.input(
+                            &["hash-object", "-w", "--stdin", "--no-filters"],
+                            &image.bytes,
+                        )
+                        .await?,
+                    )
+                    .map_err(|_| "Invalid raw Git blob identity")?
+                    .trim()
+                    .to_owned();
+                    blobs.insert(image.bytes.as_slice(), object.clone());
+                    object
+                }
+            };
             images::verify(&object, &image.bytes)?;
             let (parent, leaf) = path.rsplit_once('/').unwrap_or(("", path));
             let mut ancestor = parent;
@@ -79,3 +89,6 @@ impl Shadow {
         Ok(object)
     }
 }
+
+#[cfg(test)]
+mod tests;

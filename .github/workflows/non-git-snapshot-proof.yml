@@ -6,7 +6,9 @@ on:
       - crates/cyber-app/Cargo.toml
       - crates/cyber-app/src/**
       - crates/cyber-app/tests/support/scripted_model.rs
+      - crates/cyber-app/tests/support/snapshot*.rs
       - crates/cyber-server/src/runtime/snapshot*.rs
+      - crates/cyber-server/src/runtime/snapshot_reclamation/**
       - crates/cyber-server/src/runtime/rewind*.rs
       - crates/cyber-server/src/runtime/drain.rs
       - crates/cyber-server/src/runtime/structured*.rs

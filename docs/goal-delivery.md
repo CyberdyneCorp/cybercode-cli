@@ -151,6 +151,15 @@ fixture is retained/uploaded; independent client/JSONL/structured checks pass.
 That acceptance failure remains unresolved. The queued writer run at `5be366b7`
 and new native retirement need their own evidence.
 
+The retained Intel fixture shows a 40,253 ms preview and no published preparation
+origin before the later confirmation observation failure. Raw Git publication
+performed one blob-writing process per path, even for identical captured bytes.
+It now writes each distinct content once within that capture while retaining every
+path/mode and existing source/policy/hash checks. The real managed cancellation
+case passes locally with its origin observed in 14.6 seconds under the unchanged
+45-second deadline. This is a local correction and diagnostic improvement; fresh
+Intel/native acceptance remains required before resolving the platform failure.
+
 Verification: three structured-output CLI tests, seven JSONL CLI tests, five
 structured-result server tests and six binary-worker ownership tests pass;
 formatting and whitespace

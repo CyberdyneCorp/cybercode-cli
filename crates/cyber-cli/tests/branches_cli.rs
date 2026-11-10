@@ -1883,6 +1883,9 @@ fn kill_after_prepared_images(env: &Env, id: &str, first: &str) -> String {
     let preview = reviewed_preview(env, id, &selection);
     let mut body = selection;
     body["confirmation"] = preview["confirmation"].clone();
+    // Keep request diagnostics in the failed fixture even if observation times
+    // out while the real service is still validating/preparing the restore.
+    let diagnostics = env.root.join("preparation-confirm.stderr");
     let mut pending = env
         .command(&[
             "api",
@@ -1891,8 +1894,8 @@ fn kill_after_prepared_images(env: &Env, id: &str, first: &str) -> String {
             "-d",
             &body.to_string(),
         ])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        .stdout(std::fs::File::create(env.root.join("preparation-confirm.stdout")).unwrap())
+        .stderr(std::fs::File::create(&diagnostics).unwrap())
         .spawn()
         .unwrap();
     let data = env.root.join("cyber-home/data");
@@ -1903,18 +1906,22 @@ fn kill_after_prepared_images(env: &Env, id: &str, first: &str) -> String {
         .unwrap();
     let db = rusqlite::Connection::open(database).unwrap();
     db.busy_timeout(Duration::from_secs(5)).unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    let started = std::time::Instant::now();
+    let deadline = started + Duration::from_secs(45);
     let activity = loop {
         let activity: Option<String> = db.query_row("SELECT aggregate_id FROM event e WHERE type='native.activity.changed.1' AND seq=1 AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_origin') IS NOT NULL AND json_extract(data,'$.snapshot_source_admitted')=0 AND NOT EXISTS(SELECT 1 FROM event n WHERE n.aggregate_id=e.aggregate_id AND n.seq>e.seq)", [id], |row|row.get(0)).optional().unwrap();
         if let Some(activity) = activity {
             break activity;
         }
+        let status = pending.try_wait().unwrap();
         assert!(
-            pending.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline,
-            "preparation origin was not observed"
+            status.is_none() && std::time::Instant::now() < deadline,
+            "preparation origin was not observed; client status {status:?}: {}",
+            std::fs::read_to_string(&diagnostics).unwrap_or_default()
         );
         std::thread::sleep(Duration::from_millis(1));
     };
+    eprintln!("preparation origin observed after {:?}", started.elapsed());
     // Real SQLite writer contention holds source admission, not preparation I/O.
     // No row is edited and no native acknowledgement or effect hook is replaced.
     db.execute_batch("BEGIN IMMEDIATE").unwrap();
@@ -1955,10 +1962,9 @@ fn kill_after_prepared_images(env: &Env, id: &str, first: &str) -> String {
             break;
         }
         if let Some(status) = pending.try_wait().unwrap() {
-            let output = pending.wait_with_output().unwrap();
             panic!(
                 "restore exited before publishing prepared identities ({status}): {}",
-                String::from_utf8_lossy(&output.stderr)
+                std::fs::read_to_string(&diagnostics).unwrap_or_default()
             );
         }
         assert!(
