@@ -35,3 +35,9 @@
 #### Scenario: Many imports
 - **WHEN** `/repo/CYBER.md` imports enough files to exceed the total instruction budget
 - **THEN** the baseline stops at the budget with a truncation notice, and a warning names each file left out
+
+#### Scenario: Complete instruction assembly is bounded
+- **WHEN** instruction files, imports, labels or omitted-file lists exceed the configured total
+- **THEN** the complete rendered instruction-file baseline (`core/instructions`) and each nested reminder SHALL fit their respective byte budgets, including labels, notices, separators and wrappers
+- **AND** only complete file labels actually delivered SHALL consume reminder identity; unlisted imports SHALL remain discoverable after their importer is labelled
+- **AND** a truncated import declaration SHALL NOT load the file named by its partial path

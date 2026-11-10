@@ -32,6 +32,7 @@ on:
       - crates/cyber-tools/tests/instruction_config.rs
       - crates/cyber-server/src/runtime/context.rs
       - crates/cyber-server/src/runtime/instructions.rs
+      - crates/cyber-server/src/runtime/instructions/**
       - crates/cyber-server/src/runtime/host.rs
       - crates/cyber-server/tests/context_compaction.rs
       - crates/cyber-server/tests/support/mod.rs
@@ -194,6 +195,8 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-core --test config instruction_limits -- --nocapture 2>&1 | tee instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::context:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --lib runtime::instructions:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --lib runtime::drain::skill_reminder_tests:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --test context_compaction -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-app --features native-git-acceptance --test instructions -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-tools --test instruction_config -- --nocapture 2>&1 | tee -a instruction-limits-proof.log

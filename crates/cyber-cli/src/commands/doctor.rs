@@ -531,7 +531,7 @@ mod instruction_tests {
         std::fs::write(ctx.paths.config.join("AGENTS.md"), "λ".repeat(40)).unwrap();
         std::fs::write(
             ctx.paths.config.join("cyber.json"),
-            r#"{"instruction_limits":{"max_file_bytes":16,"max_total_bytes":24}}"#,
+            r#"{"instruction_limits":{"max_file_bytes":16,"max_total_bytes":1024}}"#,
         )
         .unwrap();
         let resolved = cyber_core::config::load(&cyber_core::config::LoadRequest {

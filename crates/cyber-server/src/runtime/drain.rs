@@ -2084,7 +2084,8 @@ impl Inner {
 
     /// The instruction files each successful read in `targets` attaches (`system-context`
     /// → Nested rule files on read), skipping the baseline, files already attached this
-    /// epoch and files an earlier target attaches. The files are read on a blocking thread
+    /// epoch. In-group deduplication happens only after actual reminder finalization.
+    /// The files are read on a blocking thread
     /// before the caller takes the Session lock, so a slow file never stalls the Session.
     pub(super) async fn nested_instructions(
         &self,
@@ -2096,7 +2097,7 @@ impl Inner {
         if targets.iter().all(Option::is_none) {
             return empty();
         }
-        let mut attached = Reminded::of(&*handle.state.lock().await).instructions;
+        let attached = Reminded::of(&*handle.state.lock().await).instructions;
         let global = self.options.global_config_dir.clone();
         let load = move || {
             let mut loaded = Vec::with_capacity(targets.len());
@@ -2110,7 +2111,6 @@ impl Inner {
                         &attached,
                     )
                 });
-                attached.extend(nested.attached());
                 loaded.push(nested);
             }
             loaded
@@ -2408,24 +2408,34 @@ pub(super) fn settlement_with_reminders(
     let (names, skill_reminder) = skill_reminder(skills, &seen.skills);
     let skill_reminder = skill_reminder.unwrap_or_default();
     let nested = if failed { None } else { Some(nested) };
-    let (output, instructions) = match with_reminders(output, nested, &skill_reminder, &finalize) {
+    let (output, instructions) = match with_reminders(
+        output,
+        nested,
+        &seen.instructions,
+        &skill_reminder,
+        &finalize,
+    ) {
         Ok(done) => done,
         Err(error) => return (settlement(call_id, def, ToolOutcome::Crashed(error)), None),
     };
-    let attached = match (&instructions, nested) {
-        (Some(_), Some(nested)) => nested.attached(),
-        _ => Vec::new(),
-    };
+    let attached = instructions.as_ref().map_or_else(Vec::new, |delivery| {
+        delivery
+            .files
+            .iter()
+            .map(|file| file.canonical.display().to_string())
+            .collect::<Vec<_>>()
+    });
     seen.skills.extend(names.iter().cloned());
     seen.instructions.extend(attached.iter().cloned());
-    let loaded =
-        instructions
-            .zip(nested)
-            .map(|(text, nested)| super::context::LoadedInstructions {
-                source: "core/instructions".into(),
-                text,
-                files: nested.paths(),
-            });
+    let loaded = instructions.map(|delivery| super::context::LoadedInstructions {
+        source: "core/instructions".into(),
+        text: delivery.text,
+        files: delivery
+            .files
+            .iter()
+            .map(|file| file.path.display().to_string())
+            .collect(),
+    });
     let settled = event(
         TOOL_SETTLED,
         &ToolSettled {
@@ -2456,15 +2466,21 @@ pub(super) fn settlement_with_reminders(
 fn with_reminders(
     output: String,
     nested: Option<&super::instructions::Instructions>,
+    seen: &std::collections::BTreeSet<String>,
     skill: &str,
     finalize: &impl Fn(String, &str) -> Result<String, String>,
-) -> Result<(String, Option<String>), String> {
+) -> Result<(String, Option<super::instructions::InstructionReminder>), String> {
     let candidates = nested
         .into_iter()
-        .flat_map(|nested| [nested.reminder(), nested.pointer()])
+        .flat_map(|nested| {
+            [
+                nested.reminder_delivery(seen),
+                nested.pointer_delivery(seen),
+            ]
+        })
         .flatten();
     for instructions in candidates {
-        if let Ok(done) = finalize(output.clone(), &format!("{instructions}{skill}")) {
+        if let Ok(done) = finalize(output.clone(), &format!("{}{skill}", instructions.text)) {
             return Ok((done, Some(instructions)));
         }
     }
@@ -2818,7 +2834,7 @@ mod skill_reminder_tests {
         (serde_json::from_value(event.data).unwrap(), loaded)
     }
 
-    /// Regression: two nested files near `instructions.max_bytes` made a reminder larger
+    /// Regression: two nested files near the file limit made a reminder larger
     /// than the tool output budget, the read settled as `Tool crashed`, and nothing was
     /// recorded, so every later read in that directory crashed too.
     #[test]
@@ -2831,10 +2847,14 @@ mod skill_reminder_tests {
         let (payload, loaded) = settle(&nested, &mut seen, default_budget);
         assert_eq!(payload.status, CallStatus::Ok, "{}", payload.output);
         assert!(payload.output.starts_with("file text"));
-        assert!(payload.output.contains(&"a".repeat(32 * 1024)));
+        assert!(payload.output.contains(&"a".repeat(1024)));
+        assert!(!payload.output.contains(&"a".repeat(32 * 1024)));
         assert!(!payload.output.contains("ccc"));
         assert!(payload.output.contains("exceed the instruction budget"));
-        assert!(payload.output.len() <= 51_200 + "file text".len());
+        assert!(
+            payload.output.len()
+                <= super::super::instructions::NESTED_MAX_TOTAL_BYTES + "file text".len()
+        );
         assert_eq!(payload.instruction_reminders.len(), 2);
         assert_eq!(seen.instructions.len(), 2);
         assert_eq!(loaded.unwrap().files.len(), 2);
@@ -2857,6 +2877,22 @@ mod skill_reminder_tests {
                 .text
                 .contains("exceed the tool output budget")
         );
+    }
+
+    #[test]
+    fn only_successfully_finalized_reminders_reserve_files_in_a_group() {
+        let (_temp, nested) = nested(&[("CYBER.md", "rule".into())]);
+        let mut seen = Reminded::default();
+        let (_, first) = settle(&nested, &mut seen, |_, _| Err("no room".into()));
+        assert!(first.is_none());
+        assert!(seen.instructions.is_empty());
+        let (second, loaded) = settle(&nested, &mut seen, default_budget);
+        assert_eq!(second.instruction_reminders.len(), 1);
+        assert_eq!(loaded.unwrap().files.len(), 1);
+        let (third, loaded) = settle(&nested, &mut seen, default_budget);
+        assert!(third.instruction_reminders.is_empty());
+        assert!(loaded.is_none());
+        assert_eq!(third.output, "file text");
     }
 
     /// Regression: nested instruction files were loaded for every read, denied and failed

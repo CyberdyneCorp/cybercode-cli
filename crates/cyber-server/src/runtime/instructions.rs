@@ -16,6 +16,9 @@ use std::sync::Arc;
 
 use cyber_core::env::EnvSource;
 
+mod assembly;
+pub(crate) use assembly::Reminder as InstructionReminder;
+
 /// Files read from each directory, in load order. `CLAUDE.md` is read only where the
 /// directory has no `AGENTS.md`. `CYBER.md`, Cyber Code's own instruction file, comes
 /// last so Cyber-specific guidance wins ties within a directory.
@@ -121,83 +124,112 @@ pub struct InstructionFile {
     pub truncated: bool,
 }
 
-/// Rendered blocks, the files behind them in load order, and non-fatal problems.
+/// Bounded instruction bodies, the files behind them, and non-fatal problems.
 #[derive(Debug, Default)]
 pub struct Instructions {
-    pub blocks: Vec<String>,
+    blocks: Vec<assembly::Block>,
     pub files: Vec<InstructionFile>,
     /// Files that apply but were left out because the total budget was spent.
     pub omitted: Vec<InstructionFile>,
     pub warnings: Vec<String>,
+    max_file_bytes: usize,
+    max_total_bytes: usize,
 }
 
 impl Instructions {
-    pub fn text(&self) -> Option<String> {
-        (!self.blocks.is_empty()).then(|| self.blocks.join("\n\n"))
+    fn new(max_file_bytes: usize, max_total_bytes: usize) -> Self {
+        Self {
+            max_file_bytes,
+            max_total_bytes,
+            ..Default::default()
+        }
     }
 
-    /// Whether a nested read has anything to attach.
+    pub fn text(&self) -> Option<String> {
+        let (text, _) = assembly::blocks(
+            self.blocks.iter(),
+            self.max_file_bytes,
+            self.max_total_bytes,
+        );
+        (!text.is_empty()).then_some(text)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty() && self.omitted.is_empty()
     }
 
-    /// The text appended to a tool result for nested instructions, if any: the files'
-    /// text, then the paths of the files the budget left out.
     pub fn reminder(&self) -> Option<String> {
-        let mut parts: Vec<String> = self.text().into_iter().collect();
-        if !self.omitted.is_empty() {
-            parts.push(pointer_text(
-                "These instruction files also apply here but exceed the instruction budget",
-                &self.omitted,
-            ));
-        }
-        (!parts.is_empty()).then(|| reminder_block(&parts.join("\n\n")))
+        self.reminder_delivery(&BTreeSet::new())
+            .map(|delivery| delivery.text)
     }
 
-    /// A short reminder naming every file, for when [`Self::reminder`] does not fit the
-    /// tool output budget.
     pub fn pointer(&self) -> Option<String> {
-        let all: Vec<InstructionFile> = self.files.iter().chain(&self.omitted).cloned().collect();
-        (!all.is_empty()).then(|| {
-            reminder_block(&pointer_text(
-                "These instruction files apply here but exceed the tool output budget",
-                &all,
-            ))
-        })
+        self.pointer_delivery(&BTreeSet::new())
+            .map(|delivery| delivery.text)
     }
 
-    /// Canonical paths of every file a reminder covers (attached or named).
+    fn content_budget(&self) -> usize {
+        self.max_total_bytes
+            .saturating_sub(assembly::OPEN.len() + assembly::CLOSE.len())
+    }
+
+    pub(crate) fn reminder_delivery(&self, seen: &BTreeSet<String>) -> Option<InstructionReminder> {
+        let eligible =
+            |file: &&InstructionFile| !seen.contains(&file.canonical.display().to_string());
+        // Reserve complete labels first when some files could not enter the body.
+        // A bounded prefix is truthful: unlisted files remain eligible next time.
+        let pointers = (!self.omitted.is_empty())
+            .then(|| {
+                assembly::pointers(
+                    "Instruction files for this path that may exceed the instruction budget",
+                    self.files.iter().chain(&self.omitted).filter(eligible),
+                    self.content_budget(),
+                )
+            })
+            .flatten();
+        let reserved = pointers
+            .as_ref()
+            .map_or(0, |pointer| pointer.text.len().saturating_add(2));
+        let (mut text, mut files) = assembly::blocks(
+            self.blocks
+                .iter()
+                .filter(|block| !seen.contains(&block.file.canonical.display().to_string())),
+            self.max_file_bytes,
+            self.content_budget().saturating_sub(reserved),
+        );
+        if let Some(pointer) = pointers {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&pointer.text);
+            files.extend(pointer.files);
+        }
+        assembly::finish(text, files)
+    }
+
+    pub(crate) fn pointer_delivery(&self, seen: &BTreeSet<String>) -> Option<InstructionReminder> {
+        let pointer = assembly::pointers(
+            "These instruction files apply here but exceed the tool output budget",
+            self.files
+                .iter()
+                .chain(&self.omitted)
+                .filter(|file| !seen.contains(&file.canonical.display().to_string())),
+            self.content_budget(),
+        )?;
+        assembly::finish(pointer.text, pointer.files)
+    }
+
+    /// Canonical identities actually labelled by the default bounded delivery.
     pub fn attached(&self) -> Vec<String> {
-        self.files
-            .iter()
-            .chain(&self.omitted)
-            .map(|file| file.canonical.display().to_string())
-            .collect()
+        self.reminder_delivery(&BTreeSet::new())
+            .map_or_else(Vec::new, |delivery| {
+                delivery
+                    .files
+                    .iter()
+                    .map(|file| file.canonical.display().to_string())
+                    .collect()
+            })
     }
-
-    /// The paths of the files a reminder covers, as discovered.
-    pub fn paths(&self) -> Vec<String> {
-        self.files
-            .iter()
-            .chain(&self.omitted)
-            .map(|file| file.path.display().to_string())
-            .collect()
-    }
-}
-
-fn reminder_block(text: &str) -> String {
-    format!("\n\n<system-reminder>\n{text}\n</system-reminder>")
-}
-
-fn pointer_text(reason: &str, files: &[InstructionFile]) -> String {
-    let list: Vec<String> = files
-        .iter()
-        .map(|file| format!("- {}", file.path.display()))
-        .collect();
-    format!(
-        "{reason}; read them with the read tool:\n{}",
-        list.join("\n")
-    )
 }
 
 /// The candidate files of one directory, in load order.
@@ -265,11 +297,18 @@ pub fn load_nested(
     if !settings.project || dirs.is_empty() {
         return Instructions::default();
     }
-    let mut loader = Loader::new(settings, settings.max_total_bytes);
-    let _ = fill_baseline(&mut loader, global_dir, &location);
-    loader.out = Instructions::default();
-    loader.remaining = NESTED_MAX_TOTAL_BYTES.min(settings.max_total_bytes);
-    loader.seen.extend(attached.iter().map(PathBuf::from));
+    let mut baseline = Loader::new(settings, settings.max_total_bytes);
+    let _ = fill_baseline(&mut baseline, global_dir, &location);
+    let budget = NESTED_MAX_TOTAL_BYTES.min(settings.max_total_bytes);
+    let mut loader = Loader::new(settings, budget);
+    loader.delivered = baseline
+        .out
+        .files
+        .iter()
+        .map(|file| file.canonical.clone())
+        .collect();
+    loader.delivered.extend(attached.iter().map(PathBuf::from));
+    loader.remaining = budget.saturating_sub(assembly::OPEN.len() + assembly::CLOSE.len());
     let root = canonical(&cyber_core::config::project_root(&location));
     for file in dirs.iter().flat_map(|dir| directory_files(dir, settings)) {
         if let Err(error) = loader.load(&file, Some(&root)) {
@@ -327,6 +366,8 @@ fn fill_baseline(loader: &mut Loader<'_>, global_dir: &Path, location: &Path) ->
 struct Loader<'a> {
     settings: &'a InstructionSettings,
     seen: BTreeSet<PathBuf>,
+    delivered: BTreeSet<PathBuf>,
+    discovery_remaining: usize,
     /// Canonical paths of the files whose imports are being expanded.
     stack: Vec<PathBuf>,
     /// Bytes of instruction text still allowed.
@@ -339,9 +380,11 @@ impl<'a> Loader<'a> {
         Self {
             settings,
             seen: BTreeSet::new(),
+            delivered: BTreeSet::new(),
+            discovery_remaining: settings.max_total_bytes,
             stack: Vec::new(),
             remaining: budget,
-            out: Instructions::default(),
+            out: Instructions::new(settings.max_bytes, budget),
         }
     }
 
@@ -380,75 +423,98 @@ impl<'a> Loader<'a> {
         if !self.seen.insert(key.clone()) {
             return Ok(());
         }
+        if self.delivered.contains(&key) {
+            return self.discover_imports(path, key, confine);
+        }
         let file = InstructionFile {
             path: path.to_path_buf(),
             canonical: key.clone(),
             truncated: false,
         };
-        if self.remaining == 0 {
-            self.out.warnings.push(format!(
-                "{} was not loaded: instruction files exceed their total budget",
-                path.display()
-            ));
-            self.out.omitted.push(file);
-            return Ok(());
+        let separator = if self.out.blocks.is_empty() { 0 } else { 2 };
+        let label = format!("{INSTRUCTIONS_FROM}{}\n", path.display());
+        let available = self.remaining.saturating_sub(separator);
+        if available < label.len() {
+            return self.omit(file);
         }
-        let limit = self.remaining.min(self.settings.max_bytes);
+        let limit = self
+            .settings
+            .max_bytes
+            .min(available - label.len())
+            .min(self.discovery_remaining);
         let read = read_bounded(path, limit)?;
-        let body = self.render(path, read, limit);
-        self.remaining -= body.kept;
-        self.out.files.push(InstructionFile {
-            truncated: body.omitted > 0,
+        self.discovery_remaining -= read.text.len();
+        let Some(rendered) = assembly::block(path, &read, self.settings.max_bytes, available)
+        else {
+            return self.omit(file);
+        };
+        self.remaining -= rendered.text.len() + separator;
+        let file = InstructionFile {
+            truncated: rendered.body.omitted > 0,
             ..file
+        };
+        if file.truncated {
+            self.out
+                .warnings
+                .push(if rendered.body.limit == self.settings.max_bytes {
+                    format!(
+                        "{} exceeds instruction_limits.max_file_bytes ({} bytes) and was truncated",
+                        path.display(),
+                        self.settings.max_bytes
+                    )
+                } else {
+                    format!(
+                        "{} was truncated: instruction files exceed their total budget",
+                        path.display()
+                    )
+                });
+        }
+        let references = imports(rendered.body.complete_lines());
+        self.out.files.push(file.clone());
+        self.out.blocks.push(assembly::Block {
+            file,
+            body: rendered.body,
         });
         self.stack.push(key);
-        for reference in imports(&body.text) {
+        for reference in references {
             self.import(path, &reference, confine);
         }
         self.stack.pop();
         Ok(())
     }
 
-    /// The block for `read`, with a truncation notice and warning when it was cut.
-    fn render(&mut self, path: &Path, read: Bounded, limit: usize) -> Rendered {
-        let (kept, omitted) = (read.text.len(), read.omitted);
-        let mut block = read.text.trim_end().to_owned();
-        if omitted > 0 {
-            let max = self.settings.max_bytes;
-            let (notice, warning) = if limit == max {
-                (
-                    format!(
-                        "[Truncated: {} exceeds instruction_limits.max_file_bytes ({max} bytes); {omitted} bytes omitted]",
-                        path.display()
-                    ),
-                    format!(
-                        "{} exceeds instruction_limits.max_file_bytes ({max} bytes) and was truncated",
-                        path.display()
-                    ),
-                )
-            } else {
-                (
-                    format!(
-                        "[Truncated: instruction files exceed their total budget; {omitted} bytes of {} omitted]",
-                        path.display()
-                    ),
-                    format!(
-                        "{} was truncated: instruction files exceed their total budget",
-                        path.display()
-                    ),
-                )
-            };
-            block = format!("{}\n{notice}", read.text);
-            self.out.warnings.push(warning);
+    /// Revisit authorized import declarations without redelivering an already labelled
+    /// parent. Otherwise a bounded pointer prefix would strand its unlisted children.
+    fn discover_imports(
+        &mut self,
+        path: &Path,
+        key: PathBuf,
+        confine: Option<&Path>,
+    ) -> Result<(), String> {
+        if self.discovery_remaining == 0 {
+            self.out.warnings.push(format!(
+                "{}: import discovery budget exhausted",
+                path.display()
+            ));
+            return Ok(());
         }
-        self.out
-            .blocks
-            .push(format!("{INSTRUCTIONS_FROM}{}\n{block}", path.display()));
-        Rendered {
-            text: read.text,
-            kept,
-            omitted,
+        let read = read_bounded(path, self.settings.max_bytes.min(self.discovery_remaining))?;
+        self.discovery_remaining -= read.text.len();
+        self.stack.push(key);
+        for reference in imports(read.complete_lines()) {
+            self.import(path, &reference, confine);
         }
+        self.stack.pop();
+        Ok(())
+    }
+
+    fn omit(&mut self, file: InstructionFile) -> Result<(), String> {
+        self.out.warnings.push(format!(
+            "{} was not loaded: instruction files exceed their total budget",
+            file.path.display()
+        ));
+        self.out.omitted.push(file);
+        Ok(())
     }
 
     fn import(&mut self, from: &Path, reference: &str, confine: Option<&Path>) {
@@ -501,16 +567,25 @@ impl<'a> Loader<'a> {
 }
 
 /// A file's text read up to a byte limit, and how many bytes past it were left unread.
+#[derive(Debug, Clone)]
 struct Bounded {
     text: String,
     omitted: usize,
+    limit: usize,
 }
 
-/// The kept text of a rendered file (imports are parsed from it) and its size.
-struct Rendered {
-    text: String,
-    kept: usize,
-    omitted: usize,
+impl Bounded {
+    /// A cut final line is not an import declaration: its truncated path could name
+    /// a different existing file. Full final lines without a newline remain valid.
+    fn complete_lines(&self) -> &str {
+        if self.omitted > 0 && !self.text.ends_with('\n') {
+            self.text
+                .rsplit_once('\n')
+                .map_or("", |(complete, _)| complete)
+        } else {
+            &self.text
+        }
+    }
 }
 
 /// Read at most `limit` bytes of `path`, cut back to a character boundary. A path that
@@ -551,7 +626,11 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Bounded, String> {
     } else {
         0
     };
-    Ok(Bounded { text, omitted })
+    Ok(Bounded {
+        text,
+        omitted,
+        limit,
+    })
 }
 
 /// `@path` references on their own line, outside code fences.
@@ -1008,11 +1087,9 @@ mod tests {
         settings.max_total_bytes = 350;
         let loaded = repo.baseline("", &settings);
         let text = loaded.text().unwrap();
-        assert_eq!(loaded.files.len(), 4, "{:?}", loaded.files);
-        assert!(loaded.files[3].truncated);
-        assert!(text.contains("instruction files exceed their total budget"));
-        assert_eq!(loaded.omitted.len(), 7);
-        assert!(text.matches('y').count() <= 350);
+        assert!(text.len() <= 350, "{} bytes", text.len());
+        assert!(!loaded.omitted.is_empty());
+        assert!(text.contains("CYBER.md"));
         assert!(
             loaded
                 .warnings
@@ -1033,7 +1110,7 @@ mod tests {
         assert_eq!(order(&repo, &nested), ["web/AGENTS.md"]);
         assert_eq!(nested.omitted.len(), 1);
         let reminder = nested.reminder().unwrap();
-        assert!(reminder.len() < DEFAULT_MAX_BYTES + 1024);
+        assert!(reminder.len() <= NESTED_MAX_TOTAL_BYTES);
         assert!(reminder.contains(&format!("- {}", cyber.display())));
         assert_eq!(nested.attached().len(), 2);
         let pointer = nested.pointer().unwrap();
@@ -1041,5 +1118,45 @@ mod tests {
             pointer.len() < 1024 && pointer.contains("CYBER.md"),
             "{pointer}"
         );
+    }
+
+    #[test]
+    fn a_cut_import_line_never_loads_the_file_named_by_its_prefix() {
+        let repo = Repo::new();
+        repo.write("CYBER.md", "@secrets.md");
+        repo.write("secret", "unintended file");
+        let mut settings = settings();
+        settings.max_bytes = 7;
+        let loaded = repo.baseline("", &settings);
+        assert_eq!(order(&repo, &loaded), ["CYBER.md"]);
+    }
+
+    #[test]
+    fn unlisted_imports_remain_discoverable_after_their_parent_was_labelled() {
+        let repo = Repo::new();
+        let refs: Vec<_> = (0..20).map(|i| format!("@r/{i:02}.md")).collect();
+        repo.write("web/CYBER.md", &refs.join("\n"));
+        for i in 0..20 {
+            repo.write(&format!("web/r/{i:02}.md"), "x");
+        }
+        let target = repo.write("web/app.ts", "");
+        let mut settings = settings();
+        settings.max_bytes = 512;
+        settings.max_total_bytes = 512;
+        let mut attached = BTreeSet::new();
+        for _ in 0..22 {
+            let nested = load_nested(&repo.global, &repo.root, &target, &settings, &attached);
+            let Some(delivery) = nested.reminder_delivery(&attached) else {
+                break;
+            };
+            assert!(delivery.text.len() <= 512);
+            let before = attached.len();
+            for file in delivery.files {
+                assert!(delivery.text.contains(&file.path.display().to_string()));
+                attached.insert(file.canonical.display().to_string());
+            }
+            assert!(attached.len() > before);
+        }
+        assert_eq!(attached.len(), 21, "{attached:?}");
     }
 }

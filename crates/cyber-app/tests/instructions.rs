@@ -44,29 +44,95 @@ fn reply(body: &Value) -> Value {
 #[tokio::test]
 async fn configured_instruction_limits_bound_baseline_and_nested_provider_text() {
     let f = Fixture::start_with(
-        json!({"instruction_limits":{"max_file_bytes":16,"max_total_bytes":24}}),
+        json!({"instruction_limits":{"max_file_bytes":3000,"max_total_bytes":4096}}),
     )
     .await;
-    f.write("AGENTS.md", &"λ".repeat(20));
-    f.write("CYBER.md", &"Ж".repeat(20));
-    f.write("web/AGENTS.md", &"Ψ".repeat(20));
-    f.write("web/CYBER.md", &"Ω".repeat(20));
+    f.write("AGENTS.md", &"λ".repeat(5000));
+    f.write("web/AGENTS.md", &"Ψ".repeat(5000));
+    f.write("web/CYBER.md", &"Ω".repeat(5000));
     f.write("web/src/app.ts", "export const app = true;");
     let session = f.session(&f.repo).await;
     f.prompt(&session, &f.repo, "read the app first", 2).await;
     let body = f.last_request();
-    let baseline = system_prompt(&body);
-    assert!(baseline.contains(&"λ".repeat(8)), "{baseline}");
-    assert!(!baseline.contains(&"λ".repeat(9)), "{baseline}");
-    assert!(baseline.contains(&"Ж".repeat(4)), "{baseline}");
-    assert!(!baseline.contains(&"Ж".repeat(5)), "{baseline}");
-    assert!(baseline.contains("instruction_limits.max_file_bytes (16 bytes)"));
+    let state = f.app.runtime.state(&session).await.unwrap();
+    let epoch = state.epoch.unwrap();
+    let instructions = &epoch.snapshot["core/instructions"];
+    assert!(instructions.len() <= 4096);
+    assert!(instructions.contains(&"λ".repeat(1500)));
+    assert!(!instructions.contains(&"λ".repeat(1501)));
+    assert!(system_prompt(&body).contains(instructions));
     let nested = last_tool_result(&body);
-    assert!(nested.contains(&"Ψ".repeat(8)), "{nested}");
-    assert!(!nested.contains(&"Ψ".repeat(9)), "{nested}");
-    assert!(nested.contains(&"Ω".repeat(4)), "{nested}");
-    assert!(!nested.contains(&"Ω".repeat(5)), "{nested}");
-    assert!(nested.contains("total budget"));
+    let start = nested.find("\n\n<system-reminder>").unwrap();
+    let reminder = &nested[start..];
+    assert!(reminder.len() <= 4096, "{} bytes", reminder.len());
+    assert!(reminder.ends_with("</system-reminder>"));
+    assert!(reminder.contains("Ψ"));
+    assert!(!reminder.contains(&"Ψ".repeat(1501)));
+    assert!(!reminder.contains(&"Ω".repeat(1501)));
+    assert!(reminder.contains("total budget") || reminder.contains("instruction budget"));
+
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn bounded_lists_record_only_labelled_files_and_retry_unlisted_imports() {
+    let f = Fixture::start_with(
+        json!({"instruction_limits":{"max_file_bytes":512,"max_total_bytes":512}}),
+    )
+    .await;
+    let refs: Vec<_> = (0..20).map(|i| format!("@r/{i:02}.md")).collect();
+    f.write("web/CYBER.md", &refs.join("\n"));
+    for i in 0..20 {
+        f.write(&format!("web/r/{i:02}.md"), "x");
+    }
+    f.write("web/src/app.ts", "export const app = true;");
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let first = f
+        .app
+        .runtime
+        .state(&session)
+        .await
+        .unwrap()
+        .epoch
+        .unwrap()
+        .reminded_instructions;
+    let output = last_tool_result(&f.last_request());
+    let reminder = &output[output.find("\n\n<system-reminder>").unwrap()..];
+    assert!(reminder.len() <= 512);
+    assert!(!first.is_empty() && first.len() < 21);
+    for id in &first {
+        assert!(
+            reminder.contains(id),
+            "unlabelled identity {id}: {reminder}"
+        );
+    }
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let second = f
+        .app
+        .runtime
+        .state(&session)
+        .await
+        .unwrap()
+        .epoch
+        .unwrap()
+        .reminded_instructions;
+    let output = last_tool_result(&f.last_request());
+    let reminder = &output[output.find("\n\n<system-reminder>").unwrap()..];
+    assert!(reminder.len() <= 512);
+    assert!(second.len() > first.len());
+    for id in second.difference(&first) {
+        assert!(
+            reminder.contains(id),
+            "unlabelled identity {id}: {reminder}"
+        );
+    }
+    for id in &first {
+        assert!(
+            !reminder.contains(id),
+            "duplicate identity {id}: {reminder}"
+        );
+    }
     f.app.runtime.shutdown().await;
 }
 
@@ -385,7 +451,10 @@ async fn two_full_size_nested_files_still_give_a_successful_read() {
         &result[..result.len().min(400)]
     );
     assert!(result.contains("export const app"));
-    assert!(result.contains(&"a".repeat(32 * 1024)));
+    assert!(result.contains(&"a".repeat(1024)));
+    assert!(!result.contains(&"a".repeat(32 * 1024)));
+    let reminder = &result[result.find("\n\n<system-reminder>").unwrap()..];
+    assert!(reminder.len() <= 32 * 1024);
     assert!(result.contains(&format!("- {}", cyber.display())));
     assert!(!result.contains("cccc"));
     f.prompt(&session, &repo, "read the app again", 2).await;

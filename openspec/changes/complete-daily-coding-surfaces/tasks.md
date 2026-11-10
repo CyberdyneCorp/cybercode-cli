@@ -1576,3 +1576,48 @@ trusted path-rule discovery/globs, successful-operation/Epoch/digest-bound
 reminders, changed/revoked definitions, effective context inspection and the TUI
 flow remain required. Task 4.1 and all other parent tasks stay open; this does not
 accept rules/context, the recovery branch or issue #93.
+
+Rendered instruction assembly continuation (2026-11-10): `core/instructions`
+now budgets complete file labels, bodies, separators and truncation notices.
+Nested limits also include the system-reminder wrapper and bounded lists of whole
+file labels. Tiny budgets withhold files instead of emitting partial labels or
+notices. Typed bounded bodies retain their actual limiting budget and omitted
+byte count, so UTF-8 cuts and per-file/aggregate notices remain truthful. Other
+Context Sources and the provider/agent prefix have separate accounting.
+
+Reminder candidates carry the exact typed files they label. Durable settlement
+IDs and InstructionsLoaded paths come from the successfully finalized candidate,
+not the entire planned inventory or untrusted rendered text. In-group deduplication
+occurs after finalization, so a failed attachment cannot reserve another call's
+files. Bounded authorized rediscovery of labelled importers keeps unlisted children
+eligible; a cut final import line is never interpreted as a different filename.
+Read gates, confinement, regular-file checks, cycle/depth checks and bounded input
+reads remain on rediscovery. Source-graph exhaustion/deep graph/restart acceptance
+still belongs to the remaining discovery and provenance work.
+
+Verification passes: 449 server library tests (one explicit subprocess-fixture
+entry ignored), 20 context/compaction tests, 10 real-App instruction tests and the
+doctor regression. The App tests inspect actual provider text against the stored
+source and enforce complete reminder byte limits. The new bounded-list App case
+compares durable Epoch identities with complete labels in two actual tool results,
+verifying later progress without consuming unlisted imports or repeating prior
+identities. Unit coverage checks UTF-8/notice boundaries across small budgets,
+bounded pointer prefixes, importer retry and truncated-path refusal. An earlier
+assertion expecting the full 32 KiB body plus metadata was replaced by complete
+rendered-size checks and positive content/identity checks.
+
+Affected server/App/CLI all-target Clippy with warnings denied, formatting, diff,
+SDK generation consistency and workflow YAML/selection checks pass. Strict
+OpenSpec 1.13.2 validates 100/100 items; lint reports 0 errors/25 warnings. Native C
+deprecation and linker unwind warnings were observed without assigning origin.
+Main was fetched with no missing upstream commits. The native workflow includes
+assembly/reminder units and the new support-module filter, alongside real App
+acceptance and retained logs. SDK runtime/full workspace and fresh-source platform
+acceptance have not run for this increment. No API/event envelope changed.
+
+Focused code-review-skill review checks complete-boundary rendering, typed
+delivery authority, post-finalization consumption, permission/confine checks on
+rediscovery and partial-line refusal. Full rules/context review remains open for
+trusted definition identity, source-graph exhaustion, operation/Epoch/restart and
+revocation binding, effective inspection and the TUI flow. Task 4.1 and parent
+acceptance remain incomplete; no goal or delivery completion is claimed.
