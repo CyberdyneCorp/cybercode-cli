@@ -188,7 +188,9 @@ async fn kill_at_cut(control: &Path, cut: &str) {
         ])
         .env("CYBER_MANAGED_METADATA_CUT_CONTROL", control)
         .env("CYBER_MANAGED_METADATA_CUT", cut)
-        .env("TMPDIR", control)
+        // Inherit the short CI fixture root. Nesting another TempDir under the
+        // control directory exceeds Linux's Unix socket limit during worktree
+        // setup. The child retains its own fixture and reports its actual root.
         .stdout(log.try_clone().unwrap())
         .stderr(log)
         .spawn()

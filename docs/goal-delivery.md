@@ -59,6 +59,13 @@ code changes. The workflow also runs the four zero-payload CLI cases and retains
 their log. This resolves the inspected fixture routing problem in configuration;
 fresh-source native execution is still required to prove acceptance.
 
+Run 42790242409 at `af0d10ed` passes both macOS jobs but still fails managed
+process-cut setup on Linux: overriding the child's `TMPDIR` with the control
+directory adds another temporary-directory component. The child now inherits
+the short workflow root. Its fixture independently retains failures and records
+its actual root for reopening; both sibling roots remain covered by artifact
+upload. Linux execution of this correction remains required.
+
 ### Location continuity acceptance
 
 Location continuity acceptance now exercises six combinations of missing,

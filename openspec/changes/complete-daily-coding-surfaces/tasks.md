@@ -1524,3 +1524,14 @@ independent JSONL step/retained-root assertions pass. The CI-pinned OpenSpec
 1.13.2 validates 100/100 items; cross-spec lint reports 0 errors and 25 warnings.
 Other cached OpenSpec versions were not used for acceptance. The SDK generation
 check is clean. No parent task is checked off by this increment.
+
+Native CI follow-up: run 42790242409 at af0d10ed passes macOS ARM/Intel
+but fails both Linux jobs during the managed metadata child fixture setup, before
+its observed cut. The log reports SUN_LEN at the nested control/fixture root.
+The child now inherits the workflow's short TMPDIR instead of nesting beneath
+the control directory. It still retains its own failure root and writes the actual
+root into fixture.json for reopening; the workflow uploads both roots. The actual
+managed metadata process-death selection passes locally after this correction
+(two entries, including the inert child entry and parent exercising both cuts).
+Formatting and diff checks pass. Linker unwind and native C deprecation warnings
+were observed without assigning origin. Linux execution remains required.
