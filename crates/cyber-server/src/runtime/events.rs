@@ -367,23 +367,24 @@ pub struct ToolDispatched {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuleRead {
-    pub evidence: cyber_core::rules::ReadEvidence,
+pub struct RuleOperation {
+    pub evidence: cyber_core::rules::FileEvidence,
     pub epoch: u32,
     pub location: String,
     pub operation_key: String,
     pub attempt: u32,
 }
-impl RuleRead {
+impl RuleOperation {
     pub fn matches(
         &self,
         binding: &super::instructions::RuleBinding,
         epoch: u32,
+        tool: &str,
         info: &super::model::SessionInfo,
         call: &super::model::CallState,
     ) -> bool {
         call.status == super::model::CallStatus::Dispatched
-            && call.name.eq_ignore_ascii_case("read")
+            && call.name.eq_ignore_ascii_case(tool)
             && self.epoch == epoch
             && self.location == info.directory
             && self.attempt != 0
@@ -409,7 +410,9 @@ pub struct ToolSettled {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_reminders: Vec<super::instructions::RuleBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rule_read: Option<RuleRead>,
+    pub rule_read: Option<RuleOperation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_edit: Option<RuleOperation>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

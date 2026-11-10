@@ -2318,6 +2318,7 @@ impl Runtime {
             instruction_reminders: Vec::new(),
             rule_reminders: Vec::new(),
             rule_read: None,
+            rule_edit: None,
             structured_output: None,
             call_id: call_id.into(),
             status,

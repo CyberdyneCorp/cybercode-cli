@@ -488,12 +488,12 @@ pub struct SkillSuggestion {
     pub description: String,
 }
 
-/// An execution with actual file reads, when the host instruments them. `None`
-/// preserves legacy ordinary instruction loading; `Some([])` proves no eligible read.
+/// An execution with actual file operations, when the host instruments them. `None`
+/// preserves legacy ordinary instruction loading; `Some([])` reports no eligible operation.
 #[derive(Debug)]
 pub struct ObservedExecution {
     pub outcome: ToolOutcome,
-    pub reads: Option<Vec<std::sync::Arc<cyber_core::rules::ReadReceipt>>>,
+    pub files: Option<Vec<std::sync::Arc<cyber_core::rules::FileReceipt>>>,
 }
 
 /// How a tool run ended.
@@ -1084,7 +1084,7 @@ pub trait ToolHost: Send + Sync {
     /// Run a call. Implementations stop within 2 s once `cancel` fires.
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome>;
 
-    /// Run with native read observations when the host can supply them. The
+    /// Run with native file observations when the host can supply them. The
     /// default has no operation receipt and cannot activate scoped rules.
     fn execute_observed(
         &self,
@@ -1094,7 +1094,7 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async move {
             ObservedExecution {
                 outcome: self.execute(invocation, cancel).await,
-                reads: None,
+                files: None,
             }
         })
     }

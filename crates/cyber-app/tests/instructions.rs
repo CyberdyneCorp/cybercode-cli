@@ -28,6 +28,11 @@ fn reply(body: &Value) -> Value {
         return json!({"content": "done"});
     }
     let text = last.to_string();
+    if text.contains("edit the app") {
+        let arguments = json!({"path":"web/src/app.ts","old_string":"const version = 1","new_string":"const version = 2"}).to_string();
+        return json!({"tool_calls":[{"index":0,"id":"call_edit","type":"function",
+            "function":{"name":"edit","arguments":arguments}}]});
+    }
     for (prompt, id) in [
         ("read the app first", "call_first"),
         ("read the app again", "call_again"),
@@ -894,5 +899,52 @@ async fn rewritten_reads_deliver_only_rules_for_the_file_actually_opened() {
     let call = &state.calls[settled.data["call_id"].as_str().unwrap()];
     assert_eq!(call.input.as_ref().unwrap()["path"], "web/src/app.ts");
     assert_eq!(state.epoch.unwrap().reminded_rules.len(), 1);
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn denied_read_leaves_rule_available_for_a_successful_edit() {
+    let f = Fixture::start_with(json!({"permissions":{"read":{"web/src/app.ts":"deny"}}})).await;
+    f.write("web/src/app.ts", "const version = 1");
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nEDIT_RULE_GUIDANCE",
+    );
+    f.approve(&f.repo);
+    let id = f.session(&f.repo).await;
+    f.prompt(&id, &f.repo, "read the app first", 2).await;
+    let before = f.app.runtime.state(&id).await.unwrap();
+    assert!(
+        before
+            .calls
+            .values()
+            .any(|call| call.name == "read"
+                && call.status == cyber_server::runtime::CallStatus::Error)
+    );
+    assert!(before.epoch.as_ref().unwrap().reminded_rules.is_empty());
+    assert!(!last_tool_result(&f.last_request()).contains("EDIT_RULE_GUIDANCE"));
+
+    f.prompt(&id, &f.repo, "edit the app", 2).await;
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("web/src/app.ts")).unwrap(),
+        "const version = 2"
+    );
+    assert!(last_tool_result(&f.last_request()).contains("EDIT_RULE_GUIDANCE"));
+    let state = f.app.runtime.state(&id).await.unwrap();
+    let epoch = state.epoch.unwrap();
+    assert_eq!(epoch.number, before.epoch.unwrap().number);
+    assert_eq!(epoch.reminded_rules.len(), 1);
+    let events = f.app.store.read_events(&id, -1, 500).unwrap().events;
+    let settled = events
+        .iter()
+        .find(|event| event.data["rule_edit"].is_object())
+        .unwrap();
+    assert!(settled.data.get("rule_read").is_none());
+    assert_eq!(
+        settled.data["rule_edit"]["evidence"]["path"],
+        f.repo.join("web/src/app.ts").to_str().unwrap()
+    );
+    let replay = cyber_server::runtime::SessionState::replay(&events).unwrap();
+    assert_eq!(replay.epoch.unwrap().reminded_rules, epoch.reminded_rules);
     f.app.runtime.shutdown().await;
 }

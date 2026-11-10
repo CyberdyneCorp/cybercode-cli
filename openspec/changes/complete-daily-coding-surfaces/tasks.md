@@ -1797,3 +1797,18 @@ reader's import tests are included in the platform workflow. Windows, whole
 workspace, SDK runtime and current-source native matrix acceptance remain unrun
 locally for this increment. Checkpoint review found no remaining findings in the
 read changes after the fixes above; full-goal review remains open.
+
+Existing-file edit continuation. The guarded edit captures the authorized
+physical path and verifies the handle that completed the write against the
+observed file. The settlement stores the edit receipt under `rule_edit` with the
+native root and file identities, dispatched attempt, Location and Context Epoch.
+Replay checks those fields against the edit dispatch. The App regression covers
+a denied read followed by a successful edit in the same Epoch. The Core test
+rejects a writer handle for an unrelated file. An edit through a separately named
+alias can still produce its normal tool result without a scoped rule receipt.
+Multi-file patch, creation/removal receipts, partial patch settlements, exact
+configuration generation and revocation/restart acceptance remain open.
+
+Local edit verification passed 12 filtered Core tests, 17 App instruction tests,
+and all-target Clippy for Core, Tools, Server and App. Formatting, SDK consistency
+and strict OpenSpec checks passed. Windows and platform acceptance remain pending.

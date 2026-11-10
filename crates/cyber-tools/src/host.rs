@@ -1611,7 +1611,7 @@ impl ToolHost for BuiltinHost {
         cancel: CancellationToken,
     ) -> BoxFuture<'_, cyber_server::runtime::ObservedExecution> {
         Box::pin(async move {
-            let read_receipt = ReadReceiptSlot::default();
+            let read_receipt = FileReceiptSlot::default();
             let outcome = self.execute_inner(inv, cancel, read_receipt.clone()).await;
             let read = read_receipt
                 .lock()
@@ -1619,7 +1619,7 @@ impl ToolHost for BuiltinHost {
                 .take();
             cyber_server::runtime::ObservedExecution {
                 outcome,
-                reads: Some(read.into_iter().collect()),
+                files: Some(read.into_iter().collect()),
             }
         })
     }
@@ -1959,7 +1959,7 @@ impl BuiltinHost {
         hook_decision: Option<HookAction>,
         cancel: CancellationToken,
         denial: DenialHooks,
-        read_receipt: ReadReceiptSlot,
+        read_receipt: FileReceiptSlot,
     ) -> Result<Ctx<'a>, String> {
         let policy = self.policy(inv).await?;
         if let Some(reason) = policy.skill_tool_denial(&inv.name) {
@@ -2056,10 +2056,10 @@ impl BuiltinHost {
 }
 
 /// Everything a tool needs for one call.
-pub(crate) type ReadReceiptSlot = Arc<Mutex<Option<Arc<cyber_core::rules::ReadReceipt>>>>;
+pub(crate) type FileReceiptSlot = Arc<Mutex<Option<Arc<cyber_core::rules::FileReceipt>>>>;
 
 pub(crate) struct Ctx<'a> {
-    pub read_receipt: ReadReceiptSlot,
+    pub read_receipt: FileReceiptSlot,
     pub skill_paths: Mutex<Vec<PathBuf>>,
     pub loaded_skill: Mutex<Option<skills::SkillActivation>>,
     /// Set by a tool whose result comes from outside the workspace; the projection
@@ -2799,7 +2799,7 @@ impl BuiltinHost {
         &self,
         inv: Invocation,
         cancel: CancellationToken,
-        read_receipt: ReadReceiptSlot,
+        read_receipt: FileReceiptSlot,
     ) -> BoxFuture<'_, ToolOutcome> {
         Box::pin(async move {
             if inv.name.starts_with("mcp__") {

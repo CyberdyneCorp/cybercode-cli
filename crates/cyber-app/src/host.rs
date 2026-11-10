@@ -374,7 +374,7 @@ impl ToolHost for AppHost {
             return Box::pin(async move {
                 cyber_server::runtime::ObservedExecution {
                     outcome: self.execute(call, cancel).await,
-                    reads: None,
+                    files: None,
                 }
             });
         }

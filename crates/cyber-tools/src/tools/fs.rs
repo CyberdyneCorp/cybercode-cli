@@ -113,7 +113,7 @@ fn observed_reader(
     ctx: &Ctx<'_>,
     path: &Path,
     authorized: &Path,
-) -> Option<cyber_core::rules::ObservedRead> {
+) -> Option<cyber_core::rules::ObservedFile> {
     let location = ctx.location.canonicalize().ok()?;
     let physical_resource = authorized.strip_prefix(&location).map_or_else(
         |_| ctx.resource(authorized),
@@ -134,7 +134,7 @@ fn observed_reader(
             return None;
         }
     }
-    cyber_core::rules::ObservedRead::open(&ctx.location, path, authorized).ok()
+    cyber_core::rules::ObservedFile::open(&ctx.location, path, authorized).ok()
 }
 
 /// A page of the file redacted as a whole first, so a secret that the page boundary
@@ -424,6 +424,8 @@ pub(crate) async fn guarded_write(
         &String::from_utf8_lossy(after),
     )?;
     ctx.check_external_writes(&[path.to_path_buf()]).await?;
+    // Capture the physical spelling before permission can suspend the call.
+    let authorized = path.canonicalize().ok();
     authorize_edit(ctx, path, diff).await?;
     let origin = super::intelligence::capture(ctx, path);
     let workspace = cyber_server::workspace::mutation_lock(&ctx.location)
@@ -442,7 +444,7 @@ pub(crate) async fn guarded_write(
             .await
             .map_err(|e| failed(format!("Could not create {}: {e}", parent.display())))?;
     }
-    tokio::fs::write(path, after)
+    write_observed_edit(ctx, path, after, authorized.as_deref())
         .await
         .map_err(|e| failed(format!("Could not write {}: {e}", path.display())))?;
     ctx.host.mark_read(&ctx.inv.session_id, path);
@@ -450,6 +452,47 @@ pub(crate) async fn guarded_write(
     drop(_guard);
     drop(workspace_guard);
     Ok(super::intelligence::feedback(ctx, path, after, origin).await)
+}
+
+async fn write_observed_edit(
+    ctx: &Ctx<'_>,
+    path: &Path,
+    bytes: &[u8],
+    authorized: Option<&Path>,
+) -> std::io::Result<()> {
+    // An edit approval for an alias does not attest a separately named resource.
+    let observation = authorized
+        .filter(|_| ctx.inv.name == "edit")
+        .filter(|target| {
+            ctx.location
+                .canonicalize()
+                .ok()
+                .and_then(|location| {
+                    target
+                        .strip_prefix(location)
+                        .ok()
+                        .map(|relative| ctx.location.join(relative))
+                })
+                .as_deref()
+                == Some(path)
+        })
+        .and_then(|target| cyber_core::rules::ObservedFile::open(&ctx.location, path, target).ok());
+    let Some(observation) = observation else {
+        return tokio::fs::write(path, bytes).await;
+    };
+    use tokio::io::AsyncWriteExt;
+    let mut file = tokio::fs::File::create(path).await?;
+    file.write_all(bytes).await?;
+    file.flush().await?;
+    let file = file.into_std().await;
+    let receipt = tokio::task::spawn_blocking(move || observation.after_write(&file)).await;
+    if let Ok(Ok(receipt)) = receipt {
+        *ctx.read_receipt
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(std::sync::Arc::new(receipt));
+    }
+    Ok(())
 }
 
 pub(crate) async fn authorize_edit(

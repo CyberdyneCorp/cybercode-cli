@@ -202,26 +202,42 @@ impl DirectorySnapshot {
 
 /// An actual read performed through the captured no-follow file handle. Unlike
 /// definition snapshots this preserves the read tool's existing file-size contract.
-pub(crate) struct FileRead {
+pub(crate) struct ObservedFileHandle {
     path: PathBuf,
     opened: OpenSource,
 }
-pub(crate) struct FileReadReceipt {
+pub(crate) struct FileHandleReceipt {
     path: PathBuf,
     bindings: Vec<Identity>,
     state: FileState,
     _retained: Option<OpenSource>,
 }
-impl FileRead {
+impl ObservedFileHandle {
     pub(crate) fn open(path: &Path) -> Result<Self, DiscoveryError> {
         Ok(Self {
             path: path.into(),
             opened: OpenSource::open_observed(path, true)?,
         })
     }
-    pub(crate) fn read(mut self) -> std::io::Result<(Vec<u8>, FileReadReceipt)> {
+    pub(crate) fn read(mut self) -> std::io::Result<(Vec<u8>, FileHandleReceipt)> {
         let mut bytes = Vec::new();
         self.opened.file.read_to_end(&mut bytes)?;
+        Ok((bytes, self.receipt()))
+    }
+
+    pub(crate) fn after_write(self, file: &File) -> Result<FileHandleReceipt, DiscoveryError> {
+        if observed_identity(file, &self.path, true)? != self.opened.state.identity {
+            return Err(error(
+                &self.path,
+                "write handle differs from the authorized file",
+            ));
+        }
+        let receipt = self.receipt();
+        receipt.verify()?;
+        Ok(receipt)
+    }
+
+    fn receipt(self) -> FileHandleReceipt {
         let bindings = self.opened.bindings.clone();
         let state = self.opened.state.clone();
         #[cfg(windows)]
@@ -231,18 +247,15 @@ impl FileRead {
         };
         #[cfg(not(windows))]
         let retained = Some(self.opened);
-        Ok((
-            bytes,
-            FileReadReceipt {
-                path: self.path,
-                bindings,
-                state,
-                _retained: retained,
-            },
-        ))
+        FileHandleReceipt {
+            path: self.path,
+            bindings,
+            state,
+            _retained: retained,
+        }
     }
 }
-impl FileReadReceipt {
+impl FileHandleReceipt {
     pub(crate) fn verify(&self) -> Result<(), DiscoveryError> {
         let current = OpenSource::open_observed(&self.path, true)?;
         if current.bindings != self.bindings || current.state.identity != self.state.identity {

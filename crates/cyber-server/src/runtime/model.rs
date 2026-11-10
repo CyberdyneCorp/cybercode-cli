@@ -1512,13 +1512,31 @@ impl SessionState {
                     epoch.reminded_rules.extend(
                         s.rule_reminders
                             .iter()
-                            .filter(|binding| match (&binding.native_root, &s.rule_read) {
-                                (None, None) => true, // historical, path-only binding
-                                (Some(_), Some(read)) => {
-                                    !self.epoch_stale
-                                        && read.matches(binding, epoch.number, &self.info, call)
+                            .filter(|binding| {
+                                match (&binding.native_root, &s.rule_read, &s.rule_edit) {
+                                    (None, None, None) => true,
+                                    (Some(_), Some(read), None) => {
+                                        !self.epoch_stale
+                                            && read.matches(
+                                                binding,
+                                                epoch.number,
+                                                "read",
+                                                &self.info,
+                                                call,
+                                            )
+                                    }
+                                    (Some(_), None, Some(edit)) => {
+                                        !self.epoch_stale
+                                            && edit.matches(
+                                                binding,
+                                                epoch.number,
+                                                "edit",
+                                                &self.info,
+                                                call,
+                                            )
+                                    }
+                                    _ => false,
                                 }
-                                _ => false,
                             })
                             .map(super::instructions::RuleBinding::identity),
                     );

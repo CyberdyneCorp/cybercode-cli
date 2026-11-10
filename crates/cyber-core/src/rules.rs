@@ -62,23 +62,23 @@ impl std::fmt::Debug for RootBinding {
 /// Metadata describing a successful read; these hashes are observations, never
 /// authority to perform another operation or reopen a source after restart.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct ReadEvidence {
+pub struct FileEvidence {
     pub root: PathBuf,
     pub path: PathBuf,
     pub root_identity: String,
     pub file_identity: String,
 }
-pub struct ObservedRead {
+pub struct ObservedFile {
     declared: PathBuf,
     physical: PathBuf,
     root: RootBinding,
-    reader: crate::import::FileRead,
+    reader: crate::import::ObservedFileHandle,
 }
-pub struct ReadReceipt {
+pub struct FileReceipt {
     declared: PathBuf,
     root: RootBinding,
-    native: crate::import::FileReadReceipt,
-    evidence: ReadEvidence,
+    native: crate::import::FileHandleReceipt,
+    evidence: FileEvidence,
 }
 impl RootBinding {
     pub fn identity(&self) -> String {
@@ -87,7 +87,7 @@ impl RootBinding {
             .expect("project root is an ancestor")
     }
 }
-impl ObservedRead {
+impl ObservedFile {
     pub fn open(location: &Path, path: &Path, authorized: &Path) -> Result<Self, String> {
         let root = RootBinding::capture(location)?;
         let declared = std::path::absolute(path).map_err(|_| "read path is invalid")?;
@@ -104,7 +104,8 @@ impl ObservedRead {
         if physical.to_str().is_none() || root.root().to_str().is_none() {
             return Err("read receipt paths must be UTF-8".into());
         }
-        let reader = crate::import::FileRead::open(&physical).map_err(|e| e.reason.to_owned())?;
+        let reader =
+            crate::import::ObservedFileHandle::open(&physical).map_err(|e| e.reason.to_owned())?;
         root.verify()?;
         Ok(Self {
             declared,
@@ -113,27 +114,48 @@ impl ObservedRead {
             reader,
         })
     }
-    pub fn read(self) -> std::io::Result<(Vec<u8>, ReadReceipt)> {
+    pub fn read(self) -> std::io::Result<(Vec<u8>, FileReceipt)> {
         let (bytes, native) = self.reader.read()?;
-        let evidence = ReadEvidence {
-            root: self.root.root().into(),
-            path: self.physical,
-            root_identity: self.root.identity(),
-            file_identity: native.identity(),
-        };
         Ok((
             bytes,
-            ReadReceipt {
-                declared: self.declared,
-                root: self.root,
-                native,
-                evidence,
-            },
+            FileReceipt::from_native(self.declared, self.physical, self.root, native),
         ))
     }
+
+    /// Bind a completed write to the file handle that performed it.
+    pub fn after_write(self, file: &std::fs::File) -> Result<FileReceipt, String> {
+        let native = self
+            .reader
+            .after_write(file)
+            .map_err(|error| error.reason.to_owned())?;
+        let receipt = FileReceipt::from_native(self.declared, self.physical, self.root, native);
+        receipt.verify()?;
+        Ok(receipt)
+    }
 }
-impl ReadReceipt {
-    pub fn evidence(&self) -> &ReadEvidence {
+
+impl FileReceipt {
+    fn from_native(
+        declared: PathBuf,
+        physical: PathBuf,
+        root: RootBinding,
+        native: crate::import::FileHandleReceipt,
+    ) -> Self {
+        let evidence = FileEvidence {
+            root: root.root().into(),
+            path: physical,
+            root_identity: root.identity(),
+            file_identity: native.identity(),
+        };
+        Self {
+            declared,
+            root,
+            native,
+            evidence,
+        }
+    }
+
+    pub fn evidence(&self) -> &FileEvidence {
         &self.evidence
     }
     pub fn verify(&self) -> Result<(), String> {
@@ -144,9 +166,9 @@ impl ReadReceipt {
         self.native.verify().map_err(|e| e.reason.to_owned())
     }
 }
-impl std::fmt::Debug for ReadReceipt {
+impl std::fmt::Debug for FileReceipt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ReadReceipt")
+        f.debug_struct("FileReceipt")
             .field("evidence", &self.evidence)
             .finish_non_exhaustive()
     }
@@ -500,7 +522,7 @@ mod tests {
         let path = root.join("large.txt");
         let content = vec![b'x'; 1024 * 1024 + 1];
         std::fs::write(&path, &content).unwrap();
-        let reader = ObservedRead::open(&root, &path, &path.canonicalize().unwrap()).unwrap();
+        let reader = ObservedFile::open(&root, &path, &path.canonicalize().unwrap()).unwrap();
         let (bytes, receipt) = reader.read().unwrap();
         assert_eq!(bytes, content);
         assert!(receipt.verify().is_ok());
@@ -528,7 +550,7 @@ mod tests {
         std::fs::write(&path, "workspace content").unwrap();
         std::fs::hard_link(&path, &link).unwrap();
         let (bytes, receipt) =
-            ObservedRead::open(temp.path(), &link, &link.canonicalize().unwrap())
+            ObservedFile::open(temp.path(), &link, &link.canonicalize().unwrap())
                 .unwrap()
                 .read()
                 .unwrap();
@@ -548,13 +570,34 @@ mod tests {
         std::fs::write(&a, "actual original bytes").unwrap();
         std::fs::write(&b, "different bytes").unwrap();
         symlink(&a, &alias).unwrap();
-        let reader = ObservedRead::open(temp.path(), &alias, &a.canonicalize().unwrap()).unwrap();
+        let reader = ObservedFile::open(temp.path(), &alias, &a.canonicalize().unwrap()).unwrap();
         std::fs::remove_file(&alias).unwrap();
         symlink(&b, &alias).unwrap();
         let (bytes, receipt) = reader.read().unwrap();
         assert_eq!(bytes, b"actual original bytes");
         assert!(receipt.verify().is_err());
-        assert!(ObservedRead::open(temp.path(), &alias, &a.canonicalize().unwrap()).is_err());
+        assert!(ObservedFile::open(temp.path(), &alias, &a.canonicalize().unwrap()).is_err());
+    }
+
+    #[test]
+    fn edit_receipt_requires_the_handle_that_wrote_the_observed_file() {
+        use std::io::Write;
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("target.txt");
+        let other = temp.path().join("other.txt");
+        std::fs::write(&path, "before").unwrap();
+        let physical = path.canonicalize().unwrap();
+        let observed = ObservedFile::open(temp.path(), &path, &physical).unwrap();
+        let mut unrelated = std::fs::File::create(&other).unwrap();
+        unrelated.write_all(b"after").unwrap();
+        assert!(observed.after_write(&unrelated).is_err());
+
+        let observed = ObservedFile::open(temp.path(), &path, &physical).unwrap();
+        let mut written = std::fs::File::create(&path).unwrap();
+        written.write_all(b"after").unwrap();
+        let receipt = observed.after_write(&written).unwrap();
+        assert!(receipt.verify().is_ok());
+        assert_eq!(receipt.evidence().path, physical);
     }
 
     fn root() -> (tempfile::TempDir, PathBuf) {

@@ -1818,9 +1818,10 @@ impl Inner {
         let mut events = Vec::new();
         let mut stops = Vec::new();
         let mut loaded = Vec::new();
+        let mut edited = Vec::new();
         for (run, nested) in outcomes.into_iter().zip(nested) {
             let nested = run.current_nested(&state, nested);
-            let proof = run.read_proof();
+            let proof = run.operation_proof();
             let (settled, instructions) = settlement_with_reminders(
                 &run.call_id,
                 &run.def,
@@ -1832,14 +1833,20 @@ impl Inner {
                         .finalize_skill_output(&directory, output, reminder)
                 },
             );
-            let settled = with_read_proof(settled, proof);
+            let settled = with_operation_proof(settled, &run.def.spec.name, proof);
             events.push(self.with_call_metadata(&session_id, &run.call_id, &directory, settled));
-            loaded.extend(instructions);
+            if run.def.spec.name == "edit" {
+                edited.extend(instructions);
+            } else {
+                loaded.extend(instructions);
+            }
             stops.extend(self.take_call_hook_effects(&session_id, &run.call_id, &mut events));
         }
         self.commit_locked(&mut state, events)?;
         drop(state);
         self.instructions_loaded(handle, loaded, NESTED_LOAD_REASON)
+            .await;
+        self.instructions_loaded(handle, edited, "nested_edit")
             .await;
         for reason in &stops {
             self.publish_hook_stop(&session_id, reason);
@@ -2034,7 +2041,7 @@ impl Inner {
     ) -> ToolRun {
         let call_id = invocation.call_id.clone();
         let scope = ReminderScope::capture(&*handle.state.lock().await, &invocation.directory);
-        let read = scope.and_then(|scope| self.read_target(&def, &invocation, scope));
+        let read = scope.and_then(|scope| self.file_target(&def, &invocation, scope));
         if invocation.name == super::structured::CHILD_TOOL
             || invocation.name == super::structured::ROOT_TOOL
         {
@@ -2060,12 +2067,12 @@ impl Inner {
                 Ok(outcome) => outcome,
                 Err(_) => {
                     handle.location_uncertain.store(true, std::sync::atomic::Ordering::SeqCst);
-                    super::host::ObservedExecution { outcome: ToolOutcome::Aborted, reads: Some(Vec::new()) }
+                    super::host::ObservedExecution { outcome: ToolOutcome::Aborted, files: Some(Vec::new()) }
                 }
             },
         };
-        let read = match outcome.reads {
-            None => read,
+        let read = match outcome.files {
+            None => read.filter(|_| def.spec.name == "read"),
             Some(mut receipts) if receipts.len() == 1 => read.and_then(|mut target| {
                 let receipt = receipts.pop().unwrap();
                 if target.root.identity() != receipt.evidence().root_identity {
@@ -2085,20 +2092,22 @@ impl Inner {
         }
     }
 
-    /// The file a built-in `read` call targets, for nested instructions.
-    fn read_target(
+    /// Capture the Location before an operation can suspend for authorization.
+    fn file_target(
         &self,
         def: &ToolDef,
         invocation: &Invocation,
         scope: ReminderScope,
-    ) -> Option<ReadTarget> {
-        if def.scope != super::host::ToolScope::Builtin || def.spec.name != "read" {
+    ) -> Option<FileTarget> {
+        if def.scope != super::host::ToolScope::Builtin
+            || !matches!(def.spec.name.as_str(), "read" | "edit")
+        {
             return None;
         }
         let path = invocation.input.get("path")?.as_str()?;
         let settings = self.instruction_settings(&invocation.directory).ok()?;
         let location = std::path::PathBuf::from(&invocation.directory);
-        Some(ReadTarget {
+        Some(FileTarget {
             file: super::instructions::read_target(&location, settings.home.as_deref(), path),
             location: location.clone(),
             scope,
@@ -2117,7 +2126,7 @@ impl Inner {
     pub(super) async fn nested_instructions(
         &self,
         handle: &Handle,
-        targets: Vec<Option<ReadTarget>>,
+        targets: Vec<Option<FileTarget>>,
     ) -> Vec<super::instructions::Instructions> {
         let count = targets.len();
         let empty = || (0..count).map(|_| Default::default()).collect();
@@ -2347,6 +2356,7 @@ fn settled(
         instruction_reminders: Vec::new(),
         rule_reminders: Vec::new(),
         rule_read: None,
+        rule_edit: None,
         structured_output: None,
         call_id: call_id.into(),
         status,
@@ -2364,13 +2374,13 @@ pub(super) struct ToolRun {
     pub call_id: String,
     pub def: ToolDef,
     pub outcome: ToolOutcome,
-    pub read: Option<ReadTarget>,
+    pub read: Option<FileTarget>,
 }
 
 impl ToolRun {
-    pub(super) fn read_proof(&self) -> Option<super::events::RuleRead> {
+    pub(super) fn operation_proof(&self) -> Option<super::events::RuleOperation> {
         let target = self.read.as_ref()?;
-        Some(super::events::RuleRead {
+        Some(super::events::RuleOperation {
             evidence: target.receipt.as_ref()?.evidence().clone(),
             epoch: target.scope.epoch,
             location: target.scope.directory.clone(),
@@ -2397,7 +2407,7 @@ impl ToolRun {
     }
 
     /// The target to load nested instructions for: only a read that succeeded.
-    pub(super) fn nested_target(&self) -> Option<ReadTarget> {
+    pub(super) fn nested_target(&self) -> Option<FileTarget> {
         let succeeded = matches!(
             self.outcome,
             ToolOutcome::Ok(_)
@@ -2439,16 +2449,16 @@ impl ReminderScope {
 /// A `read` call's Location, target and captured context; settings are resolved
 /// after successful execution rather than retaining pre-effect permission closures.
 #[derive(Clone)]
-pub(super) struct ReadTarget {
+pub(super) struct FileTarget {
     pub location: std::path::PathBuf,
     pub file: std::path::PathBuf,
     pub scope: ReminderScope,
     pub root: Arc<cyber_core::rules::RootBinding>,
-    pub receipt: Option<Arc<cyber_core::rules::ReadReceipt>>,
+    pub receipt: Option<Arc<cyber_core::rules::FileReceipt>>,
     pub operation_key: String,
     pub attempt: u32,
 }
-impl ReadTarget {
+impl FileTarget {
     fn valid_native(&self) -> bool {
         self.root.verify().is_ok()
             && self
@@ -2495,9 +2505,10 @@ impl ReadTarget {
     }
 }
 
-pub(super) fn with_read_proof(
+pub(super) fn with_operation_proof(
     mut settled: cyber_store::NewEvent,
-    proof: Option<super::events::RuleRead>,
+    tool: &str,
+    proof: Option<super::events::RuleOperation>,
 ) -> cyber_store::NewEvent {
     if settled
         .data
@@ -2506,8 +2517,12 @@ pub(super) fn with_read_proof(
         .is_some_and(|rules| !rules.is_empty())
         && let Some(proof) = proof
     {
-        settled.data["rule_read"] =
-            serde_json::to_value(proof).expect("rule read metadata serializes");
+        let field = if tool == "edit" {
+            "rule_edit"
+        } else {
+            "rule_read"
+        };
+        settled.data[field] = serde_json::to_value(proof).expect("rule read metadata serializes");
     }
     settled
 }
@@ -2620,6 +2635,7 @@ pub(super) fn settlement_with_reminders(
             instruction_reminders: attached,
             rule_reminders: rule_bindings,
             rule_read: None,
+            rule_edit: None,
             structured_output: value,
             call_id: call_id.into(),
             status: if failed {
@@ -2720,6 +2736,7 @@ pub(super) fn settlement(
                 instruction_reminders: Vec::new(),
                 rule_reminders: Vec::new(),
                 rule_read: None,
+                rule_edit: None,
                 structured_output: None,
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -2754,6 +2771,7 @@ pub(super) fn settlement(
                 instruction_reminders: Vec::new(),
                 rule_reminders: Vec::new(),
                 rule_read: None,
+                rule_edit: None,
                 structured_output: Some(value),
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -2779,6 +2797,7 @@ pub(super) fn settlement(
                 instruction_reminders: Vec::new(),
                 rule_reminders: Vec::new(),
                 rule_read: None,
+                rule_edit: None,
                 structured_output: value,
                 call_id: call_id.into(),
                 status: if failed {
@@ -2922,7 +2941,7 @@ mod skill_reminder_tests {
                 call_id: "read".into(),
                 def: read_def(),
                 outcome: ToolOutcome::Ok("file".into()),
-                read: Some(ReadTarget {
+                read: Some(FileTarget {
                     location: "/repo".into(),
                     file: "/repo/web/app.ts".into(),
                     scope,
@@ -2951,7 +2970,7 @@ mod skill_reminder_tests {
             if state.epoch.is_some() {
                 let scope = ReminderScope::capture(&state, &state.info.directory).unwrap();
                 let fresh = ToolRun {
-                    read: Some(ReadTarget {
+                    read: Some(FileTarget {
                         location: state.info.directory.clone().into(),
                         file: "/repo/web/app.ts".into(),
                         scope,
@@ -3170,7 +3189,7 @@ mod skill_reminder_tests {
     #[test]
     fn only_successful_reads_load_nested_instructions() {
         let root_dir = tempfile::tempdir().unwrap();
-        let read = ReadTarget {
+        let read = FileTarget {
             location: "/repo".into(),
             file: "/repo/web/app.ts".into(),
             scope: ReminderScope {
@@ -3251,7 +3270,7 @@ mod skill_reminder_tests {
             call_id: "call".into(),
             def: read_def(),
             outcome: external(false),
-            read: Some(ReadTarget {
+            read: Some(FileTarget {
                 location: "/repo".into(),
                 file: "/repo/a.md".into(),
                 scope: ReminderScope {
