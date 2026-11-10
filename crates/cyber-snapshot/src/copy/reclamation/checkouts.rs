@@ -10,6 +10,9 @@ pub(super) struct Checkouts {
 }
 
 impl Checkouts {
+    pub fn into_claims(self) -> Vec<SnapshotClaim> {
+        self.claims
+    }
     pub fn acquire(
         store: &Store,
         lifetime: &super::super::lifetime::Lifetime,

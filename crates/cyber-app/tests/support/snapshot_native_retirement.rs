@@ -329,6 +329,33 @@ async fn native_retirement_respects_retention_and_reader_leases_before_planning(
 }
 
 #[tokio::test]
+async fn native_retirement_preserves_changed_intent_and_admission_context_before_planning() {
+    for mode in ["intent", "phase"] {
+        let f = Fixture::new().await;
+        payload_complete(&f).await;
+        let path = if mode == "intent" {
+            f.journal.join("intent.json")
+        } else {
+            worker_routes(&f)[1].clone()
+        };
+        let mut value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        value[if mode == "intent" {
+            "acknowledged"
+        } else {
+            "admitted"
+        }] = false.into();
+        let changed = serde_json::to_vec(&value).unwrap();
+        std::fs::write(&path, &changed).unwrap();
+        assert!(retire(&f).await.is_err(), "{mode}");
+        assert!(f.record().unwrap().metadata.is_none());
+        assert_eq!(std::fs::read(path).unwrap(), changed);
+        assert!(f.journal.join("intent.json").exists());
+        assert!(worker_routes(&f).iter().all(|path| path.exists()));
+        f.app.runtime.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn native_metadata_retirement_child() {
     let Ok(control) = std::env::var("CYBER_NATIVE_METADATA_RETIREMENT_CHILD") else {
         return;

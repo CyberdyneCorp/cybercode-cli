@@ -1192,3 +1192,94 @@ HTTP/generated contract changes. Full workspace, SDK runtime, other CLI/TUI case
 all receipt-kind crash cuts and new-source platform acceptance remain unperformed
 here and required by their parent tasks. No M6, issue, PR or delivery completion is
 claimed. The preserved original pre-main-integration stash remains intact.
+
+Managed retirement implementation continuation: extend the approved M6 protocol
+with a frozen complete checkout inventory, exact native claim/acknowledgement
+observations and persistent repository-lock identity. Retain all native locks
+through the final metadata call; remove only verified acknowledged leaves under
+the Store writer's durable plan. Resumption may observe missing exact leaves only
+after that plan, and same-owner construction/foreign/aliased/live evidence refuses.
+Shared creation and unrelated activity records remain retained. Implement the core
+native guard, extended writer frame/catalog fence, actual snapshot adapter and
+ordinary/preparation/paired managed positives plus refusal and process-cut cases.
+This is ongoing M6 implementation, not acceptance or a new parent completion.
+
+Managed checkout metadata retirement (2026-11-10): core now exposes a native guard
+separate from its serializable observations. It derives fixed claim/acknowledgement
+names, retains unique no-follow file locks and persistent repository locks, checks
+native routes/creation bytes and every surviving generation before each unlink,
+removes acknowledgement before original claim and preserves unrelated activity and
+shared creation records. Same-owner unknown constructors refuse. Missing leaves
+are progress only for the trusted adapter's already committed exact plan; ordinary
+acquisition/acknowledgement is never synthesized during cleanup. Metadata opens
+are nonblocking before regular-file validation, including a bounded FIFO regression.
+
+The internal metadata event's version-2 frame retains complete ordered checkout
+bindings with per-owner consumed resource/receipt digests and exact leaf metadata.
+It bounds resources to 8,192, each native leaf to one MiB, aggregate checkout bytes
+to 64 MiB and encoding to 32 MiB. Legacy version-1 frames stay empty-inventory and
+16 KiB bounded. Shape/uniqueness and exact consumption are validated at the Store
+writer; no data frame itself grants native effects. Migration marker
+20261110010000_snapshot_checkout_retirement makes older catalogs read-only and
+preserves existing evidence across physical reopen. Historical absolute-path
+shape validation is portable and data-only; native acquisition separately requires
+host-native absolute routes.
+
+The actual snapshot adapter now prepares those guards from retained lifetimes,
+complete resource publication and existing exact consuming acknowledgements,
+commits the immutable Store plan, performs guarded claim and private metadata
+retirement under the writer, and resumes from frozen bindings after phase/intent
+removal. Repository locks remain through its last filesystem call. Shared
+namespace/record entries are synchronized before planning, and exact parent
+directories are also synchronized when resumption merely observes missing names.
+Review tightened capture ordering: native identities/hashes/generations are frozen
+before typed original context is re-attested, then fresh pins reject later changes.
+Changed intent/admission and original-claim context regressions preserve bytes and
+refuse before planning. The default owned-Git admission gate remains off.
+
+Actual local positives cover managed ordinary restore in the default data layout,
+managed prepared cancellation, and both keep/rollback after real partial source
+replacement kills. They verify claim/acknowledgement disappearance, exact completion,
+no-op repeats, protected index/config/creation bytes and receipt-only lookup/
+acknowledgement after restarting. Later source edits/links, transcript and inference
+counts remain unchanged. Native guard tests cover both per-leaf cuts through reopen,
+multiple consumed owners sharing one repository lock, live/busy exclusion,
+replacement/changed/aliased/context/constructor refusal, FIFO nonblocking and data
+bounds. These primitive reopen cuts are not managed Store/process-death acceptance.
+The prior unrelated probe panic is caught/expected; two test-helper failures were
+retained as failures (.tmpvlw4ci and .tmptdEG3s), then corrected to avoid recreating
+retired journals or killing an already stopped service. App/core failed fixture
+paths are now retained for native CI alongside the existing CLI evidence.
+
+Final local managed-retirement verification: 22 selected core worktree tests pass
+(two existing subprocess fixtures ignored at top level), including nine new
+retirement/portable-path cases; all 14 migration cases pass. Both real App Git
+runtime cases and all 38 App reclamation cases pass. The final three managed CLI
+cases pass in 292.72 seconds, including the caught fixture-preservation probe and
+both keep/rollback source-kill actions. A later sample attempt finds the CLI process
+already terminal; the verified filesystem wait is not treated as a timeout or
+restarted. The snapshot feature package passes 154 library, 31 file-copy and 22 Git
+cases (nine library/one Git subprocess fixtures intentionally ignored at top level;
+Windows-only/doc binaries select zero here). All-target core/Store/server/snapshot/
+App/CLI Clippy passes with warnings denied, as do format/whitespace, SDK generation
+consistency, strict OpenSpec (100 items), spec lint (0 errors/25 warnings), and Ruby
+workflow YAML parsing/guard-step selection. macOS C sandbox deprecations and linker
+unwind-size diagnostics are observed without assigning their origin. Build-only
+CLI artifacts were cleaned with cargo clean after verifying no CLI test/service
+was live; original source/evidence and the pre-main-integration stash are preserved.
+
+Code-review-skill summary for this checkpoint: architecture follows the existing
+native core / runtime receipt / App Store-writer / snapshot adapter boundaries.
+Native plans are data only; publication uses existing consumption markers and no
+source replay or capability activation. Review identified and corrected capture
+ordering and missing-parent-sync gaps; context/bounds/refusal tests pass. Critical:
+0. Major: 1 required acceptance gap (managed metadata-deletion process/crash matrix
+and current-source platforms). Minor/nits: 0. Verdict: REQUEST CHANGES before full
+recovery delivery, while this scoped checkpoint is reviewable. Next: actual managed
+metadata process cuts/retention-loss/reader cases, zero-payload and partial
+construction, old/deleted Location maintenance and complete native acceptance.
+Full workspace, SDK runtime and other CLI/TUI scenarios were not rerun here.
+M6, parent tasks and issue #93 remain open; no PR, merge or delivery is claimed.
+
+The final OpenAPI artifact consistency test also passes (one exact HTTP case).
+No generated HTTP/SDK schema changes are required by this internal protocol.

@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{GitExecution, Managed, Name, RemovalActivity, Repository, RepositoryLock};
 mod snapshot;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use snapshot::CheckoutRetirementGuard;
 pub use snapshot::{CheckoutAcknowledgement, CheckoutBinding, CheckoutOwner, SnapshotClaim};
+pub use snapshot::{CheckoutRetirementFile, CheckoutRetirementPlan};
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct UseRecord {

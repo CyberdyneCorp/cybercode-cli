@@ -9,15 +9,19 @@ pub const PLANNED: &str = "snapshot.reclamation.metadata.planned.1";
 pub const COMPLETED: &str = "snapshot.reclamation.metadata.completed.1";
 const FILE_LIMIT: usize = 10;
 const FILE_BYTES: u64 = 8 * 1024 * 1024;
-const ENCODED_LIMIT: usize = 16 * 1024;
+const ENCODED_LIMIT: usize = 32 * 1024 * 1024;
+const LEGACY_ENCODED_LIMIT: usize = 16 * 1024;
 
-struct EncodingLimit(usize);
+struct EncodingLimit {
+    used: usize,
+    limit: usize,
+}
 impl std::io::Write for EncodingLimit {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0 = self
-            .0
+        self.used = self
+            .used
             .checked_add(bytes.len())
-            .filter(|size| *size <= ENCODED_LIMIT)
+            .filter(|size| *size <= self.limit)
             .ok_or_else(|| {
                 std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -30,8 +34,8 @@ impl std::io::Write for EncodingLimit {
         Ok(())
     }
 }
-fn bounded_encoding(value: &impl Serialize) -> Result<(), String> {
-    serde_json::to_writer(EncodingLimit(0), value)
+fn bounded_encoding(value: &impl Serialize, limit: usize) -> Result<(), String> {
+    serde_json::to_writer(EncodingLimit { used: 0, limit }, value)
         .map_err(|_| "Metadata retirement encoding exceeds limit".into())
 }
 
@@ -62,10 +66,14 @@ pub struct Plan {
     pub version: u32,
     pub payload_plan_id: String,
     pub files: Vec<File>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checkouts: Vec<cyber_core::worktrees::CheckoutRetirementPlan>,
 }
 impl Plan {
     fn shape(&self) -> Result<(), StoreError> {
-        if self.version != 1
+        if !matches!(self.version, 1 | 2)
+            || (self.version == 1) != self.checkouts.is_empty()
+            || self.checkouts.len() > 8192
             || self.files.is_empty()
             || self.files.len() > FILE_LIMIT
             || !self
@@ -96,8 +104,33 @@ impl Plan {
                 ));
             }
         }
+        cyber_core::worktrees::CheckoutRetirementPlan::validate_set(&self.checkouts)
+            .map_err(|error| invalid(error.to_string()))?;
+        for plan in &self.checkouts {
+            for file in [&plan.claim, &plan.acknowledgement] {
+                if self.files.iter().any(|local| {
+                    local.identity
+                        == file
+                            .identity
+                            .split(':')
+                            .take(4)
+                            .collect::<Vec<_>>()
+                            .join(":")
+                }) {
+                    return Err(invalid("Aliased local and checkout retirement metadata"));
+                }
+            }
+        }
         // Bound all strings before allocating their serialized representation.
-        bounded_encoding(self).map_err(invalid)?;
+        bounded_encoding(
+            self,
+            if self.version == 1 {
+                LEGACY_ENCODED_LIMIT
+            } else {
+                ENCODED_LIMIT
+            },
+        )
+        .map_err(invalid)?;
         self.total_bytes().map(drop)
     }
     pub fn validate(&self, payload: &PayloadPlan) -> Result<(), StoreError> {
@@ -108,15 +141,32 @@ impl Plan {
         }
         let owners = payload.receipt.owners()?;
         for owner in &owners {
+            let plans = self
+                .checkouts
+                .iter()
+                .filter(|plan| plan.binding.owner_id == owner.origin.activity_id)
+                .collect::<Vec<_>>();
+            let bindings = plans
+                .iter()
+                .map(|plan| plan.binding.clone())
+                .collect::<Vec<_>>();
             if owner
                 .lifetime
-                .checkout_resources_digest(&[])
+                .checkout_resources_digest(&bindings)
                 .map_err(invalid)?
                 != owner.resources_digest
             {
                 return Err(invalid(
-                    "Metadata retirement needs an empty complete checkout inventory",
+                    "Metadata retirement checkout inventory differs from consumption",
                 ));
+            }
+            let receipt_digest = checkout_receipt_digest(&payload.receipt).map_err(invalid)?;
+            for plan in plans {
+                if plan.resources_digest != owner.resources_digest
+                    || plan.receipt_digest != receipt_digest
+                {
+                    return Err(invalid("Metadata retirement checkout disposition differs"));
+                }
             }
             for role in [Role::Intent, Role::Lifetime, Role::SourcePhase] {
                 if !self
@@ -127,6 +177,13 @@ impl Plan {
                     return Err(invalid("Metadata retirement is missing a worker role"));
                 }
             }
+        }
+        if self.checkouts.iter().any(|plan| {
+            !owners
+                .iter()
+                .any(|owner| owner.origin.activity_id == plan.binding.owner_id)
+        }) {
+            return Err(invalid("Metadata retirement has a foreign checkout owner"));
         }
         for file in &self.files {
             let owner = owners
@@ -153,9 +210,16 @@ impl Plan {
         Ok(())
     }
     pub fn total_bytes(&self) -> Result<u64, StoreError> {
-        self.files.iter().try_fold(0u64, |sum, file| {
+        let local = self.files.iter().try_fold(0u64, |sum, file| {
             sum.checked_add(file.bytes)
                 .ok_or_else(|| invalid("Metadata retirement size overflow"))
+        })?;
+        self.checkouts.iter().try_fold(local, |sum, plan| {
+            sum.checked_add(
+                plan.total_bytes()
+                    .map_err(|error| invalid(error.to_string()))?,
+            )
+            .ok_or_else(|| invalid("Metadata retirement size overflow"))
         })
     }
     /// Re-attest at the writer around a separately verified native callback.
@@ -188,6 +252,14 @@ impl Plan {
         payload.authorize(db)
     }
 }
+fn checkout_receipt_digest(receipt: &Receipt) -> Result<String, String> {
+    match receipt {
+        Receipt::Restore(receipt) => receipt.checkout_acknowledgement_digest(),
+        Receipt::Preparation(receipt) => receipt.checkout_acknowledgement_digest(),
+        Receipt::Recovery(receipt) => receipt.checkout_acknowledgement_digest(),
+    }
+}
+
 fn native_identity(value: &str) -> bool {
     if value.len() > 128 {
         return false;
@@ -281,7 +353,19 @@ pub(super) fn register(registry: &mut EventRegistry) {
             {
                 return Err("Invalid metadata retirement file bounds".into());
             }
-            bounded_encoding(value)?;
+            if value.get("checkouts").is_some_and(|checkouts| {
+                checkouts.as_array().is_none_or(|plans| plans.len() > 8192)
+            }) {
+                return Err("Invalid checkout retirement resource bounds".into());
+            }
+            bounded_encoding(
+                value,
+                if value.get("version").and_then(serde_json::Value::as_u64) == Some(2) {
+                    ENCODED_LIMIT
+                } else {
+                    LEGACY_ENCODED_LIMIT
+                },
+            )?;
             serde_json::from_value::<Plan>(value.clone())
                 .map_err(|e| e.to_string())?
                 .shape()

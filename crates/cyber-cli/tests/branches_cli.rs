@@ -926,6 +926,7 @@ fn managed_git_partial_kill(action: &str) {
     assert_native_settlement_link(&env, &journal, &result);
     assert_recovery_lookup_does_not_replay(&env, &id, &request_id, &request, &result, &messages);
     assert_managed_git_reclamation(&env, &result);
+    assert_retired_recovery_receipt(&env, &id, &request_id, &result, &messages);
     assert_eq!(std::fs::read(index_path).unwrap(), index);
     assert_eq!(std::fs::read(config_path).unwrap(), config);
     assert_eq!(model.requests().len(), requests);
@@ -993,6 +994,74 @@ fn assert_managed_git_reclamation(env: &Env, result: &Value) {
         source_link
     );
     assert!(marker.exists());
+    assert_managed_metadata_retired(&maintenance, &env.directory, &receipt);
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn assert_retired_recovery_receipt(
+    env: &Env,
+    session: &str,
+    request: &str,
+    expected: &Value,
+    messages: &[Value],
+) {
+    let source = env.file("bulk_0000");
+    let lookup = json(&env.cyber(&[
+        "sessions",
+        "recovery-request",
+        session,
+        request,
+        "--format",
+        "json",
+    ]));
+    assert_eq!(lookup["receipt"], expected["receipt"]);
+    assert!(lookup["journal_acknowledged"].is_null());
+    kill_registered_service(env);
+    let acknowledged = json(&env.cyber(&[
+        "sessions",
+        "recovery-request",
+        session,
+        request,
+        "--acknowledge",
+        "--format",
+        "json",
+    ]));
+    assert_eq!(acknowledged["receipt"], expected["receipt"]);
+    assert_eq!(acknowledged["journal_acknowledged"], true);
+    assert_eq!(env.file("bulk_0000"), source);
+    assert_eq!(env.messages(session).as_slice(), messages);
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn assert_managed_metadata_retired(
+    maintenance: &reclamation_support::Maintenance,
+    source: &std::path::Path,
+    receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
+) {
+    assert!(maintenance.retire(source, receipt.clone()).unwrap() > 0);
+    let record = maintenance.policy.record(receipt).unwrap().unwrap();
+    assert!(record.completed && record.retired);
+    let metadata = record.metadata.unwrap();
+    assert_eq!(metadata.version, 2);
+    assert!(!metadata.checkouts.is_empty());
+    assert_retired_checkout_files(&metadata.checkouts);
+    for owner in receipt.owners().unwrap() {
+        assert!(
+            !maintenance
+                .namespace
+                .join("journals")
+                .join(&owner.origin.binding.journal_id)
+                .exists()
+        );
+    }
+    assert_retired_worker_files(&maintenance.namespace, receipt);
+    assert_eq!(maintenance.retire(source, receipt.clone()).unwrap(), 0);
 }
 
 #[cfg(all(
@@ -1441,32 +1510,33 @@ fn assert_prepared_metadata_retirement(
     journal: &std::path::Path,
     receipt: &cyber_server::runtime::snapshot_reclamation::Receipt,
 ) {
-    let owner = receipt.owners().unwrap().remove(0);
-    if owner.lifetime.owner.worktree_id.is_some() {
-        let error = maintenance.retire(source, receipt.clone()).unwrap_err();
-        assert!(
-            error.contains("Managed checkout metadata retirement is not yet available"),
-            "{error}"
-        );
-        assert!(
-            maintenance
-                .policy
-                .record(receipt)
-                .unwrap()
-                .unwrap()
-                .metadata
-                .is_none()
-        );
-        assert!(journal.join("intent.json").exists() && journal.join("preparation.json").exists());
-        return;
-    }
     assert!(maintenance.retire(source, receipt.clone()).unwrap() > 0);
     let record = maintenance.policy.record(receipt).unwrap().unwrap();
     assert!(record.completed && record.retired);
-    assert_eq!(record.metadata.unwrap().files.len(), 5);
+    let metadata = record.metadata.unwrap();
+    assert_eq!(metadata.files.len(), 5);
+    assert_retired_checkout_files(&metadata.checkouts);
     assert!(!journal.exists());
     assert_retired_worker_files(&maintenance.namespace, receipt);
     assert_eq!(maintenance.retire(source, receipt.clone()).unwrap(), 0);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn assert_retired_checkout_files(plans: &[cyber_core::worktrees::CheckoutRetirementPlan]) {
+    for plan in plans {
+        let directory = plan
+            .binding
+            .common_dir
+            .join("cyber-worktree-activity")
+            .join(&plan.binding.worktree_id);
+        for suffix in [".lock", ".snapshot-ack"] {
+            let path = directory.join(format!("{}{suffix}", plan.binding.owner_id));
+            assert_eq!(
+                std::fs::symlink_metadata(path).unwrap_err().kind(),
+                std::io::ErrorKind::NotFound
+            );
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

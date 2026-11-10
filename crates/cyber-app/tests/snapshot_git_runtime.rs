@@ -26,6 +26,18 @@ struct Fixture {
     directory: PathBuf,
     session: String,
 }
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self._temp.disable_cleanup(true);
+            eprintln!(
+                "Preserved failed Git App fixture at {}",
+                self._temp.path().display()
+            );
+        }
+    }
+}
+
 impl Fixture {
     async fn new(format: &str, scoped: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
@@ -347,13 +359,122 @@ async fn reclaim_restore_payloads(f: &Fixture, receipt: &SnapshotRestoreReceipt)
             .unwrap(),
         0
     );
+    assert_retained_intent_metadata(&journal, &intent);
+    retire_restore_metadata(f, receipt, &snapshots, policy.as_ref()).await;
+    assert_reclaimed_source_and_receipt(f, receipt, inference).await;
+}
+
+fn assert_retained_intent_metadata(journal: &Path, intent: &[u8]) {
     assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
-    let header: Value = serde_json::from_slice(&intent).unwrap();
+    let header: Value = serde_json::from_slice(intent).unwrap();
     assert_eq!(header["version"], 7);
     assert!(header["updates"].is_object());
     assert!(journal.join("intent.next").is_file());
     assert_eq!(std::fs::read_dir(journal).unwrap().count(), 2);
-    assert_reclaimed_source_and_receipt(f, receipt, inference).await;
+}
+
+async fn retire_restore_metadata(
+    f: &Fixture,
+    receipt: &SnapshotRestoreReceipt,
+    snapshots: &cyber_snapshot::GitSnapshots,
+    policy: &dyn cyber_snapshot::reclamation::Policy,
+) {
+    use cyber_server::runtime::snapshot_reclamation::Receipt;
+    let journal = f.journal(receipt);
+    let namespace = journal.parent().unwrap().parent().unwrap().to_path_buf();
+    let checkout = receipt.checkout.as_ref().unwrap();
+    let phase = namespace
+        .join("workers")
+        .join(checkout.lifetime.source_phase.as_ref().unwrap());
+    let data: Value = serde_json::from_slice(&std::fs::read(&phase).unwrap()).unwrap();
+    let bindings: Vec<cyber_core::worktrees::CheckoutBinding> =
+        serde_json::from_value(data["checkout_bindings"].clone()).unwrap();
+    let creations = bindings
+        .iter()
+        .map(|binding| {
+            let path = binding
+                .common_dir
+                .join("cyber-worktrees")
+                .join(format!("{}.json", binding.name));
+            let bytes = std::fs::read(&path).unwrap();
+            (path, bytes)
+        })
+        .collect::<Vec<_>>();
+    let retained = Receipt::Restore(receipt.clone());
+    assert!(
+        snapshots
+            .retire(f.directory.to_str().unwrap(), retained.clone())
+            .await
+            .unwrap()
+            > 0
+    );
+    let record = policy.record(&retained).unwrap().unwrap();
+    assert!(record.completed && record.retired);
+    let plan = record.metadata.unwrap();
+    assert_managed_retirement_frame(&plan, &record.plan);
+    assert_eq!(
+        plan.checkouts
+            .iter()
+            .map(|plan| plan.binding.clone())
+            .collect::<Vec<_>>(),
+        bindings
+    );
+    assert!(!journal.exists());
+    assert_eq!(
+        std::fs::symlink_metadata(phase).unwrap_err().kind(),
+        std::io::ErrorKind::NotFound
+    );
+    for binding in &bindings {
+        assert_checkout_metadata_removed(binding);
+    }
+    for (path, bytes) in creations {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+    assert_eq!(
+        snapshots
+            .retire(f.directory.to_str().unwrap(), retained)
+            .await
+            .unwrap(),
+        0
+    );
+}
+fn assert_managed_retirement_frame(
+    plan: &cyber_server::runtime::snapshot_reclamation::metadata::Plan,
+    payload: &cyber_server::runtime::snapshot_reclamation::Plan,
+) {
+    plan.validate(payload).unwrap();
+    if plan.checkouts.is_empty() {
+        return;
+    }
+    for mutation in ["receipt", "resources", "owner", "duplicate", "alias"] {
+        let mut foreign = plan.clone();
+        match mutation {
+            "receipt" => foreign.checkouts[0].receipt_digest = "f".repeat(64),
+            "resources" => foreign.checkouts[0].resources_digest = "f".repeat(64),
+            "owner" => foreign.checkouts[0].binding.owner_id = "op_foreign".into(),
+            "duplicate" => foreign.checkouts.push(foreign.checkouts[0].clone()),
+            "alias" => {
+                foreign.checkouts[0].acknowledgement.identity =
+                    foreign.checkouts[0].claim.identity.clone()
+            }
+            _ => unreachable!(),
+        }
+        assert!(foreign.validate(payload).is_err(), "{mutation}");
+    }
+}
+
+fn assert_checkout_metadata_removed(binding: &cyber_core::worktrees::CheckoutBinding) {
+    let directory = binding
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&binding.worktree_id);
+    for suffix in [".lock", ".snapshot-ack"] {
+        let path = directory.join(format!("{}{suffix}", binding.owner_id));
+        assert_eq!(
+            std::fs::symlink_metadata(path).unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+    }
 }
 
 async fn assert_replaced_link_payload_refused(

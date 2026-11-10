@@ -1019,6 +1019,33 @@ callback. The first writer frame supports empty complete checkout inventories;
 managed checkout claim retirement, partial constructors and all actual native
 retirement/reconciliation/crash paths remain required before M6 acceptance.
 
+#### Consumed managed checkout retirement
+
+The managed extension SHALL freeze the complete ordered checkout bindings for each
+consumed owner with the metadata plan before the first unlink. Each binding SHALL
+match its owner's consumed resource digest and lifetime, and its native claim and
+existing acknowledgement SHALL match the same receipt digest. The plan SHALL bind
+both leaves' native identity, generation, BLAKE3 content hash and bounded length,
+plus the persistent repository-lock identity. Shape validation is not deletion
+authority. Older Store writers SHALL refuse the extended protocol through the
+migration catalog; version-1 empty-inventory plans retain their exact meaning.
+The version-2 envelope SHALL bound the combined inventory to 8,192 checkout
+resources, one MiB per native leaf, 64 MiB of checkout metadata in total and
+32 MiB of encoded plan data. Legacy version-1 plans retain the 16 KiB envelope
+bound. Overflow refuses before deletion. Historical path validation SHALL remain
+data-only and portable; native acquisition additionally requires host-native routes.
+
+The native adapter SHALL retain all original lifetime locks, repository locks,
+creation/namespace pins and surviving claim/acknowledgement locks through the last
+filesystem call. It SHALL derive fixed semantic names from verified bindings,
+revalidate registrations and every surviving leaf before each unlink, remove the
+acknowledgement before its original claim and synchronize the activity directory.
+Only an already committed exact plan permits missing leaves on restart. A changed
+creation, route, byte sequence, generation, alias or live owner refuses. Unknown
+construction entries for the same owner remain fenced; unrelated activity and
+shared creation records remain intact. The callback remains serialized against
+reference writers, with fresh retention and complete native-owner re-attestation.
+
 ### Paired recovery payload cleanup
 
 Acknowledged keep/rollback cleanup SHALL bind the exact durable two-owner recovery

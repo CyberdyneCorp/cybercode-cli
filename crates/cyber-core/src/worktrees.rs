@@ -8,10 +8,13 @@ mod location;
 mod removal;
 pub(crate) mod repository;
 mod setup;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use activity::CheckoutRetirementGuard;
 pub use activity::{
     CheckoutAcknowledgement, CheckoutActivity, CheckoutBinding, CheckoutLease, CheckoutOwner,
     SnapshotClaim,
 };
+pub use activity::{CheckoutRetirementFile, CheckoutRetirementPlan};
 pub use changes::{ChangedFile, Changes};
 pub use includes::IncludedFile;
 pub use removal::{RemovalActivity, RemovalPhase, RemovalRecord};

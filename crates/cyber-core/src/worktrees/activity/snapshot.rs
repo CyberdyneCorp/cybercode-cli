@@ -2,10 +2,14 @@
 use super::{Managed, UseRecord, invalid};
 pub(super) mod acknowledgement;
 mod publication;
+mod retirement;
 pub use acknowledgement::CheckoutAcknowledgement;
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
 pub(super) use publication::publish;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use retirement::CheckoutRetirementGuard;
+pub use retirement::{CheckoutRetirementFile, CheckoutRetirementPlan};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -168,12 +172,14 @@ pub(super) struct Pins {
 }
 
 fn open_file(directory: &Dir, name: &str) -> io::Result<File> {
-    let file = directory
-        .open_with(
-            name,
-            OpenOptions::new().read(true).follow(FollowSymlinks::No),
-        )?
-        .into_std();
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = directory.open_with(name, &options)?.into_std();
     regular(&file)?;
     Ok(file)
 }

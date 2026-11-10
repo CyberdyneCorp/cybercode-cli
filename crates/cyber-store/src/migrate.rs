@@ -209,6 +209,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261110000000_snapshot_metadata_retirement",
         sql: include_str!("../migrations/20261110000000_snapshot_metadata_retirement.sql"),
     },
+    Migration {
+        id: "20261110010000_snapshot_checkout_retirement",
+        sql: include_str!("../migrations/20261110010000_snapshot_checkout_retirement.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -655,13 +659,21 @@ mod tests {
 
     #[test]
     fn metadata_retirement_catalog_survives_reopen_and_preserves_unknown_evidence() {
+        for id in [
+            "20261110000000_snapshot_metadata_retirement",
+            "20261110010000_snapshot_checkout_retirement",
+        ] {
+            metadata_catalog_fence(id);
+        }
+    }
+    fn metadata_catalog_fence(id: &str) {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("retirement.db");
         let marker = temp.path().join("retained-intent.next");
         std::fs::write(&marker, b"unknown native metadata").unwrap();
         let at = MIGRATIONS
             .iter()
-            .position(|migration| migration.id == "20261110000000_snapshot_metadata_retirement")
+            .position(|migration| migration.id == id)
             .unwrap();
         let mut db = Connection::open(&path).unwrap();
         migrate(&mut db, &MIGRATIONS[..at]).unwrap();

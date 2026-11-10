@@ -69,6 +69,18 @@ fn stage_owner(name: &str) -> io::Result<&str> {
     Ok(owner)
 }
 impl Acknowledged {
+    pub(super) fn retirement_context(&self) -> (String, String) {
+        (
+            self.record.resources_digest.clone(),
+            self.record.receipt_digest.clone(),
+        )
+    }
+    pub(super) fn into_retirement_file(self) -> LockedRecord {
+        self.file
+    }
+    pub(super) fn file_for_retirement(&self) -> &File {
+        &self.file
+    }
     fn open(pins: &Pins, binding: &CheckoutBinding) -> io::Result<Self> {
         let file = open_file(&pins.directory, &format!("{}{SUFFIX}", binding.owner_id))?;
         if !super::super::try_lock(&file)? {
@@ -112,6 +124,25 @@ impl Acknowledged {
         }
         Ok(())
     }
+}
+
+pub(super) fn verify_retirement_context(
+    file: &File,
+    plan: &super::CheckoutRetirementPlan,
+) -> io::Result<()> {
+    let record: Record = serde_json::from_slice(&contents(file, LIMIT)?).map_err(invalid)?;
+    if record.version != 1
+        || record.binding != plan.binding
+        || record.resources_digest != plan.resources_digest
+        || record.receipt_digest != plan.receipt_digest
+        || record.file_identity != plan.acknowledgement.identity
+        || stage_owner(&record.staging_name)? != plan.binding.owner_id
+    {
+        return Err(invalid(
+            "Checkout retirement acknowledgement context differs",
+        ));
+    }
+    Ok(())
 }
 
 impl CheckoutAcknowledgement {

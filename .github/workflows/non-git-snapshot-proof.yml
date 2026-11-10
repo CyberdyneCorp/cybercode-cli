@@ -77,11 +77,23 @@ jobs:
           set -euo pipefail
           cargo test --locked -p cyber-core --lib worktrees::activity::snapshot::acknowledgement::tests::maintenance_requires_an_existing_acknowledgement_without_publishing_one -- --exact --nocapture 2>&1 | tee managed-checkout-ack-proof.log
       - name: Owned Git runtime acceptance candidate
+        env:
+          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-snapshot --features native-git-acceptance -- --nocapture 2>&1 | tee git-adapter-proof.log
           cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_git_runtime -- --nocapture 2>&1 | tee git-runtime-proof.log
+      - name: Exact acknowledged checkout retirement and resumption
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-core --lib worktrees::activity::snapshot::retirement:: -- --nocapture 2>&1 | tee checkout-retirement-proof.log
       - name: Store-bound fallback collection and reclamation
         shell: bash
         run: |
@@ -143,6 +155,7 @@ jobs:
           path: |
             non-git-snapshot-proof.log
             managed-checkout-ack-proof.log
+            checkout-retirement-proof.log
             git-adapter-proof.log
             git-runtime-proof.log
             fallback-collection-proof.log

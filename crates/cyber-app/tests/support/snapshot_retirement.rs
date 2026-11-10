@@ -66,6 +66,7 @@ fn plan(f: &Fixture) -> Plan {
         version: 1,
         payload_plan_id: records::Plan::id(&f.receipt).unwrap(),
         files,
+        checkouts: vec![],
     }
 }
 fn append(

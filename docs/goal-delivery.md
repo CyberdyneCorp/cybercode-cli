@@ -117,12 +117,12 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    files for empty checkout inventories. Periodic Store discovery resumes after
    active-intent deletion, including a tested real process kill; cap pressure can
    reclaim metadata before one capture retry. Completed acknowledgement returns
-   the retained Store receipt without reopening deleted files. Managed claims,
-   partial construction and complete receipt-kind crash/platform acceptance remain
+   the retained Store receipt without reopening deleted files. Remaining managed
+   claim crash cases, partial construction and full platform acceptance remain
    open. Real prepared-cancellation and paired keep/rollback CLI fixtures now
    exercise metadata retirement and receipt acknowledgement after restart, including
    no-follow checks for removed lifetime/phase files. These positive cases do not
-   establish the complete crash matrix or managed claim retirement.
+   establish the complete crash matrix.
 
    A separate real App regression reproduced 57,344 bytes of payload deletion
    when configuration resolved to null. Cleanup now preserves bytes initially and
@@ -131,6 +131,21 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    deletion, tamper/alias/live-owner refusals, policy loss, process death and cap
    retry. The earlier 14 migration tests cover the writer catalog. Fresh platform
    and broader current-source verification remain required before M6 acceptance.
+
+9. **Managed retirement now freezes complete checkout bindings before deletion.**
+   A version-2 metadata plan binds each original claim and its existing consuming
+   acknowledgement, native generations/hashes and persistent repository-lock
+   identity. The native callback retains the original lifetime and all repository/
+   leaf locks, removes acknowledgement before claim, preserves shared creation and
+   unrelated activity records, and synchronizes observed absence on resumption.
+   The Store writer re-attests receipt, retention and references; a new catalog
+   marker fences older writers. Version-1 plans retain their original meaning.
+   Real App/CLI managed ordinary restore, prepared cancellation and paired
+   keep/rollback positives now remove those leaves and acknowledge from the
+   retained receipt after restart without source replay. Guard reopen/cut,
+   alias/context/live-owner/construction and bounded FIFO cases pass locally.
+   Actual managed metadata-deletion process cuts, zero-payload/partial constructors,
+   old/deleted Locations and source-bound platforms still gate M6 acceptance.
 
 Native run [42733865471](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42733865471)
 passes Linux x64/ARM and macOS ARM/Intel at `e2b3ba18`, including the earlier

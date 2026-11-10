@@ -29,16 +29,6 @@ pub(crate) fn retire(
     if !due(config.as_ref(), &store.root, settlement.settled_at_ms) {
         return Ok(0);
     }
-    for owner in receipt.owners().map_err(storage::fail)? {
-        if owner.lifetime.owner.worktree_id.is_some()
-            || owner.lifetime.checkout_resources_digest(&[])? != owner.resources_digest
-        {
-            return Err("Managed checkout metadata retirement is not yet available".into());
-        }
-    }
-    if record.metadata.is_none() {
-        verify_initial(&store, &record)?;
-    }
     let prepared =
         native::Prepared::new(store, workspace, config, settlement.settled_at_ms, record)?;
     let plan = prepared.plan.clone();
@@ -46,8 +36,8 @@ pub(crate) fn retire(
     policy.retire(payload, plan, Box::new(move || prepared.delete()))
 }
 
-fn verify_initial(store: &Store, retained: &records::Record) -> Result<(), String> {
-    let receipt = &retained.plan.receipt;
+fn verify_initial(store: &Store, retained: &records::Plan) -> Result<(), String> {
+    let receipt = &retained.receipt;
     for owner in receipt.owners().map_err(storage::fail)? {
         store.verify_worker_namespace(owner.origin)?;
         let (_, journal) = store.journal(&owner.origin.binding.journal_id)?;
@@ -69,17 +59,16 @@ fn verify_initial(store: &Store, retained: &records::Record) -> Result<(), Strin
 }
 fn initial_journal(
     store: &Store,
-    retained: &records::Record,
+    retained: &records::Plan,
     journal: &Journal,
     origin: &cyber_server::runtime::SnapshotOrigin,
 ) -> Result<(String, bool), String> {
-    match &retained.plan.receipt {
+    match &retained.receipt {
         Receipt::Restore(receipt) if ordinary(journal) => {
             Ok((receipt.intent_digest.clone(), !journal.changes.is_empty()))
         }
         Receipt::Preparation(receipt) if cancelled::verify(store, receipt, journal)? => Ok((
             retained
-                .plan
                 .intent_digest
                 .clone()
                 .ok_or("Missing cancellation intent digest")?,

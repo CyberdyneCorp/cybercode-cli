@@ -1,5 +1,6 @@
 //! Native guards and fixed semantic routes; no source image is opened or installed.
 use super::*;
+use cyber_core::worktrees::CheckoutRetirementGuard;
 use cyber_server::runtime::{SnapshotLifetimeBinding, SnapshotOrigin};
 use metadata::{File as Entry, Plan as MetadataPlan, Role};
 use std::os::unix::fs::FileExt;
@@ -7,6 +8,7 @@ use std::os::unix::fs::FileExt;
 struct Owner {
     origin: SnapshotOrigin,
     binding: SnapshotLifetimeBinding,
+    resources_digest: String,
     journal: Option<Dir>,
     journal_generation: Option<String>,
     _lifetime: Option<super::super::super::lifetime::Lifetime>,
@@ -24,6 +26,7 @@ pub(super) struct Prepared {
     workers: Dir,
     workers_generation: String,
     owners: Vec<Owner>,
+    checkouts: CheckoutRetirementGuard,
     leaves: Vec<Leaf>,
     _workspace: tokio::sync::OwnedMutexGuard<()>,
     config: Arc<crate::ConfigFn>,
@@ -57,19 +60,43 @@ impl Prepared {
             owners.push(Owner {
                 origin: evidence.origin.clone(),
                 binding: evidence.lifetime.clone(),
+                resources_digest: evidence.resources_digest.to_owned(),
                 journal,
                 journal_generation,
                 _lifetime: lifetime,
             });
         }
+        let checkouts = match &frozen {
+            Some(plan) => CheckoutRetirementGuard::resume_committed(plan.checkouts.clone())
+                .map_err(storage::fail)?,
+            None => {
+                let mut claims = Vec::new();
+                for owner in &owners {
+                    let lifetime = owner
+                        ._lifetime
+                        .as_ref()
+                        .ok_or("Missing original metadata lifetime")?;
+                    let proof = super::super::checkouts::Checkouts::acquire(
+                        &store,
+                        lifetime,
+                        &owner.binding,
+                        &owner.resources_digest,
+                        &super::super::checkouts::receipt_digest(&record.plan.receipt)?,
+                    )?;
+                    claims.extend(proof.into_claims());
+                }
+                CheckoutRetirementGuard::prepare(claims).map_err(storage::fail)?
+            }
+        };
         let entries = match &frozen {
             Some(plan) => plan.files.clone(),
             None => capture(&store, &workers, &owners, &record.plan.receipt)?,
         };
         let plan = MetadataPlan {
-            version: 1,
+            version: if checkouts.plans().is_empty() { 1 } else { 2 },
             payload_plan_id: records::Plan::id(&record.plan.receipt).map_err(storage::fail)?,
             files: entries,
+            checkouts: checkouts.plans(),
         };
         plan.validate(&record.plan).map_err(storage::fail)?;
         if frozen.as_ref().is_some_and(|frozen| *frozen != plan) {
@@ -91,12 +118,18 @@ impl Prepared {
                 pin,
             });
         }
+        // Freeze native identities/generations first, then re-attest original
+        // typed intent/phase context. verify() rejects any subsequent mutation.
+        if frozen.is_none() {
+            super::verify_initial(&store, &record.plan)?;
+        }
         leaves.sort_by_key(|leaf| priority(leaf.entry.role));
         let prepared = Self {
             workers_generation: directory_generation(&workers)?,
             store,
             workers,
             owners,
+            checkouts,
             leaves,
             plan,
             payload: record.plan,
@@ -112,12 +145,7 @@ impl Prepared {
         if !due(self.config.as_ref(), &self.store.root, self.settled) {
             return Err("Snapshot retention no longer permits metadata retirement".into());
         }
-        if !cyber_core::worktrees::Repository::managed_locations_at(&self.store.root)
-            .map_err(storage::fail)?
-            .is_empty()
-        {
-            return Err("Metadata retirement checkout registration changed".into());
-        }
+        self.verify_checkouts()?;
         let fresh = Store::existing(
             &self.store.data_path,
             &self.store.root.to_string_lossy(),
@@ -141,6 +169,28 @@ impl Prepared {
             }
         }
         self.inventory()
+    }
+    fn verify_checkouts(&self) -> Result<(), String> {
+        let current = cyber_core::worktrees::Repository::managed_locations_at(&self.store.root)
+            .map_err(storage::fail)?;
+        for owner in &self.owners {
+            let plans = self
+                .plan
+                .checkouts
+                .iter()
+                .filter(|plan| plan.binding.owner_id == owner.origin.activity_id)
+                .collect::<Vec<_>>();
+            if current.len() != plans.len()
+                || !current.iter().zip(plans).all(|((_, managed), plan)| {
+                    managed.common_dir == plan.binding.common_dir
+                        && managed.id == plan.binding.worktree_id
+                        && managed.name == plan.binding.name
+                })
+            {
+                return Err("Metadata retirement checkout registration changed".into());
+            }
+        }
+        self.checkouts.verify().map_err(storage::fail)
     }
     fn verify_owner(
         &self,
@@ -208,6 +258,12 @@ impl Prepared {
     }
     pub fn delete(mut self) -> Result<u64, String> {
         self.verify()?;
+        loop {
+            self.verify()?;
+            if !self.checkouts.remove_next().map_err(storage::fail)? {
+                break;
+            }
+        }
         for index in 0..self.leaves.len() {
             self.verify()?;
             let leaf = &self.leaves[index];
@@ -237,6 +293,10 @@ impl Prepared {
                 self.owners[index].journal_generation = None;
             }
         }
+        // Resumption can observe already missing names before any unlink here;
+        // synchronize their exact parent directories before durable completion.
+        storage::sync(&self.workers)?;
+        storage::sync(&self.store.journals)?;
         self.verify()?;
         self.plan.total_bytes().map_err(storage::fail)
     }
