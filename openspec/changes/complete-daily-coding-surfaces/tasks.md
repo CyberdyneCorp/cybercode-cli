@@ -1283,3 +1283,44 @@ M6, parent tasks and issue #93 remain open; no PR, merge or delivery is claimed.
 
 The final OpenAPI artifact consistency test also passes (one exact HTTP case).
 No generated HTTP/SDK schema changes are required by this internal protocol.
+
+Managed metadata process-death continuation (2026-11-10): an actual App creates a
+managed checkout in default application data, captures/restores through the real
+owned worker, observes payload completion and starts metadata retirement. A
+configuration callback observes the real acknowledgement unlink, or the following
+original-claim unlink, and parks before the next native deletion. The parent
+verifies readiness, sends SIGKILL and reaps the child. No native source/deletion
+hook or Store event is replaced. Failed control/child fixtures remain retained.
+The original 30-second restore confirmation bound is unchanged; a separate new
+90-second parent deadline covers the complete fixture setup and selected cut.
+
+After each kill, a physically reopened Store shows version-2 metadata planning
+without completion, the exact missing checkout leaves and the still-retained
+intent. Production periodic maintenance resumes the frozen complete bindings,
+finishes the same plan and returns zero on repeat. Protected Git index/config and
+shared creation bytes, Session event sequence and a later source symlink to an
+unreadable owner file stay unchanged. A fresh App returns the same receipt through
+explicit acknowledgement after metadata is gone. These are ordinary managed
+restore cuts at acknowledgement/claim removal, not the full managed preparation/
+paired/constructor/removed-Location crash matrix. The child entry point is inert
+in ordinary test discovery and actually executes twice through its parent.
+
+The existing managed App fixture setup and tracked restore are shared with the
+new subprocess case without changing its source/ownership assertions. Native CI
+already runs the complete Git App binary; its path filter now explicitly includes
+the new support file. This advances M6/M8 acceptance without closing either task.
+
+Final local cut verification passes all four Git App entries in 48.73 seconds,
+including the inert child and parent exercising two actual SIGKILLs. The focused
+new parent also passes independently in 28.83 seconds. App all-target Clippy with
+warnings denied passes after splitting cut-state assertions from resumption (the
+initial combined helper measured 18/15; no allowance was added). Formatting,
+whitespace, strict OpenSpec (100 items) and spec lint (0 errors/25 warnings) pass.
+Code-review-skill review checks the exact observed cut, unconditional child
+kill/reap, retained failure roots, physical Store reopen, immutable plan equality,
+production maintenance resumption and data-only acknowledgement assertions; no
+additional issue is found in this test continuation. Native C sandbox and linker
+unwind diagnostics were observed without assigning their origin. No production
+behavior, wire/SDK contract, default Git admission or parent completion changes.
+Full workspace/SDK runtime and fresh-source cross-platform proof were not performed
+locally; the native matrix must execute this source before accepting M8.

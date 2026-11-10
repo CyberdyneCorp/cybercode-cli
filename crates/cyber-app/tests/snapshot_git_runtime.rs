@@ -3,6 +3,8 @@
     any(target_os = "linux", target_os = "macos")
 ))]
 //! The real App/Store/worker path in an explicitly non-default acceptance build.
+#[path = "support/managed_retirement_cut.rs"]
+mod managed_retirement_cut;
 #[path = "support/scripted_model.rs"]
 mod scripted_model;
 use cyber_app::{App, AppOptions};
@@ -92,6 +94,42 @@ impl Fixture {
             directory,
             session,
         }
+    }
+    async fn managed() -> Self {
+        let mut f = Self::new("sha1", false).await;
+        std::fs::write(f.project.join("tracked"), "initial").unwrap();
+        git(&f.project, &["add", "tracked"]);
+        git(
+            &f.project,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "-m",
+                "Initial",
+            ],
+        );
+        let created = f
+            .client
+            .post(
+                "/worktrees",
+                json!({"name":"managed", "session":{"model":"test/main"}}),
+            )
+            .await
+            .unwrap();
+        f.directory = PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap());
+        f.session = created["data"]["session"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        f.client = Client::embedded(f.app.embedded()).at(f.directory.to_str().unwrap());
+        assert!(f.directory.starts_with(f.paths.data.join("worktrees")));
+        f
     }
     async fn prompt(&self, text: &str, count: usize) -> String {
         self.client
@@ -190,75 +228,19 @@ fn image(value: u8) -> Vec<u8> {
 
 #[tokio::test]
 async fn managed_worktree_in_default_data_directory_restores_through_owned_worker() {
-    let mut f = Fixture::new("sha1", false).await;
-    std::fs::write(f.project.join("tracked"), "initial").unwrap();
-    git(&f.project, &["add", "tracked"]);
-    git(
-        &f.project,
-        &[
-            "-c",
-            "user.name=Fixture",
-            "-c",
-            "user.email=fixture@example.test",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "--quiet",
-            "-m",
-            "Initial",
-        ],
-    );
-    let created = f
-        .client
-        .post(
-            "/worktrees",
-            json!({"name":"managed", "session":{"model":"test/main"}}),
-        )
-        .await
-        .unwrap();
-    f.directory = PathBuf::from(created["data"]["worktree"]["path"].as_str().unwrap());
-    f.session = created["data"]["session"]["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    f.client = Client::embedded(f.app.embedded()).at(f.directory.to_str().unwrap());
-    assert!(f.directory.starts_with(f.paths.data.join("worktrees")));
+    let f = Fixture::managed().await;
     let index_path = PathBuf::from(git(
         &f.directory,
         &["rev-parse", "--path-format=absolute", "--git-path", "index"],
     ));
     let index = std::fs::read(&index_path).unwrap();
     let config = std::fs::read(f.project.join(".git/config")).unwrap();
-    std::fs::write(f.directory.join("tracked"), "before").unwrap();
-    let first = f.prompt("before", 1).await;
-    std::fs::write(f.directory.join("tracked"), "after").unwrap();
-    f.prompt("after", 2).await;
-    let mut request = json!({"message_id":first,"target":"code","action":"commit","expected_directory":f.directory});
-    let preview = f
-        .client
-        .post(
-            &format!("/sessions/{}/rewind/preview", f.session),
-            request.clone(),
-        )
-        .await
-        .unwrap();
-    request["confirmation"] = preview["data"]["confirmation"].clone();
-    tokio::time::timeout(
-        Duration::from_secs(30),
-        f.client
-            .post(&format!("/sessions/{}/rewind/confirm", f.session), request),
-    )
-    .await
-    .expect("managed confirmation timed out")
-    .unwrap();
-    assert_eq!(
-        std::fs::read_to_string(f.directory.join("tracked")).unwrap(),
-        "before"
-    );
-    let receipt = f.receipt();
+    let receipt = restore_tracked(&f).await;
     assert_eq!(
         serde_json::to_value(&receipt.origin).unwrap()["worktree_id"],
-        created["data"]["worktree"]["id"]
+        cyber_core::worktrees::Repository::managed_locations_at(&f.directory).unwrap()[0]
+            .1
+            .id
     );
     let checkout = receipt.checkout.as_ref().unwrap();
     let journal = f.journal(&receipt);
@@ -302,6 +284,36 @@ async fn managed_worktree_in_default_data_directory_restores_through_owned_worke
         config
     );
     f.app.runtime.shutdown().await;
+}
+
+async fn restore_tracked(f: &Fixture) -> SnapshotRestoreReceipt {
+    std::fs::write(f.directory.join("tracked"), "before").unwrap();
+    let first = f.prompt("before", 1).await;
+    std::fs::write(f.directory.join("tracked"), "after").unwrap();
+    f.prompt("after", 2).await;
+    let mut request = json!({"message_id":first,"target":"code","action":"commit","expected_directory":f.directory});
+    let preview = f
+        .client
+        .post(
+            &format!("/sessions/{}/rewind/preview", f.session),
+            request.clone(),
+        )
+        .await
+        .unwrap();
+    request["confirmation"] = preview["data"]["confirmation"].clone();
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        f.client
+            .post(&format!("/sessions/{}/rewind/confirm", f.session), request),
+    )
+    .await
+    .expect("managed confirmation timed out")
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(f.directory.join("tracked")).unwrap(),
+        "before"
+    );
+    f.receipt()
 }
 
 async fn reclaim_restore_payloads(f: &Fixture, receipt: &SnapshotRestoreReceipt) {

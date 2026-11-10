@@ -7,6 +7,7 @@ on:
       - crates/cyber-app/src/**
       - crates/cyber-app/tests/support/scripted_model.rs
       - crates/cyber-app/tests/support/snapshot*.rs
+      - crates/cyber-app/tests/support/managed_retirement_cut.rs
       - crates/cyber-server/src/runtime/snapshot*.rs
       - crates/cyber-server/src/runtime/snapshot_reclamation/**
       - crates/cyber-server/src/runtime/rewind*.rs

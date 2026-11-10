@@ -144,8 +144,11 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    keep/rollback positives now remove those leaves and acknowledge from the
    retained receipt after restart without source replay. Guard reopen/cut,
    alias/context/live-owner/construction and bounded FIFO cases pass locally.
-   Actual managed metadata-deletion process cuts, zero-payload/partial constructors,
-   old/deleted Locations and source-bound platforms still gate M6 acceptance.
+   Ordinary managed metadata deletion now also passes actual process kills after
+   acknowledgement removal and after claim removal, followed by physical Store
+   reopen and periodic resumption of the same plan. Broader preparation/paired
+   deletion cuts, zero-payload/partial constructors, old/deleted Locations and
+   source-bound platforms still gate M6 acceptance.
 
 Native run [42733865471](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42733865471)
 passes Linux x64/ARM and macOS ARM/Intel at `e2b3ba18`, including the earlier
