@@ -204,14 +204,17 @@ fn inventory(journal: &Dir, count: usize) -> Result<(), String> {
         .map(|index| format!("stage_{index}"))
         .chain(std::iter::once("intent.json".into()))
         .collect::<BTreeSet<_>>();
-    if storage::names(journal, super::super::ENTRY_LIMIT * 3)?
-        .iter()
-        .any(|name| !known.contains(name))
+    if let Some(name) = storage::names(journal, super::super::ENTRY_LIMIT * 3)?
+        .into_iter()
+        .find(|name| !known.contains(name))
     {
-        return Err("Unknown recovery payload or construction entry".into());
+        return Err(format!(
+            "Unknown recovery payload or construction entry: {name:?}"
+        ));
     }
     Ok(())
 }
+
 fn planned<'a>(frozen: Option<&'a Plan>, owner: &Owner) -> BTreeMap<&'a str, &'a Payload> {
     frozen
         .into_iter()
@@ -412,5 +415,28 @@ impl PreparedPair {
             return Err("Paired cleanup payload changed".into());
         }
         Ok(Some(pin))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unknown_entry_diagnostic_quotes_the_leaf_and_keeps_its_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
+        let name = "foreign\nowner";
+        storage::create(&dir, name, b"unknown owner bytes").unwrap();
+        let error = inventory(&dir, 0).unwrap_err();
+        assert_eq!(
+            error,
+            format!("Unknown recovery payload or construction entry: {name:?}")
+        );
+        assert!(!error.contains('\n'));
+        assert_eq!(
+            storage::read(&dir, name, 100).unwrap(),
+            b"unknown owner bytes"
+        );
     }
 }

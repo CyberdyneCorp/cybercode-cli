@@ -159,6 +159,15 @@ finish acknowledged payload reclamation but must not delete unacknowledged evide
 or replay filesystem resolution. Unknown files, aliases and identity changes refuse
 cleanup visibly. No direct user removal of private journal directories is required.
 
+Fallback manifest/object collection SHALL establish the Location's current
+retention policy from a complete valid, namespace-bound manifest inventory before
+deletion. Disabled snapshots and zero retention preserve manifests, orphan objects
+and temporary files. Configured retention applies to orphan/temporary aging too;
+policy changes refuse before the next unlink. Corrupt/foreign manifests, unknown
+object entries and temporary aliases refuse before manifest deletion. An empty
+namespace is a no-op. Orphans without surviving Location evidence remain retained;
+durable collection/retirement evidence for those namespaces remains part of M6.
+
 ## Managed checkout payload reclamation
 
 Reclamation of acknowledged regular-file and symlink Git journal payloads SHALL reacquire

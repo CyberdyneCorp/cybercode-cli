@@ -3,12 +3,14 @@ pub(crate) mod config_inputs;
 pub(crate) fn object_digest(bytes: &[u8]) -> String {
     storage::digest(bytes)
 }
+mod collection;
 pub(crate) mod generated_rules;
 mod git;
 pub(crate) mod git_capture;
 mod git_images;
 pub(crate) mod git_rules;
 mod inventory;
+pub(crate) use collection::gc;
 mod links;
 #[cfg(test)]
 mod managed_tests;
@@ -528,125 +530,6 @@ fn changes(a: &Tree, b: &Tree) -> Vec<String> {
         .collect()
 }
 
-/// Prune only unreferenced, old manifests. Journals keep all their objects pinned;
-/// an unavailable durable-reference view never authorizes deletion.
-pub(crate) fn gc(
-    data: &Path,
-    config: &std::sync::Arc<crate::ConfigFn>,
-    protected: &BTreeSet<String>,
-) -> Result<()> {
-    if !data.exists() {
-        return Ok(());
-    }
-    let data = Dir::open_ambient_dir(data, cap_std::ambient_authority()).map_err(fail)?;
-    if data.symlink_metadata("snapshot").is_err() {
-        return Ok(());
-    }
-    let snapshot = storage::existing_child(&data, "snapshot", false)?;
-    if snapshot.symlink_metadata("global").is_err() {
-        return Ok(());
-    }
-    let root = storage::existing_child(&snapshot, "global", true)?;
-    for location in storage::names(&root, 100_000)? {
-        if !storage::valid_digest(&location) {
-            return Err("Invalid snapshot namespace".into());
-        }
-        let dir = storage::private_child(&root, &location)?;
-        let _lock = match storage::lock(&dir, false) {
-            Ok(lock) => lock,
-            Err(_) => continue,
-        };
-        gc_location(&dir, config, protected)?;
-    }
-    Ok(())
-}
-fn gc_location(
-    dir: &Dir,
-    config: &std::sync::Arc<crate::ConfigFn>,
-    protected: &BTreeSet<String>,
-) -> Result<()> {
-    match dir.symlink_metadata("workers") {
-        Ok(_) => {
-            let workers = storage::existing_child(dir, "workers", true)?;
-            if !storage::names(&workers, ENTRY_LIMIT)?.is_empty() {
-                return Ok(());
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(fail(error)),
-    }
-    let manifests = storage::private_child(dir, "manifests")?;
-    let journals = storage::private_child(dir, "journals")?;
-    // Until an owner resolves/acknowledges native evidence, no journal is evicted.
-    if !storage::names(&journals, ENTRY_LIMIT)?.is_empty() {
-        return Ok(());
-    }
-    let objects = storage::private_child(dir, "files")?;
-    let mut keep = BTreeSet::new();
-    for name in storage::names(&manifests, 100_000)? {
-        if temporary(&name) {
-            prune_temporary(&manifests, &name)?;
-            continue;
-        }
-        if !storage::valid_digest(&name) {
-            return Err("Unrecognized snapshot manifest".into());
-        }
-        let manifest: Manifest =
-            serde_json::from_slice(&storage::read(&manifests, &name, RECORD_LIMIT)?)
-                .map_err(fail)?;
-        if manifest.tree.version != 1
-            || manifest
-                .tree
-                .files
-                .values()
-                .any(|entry| entry.kind != ImageKind::File)
-            || storage::digest(&serde_json::to_vec(&manifest.tree).map_err(fail)?) != name
-        {
-            return Err("Corrupt snapshot manifest".into());
-        }
-        let days = config(&manifest.tree.location)
-            .pointer("/snapshots/retention_days")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(7);
-        let old = days != 0 && now().saturating_sub(manifest.accessed) > days.saturating_mul(86400);
-        if old && !protected.contains(&format!("copy:{name}")) {
-            manifests.remove_file(&name).map_err(fail)?;
-        } else {
-            keep.extend(
-                manifest
-                    .tree
-                    .files
-                    .values()
-                    .map(|entry| entry.object.clone()),
-            );
-        }
-    }
-    storage::sync(&manifests)?;
-    for name in storage::names(&objects, 100_000)? {
-        if temporary(&name) {
-            prune_temporary(&objects, &name)?;
-            continue;
-        }
-        if !storage::valid_digest(&name) {
-            continue;
-        }
-        if !keep.contains(&name) {
-            let metadata = storage::open(&objects, Path::new(&name))?
-                .metadata()
-                .map_err(fail)?;
-            let old = metadata
-                .modified()
-                .ok()
-                .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
-                .is_some_and(|age| age.as_secs() > 7 * 86400);
-            if old {
-                objects.remove_file(&name).map_err(fail)?;
-            }
-        }
-    }
-    storage::sync(&objects)
-}
-
 fn excluded(tree: &Tree, path: &str) -> bool {
     tree.skipped
         .iter()
@@ -666,24 +549,4 @@ impl Store {
         }
         Ok(skipped.into_iter().collect())
     }
-}
-
-fn temporary(name: &str) -> bool {
-    name.strip_prefix("tmp_")
-        .is_some_and(|id| id.len() == 26 && id.parse::<ulid::Ulid>().is_ok())
-}
-fn prune_temporary(dir: &Dir, name: &str) -> Result<()> {
-    let file = storage::open(dir, Path::new(name))?;
-    let old = file
-        .metadata()
-        .map_err(fail)?
-        .modified()
-        .ok()
-        .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
-        .is_some_and(|age| age.as_secs() > 7 * 86400);
-    if old {
-        dir.remove_file(name).map_err(fail)?;
-        storage::sync(dir)?;
-    }
-    Ok(())
 }

@@ -65,6 +65,18 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    returning aggregate exit 1 and an `end` error. Interrupted/protocol exit codes
    retain precedence. This does not complete the ownership/backpressure findings.
 
+5. **Fixed locally: fallback collection ignored disabled retention policy.**
+   Complete manifest/entry preflight now binds the namespace Location, protects
+   disabled/zero-retention data, honors configured orphan aging and rechecks policy
+   before each unlink. Final fallback/App integration coverage passes 44 cases;
+   durable collection/retirement evidence and full metadata/CAS cleanup remain open.
+   Native run 42728260672 at 1be03642 passes both Linux jobs but fails managed Git
+   cleanup-plan preparation on macOS ARM because of an unidentified unknown entry.
+   Keep that fence: the diagnostic now quotes the leaf, failed CLI fixture roots
+   are retained/uploaded, and independent structured/JSONL checks no longer depend
+   on earlier recovery success. This is an open construction/acceptance failure,
+   not a timeout or an accepted native result.
+
 Verification: three structured-output CLI tests, seven JSONL CLI tests, five
 structured-result server tests and six binary-worker ownership tests pass;
 formatting and whitespace

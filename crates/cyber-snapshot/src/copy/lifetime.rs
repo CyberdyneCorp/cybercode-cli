@@ -791,7 +791,15 @@ mod tests {
         let object = store.object(b"protected preparation bytes").unwrap();
         let config: std::sync::Arc<crate::ConfigFn> =
             std::sync::Arc::new(|_| serde_json::json!({"snapshots":{"retention_days":0}}));
-        super::super::gc_location(&store.namespace, &config, &Default::default()).unwrap();
+        let namespace =
+            storage::digest(format!("{}\0{}", store.root.display(), store.root_id).as_bytes());
+        super::super::collection::gc_location(
+            &store.namespace,
+            &namespace,
+            config.as_ref(),
+            &Default::default(),
+        )
+        .unwrap();
         assert!(storage::open(&store.objects, Path::new(&object.object)).is_ok());
         lifetime.verify().unwrap();
     }

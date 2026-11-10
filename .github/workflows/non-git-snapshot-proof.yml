@@ -15,6 +15,7 @@ on:
       - crates/cyber-server/tests/support/structured_terminal_fault.rs
       - crates/cyber-server/src/http/sessions.rs
       - crates/cyber-app/tests/snapshot_git_runtime.rs
+      - crates/cyber-app/tests/snapshot_reclamation.rs
       - crates/cyber-cli/Cargo.toml
       - crates/cyber-cli/src/**
       - crates/cyber-cli/tests/branches_cli.rs
@@ -77,18 +78,28 @@ jobs:
           set -euo pipefail
           cargo test --locked -p cyber-snapshot --features native-git-acceptance -- --nocapture 2>&1 | tee git-adapter-proof.log
           cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_git_runtime -- --nocapture 2>&1 | tee git-runtime-proof.log
-      - name: Managed Git CLI process-death recovery and cancellation candidate
+      - name: Store-bound fallback collection and reclamation
         shell: bash
         run: |
           set -euo pipefail
+          cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_reclamation -- --nocapture 2>&1 | tee fallback-collection-proof.log
+      - name: Managed Git CLI process-death recovery and cancellation candidate
+        env:
+          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_git_ -- --nocapture --test-threads=1 2>&1 | tee git-cli-recovery-proof.log
       - name: JSONL driver and atomic last-message regressions
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::exec:: -- --nocapture 2>&1 | tee jsonl-driver-proof.log
           cargo test --locked -p cyber-cli --features native-git-acceptance --test exec_stream_input -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
       - name: Root structured result recovery and CLI stop regressions
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -103,7 +114,16 @@ jobs:
             managed-checkout-ack-proof.log
             git-adapter-proof.log
             git-runtime-proof.log
+            fallback-collection-proof.log
             git-cli-recovery-proof.log
             jsonl-driver-proof.log
             structured-result-proof.log
+          if-no-files-found: warn
+      - name: Retain failed CLI fixture evidence
+        if: ${{ failure() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-failed-cli-fixtures-${{ matrix.os }}
+          path: ${{ runner.temp }}/snapshot-fixtures
+          include-hidden-files: true
           if-no-files-found: warn

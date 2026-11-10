@@ -886,3 +886,50 @@ macOS ARM/Intel. It predates steering and this cancellation extension. Run
 its Linux x64 job has passed, with the remaining jobs pending at this checkpoint.
 Neither run accepts the new cancelled-Git cleanup source. Queue its own native
 proof and retain each run's actual tested source identity.
+
+
+Fallback collection retention continuation (2026-11-09): six new regressions
+initially fail because disabled capture still prunes manifests, zero retention
+still prunes temporary/orphan bytes, orphan aging is fixed at seven days, corrupt
+or missing Location evidence is discovered after deletion, and policy revocation
+is not rechecked. Collection now preflights the complete namespace-bound manifest
+inventory and known regular object/temporary entries before manifest unlinks,
+retains disabled/zero-retention bytes, applies configured retention to orphan and
+temporary aging, and refuses a changed configuration before each unlink. Foreign
+Location manifests, temporary aliases and unknown object entries refuse before
+any manifest deletion; already empty namespaces are no-ops. The native collector
+is isolated in copy/collection.rs and still uses the existing serialized Store
+reference callback. No native worker/journal fence is relaxed and no API, SDK or
+receipt schema changes. Missing surviving Location evidence protects orphan bytes;
+durable collection/retirement evidence, complete metadata/CAS reclamation and
+partial construction remain required by M6 rather than being inferred from names.
+
+Final local verification: 28 fallback integration tests and 16 App reclamation
+cases pass, including a real Store-writer disabled/zero-policy/reenabled-collection
+case and existing reference-writer exclusion, cap-pressure, unknown-owner, native
+process-death, restart and receipt regressions. The additional empty-namespace
+unit and quoted unknown-entry diagnostic unit pass. A focused App unknown-payload
+rerun passes after the diagnostic change, and the new CLI panic-preservation probe
+passes. Earlier in this turn, before the final preflight refinements, the complete
+snapshot suite passed 188 tests with seven intentional subprocess/diagnostic skips;
+that earlier run is not claimed as final-source full-suite acceptance. Final
+all-target snapshot/App/CLI Clippy and formatting/whitespace pass. Strict OpenSpec
+passes 100 items; spec lint reports zero errors and 25 warnings. Focused code and
+security review found no additional issue in these changes after the preflight
+fixes; the macOS construction failure and complete branch review remain open. Native platform, SDK/generated
+artifact and full-workspace delivery acceptance remain open.
+
+Source-bound native failure: run 42728260672 at 1be03642 passes Linux x64/ARM,
+but macOS ARM fails the managed Git process-death recovery case at cleanup-plan
+preparation with "Unknown recovery payload or construction entry". Its adapter,
+core marker and App Git acceptance steps passed; JSONL and structured steps were
+skipped after the failure. The log does not identify the entry, so its type and
+cause are not established and the fence must not be bypassed. Paired cleanup now
+quotes the first bounded unexpected leaf in its refusal, with a unit case proving
+newlines are escaped and bytes remain intact. CLI fixtures now retain their own
+private roots on panic after service stop, with a catch-unwind regression; native
+CI uploads those failed scripted-fixture directories including hidden Git metadata.
+Independent JSONL/structured checks run unless cancelled even after an earlier
+recovery failure, without relaxing the overall job gate. The native workflow also
+selects the complete App reclamation suite. These edits provide diagnostics and
+coverage, not a fix or passing acceptance for the macOS construction failure.

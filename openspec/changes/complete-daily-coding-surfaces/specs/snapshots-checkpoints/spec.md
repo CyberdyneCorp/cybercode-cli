@@ -497,3 +497,10 @@
 - **THEN** it SHALL pin and unlink the journal link inode without opening its target, including dangling targets
 - **AND** an equal-target replacement inode or changed metadata SHALL refuse before deletion; a missing leaf SHALL require the exact previously committed plan
 - **AND** later owner source links, consuming receipts and native ownership metadata SHALL remain intact
+
+#### Scenario: Fallback collection has disabled or unavailable retention policy
+- **WHEN** fallback manifest, orphan-object or temporary-file collection begins
+- **THEN** a complete valid manifest inventory SHALL establish the namespace-bound Location policy before deletion; absent, corrupt or foreign Location evidence SHALL refuse collection
+- **AND** unknown object entries and unsupported temporary-file aliases SHALL refuse before any manifest unlink; an already empty namespace SHALL remain a no-op
+- **AND** disabled snapshots or zero retention SHALL preserve those bytes, and orphan/temporary aging SHALL use the configured retention duration
+- **AND** a changed policy SHALL refuse before the next unlink, preserving remaining manifests and objects even if earlier eligible manifests were already removed

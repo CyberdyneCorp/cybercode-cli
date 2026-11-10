@@ -141,6 +141,10 @@ impl Env {
 impl Drop for Env {
     fn drop(&mut self) {
         let _ = self.cyber(&["service", "stop"]);
+        if std::thread::panicking() {
+            self._dir.disable_cleanup(true);
+            eprintln!("Preserved failed CLI fixture at {}", self.root.display());
+        }
     }
 }
 
@@ -3021,4 +3025,20 @@ fn non_git_recovery_inspection_creates_no_namespace_and_starts_no_inference() {
     });
     assert_eq!(status, reqwest::StatusCode::UNAUTHORIZED);
     assert!(!env.root.join("cyber-home/data/snapshot/global").exists());
+}
+
+#[test]
+fn managed_git_fixture_panic_retains_its_private_evidence() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    let root = env.root.clone();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _owned_fixture = env;
+        panic!("fixture preservation probe");
+    }));
+    assert!(result.is_err());
+    assert!(root.join("repo/.git").is_dir());
+    // This probe created no Session/native work or unknown evidence. Only its
+    // own empty fixture is removed; failed recovery fixtures stay retained.
+    std::fs::remove_dir_all(root).unwrap();
 }

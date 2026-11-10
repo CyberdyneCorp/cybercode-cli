@@ -882,3 +882,86 @@ async fn historical_reclamation_reprojects_after_later_fences_and_source_deletio
         f.app.runtime.shutdown().await;
     }
 }
+
+#[tokio::test]
+async fn fallback_collection_honors_disabled_and_zero_retention_at_the_store_writer() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let paths = Paths {
+        data: root.join("data"),
+        config: root.join("config"),
+        state: root.join("state"),
+        cache: root.join("cache"),
+        tmp: root.join("tmp"),
+    };
+    paths.ensure().unwrap();
+    let project = root.join("project");
+    std::fs::create_dir(&project).unwrap();
+    std::fs::write(project.join("a.txt"), "unreferenced bytes").unwrap();
+    let store = Arc::new(
+        cyber_store::Store::open(cyber_store::StoreOptions::new(
+            DatabaseLocation::File(paths.data.join("cyber.db")),
+            cyber_server::runtime::Runtime::registry(),
+        ))
+        .unwrap(),
+    );
+    let config = Arc::new(Mutex::new(json!({})));
+    let snapshots = maintenance(
+        &paths,
+        config.clone(),
+        cyber_app::snapshot_reclamation::policy(store),
+    );
+    snapshots
+        .track(project.to_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let namespace = std::fs::read_dir(paths.data.join("snapshot/global"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let retained = age_fallback_collection_images(&namespace);
+    for settings in [
+        json!({"snapshots":false}),
+        json!({"snapshots":{"retention_days":0}}),
+    ] {
+        *config.lock().unwrap() = settings;
+        snapshots.gc().await;
+        for (path, bytes) in &retained {
+            assert_eq!(std::fs::read(path).unwrap(), *bytes);
+        }
+    }
+    *config.lock().unwrap() = json!({});
+    snapshots.gc().await;
+    for (path, _) in retained {
+        assert!(!path.exists());
+    }
+}
+
+fn age_fallback_collection_images(namespace: &std::path::Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut retained = vec![];
+    for directory in [namespace.join("manifests"), namespace.join("files")] {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.parent().unwrap().ends_with("manifests") {
+                let mut manifest: Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                manifest["accessed"] = json!(0);
+                std::fs::write(&path, manifest.to_string()).unwrap();
+            }
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(
+                    std::fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1)),
+                )
+                .unwrap();
+            retained.push((path.clone(), std::fs::read(path).unwrap()));
+        }
+    }
+    retained
+}
