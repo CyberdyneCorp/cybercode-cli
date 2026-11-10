@@ -675,3 +675,60 @@ async fn compaction_summary_carries_no_opaque_state_and_the_tail_replays() {
         .collect();
     assert_eq!(tail, [("new thought", true)]);
 }
+
+/// A successful operation does not authorize instruction loading with callbacks
+/// captured before a configuration change while the operation was in flight.
+#[tokio::test]
+async fn nested_instructions_resolve_settings_after_the_successful_operation() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("read_one", "read", r#"{"path":"web/app.ts"}"#)]),
+                text("done"),
+                tools(&[("read_two", "read", r#"{"path":"web/app.ts"}"#)]),
+                text("done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    std::fs::create_dir(h.repo.join("web")).unwrap();
+    std::fs::write(h.repo.join("web/CYBER.md"), "fresh operation instructions").unwrap();
+    std::fs::write(h.repo.join("web/app.ts"), "contents").unwrap();
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Gated);
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("first read")).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        h.tools.started.notified(),
+    )
+    .await
+    .unwrap();
+    *h.tools.instruction_limits.lock().unwrap() = Err("configuration changed during read".into());
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert_eq!(state.calls["read_one"].output.as_deref(), Some("done"));
+    assert!(state.epoch.unwrap().reminded_instructions.is_empty());
+    *h.tools.instruction_limits.lock().unwrap() = Ok(Default::default());
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Return("contents".into()));
+    h.runtime.admit(&id, admit("second read")).await.unwrap();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert!(
+        state.calls["read_two"]
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("fresh operation instructions")
+    );
+    assert_eq!(state.epoch.unwrap().reminded_instructions.len(), 1);
+}

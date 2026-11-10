@@ -1819,6 +1819,7 @@ impl Inner {
         let mut stops = Vec::new();
         let mut loaded = Vec::new();
         for (run, nested) in outcomes.into_iter().zip(nested) {
+            let nested = run.current_nested(&state, nested);
             let (settled, instructions) = settlement_with_reminders(
                 &run.call_id,
                 &run.def,
@@ -2030,7 +2031,8 @@ impl Inner {
         cancel: CancellationToken,
     ) -> ToolRun {
         let call_id = invocation.call_id.clone();
-        let read = self.read_target(&def, &invocation);
+        let scope = ReminderScope::capture(&*handle.state.lock().await, &invocation.directory);
+        let read = scope.and_then(|scope| self.read_target(&def, &invocation, scope));
         if invocation.name == super::structured::CHILD_TOOL
             || invocation.name == super::structured::ROOT_TOOL
         {
@@ -2069,7 +2071,12 @@ impl Inner {
     }
 
     /// The file a built-in `read` call targets, for nested instructions.
-    fn read_target(&self, def: &ToolDef, invocation: &Invocation) -> Option<ReadTarget> {
+    fn read_target(
+        &self,
+        def: &ToolDef,
+        invocation: &Invocation,
+        scope: ReminderScope,
+    ) -> Option<ReadTarget> {
         if def.scope != super::host::ToolScope::Builtin || def.spec.name != "read" {
             return None;
         }
@@ -2079,7 +2086,7 @@ impl Inner {
         Some(ReadTarget {
             file: super::instructions::read_target(&location, settings.home.as_deref(), path),
             location,
-            settings,
+            scope,
         })
     }
 
@@ -2098,17 +2105,29 @@ impl Inner {
         if targets.iter().all(Option::is_none) {
             return empty();
         }
-        let attached = Reminded::of(&*handle.state.lock().await).instructions;
+        let state = handle.state.lock().await;
+        let targets: Vec<_> = targets
+            .into_iter()
+            .map(|target| target.filter(|read| read.scope.is_current(&state)))
+            .collect();
+        let attached = Reminded::of(&state).instructions;
+        drop(state);
+        let inner = self.me.upgrade().expect("runtime alive");
         let global = self.options.global_config_dir.clone();
         let load = move || {
             let mut loaded = Vec::with_capacity(targets.len());
             for target in targets {
                 let nested = target.map_or_else(Default::default, |read| {
+                    // Resolve again after the effect: pre-call permission callbacks and
+                    // trust inventories may have been invalidated while the tool ran.
+                    let Ok(settings) = inner.instruction_settings(&read.scope.directory) else {
+                        return Default::default();
+                    };
                     super::instructions::load_nested(
                         &global,
                         &read.location,
                         &read.file,
-                        &read.settings,
+                        &settings,
                         &attached,
                     )
                 });
@@ -2336,6 +2355,24 @@ pub(super) struct ToolRun {
 }
 
 impl ToolRun {
+    /// Recheck under the settlement lock, after filesystem discovery. A Location
+    /// switch or Epoch replacement during discovery must not consume new identities.
+    pub(super) fn current_nested(
+        &self,
+        state: &SessionState,
+        nested: super::instructions::Instructions,
+    ) -> super::instructions::Instructions {
+        if self
+            .read
+            .as_ref()
+            .is_some_and(|read| read.scope.is_current(state))
+        {
+            nested
+        } else {
+            Default::default()
+        }
+    }
+
     /// The target to load nested instructions for: only a read that succeeded.
     pub(super) fn nested_target(&self) -> Option<ReadTarget> {
         let succeeded = matches!(
@@ -2348,12 +2385,41 @@ impl ToolRun {
     }
 }
 
-/// A `read` call's Location, the file it targets and what may load there.
+/// The context in which the successful operation may deliver a reminder.
+#[derive(Clone)]
+pub(super) struct ReminderScope {
+    directory: String,
+    epoch: u32,
+}
+
+impl ReminderScope {
+    fn capture(state: &SessionState, directory: &str) -> Option<Self> {
+        if state.epoch_stale || state.info.directory != directory {
+            return None;
+        }
+        Some(Self {
+            directory: directory.into(),
+            epoch: state.epoch.as_ref()?.number,
+        })
+    }
+
+    fn is_current(&self, state: &SessionState) -> bool {
+        !state.epoch_stale
+            && state.info.directory == self.directory
+            && state
+                .epoch
+                .as_ref()
+                .is_some_and(|epoch| epoch.number == self.epoch)
+    }
+}
+
+/// A `read` call's Location, target and captured context; settings are resolved
+/// after successful execution rather than retaining pre-effect permission closures.
 #[derive(Clone)]
 pub(super) struct ReadTarget {
     pub location: std::path::PathBuf,
     pub file: std::path::PathBuf,
-    pub settings: super::instructions::InstructionSettings,
+    pub scope: ReminderScope,
 }
 
 /// `InstructionsLoaded` `load_reason` for files a read attached.
@@ -2737,6 +2803,75 @@ mod skill_reminder_tests {
     use super::*;
 
     #[test]
+    fn reminders_cannot_cross_an_epoch_or_location_change_during_loading() {
+        let state = || {
+            let info = serde_json::from_value(serde_json::json!({
+                "id":"ses_rules", "title":"rules", "directory":"/repo", "parent_id":null,
+                "agent":"build", "model":"test/main", "mode":"default", "created_ms":0
+            }))
+            .unwrap();
+            let mut state = SessionState::new(info);
+            state.epoch = Some(
+                serde_json::from_value(serde_json::json!({
+                    "number":1, "baseline":"", "snapshot":{}, "provider":"test"
+                }))
+                .unwrap(),
+            );
+            state
+        };
+        for changed in ["epoch", "location", "stale", "missing"] {
+            let mut state = state();
+            let scope = ReminderScope::capture(&state, "/repo").unwrap();
+            let run = ToolRun {
+                call_id: "read".into(),
+                def: read_def(),
+                outcome: ToolOutcome::Ok("file".into()),
+                read: Some(ReadTarget {
+                    location: "/repo".into(),
+                    file: "/repo/web/app.ts".into(),
+                    scope,
+                }),
+            };
+            match changed {
+                "epoch" => state.epoch.as_mut().unwrap().number += 1,
+                "location" => state.info.directory = "/other".into(),
+                "stale" => state.epoch_stale = true,
+                _ => state.epoch = None,
+            }
+            let (_temp, candidate) = nested(&[("CYBER.md", "nested delivery".into())]);
+            let held = run.current_nested(&state, candidate);
+            assert!(held.is_empty(), "{changed}");
+            let mut seen = Reminded::of(&state);
+            let (settled, loaded) = settle(&held, &mut seen, default_budget);
+            assert!(loaded.is_none(), "{changed}");
+            assert!(settled.instruction_reminders.is_empty(), "{changed}");
+            assert!(seen.instructions.is_empty(), "{changed}");
+            // A new operation in the active context can still deliver the identity.
+            state.epoch_stale = false;
+            if state.epoch.is_some() {
+                let scope = ReminderScope::capture(&state, &state.info.directory).unwrap();
+                let fresh = ToolRun {
+                    read: Some(ReadTarget {
+                        location: state.info.directory.clone().into(),
+                        file: "/repo/web/app.ts".into(),
+                        scope,
+                    }),
+                    ..run
+                };
+                let (_temp, candidate) = nested(&[("CYBER.md", "nested delivery".into())]);
+                let current = fresh.current_nested(&state, candidate);
+                let (settled, loaded) = settle(&current, &mut seen, default_budget);
+                assert!(loaded.is_some());
+                assert_eq!(settled.instruction_reminders.len(), 1);
+            }
+        }
+        let mut initial = state();
+        initial.epoch = None;
+        assert!(ReminderScope::capture(&initial, "/repo").is_none());
+        assert!(ReminderScope::capture(&state(), "/other").is_none());
+    }
+
+    #[test]
     fn legacy_settlements_keep_canonical_paths_and_have_no_fabricated_rule_bindings() {
         let settled: ToolSettled = serde_json::from_value(serde_json::json!({"call_id":"old","status":"ok","output":"text","instruction_reminders":["/repo/web/CYBER.md"]})).unwrap();
         assert_eq!(settled.instruction_reminders, ["/repo/web/CYBER.md"]);
@@ -2933,10 +3068,10 @@ mod skill_reminder_tests {
         let read = ReadTarget {
             location: "/repo".into(),
             file: "/repo/web/app.ts".into(),
-            settings: super::super::instructions::InstructionSettings::from_env(
-                true,
-                &std::collections::HashMap::<String, String>::new(),
-            ),
+            scope: ReminderScope {
+                directory: "/repo".into(),
+                epoch: 1,
+            },
         };
         let run = |outcome| ToolRun {
             call_id: "call".into(),
@@ -3009,10 +3144,10 @@ mod skill_reminder_tests {
             read: Some(ReadTarget {
                 location: "/repo".into(),
                 file: "/repo/a.md".into(),
-                settings: super::super::instructions::InstructionSettings::from_env(
-                    true,
-                    &std::collections::HashMap::<String, String>::new(),
-                ),
+                scope: ReminderScope {
+                    directory: "/repo".into(),
+                    epoch: 1,
+                },
             }),
         };
         assert!(run.nested_target().is_none());

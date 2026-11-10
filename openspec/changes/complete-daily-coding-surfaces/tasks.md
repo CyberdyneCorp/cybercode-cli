@@ -1678,3 +1678,31 @@ Final local gates: core/server/tools/App/CLI all-target Clippy with warnings den
 formatting, diff checks and workflow YAML/source-selection checks pass. Strict
 OpenSpec 1.13.2 validates 100/100 items; cross-spec lint reports 0 errors/25
 warnings. The worktree must execute on fresh-source CI before platform acceptance.
+
+
+Nested read context fence continuation (2026-11-10): capture the active Location
+and Context Epoch before running the built-in read, reject absent/stale contexts,
+and recheck before discovery and again under the settlement lock. Resolve current
+instruction settings on the blocking discovery thread after successful execution;
+retain no pre-effect permission/trust callbacks. Normal grouped settlement and
+exact `/approve` replay use the same final fence. Suppression leaves successful
+output intact and records no reminder identity, so a later operation can deliver.
+Regressions cover replaced/missing/stale Epochs, moved Locations, and a gated
+successful read whose configuration becomes unavailable before settlement, then
+restored configuration and successful delivery on a later read. This does not
+complete 4.2: native operation receipts, exact configuration-generation fencing
+through commit, edit/patch and successful partial effects, withdrawal/revocation,
+physical restart and effective inspection remain required. No parent task closes.
+
+Checkpoint verification: server library 455 passed / one ignored nested lock
+probe; context/compaction integration 21 passed; production App instruction
+integration 15 passed; HTTP override integration filter two passed. Server/App
+all-target Clippy with `-D warnings`, formatting/diff checks, generated SDK
+consistency and CI-pinned strict OpenSpec (100 items) passed. Spec lint reports
+zero errors and 25 warnings; native C/linker warnings were observed without an
+origin claim. This increment did not rerun the entire workspace, SDK runtime or
+platform matrix. Checkpoint review using the code-review skill found no new
+findings within these changes: existing runtime/host boundaries and atomic
+settlement are retained, unavailable configuration holds reminders, both writer
+paths revalidate the context, and regressions cover suppression and retry.
+Whole-goal review and source-bound native acceptance remain open.

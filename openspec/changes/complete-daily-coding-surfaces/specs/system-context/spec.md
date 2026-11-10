@@ -54,3 +54,10 @@
 - **THEN** its settlement SHALL retain typed project-root, definition-path, digest and approval-generation metadata separately from canonical instruction-file path markers
 - **AND** replay of historical settlements without rule bindings SHALL remain compatible
 - **AND** a reviewed definition from another checkout SHALL NOT supply rule context for the parent Session
+
+#### Scenario: Context changes while a successful read is settling
+- **GIVEN** a read started in one Location and Context Epoch
+- **WHEN** that Epoch becomes stale, is replaced or disappears, or the Session changes Location before reminder settlement
+- **THEN** the read result SHALL settle without delivering that operation's nested reminder into the new context
+- **AND** the suppressed reminder SHALL NOT consume once-per-Epoch delivery
+- **AND** nested discovery SHALL resolve current instruction settings after the successful operation instead of retaining pre-effect permission callbacks

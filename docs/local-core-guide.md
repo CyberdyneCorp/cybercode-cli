@@ -1221,7 +1221,7 @@ Project rule bytes are included in the existing checkout trust digest. Review wi
 
 Definition reads use the fenced native reader: linked files/directories, hard links and special files are refused. The reader caps a definition at 1 MiB; frontmatter is limited to 16 KiB, with up to 64 relative patterns of 256 bytes each. A project inventory covers up to 128 definitions and 4 MiB, with bounded directory enumeration. These review/discovery bounds are separate from the smaller rendered instruction budgets. Unknown inventories grant no rule authority. `cyber doctor` reports held, refused and truncated baseline rules.
 
-The current local implementation activates scoped rules after successful built-in reads and records typed root/path/digest/approval bindings separately from legacy instruction paths. Edit/patch and partial-settlement delivery, exact operation/Epoch binding, withdrawal after revocation, full restart acceptance and effective `/context` inspection remain in progress.
+The current local implementation activates scoped rules after successful built-in reads and records typed root/path/digest/approval bindings separately from legacy instruction paths. Nested discovery resolves settings after the successful read and checks that its captured Location and Context Epoch still apply before loading and before settlement. A suppressed reminder remains eligible for a later operation. Edit/patch and partial-settlement delivery, native operation and exact configuration-generation binding, withdrawal after revocation, full restart acceptance and effective `/context` inspection remain in progress.
 
 ### Switches
 
@@ -1240,7 +1240,7 @@ These are read from the server's environment (a value of `1`, `true`, `yes` or `
 
 No migration is needed: `CLAUDE.md` keeps loading in place. `cyber import` does not copy `CLAUDE.md` into `CYBER.md`, because both would then load and duplicate the content. To move Cyber-specific parts, put them in `CYBER.md` and, if the remaining guidance is shared, rename `CLAUDE.md` to `AGENTS.md`.
 
-Not implemented yet: `.cyber/rules/*.md` and `.claude/rules/*.md`, `.claude/CLAUDE.md`, the `~/.claude/CLAUDE.md` global fallback, a configurable `instructions.max_bytes`, per-source token sizes in `/context`, and `/init` (which is specified to generate `AGENTS.md`, not `CYBER.md`).
+Not implemented yet: `.claude/CLAUDE.md`, the `~/.claude/CLAUDE.md` global fallback, per-source token sizes in `/context`, and `/init` (which is specified to generate `AGENTS.md`, not `CYBER.md`).
 
 ## Base prompts and output styles
 
@@ -2099,7 +2099,7 @@ Nothing a source declares is run during an import, and an item without a native 
 | Claude `hooks` (every settings file, in layer order), Codex `hooks.json` | `hooks`, events one to one; `Bash` → `bash`, `Edit\|Write` → `{edit,write}`, `mcp__x__.*` → `mcp__x__*`; `statusMessage` → `status_message`; `CLAUDE_PROJECT_DIR` → `CYBER_PROJECT_DIR`. Events without an equivalent, `agent` handlers, header-carrying handlers and regex matchers are reported |
 | Claude `.claude/agents/*.md` | `agents.<name>`: the body is `system`, `mode: subagent`, `tools`/`disallowedTools` → `tools.allow`/`tools.deny`, `model` (aliases as above, `inherit` omitted), `color`, `permissionMode` → `permission_mode`, `skills`. A denied tool without an equivalent refuses the agent |
 | Claude `apiKeyHelper` | reported: command credentials are not available yet; set `ANTHROPIC_API_KEY` |
-| Claude `.claude/rules/*.md` | reported: rule files are not loaded yet |
+| Claude `.claude/rules/*.md` | reported without conversion; the runtime loads reviewed definitions in place when Claude compatibility is enabled |
 | Skills (`.claude/skills`, `.agents/skills`, `.opencode/skills`, `~/.codex/skills`), `CLAUDE.md`, `AGENTS.md` | not copied: reported `imported` because the runtime reads them in place |
 | Codex `[profiles.*]`, `~/.codex/<name>.config.toml`, `profile` | `profiles.<name>` with `model`, `mode` and `sandbox.policy`; `default_profile` |
 | Codex `[permissions.*]`, `default_permissions` | `sandbox.profiles.<name>` (`extends`, `filesystem` paths → `writable_roots`/`readable_paths`/`deny_read`, `network.enabled` → `off`/`proxy`, `network.domains`); `sandbox.profile`. A profile that cannot be converted is reported, and selecting it selects `read-only` instead |
