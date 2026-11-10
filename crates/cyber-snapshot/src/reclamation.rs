@@ -13,6 +13,12 @@ pub struct Settlement {
 
 pub type Delete = Box<dyn FnOnce() -> Result<u64, String> + Send>;
 pub type Collect = Box<dyn FnOnce(&BTreeSet<String>) -> Result<(), String> + Send>;
+#[derive(Default)]
+pub struct RetirementBatch {
+    pub receipts: Vec<Receipt>,
+    /// Continue after this deterministic aggregate; None completes one pass.
+    pub after: Option<String>,
+}
 /// Implementations serialize verification/deletion against reference writers.
 /// A durable plan must be committed before invoking `delete`; native guards are
 /// retained by that closure. Maintenance never acknowledges a native activity.
@@ -31,5 +37,14 @@ pub trait Policy: Send + Sync {
         Err("Snapshot metadata retirement is unavailable".into())
     }
     fn collect(&self, collect: Collect) -> Result<(), String>;
+    /// A bounded stable page also discovers partially retired journals whose
+    /// intent file is already gone. Legacy implementations have no candidates.
+    fn retirement_batch(
+        &self,
+        _directory: Option<&str>,
+        _after: Option<&str>,
+    ) -> Result<RetirementBatch, String> {
+        Ok(RetirementBatch::default())
+    }
     fn refused(&self, directory: &str, error: &str);
 }

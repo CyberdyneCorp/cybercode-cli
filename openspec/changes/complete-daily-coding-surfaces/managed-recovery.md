@@ -980,6 +980,32 @@ after later fences or Session deletion without granting any filesystem capabilit
 The retained Store receipt SHALL distinguish payload completion, pending metadata
 retirement and observed retirement completion, including after physical Store reopen.
 
+The native retirement entry SHALL validate acknowledged journals, immutable intent
+digests, positive source phases and exited exact lifetimes before publishing a new
+metadata plan. All journal entries must be known metadata; remaining payloads,
+construction entries and private parent directories refuse before publication.
+Each surviving planned leaf SHALL be a unique private regular file with the exact
+native identity, generation, size and BLAKE3 hash. It SHALL retain the native store
+lock and Location reader/mutation lease, recheck policy, registrations, routes and
+pins before each unlink, synchronize affected directories and remove only the
+exact empty journal directories. Missing leaves are restart progress only under
+the already durable metadata plan; replacements and newly introduced entries
+refuse. Lifetime files are removed last and their actual lock descriptors remain
+held through the final filesystem call.
+
+Explicit acknowledgement SHALL return the original verified durable receipt after
+observed metadata completion without reopening removed files or source images.
+A pending metadata plan SHALL refuse competing acknowledgement rewrites and
+require exact maintenance resumption. Neither path clears unrelated uncertainty.
+
+Periodic maintenance SHALL discover completed payload receipts from the Store even
+after the active intent has been removed. Discovery SHALL page at most 32 receipts,
+bound each encoded receipt to 64 KiB, preserve stable aggregate ordering and advance
+past deferred candidates before cycling. Discovery alone grants no native authority.
+A cap-triggered capture MAY attempt one bounded Location-scoped metadata batch and
+retry capture once after observed reclamation; ordinary retention, reference and
+native ownership checks remain mandatory.
+
 Event validation alone SHALL NOT authorize native deletion or establish that it
 occurred. The native adapter must independently retain the exact namespace,
 reader/lifetime/checkout proof and per-leaf pins around its bounded deletion

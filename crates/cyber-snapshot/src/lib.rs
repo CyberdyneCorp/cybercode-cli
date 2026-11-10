@@ -47,6 +47,8 @@ pub struct GitSnapshots {
     references: Option<Arc<ReferencesFn>>,
     unavailable: Mutex<HashMap<String, String>>,
     reclamation: Option<Arc<dyn reclamation::Policy>>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    retirement_cursor: Mutex<Option<String>>,
 }
 
 impl GitSnapshots {
@@ -78,6 +80,8 @@ impl GitSnapshots {
             private_roots,
             references,
             unavailable: Mutex::new(HashMap::new()),
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            retirement_cursor: Mutex::new(None),
         })
     }
 
@@ -367,11 +371,87 @@ impl GitSnapshots {
                 self.file_copy(directory.to_owned(), |store| store.track())
                     .await
             }
-            Ok(_) => result,
+            Ok(_) => {
+                if self.retire_for_capacity(directory, policy).await > 0 {
+                    self.file_copy(directory.to_owned(), |store| store.track())
+                        .await
+                } else {
+                    result
+                }
+            }
             Err(error) => {
                 policy.refused(directory, &error);
                 result
             }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn retire_for_capacity(
+        &self,
+        directory: &str,
+        policy: &Arc<dyn reclamation::Policy>,
+    ) -> u64 {
+        let batch = match policy.retirement_batch(Some(directory), None) {
+            Ok(batch) => batch,
+            Err(error) => {
+                policy.refused(directory, &error);
+                return 0;
+            }
+        };
+        let mut freed = 0u64;
+        for receipt in batch.receipts {
+            match self.retire(directory, receipt).await {
+                Ok(bytes) => freed = freed.saturating_add(bytes),
+                Err(error) => policy.refused(directory, &error),
+            }
+        }
+        freed
+    }
+
+    /// Retire exact private metadata for an already completed payload plan.
+    /// The Store receipt remains authoritative; this never replays source work.
+    pub async fn retire(
+        &self,
+        directory: &str,
+        receipt: cyber_server::runtime::snapshot_reclamation::Receipt,
+    ) -> Result<u64, String> {
+        let policy = self
+            .reclamation
+            .clone()
+            .ok_or("Snapshot retirement authority is unavailable")?;
+        let origin = receipt.origin().map_err(|error| error.to_string())?;
+        if origin.binding.directory != Path::new(directory) {
+            return Err("Metadata retirement belongs to another Location".into());
+        }
+        let record = policy
+            .record(&receipt)?
+            .ok_or("Missing payload retirement receipt")?;
+        if record.retired {
+            return Ok(0);
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            self.recovery_location(directory)?;
+            let source = directory.to_owned();
+            let data = self.data_dir.clone();
+            let options = self.recovery_options(directory);
+            let config = self.config.clone();
+            let lock = cyber_server::workspace::mutation_lock(Path::new(directory))
+                .map_err(|error| error.to_string())?;
+            let workspace = lock
+                .try_lock_owned()
+                .map_err(|_| "Snapshot reader or writer is active")?;
+            tokio::task::spawn_blocking(move || {
+                let store = copy::Store::recover_existing(&data, &source, options)?;
+                copy::reclamation::retirement::retire(store, workspace, config, policy, receipt)
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            Err("Native snapshot metadata retirement is unsupported on this host".into())
         }
     }
 
@@ -458,6 +538,7 @@ impl GitSnapshots {
                     Ok(Err(error)) => policy.refused("snapshot inventory", &error),
                     Err(error) => policy.refused("snapshot inventory", &error.to_string()),
                 }
+                self.gc_metadata(policy).await;
                 let (data, config, policy) =
                     (self.data_dir.clone(), self.config.clone(), policy.clone());
                 let report = policy.clone();
@@ -485,6 +566,38 @@ impl GitSnapshots {
         let _ = (&self.references, &self.reclamation);
         for git_dir in git::shadow_dirs(&self.root()) {
             git::gc(&git_dir).await;
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn gc_metadata(&self, policy: &Arc<dyn reclamation::Policy>) {
+        let after = self
+            .retirement_cursor
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        match policy.retirement_batch(None, after.as_deref()) {
+            Ok(batch) => {
+                for receipt in batch.receipts {
+                    let source = receipt
+                        .origin()
+                        .ok()
+                        .and_then(|origin| origin.binding.directory.to_str())
+                        .map(str::to_owned);
+                    if let Some(source) = source {
+                        if let Err(error) = self.retire(&source, receipt).await {
+                            policy.refused(&source, &error);
+                        }
+                    } else {
+                        policy.refused("metadata retirement discovery", "Missing native Location");
+                    }
+                }
+                *self
+                    .retirement_cursor
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = batch.after;
+            }
+            Err(error) => policy.refused("metadata retirement discovery", &error),
         }
     }
 }

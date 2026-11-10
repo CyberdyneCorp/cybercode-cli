@@ -428,3 +428,58 @@ async fn legacy_maintenance_policy_refuses_metadata_work_without_invoking_the_ca
     assert!(f.journal.join("intent.json").exists());
     f.app.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn retirement_discovery_pages_stably_and_filters_location_without_granting_native_authority()
+{
+    let f = Fixture::new().await;
+    payload_complete(&f).await;
+    let prototype = f.record().unwrap().plan;
+    // Pagination exercises only stored index discovery. These deliberately
+    // uncommitted receipt variants cannot authorize any native retirement.
+    let mut expected =
+        std::collections::BTreeSet::from([records::Plan::id(&prototype.receipt).unwrap()]);
+    for index in 1..=32u32 {
+        let mut payload = prototype.clone();
+        let records::Receipt::Restore(receipt) = &mut payload.receipt else {
+            unreachable!()
+        };
+        receipt.events_digest = format!("{index:064x}");
+        let id = records::Plan::id(&payload.receipt).unwrap();
+        expected.insert(id.clone());
+        let bytes = payload.total_bytes().unwrap();
+        f.app.store.transaction(move |db| {
+            db.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES (?1,?2,0,?3,?4,1)",
+                rusqlite::params![format!("evt_meta_plan_{index}"),id,records::PLANNED,json!(payload).to_string()])?;
+            db.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES (?1,?2,1,?3,?4,1)",
+                rusqlite::params![format!("evt_meta_done_{index}"),id,records::COMPLETED,json!(records::Completion {plan_id:id.clone(),removed_bytes:bytes}).to_string()])?;
+            Ok(())
+        }).unwrap();
+    }
+    let policy = cyber_app::snapshot_reclamation::policy(f.app.store.clone());
+    let first = policy
+        .retirement_batch(Some(f.project.to_str().unwrap()), None)
+        .unwrap();
+    assert_eq!(first.receipts.len(), 32);
+    let next = policy
+        .retirement_batch(Some(f.project.to_str().unwrap()), first.after.as_deref())
+        .unwrap();
+    assert_eq!(next.receipts.len(), 1);
+    assert!(next.after.is_none());
+    let actual = first
+        .receipts
+        .into_iter()
+        .chain(next.receipts)
+        .map(|receipt| records::Plan::id(&receipt).unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected);
+    assert!(
+        policy
+            .retirement_batch(Some("/another-location"), None)
+            .unwrap()
+            .receipts
+            .is_empty()
+    );
+    assert!(f.journal.join("intent.json").exists());
+    f.app.runtime.shutdown().await;
+}

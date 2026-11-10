@@ -330,3 +330,44 @@ pub(super) fn project(db: &Connection, event: &StoredEvent) -> Result<(), String
     }
     Ok(())
 }
+
+impl crate::runtime::Runtime {
+    /// An observed retirement answers metadata acknowledgement without reopening
+    /// removed files. A pending plan freezes them against competing rewrites.
+    pub(crate) fn snapshot_metadata_retired(
+        &self,
+        receipt: &Receipt,
+    ) -> Result<bool, crate::runtime::RuntimeError> {
+        let retained = receipt.clone();
+        let record = self.inner.store.read(move |db| {
+            let tx = db.unchecked_transaction()?;
+            retained.verify(&tx)?;
+            let record = super::lookup(&tx, &retained)?;
+            tx.commit()?;
+            Ok(record)
+        })?;
+        let Some(record) = record else {
+            return Ok(false);
+        };
+        if record.retired {
+            let session = &receipt.origin()?.session_id;
+            let handle = self
+                .inner
+                .sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(session)
+                .cloned();
+            if let Some(handle) = handle {
+                for owner in receipt.owners()? {
+                    handle.acknowledge_snapshot_uncertainty(&owner.origin.activity_id);
+                }
+            }
+            return Ok(true);
+        }
+        if record.metadata.is_some() {
+            return Err(crate::runtime::RuntimeError::Conflict("Snapshot metadata retirement is pending; resume maintenance before acknowledgement".into()));
+        }
+        Ok(false)
+    }
+}

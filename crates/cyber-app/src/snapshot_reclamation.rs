@@ -124,6 +124,13 @@ impl Policy for Reclamation {
             .transaction(move |db| collect(&records::references(db)?).map_err(invalid))
             .map_err(|error| error.to_string())
     }
+    fn retirement_batch(
+        &self,
+        directory: Option<&str>,
+        after: Option<&str>,
+    ) -> Result<cyber_snapshot::reclamation::RetirementBatch, String> {
+        metadata::batch(self, directory, after)
+    }
     fn refused(&self, directory: &str, error: &str) {
         cyber_core::log::warn(
             "snapshot",

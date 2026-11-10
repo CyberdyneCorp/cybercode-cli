@@ -2,6 +2,7 @@
 mod cancelled;
 mod checkouts;
 mod paired;
+pub(crate) mod retirement;
 use super::{Store, ownership, restore::Journal, storage};
 use crate::reclamation::{Policy, Settlement};
 use cap_fs_ext::DirExt;

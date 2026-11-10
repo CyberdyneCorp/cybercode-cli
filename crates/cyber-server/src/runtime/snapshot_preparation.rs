@@ -791,6 +791,11 @@ impl Runtime {
         if receipt.origin.is_none() && receipt.checkout_resources_digest.is_none() {
             return Ok(receipt);
         }
+        if self.snapshot_metadata_retired(&super::snapshot_reclamation::Receipt::Preparation(
+            Box::new(receipt.clone()),
+        ))? {
+            return Ok(receipt);
+        }
         let worker = self
             .preparation_worker(session, activity, Some(receipt.clone()))
             .await?;

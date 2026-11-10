@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 //! Real App restores/receipts and native private payloads; no source writes by cleanup.
+#[path = "support/snapshot_native_retirement.rs"]
+mod native_retirement;
 #[path = "support/snapshot_retirement.rs"]
 mod retirement;
 #[path = "support/scripted_model.rs"]
@@ -318,10 +320,16 @@ async fn periodic_collection_applies_the_same_retention_and_receipt_admission() 
     f.age();
     f.snapshots.gc().await;
     assert!(f.record().unwrap().completed);
-    assert!(!f.journal.join("stage_0").exists() && !f.journal.join("stage_1").exists());
+    assert!(f.record().unwrap().retired && !f.journal.exists());
+    let metadata = f.record().unwrap().metadata.unwrap();
     assert_eq!(
-        std::fs::read(f.journal.join("intent.json")).unwrap(),
-        intent
+        metadata
+            .files
+            .iter()
+            .find(|file| file.role == records::metadata::Role::Intent)
+            .unwrap()
+            .hash,
+        blake3::hash(&intent).to_hex().to_string()
     );
     assert_eq!(image_bytes(&files), images);
     f.app.runtime.shutdown().await;

@@ -1060,3 +1060,57 @@ Collection source 124c11b9 completes native run 42759174937 successfully on Linu
 x64/ARM and macOS ARM/Intel. This accepts that source, not the subsequent metadata
 writer protocol. Run 42759434324 at 50e00372 retains the longer workflow allowance
 and is queued at this checkpoint; it also predates these writer changes.
+
+Native metadata-retirement continuation (2026-11-10): the Linux/macOS adapter now
+captures semantic-role identities, generations, BLAKE3 hashes and exact byte totals
+for acknowledged journals with empty complete checkout inventories. It retains the
+Store namespace lock, Location mutation/reader lease and actual exited lifetime
+locks, verifies current and retained routes, known-only journal inventory, pins and
+policy before each unlink, and synchronizes exact leaf/directory removal. Existing
+immutable plans resume missing leaves without reconstructing or replaying source.
+Unknown entries, replacement inodes, aliases, live owners and changed policy refuse.
+The Store writer remains held through the callback; completed receipts answer native
+acknowledgement from retained Store history, while pending plans freeze rewrites.
+
+Periodic maintenance discovers at most 32 payload-completed receipts from the Store
+per stable cursor page, with 64 KiB per-receipt bounds and Location-scoped cap
+fallback. Thus missing active intents do not hide interrupted cleanup, and deferred
+managed candidates do not permanently starve later pages. Discovery is not native
+authority. A successful metadata cap fallback permits one fresh capture attempt.
+
+Local evidence: all 37 App reclamation cases pass, including real ordinary native
+retirement, actual HTTP acknowledgement after removal, before/after callback cuts,
+replacement/unknown/alias/live-lock refusal, policy loss after the first unlink,
+stable discovery pagination, cap-triggered capture and actual subprocess SIGKILL
+followed by physical Store reopen and production periodic resumption. Later source
+symlinks/unreadable owner bytes, transcript and inference counts are preserved.
+The child fixture is an inert top-level test unless explicitly invoked by its parent;
+its process-death assertion actually executes in the parent case. Affected server,
+snapshot and App all-target Clippy passes with warnings denied; native macOS C
+sandbox deprecation diagnostics are observed without unchanged-main attribution.
+Managed claim retirement, zero-payload/partial construction, old/deleted Location
+maintenance, full receipt-kind cuts and current-source platform acceptance remain
+required. M6 and parent tasks remain open; this is not issue or delivery completion.
+
+Prior-source native run 42759434324 at 50e00372 finishes both Linux jobs and macOS
+ARM successfully; Intel fails the managed Git prepared-cancellation test because
+its preparation origin was not observed (branches_cli.rs:1912). The failed private
+fixture is retained/uploaded at .tmphzzjxr; the fixture-preservation probe's earlier
+caught panic is expected and passes. Independent preparation/TUI, JSONL and
+structured checks pass on Intel. This is a real unresolved acceptance failure,
+not a passing matrix or evidence that a longer job allowance corrected the case.
+Run 42767559419 at 5be366b7 is queued at this audit and predates native retirement.
+
+Final local checkpoint verification: native-git-acceptance snapshot package passes
+153 library cases (8 subprocess fixtures intentionally ignored at top level), 31
+file-copy cases and 22 Git cases (1 subprocess fixture ignored at top level); the
+Windows-only and doc binaries select zero here. Server snapshot selection passes
+53 cases. OpenAPI artifact, SDK generation consistency, formatting and whitespace
+checks pass. CI-pinned OpenSpec 1.13.2 validates all 100 items; spec lint reports zero
+errors/25 warnings. Code-review-skill review of the native descriptor/route checks,
+semantic-only plan, writer-held callback, refusal/resumption and actual tests finds
+no additional defect in the tested ordinary path. Full receipt-kind acceptance
+has a test gap: native preparation/paired retirement needs direct cases, and managed
+retirement remains unsupported. These are required before accepting M6/delivery.
+Full workspace, SDK runtime, current-source CLI/TUI and cross-platform acceptance
+were not rerun for this checkpoint. No PR, merge or parent completion is claimed.

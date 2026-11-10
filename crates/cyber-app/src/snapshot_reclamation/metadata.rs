@@ -2,6 +2,35 @@
 use super::*;
 use records::metadata::{self, Plan as MetadataPlan};
 
+pub(super) fn batch(
+    owner: &Reclamation,
+    directory: Option<&str>,
+    after: Option<&str>,
+) -> Result<cyber_snapshot::reclamation::RetirementBatch, String> {
+    let directory = directory.map(str::to_owned);
+    let after = after.map(str::to_owned);
+    owner.0.read(move |db| {
+        let tx = db.unchecked_transaction()?;
+        let mut query = tx.prepare("SELECT e.aggregate_id,json_extract(e.data,'$.receipt') FROM event e WHERE e.type=?1 AND e.seq=0 AND e.aggregate_id>coalesce(?2,'') AND EXISTS(SELECT 1 FROM event c WHERE c.aggregate_id=e.aggregate_id AND c.seq=1 AND c.type=?3) AND NOT EXISTS(SELECT 1 FROM event c WHERE c.aggregate_id=e.aggregate_id AND c.seq=3 AND c.type=?4) AND (?5 IS NULL OR coalesce(json_extract(e.data,'$.receipt.origin.binding.directory'),json_extract(e.data,'$.receipt.checkout.resolution_origin.binding.directory'))=?5) ORDER BY e.aggregate_id LIMIT 32")?;
+        let mut rows = query.query(rusqlite::params![records::PLANNED, after, records::COMPLETED, metadata::COMPLETED, directory])?;
+        let mut receipts = Vec::new();
+        let mut last = None;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let raw = row.get_ref(1)?.as_str().map_err(|_| invalid("Invalid retirement receipt encoding"))?;
+            if raw.len() > 64 * 1024 { return Err(invalid("Metadata retirement receipt exceeds discovery bound")); }
+            let receipt: records::Receipt = serde_json::from_str(raw).map_err(invalid)?;
+            if Plan::id(&receipt)? != id { return Err(invalid("Foreign retirement discovery owner")); }
+            receipt.owners()?;
+            last = Some(id);
+            receipts.push(receipt);
+        }
+        let after = if receipts.len() == 32 { last } else { None };
+        drop(rows); drop(query); tx.commit()?;
+        Ok(cyber_snapshot::reclamation::RetirementBatch { receipts, after })
+    }).map_err(|error| error.to_string())
+}
+
 pub(super) fn retire(
     owner: &Reclamation,
     payload: Plan,

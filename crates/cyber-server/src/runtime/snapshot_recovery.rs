@@ -24,6 +24,12 @@ impl Runtime {
             .receipt
             .clone()
             .ok_or_else(|| RuntimeError::Corrupt("Committed recovery lacks its receipt".into()))?;
+        if self.snapshot_metadata_retired(&super::snapshot_reclamation::Receipt::Recovery(
+            receipt.clone(),
+        ))? {
+            result.journal_acknowledged = Some(true);
+            return Ok(result);
+        }
         let origin = result.resolution.clone().ok_or_else(|| {
             RuntimeError::Corrupt("Committed recovery lacks its native origin".into())
         })?;

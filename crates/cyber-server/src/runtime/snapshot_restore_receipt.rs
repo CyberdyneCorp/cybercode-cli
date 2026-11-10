@@ -100,6 +100,11 @@ impl Runtime {
             .ok_or_else(|| {
                 RuntimeError::Conflict("No immutable committed restore receipt".into())
             })?;
+        if self.snapshot_metadata_retired(&super::snapshot_reclamation::Receipt::Restore(
+            receipt.clone(),
+        ))? {
+            return Ok(receipt);
+        }
         let handle = self.inner.handle(session).await?;
         let state = handle.state.lock().await;
         let directory = state.info.directory.clone();

@@ -105,7 +105,7 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    restart, alias, namespace-transplant and reference regressions pass locally.
    This does not retire journal/worker/checkout metadata or complete M6.
 
-8. **Metadata retirement now has a durable writer protocol, not native deletion.**
+8. **Metadata retirement now joins the durable writer to exact native deletion.**
    Reclamation history distinguishes payload completion, an immutable metadata
    role/identity/generation/hash plan, and metadata completion. The App maintenance
    port commits the plan first, excludes reference writers during its guarded
@@ -113,15 +113,20 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    Migration catalog fencing preserves older evidence; logical history survives
    Store reopen and reprojection after later native fences or Session deletion.
    The Rust maintenance port defaults to unavailable for older implementations.
-   No native producer invokes it yet: ordinary cleanup still retains journal,
-   phase and lifetime files. Native deletion/resumption, receipt reconciliation,
-   managed claims and partial-construction acceptance remain required by M6.
+   The native adapter now pins and removes acknowledged journal, phase and lifetime
+   files for empty checkout inventories. Periodic Store discovery resumes after
+   active-intent deletion, including a tested real process kill; cap pressure can
+   reclaim metadata before one capture retry. Completed acknowledgement returns
+   the retained Store receipt without reopening deleted files. Managed claims,
+   partial construction and complete receipt-kind/platform acceptance remain open.
 
    A separate real App regression reproduced 57,344 bytes of payload deletion
    when configuration resolved to null. Cleanup now preserves bytes initially and
    stops after policy loss between unlinks, retaining its exact resumable plan.
-   Twenty-seven App cases and 14 migration tests pass locally; native deletion is
-   not inferred from the writer callback tests.
+   Thirty-seven App reclamation tests pass locally, including actual native
+   deletion, tamper/alias/live-owner refusals, policy loss, process death and cap
+   retry. The earlier 14 migration tests cover the writer catalog. Fresh platform
+   and broader current-source verification remain required before M6 acceptance.
 
 Native run [42733865471](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42733865471)
 passes Linux x64/ARM and macOS ARM/Intel at `e2b3ba18`, including the earlier
@@ -139,6 +144,12 @@ predates the collection-provenance continuation, whose source at `124c11b9` has
 its own run [42759174937](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42759174937),
 now successful on all four Linux/macOS platforms. It predates the metadata writer
 protocol and payload-policy fix; fresh source-bound acceptance remains required.
+The subsequent run [42759434324](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42759434324)
+at `50e00372` passes both Linux jobs and macOS ARM, but Intel fails managed Git
+prepared cancellation because its preparation origin is not observed. Its private
+fixture is retained/uploaded; independent client/JSONL/structured checks pass.
+That acceptance failure remains unresolved. The queued writer run at `5be366b7`
+and new native retirement need their own evidence.
 
 Verification: three structured-output CLI tests, seven JSONL CLI tests, five
 structured-result server tests and six binary-worker ownership tests pass;
