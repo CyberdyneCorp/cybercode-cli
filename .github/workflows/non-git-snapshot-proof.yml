@@ -28,6 +28,8 @@ on:
       - crates/cyber-app/tests/instructions.rs
       - crates/cyber-core/src/config/**
       - crates/cyber-core/src/rules.rs
+      - crates/cyber-core/src/import/snapshot.rs
+      - crates/cyber-core/src/import/mod.rs
       - crates/cyber-core/src/lib.rs
       - crates/cyber-core/tests/config.rs
       - crates/cyber-tools/src/host.rs

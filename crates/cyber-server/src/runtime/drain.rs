@@ -2085,8 +2085,9 @@ impl Inner {
         let location = std::path::PathBuf::from(&invocation.directory);
         Some(ReadTarget {
             file: super::instructions::read_target(&location, settings.home.as_deref(), path),
-            location,
+            location: location.clone(),
             scope,
+            root: Arc::new(cyber_core::rules::RootBinding::capture(&location).ok()?),
         })
     }
 
@@ -2108,7 +2109,7 @@ impl Inner {
         let state = handle.state.lock().await;
         let targets: Vec<_> = targets
             .into_iter()
-            .map(|target| target.filter(|read| read.scope.is_current(&state)))
+            .map(|target| target.filter(|read| read.is_current(&state)))
             .collect();
         let attached = Reminded::of(&state).instructions;
         drop(state);
@@ -2120,16 +2121,9 @@ impl Inner {
                 let nested = target.map_or_else(Default::default, |read| {
                     // Resolve again after the effect: pre-call permission callbacks and
                     // trust inventories may have been invalidated while the tool ran.
-                    let Ok(settings) = inner.instruction_settings(&read.scope.directory) else {
-                        return Default::default();
-                    };
-                    super::instructions::load_nested(
-                        &global,
-                        &read.location,
-                        &read.file,
-                        &settings,
-                        &attached,
-                    )
+                    read.load(&global, &attached, || {
+                        inner.instruction_settings(&read.scope.directory)
+                    })
                 });
                 loaded.push(nested);
             }
@@ -2365,7 +2359,7 @@ impl ToolRun {
         if self
             .read
             .as_ref()
-            .is_some_and(|read| read.scope.is_current(state))
+            .is_some_and(|read| read.is_current(state))
         {
             nested
         } else {
@@ -2420,6 +2414,41 @@ pub(super) struct ReadTarget {
     pub location: std::path::PathBuf,
     pub file: std::path::PathBuf,
     pub scope: ReminderScope,
+    pub root: Arc<cyber_core::rules::RootBinding>,
+}
+impl ReadTarget {
+    fn is_current(&self, state: &SessionState) -> bool {
+        self.scope.is_current(state) && self.root.verify().is_ok()
+    }
+
+    fn load(
+        &self,
+        global: &std::path::Path,
+        attached: &std::collections::BTreeSet<String>,
+        resolve: impl FnOnce() -> Result<super::instructions::InstructionSettings, String>,
+    ) -> super::instructions::Instructions {
+        if self.root.verify().is_err() {
+            return Default::default();
+        }
+        let Ok(settings) = resolve() else {
+            return Default::default();
+        };
+        if self.root.verify().is_err() {
+            return Default::default();
+        }
+        let loaded = super::instructions::load_nested(
+            global,
+            &self.location,
+            &self.file,
+            &settings,
+            attached,
+        );
+        if self.root.verify().is_ok() {
+            loaded
+        } else {
+            Default::default()
+        }
+    }
 }
 
 /// `InstructionsLoaded` `load_reason` for files a read attached.
@@ -2804,6 +2833,8 @@ mod skill_reminder_tests {
 
     #[test]
     fn reminders_cannot_cross_an_epoch_or_location_change_during_loading() {
+        let root_dir = tempfile::tempdir().unwrap();
+        let root = Arc::new(cyber_core::rules::RootBinding::capture(root_dir.path()).unwrap());
         let state = || {
             let info = serde_json::from_value(serde_json::json!({
                 "id":"ses_rules", "title":"rules", "directory":"/repo", "parent_id":null,
@@ -2830,6 +2861,7 @@ mod skill_reminder_tests {
                     location: "/repo".into(),
                     file: "/repo/web/app.ts".into(),
                     scope,
+                    root: root.clone(),
                 }),
             };
             match changed {
@@ -2855,6 +2887,7 @@ mod skill_reminder_tests {
                         location: state.info.directory.clone().into(),
                         file: "/repo/web/app.ts".into(),
                         scope,
+                        root: root.clone(),
                     }),
                     ..run
                 };
@@ -3065,6 +3098,7 @@ mod skill_reminder_tests {
     /// ones included, before the outcome was checked.
     #[test]
     fn only_successful_reads_load_nested_instructions() {
+        let root_dir = tempfile::tempdir().unwrap();
         let read = ReadTarget {
             location: "/repo".into(),
             file: "/repo/web/app.ts".into(),
@@ -3072,6 +3106,7 @@ mod skill_reminder_tests {
                 directory: "/repo".into(),
                 epoch: 1,
             },
+            root: Arc::new(cyber_core::rules::RootBinding::capture(root_dir.path()).unwrap()),
         };
         let run = |outcome| ToolRun {
             call_id: "call".into(),
@@ -3104,6 +3139,7 @@ mod skill_reminder_tests {
     /// and the source's own error and structured value carry over.
     #[test]
     fn external_results_settle_framed_without_reminders() {
+        let root_dir = tempfile::tempdir().unwrap();
         let (_temp, nested) = nested(&[("CYBER.md", "rule".into())]);
         let framed =
             "<untrusted_content source=\"overflow\" origin=\"/o\">\nx\n</untrusted_content>";
@@ -3148,6 +3184,7 @@ mod skill_reminder_tests {
                     directory: "/repo".into(),
                     epoch: 1,
                 },
+                root: Arc::new(cyber_core::rules::RootBinding::capture(root_dir.path()).unwrap()),
             }),
         };
         assert!(run.nested_target().is_none());

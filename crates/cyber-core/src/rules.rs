@@ -11,6 +11,54 @@ pub const MAX_TOTAL_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ENTRIES: usize = 4096;
 const MAX_HEADER: usize = 16 * 1024;
 
+/// Physical checkout and Location incarnation retained across a file operation.
+/// This is observation evidence, not permission to access a source or perform an effect.
+pub struct RootBinding {
+    declared: PathBuf,
+    location: PathBuf,
+    root: PathBuf,
+    native: crate::import::DirectorySnapshot,
+}
+impl RootBinding {
+    pub fn capture(location: &Path) -> Result<Self, String> {
+        let declared = std::path::absolute(location).map_err(|_| "rule Location is invalid")?;
+        let location = location
+            .canonicalize()
+            .map_err(|_| "rule Location is unavailable")?;
+        let root = crate::config::project_root(&location);
+        let native = crate::import::DirectorySnapshot::capture(&location)
+            .map_err(|e| e.reason.to_owned())?;
+        let binding = Self {
+            declared,
+            location,
+            root,
+            native,
+        };
+        binding.verify()?;
+        Ok(binding)
+    }
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+    pub fn verify(&self) -> Result<(), String> {
+        if self.declared.canonicalize().ok().as_ref() != Some(&self.location) {
+            return Err("declared rule Location no longer names the captured directory".into());
+        }
+        self.native.verify().map_err(|e| e.reason.to_owned())?;
+        if crate::config::project_root(&self.location) != self.root {
+            return Err("rule project root changed during the operation".into());
+        }
+        Ok(())
+    }
+}
+impl std::fmt::Debug for RootBinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RootBinding")
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct Definition {
     pub path: PathBuf,
     pub digest: String,
@@ -274,6 +322,79 @@ pub fn trust_subset(location: &Path) -> TrustInventory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_binding_tracks_native_ancestry_and_project_boundaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("checkout");
+        let location = root.join("web/src");
+        std::fs::create_dir_all(&location).unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        let binding = RootBinding::capture(&location).unwrap();
+        assert_eq!(binding.root(), root.canonicalize().unwrap());
+        std::fs::write(location.join("app.ts"), "ordinary edit").unwrap();
+        assert!(binding.verify().is_ok());
+        // A nested checkout changes scope even though the physical directories remain.
+        std::fs::create_dir(root.join("web/.git")).unwrap();
+        assert!(binding.verify().is_err());
+        std::fs::remove_dir(root.join("web/.git")).unwrap();
+        assert!(binding.verify().is_ok());
+        std::fs::rename(root.join("web"), root.join("old-web")).unwrap();
+        std::fs::create_dir_all(&location).unwrap();
+        assert!(
+            binding.verify().is_err(),
+            "same path is a different ancestor"
+        );
+        assert!(RootBinding::capture(&location).unwrap().verify().is_ok());
+    }
+
+    #[test]
+    fn root_binding_rejects_replaced_and_removed_checkouts() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("checkout");
+        std::fs::create_dir(&root).unwrap();
+        let binding = RootBinding::capture(&root).unwrap();
+        std::fs::rename(&root, temp.path().join("retained")).unwrap();
+        assert!(binding.verify().is_err());
+        std::fs::create_dir(&root).unwrap();
+        assert!(
+            binding.verify().is_err(),
+            "replacement must not borrow held identity"
+        );
+        assert!(RootBinding::capture(&root).unwrap().verify().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn root_binding_accepts_a_declared_alias_but_refuses_later_link_substitution() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("checkout");
+        std::fs::create_dir(&root).unwrap();
+        let alias = temp.path().join("alias");
+        symlink(&root, &alias).unwrap();
+        let binding = RootBinding::capture(&alias).unwrap();
+        assert!(binding.verify().is_ok());
+        let other = temp.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        std::fs::remove_file(&alias).unwrap();
+        symlink(&other, &alias).unwrap();
+        assert!(
+            binding.verify().is_err(),
+            "declared alias retargeted to another root"
+        );
+        std::fs::remove_file(&alias).unwrap();
+        symlink(&root, &alias).unwrap();
+        assert!(binding.verify().is_ok());
+        let retained = temp.path().join("retained");
+        std::fs::rename(&root, &retained).unwrap();
+        symlink(&retained, &root).unwrap();
+        assert!(
+            binding.verify().is_err(),
+            "native lookup must not follow a substituted link"
+        );
+    }
+
     fn root() -> (tempfile::TempDir, PathBuf) {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();

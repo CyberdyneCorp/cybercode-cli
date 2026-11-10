@@ -732,3 +732,68 @@ async fn nested_instructions_resolve_settings_after_the_successful_operation() {
     );
     assert_eq!(state.epoch.unwrap().reminded_instructions.len(), 1);
 }
+
+/// Same-path replacement must not load the new checkout's instruction files for
+/// an operation captured against the old physical Location.
+#[tokio::test]
+async fn a_replaced_location_cannot_supply_instructions_for_an_inflight_read() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("read_old", "read", r#"{"path":"web/app.ts"}"#)]),
+                text("done"),
+                tools(&[("read_new", "read", r#"{"path":"web/app.ts"}"#)]),
+                text("done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    std::fs::create_dir(h.repo.join("web")).unwrap();
+    std::fs::write(h.repo.join("web/app.ts"), "original file").unwrap();
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Gated);
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("read old checkout"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        h.tools.started.notified(),
+    )
+    .await
+    .unwrap();
+    std::fs::rename(&h.repo, h.dir.path().join("old-checkout")).unwrap();
+    std::fs::create_dir_all(h.repo.join("web")).unwrap();
+    std::fs::create_dir(h.repo.join(".git")).unwrap();
+    std::fs::write(h.repo.join("web/app.ts"), "replacement file").unwrap();
+    std::fs::write(h.repo.join("web/CYBER.md"), "replacement checkout guidance").unwrap();
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert_eq!(state.calls["read_old"].output.as_deref(), Some("done"));
+    assert!(state.epoch.unwrap().reminded_instructions.is_empty());
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Return("replacement file".into()));
+    h.runtime
+        .admit(&id, admit("read new checkout"))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert!(
+        state.calls["read_new"]
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("replacement checkout guidance")
+    );
+    assert_eq!(state.epoch.unwrap().reminded_instructions.len(), 1);
+}

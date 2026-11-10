@@ -1706,3 +1706,49 @@ findings within these changes: existing runtime/host boundaries and atomic
 settlement are retained, unavailable configuration holds reminders, both writer
 paths revalidate the context, and regressions cover suppression and retry.
 Whole-goal review and source-bound native acceptance remain open.
+
+
+Native Location observation continuation (2026-11-10): add a metadata-only
+DirectorySnapshot using the existing no-follow native source reader's directory
+chain and identities. RootBinding retains the physical Location and project root,
+checks the declared Location alias still names that directory, and revalidates
+all native ancestors and the nearest project boundary. Unix retains handles;
+Windows retains full native IDs without holding directories open through the
+operation, preserving rename support. Runtime read targets retain the binding;
+normal and exact-override settlement check it before discovery/settings, after
+settings/discovery and under the settlement lock. No new file-operation or source
+permission is granted. Root/ancestor replacement, removal, symlink substitution,
+alias retargeting and changed nested checkout boundaries withhold reminders.
+Ordinary edits preserve the binding. A gated runtime read regression verifies a
+replacement checkout cannot supply nested guidance for the old call, while a
+fresh operation can load it without the old call consuming delivery. The existing
+rule/override and budget behavior remains covered by production App regressions.
+Checkpoint review found and fixed the declared-alias retargeting case; its native
+symlink regression now covers both alias retargeting and physical-path link
+substitution. These are point-in-time native observations, not proof of the file
+handle used by the effect. Durable rule identities still use logical root paths;
+actual per-file/native-operation receipts, root incarnation in durable provenance,
+edit/patch/partial-success delivery, exact configuration-generation fencing,
+revocation withdrawal, restart and inspection remain open. No parent task closes.
+
+Next producer integration points from code inspection: the successful read in
+`cyber-tools/src/tools/fs.rs`, `guarded_write` after its write, and each completed
+`write_one` in `tools/patch.rs`. Patch completion paths already distinguish files
+applied before failure. Collect actual authorized per-file effects there, including
+hook-rewritten inputs, rather than deriving delivery from pre-hook arguments or
+the overall tool status. RootBinding alone must not be treated as that receipt.
+
+Final local verification after the alias fix: eight filtered Core tests passed
+(seven rules tests plus the existing untrusted-rule table test), server library
+455 passed / one ignored subprocess lock probe, context/compaction 22 passed,
+production App instruction integration 15 passed, and Core/Server/App all-target
+Clippy with `-D warnings` passed. Formatting/diff checks, workflow YAML parsing,
+generated SDK consistency and CI-pinned strict OpenSpec (100 items) passed;
+spec lint reports zero errors and 25 warnings. Native C/linker warnings were
+observed without assigning their origin. Main was fetched and remains fully
+integrated at `8266db6c`. SDK runtime, entire workspace and Windows/native platform
+acceptance were not rerun locally for this increment. Workflow source filters
+include the shared native snapshot helper; its existing rules/context/App steps
+exercise the new cases. Current-source native execution and whole-goal review
+remain required before delivery; no goal/task acceptance is inferred from these
+local checks.

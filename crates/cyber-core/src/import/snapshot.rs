@@ -116,6 +116,42 @@ fn directory_chain(path: &Path) -> Result<(Vec<Dir>, Vec<Identity>), DiscoveryEr
     Ok((directories, bindings))
 }
 
+/// Native identities of every directory from the volume root to one physical
+/// directory. Capturing this reads metadata only, never directory contents.
+pub(crate) struct DirectorySnapshot {
+    path: PathBuf,
+    bindings: Vec<Identity>,
+    _retained: Option<Vec<Dir>>,
+}
+impl DirectorySnapshot {
+    pub(crate) fn capture(path: &Path) -> Result<Self, DiscoveryError> {
+        let (directories, bindings) = directory_chain(path)?;
+        // NTFS directory handles would freeze ordinary editor/worktree renames.
+        // Full Windows file IDs retain reuse protection without open handles.
+        #[cfg(windows)]
+        let retained = {
+            drop(directories);
+            None
+        };
+        #[cfg(not(windows))]
+        let retained = Some(directories);
+        let snapshot = Self {
+            path: path.into(),
+            bindings,
+            _retained: retained,
+        };
+        snapshot.verify()?;
+        Ok(snapshot)
+    }
+    pub(crate) fn verify(&self) -> Result<(), DiscoveryError> {
+        let (_, bindings) = directory_chain(&self.path)?;
+        if bindings != self.bindings {
+            return Err(error(&self.path, "source directory incarnation changed"));
+        }
+        Ok(())
+    }
+}
+
 /// Internal read-time command discovery keeps every directory binding live during enumeration.
 pub(crate) fn command_directory(path: &Path) -> Result<Vec<Dir>, DiscoveryError> {
     directory_chain(path).map(|(directories, _)| directories)

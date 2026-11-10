@@ -61,3 +61,10 @@
 - **THEN** the read result SHALL settle without delivering that operation's nested reminder into the new context
 - **AND** the suppressed reminder SHALL NOT consume once-per-Epoch delivery
 - **AND** nested discovery SHALL resolve current instruction settings after the successful operation instead of retaining pre-effect permission callbacks
+
+#### Scenario: Physical Location replacement during a read
+- **GIVEN** a file read started with a captured physical Location and project root
+- **WHEN** that Location or any native ancestor is replaced, removed or substituted with a link before nested discovery or settlement
+- **THEN** same-path replacement sources SHALL NOT supply reminders for the old operation
+- **AND** the operation result SHALL remain intact and its suppressed reminder SHALL NOT consume delivery in the active Epoch
+- **AND** a later operation captured against the replacement Location SHALL remain independently eligible
