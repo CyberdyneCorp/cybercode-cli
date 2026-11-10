@@ -265,6 +265,9 @@ pub struct SystemAdded {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepStarted {
+    /// Complete active input cohort captured before this inference step.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_message_ids: Vec<String>,
     /// Agent identity pinned for inference and every tool group of this Turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,

@@ -448,6 +448,11 @@ pub struct LastStep {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StepSnapshot {
     pub step_id: String,
+    /// Internal immutable provenance, reconstructed from step events on replay.
+    #[serde(skip)]
+    pub(crate) input_message_ids: Vec<String>,
+    #[serde(skip)]
+    pub(crate) input_root: Option<String>,
     /// The user message the step answers.
     pub user_message_id: Option<String>,
     pub pre: Option<String>,
@@ -998,7 +1003,7 @@ impl SessionState {
                 self.session_started = true;
                 self.hook_stop_step = marker.stop_after_step;
             }
-            "session.step.started" => self.on_step_started(decode(e)?, e.time_ms),
+            "session.step.started" => self.on_step_started(decode(e)?, e.time_ms)?,
             "session.text.ended" | "session.reasoning.ended" => self.on_content(kind, decode(e)?),
             "session.tool.called" => self.on_called(decode(e)?),
             "session.tool.dispatched" => self.on_dispatched(decode(e)?),
@@ -1414,7 +1419,8 @@ impl SessionState {
         });
     }
 
-    fn on_step_started(&mut self, s: StepStarted, time_ms: i64) {
+    fn on_step_started(&mut self, s: StepStarted, time_ms: i64) -> Result<(), String> {
+        super::requests::input_owners::validate(self, &s.input_message_ids)?;
         self.first_turn_started = true;
         self.turn_mode = Some(s.mode.unwrap_or_else(|| self.info.mode.clone()));
         let agent = s.agent.unwrap_or_else(|| self.info.agent.clone());
@@ -1423,6 +1429,8 @@ impl SessionState {
         self.step_origin = s.origin;
         self.steps.push(StepSnapshot {
             step_id: s.message_id.clone(),
+            input_message_ids: s.input_message_ids,
+            input_root: super::requests::input_owners::current(self).map(|(_, id)| id.to_owned()),
             user_message_id: self.current_user_message().map(str::to_string),
             pre: s.snapshot.clone(),
             post: None,
@@ -1435,6 +1443,7 @@ impl SessionState {
             started_ms: Some(time_ms),
             ..AssistantEntry::default()
         }));
+        Ok(())
     }
 
     fn assistant(&mut self, id: &str) -> Option<&mut AssistantEntry> {

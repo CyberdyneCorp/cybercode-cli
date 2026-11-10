@@ -38,7 +38,7 @@ enum Line {
     Eof,
 }
 
-/// A permission or question request this Session raised, with the Session to reply to.
+/// A live permission/question request bound to this driver's exact admitted inputs.
 struct Ask {
     session_id: String,
     question: bool,
@@ -90,24 +90,7 @@ pub async fn execute(
     let owned = Owned::capture(client, &id).await?;
     let (sender, mut lines) = mpsc::channel(64);
     tokio::spawn(read_stdin(sender));
-    let mut driver = Driver {
-        client,
-        id: &id,
-        args,
-        out: &mut out,
-        run,
-        owned,
-        inputs: Inputs::default(),
-        answering: Vec::new(),
-        answer_done: false,
-        asks: BTreeMap::new(),
-        closed: false,
-        idle: true,
-        fatal: None,
-        interrupted: false,
-        last_text: String::new(),
-        lease: None,
-    };
+    let mut driver = Driver::new(client, &id, args, &mut out, run, owned);
     driver.attach().await;
     driver.drive(&mut events, &mut lines).await;
     driver.release().await;
@@ -143,7 +126,35 @@ async fn read_stdin(sender: mpsc::Sender<Line>) {
     }
 }
 
-impl Driver<'_> {
+impl<'a> Driver<'a> {
+    fn new(
+        client: &'a Client,
+        id: &'a str,
+        args: &'a ExecArgs,
+        out: &'a mut Out,
+        run: Run,
+        owned: Owned,
+    ) -> Self {
+        Self {
+            client,
+            id,
+            args,
+            out,
+            run,
+            owned,
+            inputs: Inputs::default(),
+            answering: Vec::new(),
+            answer_done: false,
+            asks: BTreeMap::new(),
+            closed: false,
+            idle: true,
+            fatal: None,
+            interrupted: false,
+            last_text: String::new(),
+            lease: None,
+        }
+    }
+
     async fn drive<S: futures::Stream<Item = Event> + Unpin>(
         &mut self,
         events: &mut S,
@@ -261,7 +272,7 @@ impl Driver<'_> {
         }
     }
 
-    /// Answer a request this Session raised and is still waiting on; any other ID is a
+    /// Answer a request bound to this driver's live inputs; any other ID is a
     /// protocol error that leaves the run going.
     async fn reply(&mut self, request_id: &str, question: bool, body: Value) {
         let owned = self
@@ -447,6 +458,9 @@ impl Driver<'_> {
     }
 
     async fn asked(&mut self, base: &str, data: &Value) {
+        if !self.inputs.owns_request(self.id, data) {
+            return;
+        }
         let (Some(request_id), Some(session_id)) =
             (data["id"].as_str(), data["session_id"].as_str())
         else {
@@ -575,3 +589,6 @@ impl Driver<'_> {
         code
     }
 }
+
+#[cfg(test)]
+mod request_tests;

@@ -60,6 +60,25 @@ impl Inputs {
         self.pending.contains_key(message_id)
     }
 
+    /// Only a complete server-recorded cohort can authorize a driver reply.
+    /// Current Session activity and assistant history are not ownership proof.
+    pub fn owns_request(&self, session: &str, data: &Value) -> bool {
+        if data["session_id"].as_str() != Some(session)
+            || data["message_id"].as_str().is_none_or(str::is_empty)
+            || data["call_id"].as_str().is_none_or(str::is_empty)
+        {
+            return false;
+        }
+        let Some(inputs) = data["input_message_ids"].as_array() else {
+            return false;
+        };
+        !inputs.is_empty()
+            && inputs.len() <= MAX_PENDING
+            && inputs
+                .iter()
+                .all(|input| input.as_str().is_some_and(|id| self.contains(id)))
+    }
+
     pub fn get_mut(&mut self, message_id: &str) -> Option<&mut Input> {
         self.pending.get_mut(message_id)
     }
@@ -116,6 +135,29 @@ mod tests {
         input.text = "answer".repeat(1024);
         input.structured = Some(serde_json::json!({"answer":"structured"}));
         input
+    }
+
+    #[test]
+    fn request_ownership_requires_every_live_input_and_exact_session_call_evidence() {
+        let mut inputs = Inputs::default();
+        inputs.admit(input(0)).unwrap();
+        inputs.admit(input(1)).unwrap();
+        let owned = serde_json::json!({"session_id":"session","message_id":"assistant","call_id":"call","input_message_ids":["msg_0","msg_1"]});
+        assert!(inputs.owns_request("session", &owned));
+        for (field, value) in [
+            ("session_id", serde_json::json!("other")),
+            ("message_id", Value::Null),
+            ("call_id", Value::Null),
+            ("input_message_ids", serde_json::json!([])),
+            ("input_message_ids", serde_json::json!(["msg_0", "foreign"])),
+            ("input_message_ids", serde_json::json!(["msg_0", 3])),
+        ] {
+            let mut unknown = owned.clone();
+            unknown[field] = value;
+            assert!(!inputs.owns_request("session", &unknown), "{unknown}");
+        }
+        inputs.complete("msg_0").unwrap();
+        assert!(!inputs.owns_request("session", &owned));
     }
 
     #[test]

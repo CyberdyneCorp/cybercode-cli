@@ -142,7 +142,7 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 ## 6. Streaming JSONL input
 
 - [x] 6.1 Define typed version-2 envelopes, correlation, resource bounds, aggregate exit rules and driver-owned interactive request lifetime; document compatibility and unsupported combinations.
-- [ ] 6.2 Implement concurrent bounded parsing/admission and exact owned permission/question replies, retained request lookup, interrupt and end/EOF draining without stopping unrelated work. Basic parsing/admission merged in #117. The 2026-11-09 code review found that request collection and interrupt target the Session without checking the driver's admitted message ownership, and completed inputs retain their full result payloads indefinitely. Complete those ownership/resource bounds and their shared-Session/long-run regressions before accepting this task.
+- [ ] 6.2 Implement concurrent bounded parsing/admission and exact owned permission/question replies, retained request lookup, interrupt and end/EOF draining without stopping unrelated work. Basic parsing/admission merged in #117. Local continuations retire completed payloads and bind direct model requests to the complete recorded input cohort. Session-wide interruption/presence, descendant and background ownership, general event/result correlation and remaining resource bounds still need implementation and acceptance; the direct-request guard does not complete this task.
 - [ ] 6.3 Emit per-input results, optional partial/hook events and atomic last-message output with bounded backpressure and secret-safe errors. `--include-hook-events` is not implemented: hook receipts are deliberately not on the Session stream, so the lines would have nothing reliable to carry.
 - [ ] 6.4 Test multiple inputs, steering/queueing, malformed/oversized input, capacity, stale/cross-request replies, EOF while awaiting input, slow stdout, SIGINT, server restart and lost admission acknowledgement. Done: multiple inputs in order, per-input structured results, structured/plain steering while inference is gated, long-run slot retirement, malformed input (exit 2), unknown request replies, EOF while a request waits, unsupported combinations, with the real binary (`cyber-cli/tests/exec_stream_input.rs`). Open: shared-Session ownership, capacity, slow stdout, SIGINT, server restart and lost admission acknowledgement.
 
@@ -1475,3 +1475,52 @@ permanent root removal still needs a separately validated detached authority and
 coordination path; the current checks were not relaxed or replaced, and this
 remaining capability has not been marked complete. M6/M8, parent tasks and issue
 #93 remain open.
+
+
+Direct JSONL request ownership continuation (2026-11-10): assistant-step events
+now capture the complete active-path input cohort before inference. Runtime append
+and replay validate nonempty proof against branch-aware state. Private step
+snapshots preserve it across continuations and compaction without extending the
+public snapshot schema. Pending requests expose optional `input_message_ids`
+from the exact recorded step/tool call, never from the latest global promotion.
+Legacy or oversized evidence remains unknown; proof is bounded to 32 identities
+of at most 256 bytes, with no partial cohort accepted. The driver requires every
+identity to belong to its pending inputs before collecting/replying/closing a
+direct request. External correlation labels confer no authority. OpenAPI and
+TypeScript types are regenerated.
+
+Actual shared-App/Session controller tests cover permission and question requests,
+foreign reply refusal, close while the first owner remains attached, normal owner
+reply and a closed driver's own later request. Removing the guard reproduces the
+foreign-request collection failure; the failed fixture is retained. Separate real
+binary tests verify request proof and stdin permission/question replies. Server
+regressions cover co-promoted inputs, later steering, actual compaction, inactive
+branch promotions and contradictory replay. Runtime append preflights step proof;
+raw Store append is not claimed to validate SessionState.
+
+Verification passes: 3 provenance unit tests; 443 server library tests with one
+explicit subprocess-fixture test ignored; 22 request tests; branch checkout (1),
+context compaction (19) and structured-root (16) integration tests; 33 exec unit
+tests and 12 JSONL binary tests. Server/CLI all-target Clippy passes with warnings
+denied. OpenAPI exact check and SDK generated-file check pass; SDK typecheck
+and tests pass (136 passed, 10 configured external skips). These are local checks,
+not full-workspace or current-source cross-platform acceptance. The native workflow
+now independently runs provenance/request regressions alongside JSONL tests and
+retains failed shared-App fixtures under the short artifact root.
+
+Focused code-review-skill review finds no outstanding finding in this direct
+request increment. It follows the existing runtime/Store/CLI boundaries; SQL uses
+bound parameters, unknown proof grants no driver ownership, replay preserves
+legacy readability, and generated API changes are additive. The new producer,
+fold, lookup and driver guard have unit/integration coverage. Whole-branch review
+and current-source native acceptance remain required. Session-wide interruption
+and interactive leases, descendant/hook requests, input-scoped background jobs,
+output backpressure and broader event/result correlation remain implementation
+gaps. No claim is made that releasing a Session-wide lease cannot affect another
+owner without its own attached presence. Tasks 6.2–6.4 and issue #93 remain open.
+
+Final checkpoint checks: formatting, diff whitespace, workflow YAML and the
+independent JSONL step/retained-root assertions pass. The CI-pinned OpenSpec
+1.13.2 validates 100/100 items; cross-spec lint reports 0 errors and 25 warnings.
+Other cached OpenSpec versions were not used for acceptance. The SDK generation
+check is clean. No parent task is checked off by this increment.

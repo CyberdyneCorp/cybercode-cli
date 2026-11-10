@@ -15,6 +15,11 @@ on:
       - crates/cyber-server/src/runtime/drain.rs
       - crates/cyber-server/src/runtime/structured*.rs
       - crates/cyber-server/src/runtime/model.rs
+      - crates/cyber-server/src/runtime/mod.rs
+      - crates/cyber-server/src/runtime/events.rs
+      - crates/cyber-server/src/runtime/requests.rs
+      - crates/cyber-server/src/runtime/requests/**
+      - crates/cyber-server/tests/requests.rs
       - crates/cyber-server/tests/structured_root.rs
       - crates/cyber-server/tests/support/structured_terminal_fault.rs
       - crates/cyber-server/src/http/sessions.rs
@@ -153,10 +158,15 @@ jobs:
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli zero_payload:: -- --nocapture --test-threads=1 2>&1 | tee zero-payload-retirement-proof.log
       - name: JSONL driver and atomic last-message regressions
         if: ${{ !cancelled() }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::exec:: -- --nocapture 2>&1 | tee jsonl-driver-proof.log
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-server --lib runtime::requests::input_owners:: -- --nocapture 2>&1 | tee jsonl-driver-proof.log
+          cargo test --locked -p cyber-server --test requests -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::exec:: -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
           cargo test --locked -p cyber-cli --features native-git-acceptance --test exec_stream_input -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
       - name: Root structured result recovery and CLI stop regressions
         if: ${{ !cancelled() }}

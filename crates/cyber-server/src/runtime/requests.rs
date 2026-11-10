@@ -4,6 +4,7 @@
 //! A tool asks through its [`Asker`]; the request is recorded durably and waits until an
 //! attached client replies. Without an interactive client the reply is `Unattended` at once,
 //! so non-interactive Sessions never block.
+pub(super) mod input_owners;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, Weak};
@@ -98,6 +99,10 @@ pub struct PendingRequest {
     pub session_id: String,
     pub call_id: String,
     pub message_id: String,
+    /// Complete input cohort driving this exact recorded step/call. Empty means
+    /// unknown; clients must not infer ownership from current Session state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_message_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<RequestOrigin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -325,6 +330,7 @@ impl Inner {
             session_id: asker.session_id.clone(),
             call_id: asker.call_id.clone(),
             message_id: asker.message_id.clone(),
+            input_message_ids: Vec::new(),
             origin: None,
             routed_to: Vec::new(),
             kind,
@@ -363,6 +369,25 @@ impl Inner {
             QUESTION_ASKED
         };
         let mut state = handle.state.lock().await;
+        let (session, message, call) = (
+            asker.session_id.clone(),
+            asker.message_id.clone(),
+            asker.call_id.clone(),
+        );
+        let owners = self
+            .store
+            .read(move |db| input_owners::recorded(db, &session, &message, &call));
+        match owners {
+            Ok(owners) => request.input_message_ids = owners,
+            Err(error) => {
+                self.bus.publish(super::LiveEvent::Error {
+                    session_id: asker.session_id.clone(),
+                    kind: "storage".into(),
+                    message: format!("could not establish request input provenance: {error}"),
+                });
+                return false;
+            }
+        }
         let mut asked = event(kind_name, &request);
         if kind_name == PERMISSION_ASKED
             && super::workflow_solve::owns_verification(&asker.session_id)

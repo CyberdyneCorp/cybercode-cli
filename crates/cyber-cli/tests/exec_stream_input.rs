@@ -459,7 +459,9 @@ fn a_permission_is_answered_over_stdin_and_others_are_refused() {
     let mut run = Driven::start(&provider, &[]);
     let mut seen = Vec::new();
     run.send(r#"{"type":"user","text":"run it"}"#);
+    let input = run.until("input", &mut seen);
     let asked = run.until("permission_request", &mut seen);
+    assert_eq!(asked["input_message_ids"], json!([input["message_id"]]));
     let request = asked["id"].as_str().unwrap().to_owned();
     // A reply to a request this run does not have is an error, and the run goes on.
     run.send(r#"{"type":"permission_reply","request_id":"per_unknown","reply":"once"}"#);
@@ -489,6 +491,27 @@ fn eof_while_a_request_waits_declines_it_instead_of_hanging() {
     assert_eq!(result["result"], "declined");
     let second = provider.turns()[1].to_string();
     assert!(second.contains("no interactive approver"), "{second}");
+    assert_eq!(run.exit(), Some(0));
+}
+
+#[test]
+fn a_question_is_bound_to_its_input_and_answered_over_stdin() {
+    let provider = Provider::start(&[
+        r#"question {"questions":[{"question":"Choose","header":"Choice","options":[{"label":"yes"},{"label":"no"}]}]}"#,
+        "text:choice received",
+    ]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"choose","id":"choice"}"#);
+    let input = run.until("input", &mut seen);
+    let asked = run.until("question", &mut seen);
+    assert_eq!(asked["input_message_ids"], json!([input["message_id"]]));
+    run.send(
+        &json!({"type":"question_reply","request_id":asked["id"],"answers":[["yes"]]}).to_string(),
+    );
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["id"], "choice");
+    assert_eq!(result["result"], "choice received");
     assert_eq!(run.exit(), Some(0));
 }
 

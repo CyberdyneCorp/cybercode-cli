@@ -1,0 +1,225 @@
+//! Two driver controllers, one actual App/Session and real model/tool requests.
+#[path = "../../../../../cyber-app/tests/support/scripted_model.rs"]
+mod scripted_model;
+use super::*;
+use crate::cli::Format;
+use cyber_app::{App, AppOptions};
+use cyber_core::paths::{DatabaseLocation, Paths};
+use cyber_server::runtime::{PendingKind, PendingRequest};
+
+struct Fixture {
+    temp: tempfile::TempDir,
+    app: App,
+    client: Client,
+    session: String,
+    _model: scripted_model::ScriptedModel,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.temp.disable_cleanup(true);
+            eprintln!(
+                "Preserved shared-driver fixture at {}",
+                self.temp.path().display()
+            );
+        }
+    }
+}
+impl Fixture {
+    async fn new() -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let paths = Paths {
+            data: root.join("data"),
+            config: root.join("config"),
+            state: root.join("state"),
+            cache: root.join("cache"),
+            tmp: root.join("tmp"),
+        };
+        paths.ensure().unwrap();
+        let project = root.join("project");
+        std::fs::create_dir(&project).unwrap();
+        let model = scripted_model::ScriptedModel::start(response);
+        let mut config = model.config();
+        config["permissions"] = json!({"question":"allow","bash":"ask"});
+        std::fs::write(paths.config.join("cyber.jsonc"), config.to_string()).unwrap();
+        let app = App::build(AppOptions {
+            paths: paths.clone(),
+            home: root.join("home"),
+            database: DatabaseLocation::File(paths.data.join("test.db")),
+            default_directory: project.clone(),
+            sandbox_policy: None,
+            snapshots: false,
+            interactive: false,
+            password: None,
+            mcp_credentials: None,
+            remote_skill_fetcher: None,
+            workflow_cores: None,
+            isolation: None,
+        })
+        .await
+        .unwrap();
+        let client = Client::embedded(app.embedded()).at(project.to_str().unwrap());
+        let session = client
+            .post(
+                "/sessions",
+                json!({"model":"test/main","mode":"default","unattended":true}),
+            )
+            .await
+            .unwrap()["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        Self {
+            temp,
+            app,
+            client,
+            session,
+            _model: model,
+        }
+    }
+    async fn request(&self) -> PendingRequest {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(request) = self
+                    .app
+                    .runtime
+                    .pending_requests(Some(&self.session))
+                    .into_iter()
+                    .next()
+                {
+                    return request;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("model/tool request did not appear")
+    }
+}
+fn response(body: &Value) -> Value {
+    if !body["tools"].is_array()
+        || body["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .is_some_and(|last| last["role"] == "tool")
+    {
+        return json!({"content":"done"});
+    }
+    let question = body.to_string().contains("QUESTION_CASE");
+    let (name, arguments) = if question {
+        (
+            "question",
+            json!({"questions":[{"question":"Choose","header":"Choice","options":[{"label":"yes"},{"label":"no"}]}]}),
+        )
+    } else {
+        ("bash", json!({"command":"echo must-not-run"}))
+    };
+    let id = format!("call_{}", body["messages"].as_array().unwrap().len());
+    json!({"tool_calls":[{"index":0,"id":id,"type":"function","function":{"name":name,"arguments":arguments.to_string()}}]})
+}
+fn event(request: &PendingRequest) -> (&'static str, Value) {
+    let base = if matches!(request.kind, PendingKind::Question { .. }) {
+        "question.asked"
+    } else {
+        "permission.asked"
+    };
+    (base, serde_json::to_value(request).unwrap())
+}
+fn reply(question: bool) -> Value {
+    if question {
+        json!({"answers":[["yes"]]})
+    } else {
+        json!({"reply":"reject","message":"owner declines"})
+    }
+}
+
+#[tokio::test]
+async fn shared_session_requests_replies_and_close_keep_exact_driver_ownership() {
+    for text in ["PERMISSION_CASE", "QUESTION_CASE"] {
+        exercise(text).await;
+    }
+}
+async fn exercise(text: &str) {
+    let f = Fixture::new().await;
+    let args = ExecArgs::default();
+    let session = json!({"id":f.session});
+    let mut first_out = Out::new(Format::Text, &args, &session);
+    let mut second_out = Out::new(Format::Text, &args, &session);
+    let mut first = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut first_out,
+        Run::new(&args, Instant::now()),
+        Owned::capture(&f.client, &f.session).await.unwrap(),
+    );
+    let mut second = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut second_out,
+        Run::new(&args, Instant::now()),
+        Owned::capture(&f.client, &f.session).await.unwrap(),
+    );
+    first.attach().await;
+    second.attach().await;
+    first
+        .admit(
+            Some("same-correlation-label".into()),
+            vec![json!({"type":"text","text":text})],
+            "queue",
+        )
+        .await;
+    let request = f.request().await;
+    let question = matches!(request.kind, PendingKind::Question { .. });
+    assert_eq!(question, text == "QUESTION_CASE");
+    second
+        .admit(
+            Some("same-correlation-label".into()),
+            vec![json!({"type":"text","text":text})],
+            "steer",
+        )
+        .await;
+    protect_first(&f, &mut first, &mut second, &request).await;
+    finish_second(&f, &mut first, &mut second).await;
+    first.close().await;
+    f.app.runtime.shutdown().await;
+}
+async fn protect_first(
+    f: &Fixture,
+    first: &mut Driver<'_>,
+    second: &mut Driver<'_>,
+    request: &PendingRequest,
+) {
+    let question = matches!(request.kind, PendingKind::Question { .. });
+    let (base, data) = event(request);
+    second.asked(base, &data).await;
+    assert!(second.asks.is_empty());
+    second.reply(&request.id, question, reply(question)).await;
+    assert_eq!(
+        f.app.runtime.pending_requests(Some(&f.session))[0].id,
+        request.id
+    );
+    second.close().await;
+    assert_eq!(
+        f.app.runtime.pending_requests(Some(&f.session))[0].id,
+        request.id
+    );
+    first.asked(base, &data).await;
+    assert_eq!(first.asks.len(), 1);
+    first.reply(&request.id, question, reply(question)).await;
+}
+async fn finish_second(f: &Fixture, first: &mut Driver<'_>, second: &mut Driver<'_>) {
+    let request = f.request().await;
+    let (base, data) = event(&request);
+    first.asked(base, &data).await;
+    assert!(first.asks.is_empty());
+    second.asked(base, &data).await;
+    // The closed driver declines only its own late request.
+    assert!(second.asks.is_empty());
+    tokio::time::timeout(Duration::from_secs(30), f.app.runtime.wait_idle(&f.session))
+        .await
+        .unwrap();
+    assert!(f.app.runtime.pending_requests(Some(&f.session)).is_empty());
+}

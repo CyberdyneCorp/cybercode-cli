@@ -85,11 +85,18 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    The local fix keeps these diagnostics nonfatal and adds a real-binary
    regression with unavailable Git snapshots. All seven JSONL tests and all
    three structured-output CLI tests pass after the fix.
-2. **Major: request and interruption ownership is Session-wide.**
-   `Driver::asked` accepts every matching Session request and `interrupt` targets
-   the Session without binding to the driver's admitted messages. Track exact
-   input/request authority and test two drivers/owner clients sharing a Session,
-   including unrelated work present before driver startup.
+2. **Partly fixed locally: direct request ownership; interruption remains Session-wide.**
+   Model-step events now capture the complete active input cohort before inference.
+   Direct permission/question requests expose that durable cohort for their exact
+   step/call. The driver collects, replies to and closes only requests whose whole
+   cohort belongs to its pending inputs. Actual shared-App controller regressions
+   cover two drivers, equal external correlation labels, foreign replies and close
+   while the other owner remains attached. Branch checkout and compaction retain
+   the captured proof; legacy/oversized evidence grants no inferred authority.
+   Session-wide interrupt and interactive presence, descendant/hook ownership,
+   background-job ownership and general event/result correlation remain required.
+   These direct-request checks do not accept task 6.2 or complete shared-Session
+   isolation.
 3. **Partly fixed locally: completed history and blocking output.**
    Inputs now occupy at most 32 pending message-ID slots; emitted text/structured
    results retire into bounded counters and first-failure accounting. Admission

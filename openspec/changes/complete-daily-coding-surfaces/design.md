@@ -36,6 +36,21 @@ Implement `--input-format stream-json` as a bounded asynchronous reader and prot
 
 Support the existing canonical user/text-or-parts/delivery, interrupt, permission_reply, question_reply and end frames. Require exact live request ownership for replies; the streaming transport does not fabricate browser/TUI presence and does not approve anything automatically. The stream's negotiated request/reply behavior may keep an owned ask pending only while that driver is live. On EOF/end stop accepting frames, drain acknowledged pending work in defined order, and terminate after all owned inputs settle; disconnect cannot leave asks waiting forever. Never cancel unrelated work in a reused Session. SIGINT follows owned interruption and exit 130. Lost acknowledgement and restart use request lookup; uncertain native outcomes retain their ordinary fences.
 
+Request ownership must come from durable server evidence. Add optional
+`input_message_ids` to pending permission/question requests. Capture the complete
+active input cohort in each assistant-step event before inference, validate it at
+runtime append and replay, then bind requests to that exact step and tool call.
+Never infer ownership from globally latest promotion history: branch checkout can
+make those promotions inactive. Active-path snapshots retain the cohort through
+tool continuations and compaction; later steering cannot reassign an older call.
+Bound proof to 32 identities
+of at most 256 bytes each; missing, malformed or oversized evidence grants no
+driver ownership. Historical steps/requests without this field remain readable with
+unknown provenance. Direct request reply/close guards require every cohort identity
+to be a pending input of this driver and the exact Session. Scoped interruption,
+input-scoped presence, descendant ownership and other event/result correlation
+remain separate implementation obligations.
+
 Emit schema_version 2, one result per admitted input with stable correlation, optional partial text/reasoning and hook events, and atomic `--output-last-message`. Session-level usage remains separate from per-input results and descendant usage. Redact errors and bound output buffering; define aggregate exits as 130 for explicit SIGINT, 2 for a fatal protocol error, otherwise the first nonzero input outcome in admission order (0 only when all outcomes succeed). A failing input does not discard already acknowledged later input; fatal protocol errors stop new admission and settle or explicitly cancel only owned work. Cover these precedence rules in protocol tests. Do not silently change text-mode output or the existing review/workflow/Goal command contracts; unsupported option combinations fail before creating work.
 
 ## Delivery and acceptance

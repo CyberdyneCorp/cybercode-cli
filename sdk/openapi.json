@@ -9912,6 +9912,13 @@
           "message_id": {
             "type": "string"
           },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Complete input cohort driving this exact recorded step/call. Empty means\nunknown; clients must not infer ownership from current Session state."
+          },
           "origin": {
             "anyOf": [
               {

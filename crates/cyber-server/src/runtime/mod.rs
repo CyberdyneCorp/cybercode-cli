@@ -2768,6 +2768,14 @@ impl Inner {
         if events.is_empty() {
             return Ok(Vec::new());
         }
+        for event in &events {
+            if event.kind == events::STEP_STARTED {
+                let step: events::StepStarted = serde_json::from_value(event.data.clone())
+                    .map_err(|error| RuntimeError::Corrupt(error.to_string()))?;
+                requests::input_owners::validate(state, &step.input_message_ids)
+                    .map_err(RuntimeError::Invalid)?;
+            }
+        }
         let stored = self
             .store
             .append(&state.info.id, Expected::Seq(state.last_seq), events)?;

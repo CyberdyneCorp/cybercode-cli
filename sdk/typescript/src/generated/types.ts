@@ -3644,6 +3644,11 @@ export type PendingRequest = {
   session_id: string;
   call_id: string;
   message_id: string;
+  /**
+   * Complete input cohort driving this exact recorded step/call. Empty means
+   * unknown; clients must not infer ownership from current Session state.
+   */
+  input_message_ids?: string[];
   origin?: RequestOrigin | null;
   routed_to?: RequestRoute[];
 } & ((PermissionAsk & {
