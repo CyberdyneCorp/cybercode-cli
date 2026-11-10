@@ -10,11 +10,7 @@ pub(super) fn eligible(record: &Journal) -> bool {
         && !record.acknowledged
         && record.settled_by.is_none()
         && (!record.completed || record.changes.is_empty())
-        && record
-            .context
-            .as_ref()
-            .is_some_and(|context| context.git.is_none())
-        && record.backend != Some(JournalBackend::Git)
+        && record.context.is_some()
 }
 pub(super) fn verify(
     store: &Store,
@@ -172,8 +168,7 @@ fn payloads(
         let previous = planned.get(name.as_str()).copied();
         match (&change.after, image) {
             (Some(after), Some(image))
-                if after.kind == super::super::ImageKind::File
-                    && image.entry == *after
+                if image.entry == *after
                     && ownership.prepared_identity(index) == Some(image.identity.as_str()) =>
             {
                 files.push(Payload {

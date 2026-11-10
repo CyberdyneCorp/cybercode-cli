@@ -847,3 +847,42 @@ until the atomic promotion append succeeds and no request/reply or interruption
 authority is inferred from these result records. No new API/SDK fields were
 added. Current-source native/platform acceptance and global SDK/plugin/full
 workspace checks remain open. This does not complete tasks 6.2–6.4 or M2–M8.
+
+
+Cancelled fully prepared Git payload continuation (2026-11-09): cancellation
+cleanup now accepts fully persisted Git target images and typed symlinks through
+the same version-3 intent-bound plan, positive non-admitted phase, complete checkout
+set and exact already-published acknowledgement checks as other cleanup classes.
+No source replay, receipt field, plan format or default Git admission is added.
+Incomplete construction without persisted identities, CAS/metadata collection and
+the remaining native/cut/client gates remain open with M6 and its parent tasks.
+
+Both real CLI prepared-cancellation cases pass on local macOS ARM (235.48 seconds):
+file-copy and managed Git. The managed case kills the real service after prepared
+identities are published while SQLite writer contention prevents source admission.
+It verifies non-empty persisted checkout digest evidence, missing-marker and live
+claim refusal before a plan, equal-target symlink and regular-file replacement
+refusal, dangling private link ownership, immutable Store intent binding, unknown
+entry refusal, resumed cleanup after a durable plan and synthetic planned unlink,
+retained cancellation lookup after restart, unchanged owner files/transcript/Git
+index/configuration and no cleanup inference. The Git fixture uses smaller images
+under the unchanged handoff limit; its first oversized attempt was rejected before
+cleanup, and an empty-resource assertion inherited from the file-copy fixture was
+corrected to verify the actual persisted bindings. Neither failed attempt counts
+as acceptance. The final helper refactor and persisted-set checks are in the passing
+binary. Snapshot library: 140 passed, six intentionally ignored subprocess fixtures.
+All-target snapshot/CLI Clippy with warnings denied, formatting/whitespace and
+strict OpenSpec pass (100 items; lint zero errors/25 warnings). The compiler still
+reports macOS sandbox deprecation and linker unwind-table warnings. Focused code
+and security review found no additional issue in this extension; this is not a
+review of the full recovery branch. SDK/generated-artifact, default CLI, full
+workspace and current-source external platform acceptance were not rerun here.
+The native workflow now selects both managed Git process-death cases serially;
+the workflow edit is not passing platform evidence.
+
+Native run 42716226637 at 03b4526a completed successfully on Linux x64/ARM and
+macOS ARM/Intel. It predates steering and this cancellation extension. Run
+42728260672 at 1be03642 covers steering and post-commit acknowledgement loss;
+its Linux x64 job has passed, with the remaining jobs pending at this checkpoint.
+Neither run accepts the new cancelled-Git cleanup source. Queue its own native
+proof and retain each run's actual tested source identity.

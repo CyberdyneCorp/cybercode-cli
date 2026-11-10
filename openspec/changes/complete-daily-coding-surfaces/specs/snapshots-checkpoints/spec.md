@@ -478,11 +478,18 @@
 - **AND** repeated request lookup and explicit metadata acknowledgement after restart SHALL NOT replay source changes or start inference
 
 #### Scenario: Reclaiming acknowledged managed Git payloads
-- **GIVEN** an aged acknowledged Git restore or recovery pair has exact committed receipts, persisted checkout sets and regular-file payload ownership
+- **GIVEN** an aged acknowledged Git restore or recovery pair has exact committed receipts, persisted checkout sets and regular-file or symlink payload ownership
 - **WHEN** maintenance prepares and consumes a durable reclamation plan
 - **THEN** it SHALL retain every exited checkout claim and already published acknowledgement matching the exact lifetime, resource digest and consuming receipt through deletion
 - **AND** a missing acknowledgement, live claim or changed registration SHALL refuse before plan publication without repairing metadata
 - **AND** restart after plan publication SHALL use frozen native payload identities without source replay, preserving original claims, receipts and user Git metadata
+
+#### Scenario: Reclaiming cancelled fully prepared Git images
+- **GIVEN** a fully prepared Git journal has an exact committed cancellation, positive non-admitted phase, persisted target identities and complete consumed checkout evidence
+- **WHEN** retention permits maintenance to plan private payload cleanup
+- **THEN** it SHALL require every managed checkout's already published exact acknowledgement and retain the native claims through deletion
+- **AND** regular files and dangling symlinks SHALL match immutable target images and prepared native identities without following link targets
+- **AND** replacement inodes, missing markers, live claims and unknown entries SHALL refuse; restart after a durable plan SHALL preserve source files, user Git metadata and cancellation lookup without replay
 
 #### Scenario: Acknowledged private payload is a symbolic link
 - **GIVEN** an ordinary restore or settled recovery pair has immutable typed link images and exact private inode ownership

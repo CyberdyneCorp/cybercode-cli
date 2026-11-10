@@ -77,11 +77,11 @@ jobs:
           set -euo pipefail
           cargo test --locked -p cyber-snapshot --features native-git-acceptance -- --nocapture 2>&1 | tee git-adapter-proof.log
           cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_git_runtime -- --nocapture 2>&1 | tee git-runtime-proof.log
-      - name: Managed Git CLI process-death recovery candidate
+      - name: Managed Git CLI process-death recovery and cancellation candidate
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_git_keep_and_rollback_after_real_partial_restore_kill -- --nocapture 2>&1 | tee git-cli-recovery-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_git_ -- --nocapture --test-threads=1 2>&1 | tee git-cli-recovery-proof.log
       - name: JSONL driver and atomic last-message regressions
         shell: bash
         run: |

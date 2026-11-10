@@ -2,11 +2,7 @@
 mod cancelled;
 mod checkouts;
 mod paired;
-use super::{
-    Store, ownership,
-    restore::{Journal, JournalBackend},
-    storage,
-};
+use super::{Store, ownership, restore::Journal, storage};
 use crate::reclamation::{Policy, Settlement};
 use cap_fs_ext::DirExt;
 use cap_std::fs::Dir;

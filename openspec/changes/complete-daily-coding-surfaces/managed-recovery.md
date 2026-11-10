@@ -161,7 +161,7 @@ cleanup visibly. No direct user removal of private journal directories is requir
 
 ## Managed checkout payload reclamation
 
-Reclamation of acknowledged regular-file Git journal payloads SHALL reacquire
+Reclamation of acknowledged regular-file and symlink Git journal payloads SHALL reacquire
 the complete persisted checkout set for each consumed worker lifetime before
 preparing a durable deletion plan. Each claim SHALL bind the exact original
 creation and lifetime, exclude a live worker, and retain an already published
@@ -180,7 +180,7 @@ native evidence SHALL remain unchanged. Restart after a durable plan SHALL use
 the same frozen payload identities and complete-resource proof, never source
 replay. Existing receipt and reclamation event formats remain unchanged.
 
-Typed link payloads, incomplete construction, legacy missing proof, CAS/metadata
+Incomplete construction, legacy missing proof, CAS/metadata
 collection and the complete platform/cut matrix remain separate obligations.
 This extension does not enable default owned Git restore admission.
 
@@ -942,8 +942,12 @@ and be rechecked during deletion; unknown native owners continue to protect both
 ### Cancelled prepared-image cleanup
 
 An exact preparation cancellation with a published origin, positive non-admitted
-version-2 phase, complete empty checkout set and matching native cancellation
-metadata MAY reclaim fully prepared regular target images. Each leaf SHALL match
+version-2 phase, complete persisted checkout set and matching native cancellation
+metadata MAY reclaim fully prepared regular-file and symlink target images in
+file-copy or Git journals. Managed checkouts SHALL use the same retained,
+already-published acknowledgement requirements as ordinary and paired cleanup.
+Symlink observations and unlinks SHALL retain the link inode without following
+its target, including dangling private targets. Each leaf SHALL match
 its persisted prepared inode identity and immutable target image; incomplete
 construction without those identities SHALL remain protected. The version-3 plan
 SHALL freeze the native intent digest and complete private inventory before
