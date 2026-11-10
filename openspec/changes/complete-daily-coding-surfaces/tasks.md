@@ -1324,3 +1324,47 @@ unwind diagnostics were observed without assigning their origin. No production
 behavior, wire/SDK contract, default Git admission or parent completion changes.
 Full workspace/SDK runtime and fresh-source cross-platform proof were not performed
 locally; the native matrix must execute this source before accepting M8.
+
+Ordinary zero-payload continuation: remove the positive displaced-byte eligibility
+requirement and let an exact empty native inventory run through payload planning,
+the serialized native verification callback and durable completion. Empty displaced
+files remain actual leaves that must be verified and unlinked despite reporting
+zero bytes. Unchanged restores require their positively non-admitted source phase;
+restores with changes still require admission. The same immutable receipt, intent,
+checkout, lifetime, namespace, reference and retention checks apply. Remove the
+now-unused admitted-only phase wrapper and keep its resource/digest unit tests on
+the explicit admission verifier. Paired/preparation zero-inventory paths remain
+separate; this does not claim their completion.
+
+Three actual App cases (restored creation, empty displaced files and unchanged
+restore) failed before the fix because no cleanup plan was committed, then pass
+with periodic metadata retirement and data-only HTTP receipt acknowledgement.
+Each also refuses unavailable/disabled/zero retention, unknown construction, a
+live lifetime lock and contradictory source admission before committing a plan.
+A fourth regression interrupts the zero-leaf callback before and after native
+verification and resumes the exact durable plan before periodic retirement.
+Final focused selection passes four tests in 25.24 seconds.
+The full reclamation selection before the final assertion-helper extraction and
+fourth test addition passes 41 cases in 251.50 seconds; the final focused run
+verifies the extracted helpers and added interruption case. Native macOS C sandbox
+deprecation and linker unwind diagnostics were observed without assigning origin.
+Full workspace/SDK runtime and fresh-source platform checks were not run locally.
+Lifetime tests pass
+seven cases with one explicit subprocess fixture ignored. App/snapshot all-target
+Clippy with warnings denied passes after splitting cleanup and acknowledgement
+assertions (the original combined helper measured 24/15; no allowance added).
+Strict OpenSpec passes 100 items and spec lint reports 0 errors/25 warnings.
+
+Focused code-review-skill review finds no outstanding issue in the changed native
+admission and fixture paths: empty plans still execute full pre/post verification
+and synchronization, missing expected images still require an exact frozen plan,
+and periodic retirement cannot precede completion. Architecture follows the
+existing native adapter/Store-policy port; no new HTTP, SDK or schema surface is
+introduced. Cross-platform acceptance, managed/Git zero-payload cases, construction,
+old/removed Location and complete crash/client acceptance remain required. M6/M8,
+all parent tasks and issue #93 remain open.
+
+Native run 42774849027 at b42f5fca now has four successful platform jobs, including
+macOS Intel. Later managed-retirement and real-cut checkpoints are running/queued;
+that success does not accept later source. Fetching main finds 8266db6c already
+integrated, with no new upstream commits to merge.

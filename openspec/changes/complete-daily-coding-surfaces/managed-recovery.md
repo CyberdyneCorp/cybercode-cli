@@ -1046,6 +1046,23 @@ construction entries for the same owner remain fenced; unrelated activity and
 shared creation records remain intact. The callback remains serialized against
 reference writers, with fresh retention and complete native-owner re-attestation.
 
+### Ordinary restores without displaced bytes
+
+Acknowledged ordinary restores SHALL use the same bounded payload plan/completion
+protocol when their exact native inventory contains no leaves or only zero-length
+leaves. Restoring an absent source file and an unchanged restore SHALL NOT leave
+metadata permanently ineligible for retirement. A zero byte count alone is not
+completion: the native callback SHALL validate the complete journal, immutable
+intent, ownership, consumed checkout resources, exited lifetime and source phase,
+and synchronize the journal before the Store commits completion. An unchanged
+restore SHALL require its positively non-admitted source phase; a restore with
+changes SHALL require its admitted phase. Missing expected leaves without an
+existing exact plan, unknown construction and contradictory admission still refuse.
+Retention, reference and namespace fences apply before these plans as usual.
+Periodic maintenance MAY then retire the exact metadata through the existing
+receipt-bound protocol. Paired and cancelled preparation zero-payload acceptance
+remain separate required paths.
+
 ### Paired recovery payload cleanup
 
 Acknowledged keep/rollback cleanup SHALL bind the exact durable two-owner recovery

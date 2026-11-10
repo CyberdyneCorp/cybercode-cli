@@ -252,14 +252,6 @@ impl Store {
         phase.checkout_bindings = Some(resources.to_vec());
         self.write_source_phase(binding, &phase)
     }
-    pub(crate) fn verify_reclamation_phase(
-        &self,
-        binding: &SnapshotLifetimeBinding,
-        origin: &cyber_server::runtime::SnapshotOrigin,
-        resources_digest: &str,
-    ) -> Result<(), String> {
-        self.verify_reclamation_phase_admission(binding, origin, resources_digest, true)
-    }
     pub(crate) fn verify_reclamation_phase_admission(
         &self,
         binding: &SnapshotLifetimeBinding,
@@ -670,11 +662,11 @@ mod tests {
         lifetime.admit_source(&origin).unwrap();
         let digest = binding.checkout_resources_digest(&resources).unwrap();
         store
-            .verify_reclamation_phase(&binding, &origin, &digest)
+            .verify_reclamation_phase_admission(&binding, &origin, &digest, true)
             .unwrap();
         assert!(
             store
-                .verify_reclamation_phase(&binding, &origin, &"f".repeat(64))
+                .verify_reclamation_phase_admission(&binding, &origin, &"f".repeat(64), true)
                 .is_err()
         );
         assert!(

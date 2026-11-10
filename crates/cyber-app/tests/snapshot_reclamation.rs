@@ -39,6 +39,9 @@ impl Fixture {
         Self::in_directory(tempfile::tempdir().unwrap()).await
     }
     async fn in_directory(temp: tempfile::TempDir) -> Self {
+        Self::with_current(temp, Some("after!\n".repeat(4096))).await
+    }
+    async fn with_current(temp: tempfile::TempDir, current: Option<String>) -> Self {
         let root = temp.path().canonicalize().unwrap();
         let paths = Paths {
             data: root.join("data"),
@@ -101,11 +104,11 @@ impl Fixture {
             .unwrap()
             .to_owned();
         for index in 0..2 {
-            std::fs::write(
-                project.join(format!("file_{index}")),
-                "after!\n".repeat(4096),
-            )
-            .unwrap();
+            let path = project.join(format!("file_{index}"));
+            match &current {
+                Some(bytes) => std::fs::write(path, bytes).unwrap(),
+                None => std::fs::remove_file(path).unwrap(),
+            }
         }
         prompt(&app, &client, &session, "after snapshot", 2).await;
         let mut selection = json!({"message_id":first,"target":"code","action":"commit","expected_directory":project});
@@ -137,7 +140,12 @@ impl Fixture {
             })
             .find(|path| path.exists())
             .unwrap();
-        assert!(journal.join("stage_0").exists() && journal.join("stage_1").exists());
+        let displaced = current
+            .as_ref()
+            .is_some_and(|bytes| bytes != &"before\n".repeat(4096));
+        for index in 0..2 {
+            assert_eq!(journal.join(format!("stage_{index}")).exists(), displaced);
+        }
         let config = Arc::new(Mutex::new(json!({"snapshots":{"retention_days":7}})));
         let snapshots = maintenance(
             &paths,

@@ -26,6 +26,139 @@ fn worker_routes(f: &Fixture) -> [PathBuf; 2] {
     ]
 }
 
+async fn zero_payload_retirement(current: Option<String>, displaced_files: usize) {
+    let f = Fixture::with_current(tempfile::tempdir().unwrap(), current).await;
+    // Zero-byte plans still need the ordinary retention and native proof gates.
+    assert_eq!(f.reclaim().await.unwrap(), 0);
+    assert!(f.record().is_none());
+    f.age();
+    zero_payload_fences(&f).await;
+    assert_eq!(f.reclaim().await.unwrap(), 0);
+    let payload = f.record().expect("zero-byte cleanup must commit its plan");
+    assert!(payload.completed && !payload.retired);
+    assert_eq!(payload.plan.files.len(), displaced_files);
+    assert_eq!(payload.plan.total_bytes().unwrap(), 0);
+    assert_zero_payload_retired(&f).await;
+    f.app.runtime.shutdown().await;
+}
+
+async fn assert_zero_payload_retired(f: &Fixture) {
+    let requests = f.model.requests().len();
+    let routes = worker_routes(f);
+    f.snapshots.gc().await;
+    assert!(f.record().unwrap().retired);
+    assert!(f.record().unwrap().metadata.unwrap().total_bytes().unwrap() > 0);
+    assert!(!f.journal.exists());
+    assert!(routes.iter().all(|path| !path.exists()));
+    assert_eq!(retire(f).await.unwrap(), 0);
+    acknowledge_zero_payload(f).await;
+    assert_eq!(f.model.requests().len(), requests);
+}
+
+async fn acknowledge_zero_payload(f: &Fixture) {
+    let reply = f
+        .client
+        .post(
+            &format!(
+                "/sessions/{}/rewind/restores/{}/acknowledge",
+                f.session, f.receipt.origin.activity_id
+            ),
+            json!({}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_value::<SnapshotRestoreReceipt>(reply["data"].clone()).unwrap(),
+        f.receipt
+    );
+    for index in 0..2 {
+        assert_eq!(
+            std::fs::read(f.project.join(format!("file_{index}"))).unwrap(),
+            "before\n".repeat(4096).as_bytes()
+        );
+    }
+}
+
+async fn zero_payload_fences(f: &Fixture) {
+    for config in [
+        Value::Null,
+        json!({"snapshots":false}),
+        json!({"snapshots":{"retention_days":0}}),
+    ] {
+        *f.config.lock().unwrap() = config;
+        assert_eq!(f.reclaim().await.unwrap(), 0);
+        assert!(f.record().is_none());
+    }
+    *f.config.lock().unwrap() = json!({});
+    let unknown = f.journal.join("unknown-construction");
+    std::fs::write(&unknown, b"retain unknown evidence").unwrap();
+    assert!(f.reclaim().await.is_err());
+    assert!(f.record().is_none());
+    assert_eq!(std::fs::read(&unknown).unwrap(), b"retain unknown evidence");
+    // Only remove the file this test just introduced, after proving refusal.
+    std::fs::remove_file(unknown).unwrap();
+    let held = std::fs::File::open(&worker_routes(f)[0]).unwrap();
+    held.try_lock().unwrap();
+    assert!(f.reclaim().await.is_err());
+    assert!(f.record().is_none());
+    drop(held);
+    let phase = &worker_routes(f)[1];
+    let original = std::fs::read(phase).unwrap();
+    let mut changed: Value = serde_json::from_slice(&original).unwrap();
+    changed["admitted"] = (!changed["admitted"].as_bool().unwrap()).into();
+    std::fs::write(phase, changed.to_string()).unwrap();
+    assert!(f.reclaim().await.is_err());
+    assert!(f.record().is_none());
+    std::fs::write(phase, original).unwrap();
+}
+
+#[tokio::test]
+async fn zero_payload_created_restore_retires_native_metadata() {
+    zero_payload_retirement(None, 0).await;
+}
+
+#[tokio::test]
+async fn zero_payload_empty_displaced_restore_retires_native_metadata() {
+    zero_payload_retirement(Some(String::new()), 2).await;
+}
+
+#[tokio::test]
+async fn zero_payload_unchanged_restore_retires_native_metadata() {
+    zero_payload_retirement(Some("before\n".repeat(4096)), 0).await;
+}
+
+#[tokio::test]
+async fn zero_payload_interrupted_completion_resumes_the_exact_plan() {
+    for after_delete in [false, true] {
+        let f = Fixture::with_current(tempfile::tempdir().unwrap(), None).await;
+        f.age();
+        let cut = maintenance(
+            &f.paths,
+            f.config.clone(),
+            Arc::new(super::Cut {
+                inner: cyber_app::snapshot_reclamation::policy(f.app.store.clone()),
+                after_delete,
+                tamper: None,
+                pause: None,
+            }),
+        );
+        assert!(
+            cut.reclaim(f.project.to_str().unwrap())
+                .await
+                .unwrap_err()
+                .contains("injected cleanup interruption")
+        );
+        let planned = f.record().unwrap();
+        assert!(!planned.completed && planned.plan.files.is_empty());
+        assert_eq!(f.reclaim().await.unwrap(), 0);
+        let completed = f.record().unwrap();
+        assert!(completed.completed);
+        assert_eq!(completed.plan, planned.plan);
+        assert_zero_payload_retired(&f).await;
+        f.app.runtime.shutdown().await;
+    }
+}
+
 #[tokio::test]
 async fn native_retirement_removes_exact_metadata_and_acknowledges_from_the_retained_store_receipt()
 {

@@ -27,6 +27,24 @@ section 5/6 implementation state; reconcile it at delivery.
 | #92 native enforcement, tasks 2/N/R | Foundation/probe evidence exists, but production launch still uses the legacy sandbox route. Finish generation/image-bound native admission, revocation/quarantine/lifetime, independently intersected capabilities, real tool execution and native runtime/platform positives/denials. Linux R1 direction/support review and later R6 activation remain distinct gates. |
 | #92 protocol/callbacks/producers, tasks 3–6/S/D | Finish contribution ownership, hooks/providers/catalog transforms and TypeScript kit, durable scoped callbacks (`session/prompt` still explicitly refuses), Setup and DirectoryAdded plus combined producer acceptance. Preserve accepted FileChanged and CwdChanged fixes. Complete S1 epoch/directory-key/legacy-deletion and D1 directory-admission/Safe Boundary/child-policy review before their dependent code. |
 
+### Zero-byte ordinary restore continuation
+
+Ordinary cleanup now records payload completion for exact empty inventories and
+zero-length displaced files, allowing periodic maintenance to retire their native
+metadata. Actual App regressions cover restored file creation, displaced empty
+files and unchanged restores; all three failed before the fix and pass afterward.
+An unchanged restore requires its non-admitted phase, while changed restores still
+require source admission. Unknown construction, live owner locks, contradictory
+phase evidence and unavailable/disabled/zero-retention policy remain fences.
+Paired/preparation zero-payload paths, construction and removed-Location acceptance
+remain required; no parent task or delivery is complete from this increment.
+
+Native run [42774849027](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42774849027)
+at `b42f5fca` completed successfully on Linux x64/ARM and macOS ARM/Intel. This is
+source-bound evidence for that checkpoint, not acceptance of later managed
+retirement/process-cut or zero-byte changes. Main was fetched for this continuation;
+`8266db6c` remains fully integrated.
+
 ### Focused code-review findings and next actions
 
 This review covers incoming JSONL behavior and merge overlap, not acceptance of

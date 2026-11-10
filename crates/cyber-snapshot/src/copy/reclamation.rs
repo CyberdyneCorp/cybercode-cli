@@ -93,10 +93,6 @@ fn ordinary(record: &Journal) -> bool {
         && record.resolution.is_none()
         && record.settled_by.is_none()
         && record.context.is_some()
-        && record
-            .changes
-            .iter()
-            .any(|change| change.before.as_ref().is_some_and(|entry| entry.length > 0))
 }
 /// Read existing metadata only. A missing/partial namespace remains protected.
 pub(crate) fn locations(data: &Path) -> Result<BTreeSet<String>, String> {
@@ -185,9 +181,8 @@ pub(crate) fn reclaim(
         store, directory, record, settlement, frozen, workspace, config,
     )?;
     let plan = prepared.plan.clone();
-    if plan.files.is_empty() {
-        return Ok(0);
-    }
+    // Empty inventories still commit native verification/completion so that
+    // receipt-bound metadata retirement can subsequently reclaim this owner.
     policy.reclaim(plan, Box::new(move || prepared.delete()))
 }
 impl Store {
@@ -305,10 +300,11 @@ fn prepare(
         .as_deref()
         .ok_or("Missing reclamation source phase")?;
     let phase = MetadataPin::open(&workers, name)?;
-    store.verify_reclamation_phase(
+    store.verify_reclamation_phase_admission(
         binding,
         plan.receipt.origin().map_err(storage::fail)?,
         plan.receipt.owners().map_err(storage::fail)?[0].resources_digest,
+        !record.changes.is_empty(),
     )?;
     phase.verify(&workers, name)?;
     storage::existing_child(
