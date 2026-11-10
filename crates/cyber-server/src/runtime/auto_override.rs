@@ -504,10 +504,10 @@ impl Inner {
         self.instructions_loaded(
             handle,
             loaded.into_iter().collect(),
-            if run.def.spec.name == "edit" {
-                "nested_edit"
-            } else {
-                super::drain::NESTED_LOAD_REASON
+            match run.def.spec.name.as_str() {
+                "edit" => "nested_edit",
+                "apply_patch" => "nested_patch",
+                _ => super::drain::NESTED_LOAD_REASON,
             },
         )
         .await;

@@ -28,6 +28,20 @@ fn reply(body: &Value) -> Value {
         return json!({"content": "done"});
     }
     let text = last.to_string();
+    if text.contains("patch the app") {
+        let mut patch =
+            "*** Begin Patch\n*** Update File: web/a.txt\n@@\n-before-a\n+after-a\n".to_string();
+        if text.contains("partially") {
+            patch.push_str("*** Update File: web/a.txt\n@@\n-before-a\n+second-a\n");
+        }
+        patch.push_str("*** Update File: db/b.txt\n@@\n-before-b\n+after-b\n");
+        patch.push_str(
+            "*** Add File: assets/new/c.txt\n+created-c\n*** Delete File: old/d.txt\n*** End Patch",
+        );
+        let arguments = json!({"patch":patch}).to_string();
+        return json!({"tool_calls":[{"index":0,"id":"call_patch","type":"function",
+            "function":{"name":"apply_patch","arguments":arguments}}]});
+    }
     if text.contains("edit the app") {
         let arguments = json!({"path":"web/src/app.ts","old_string":"const version = 1","new_string":"const version = 2"}).to_string();
         return json!({"tool_calls":[{"index":0,"id":"call_edit","type":"function",
@@ -385,6 +399,10 @@ impl Fixture {
 
     /// Start with `extra` top-level keys added to the global configuration.
     async fn start_with(extra: Value) -> Self {
+        Self::start_with_model(extra, false).await
+    }
+
+    async fn start_with_model(extra: Value, prefers_patch: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let paths = Paths {
@@ -397,6 +415,10 @@ impl Fixture {
         paths.ensure().unwrap();
         let model = ScriptedModel::start(reply);
         let mut global = model.config();
+        if prefers_patch {
+            global["providers"]["test"]["models"]["main"] =
+                json!({"capabilities":{"prefers_apply_patch":true}});
+        }
         for (key, value) in extra.as_object().unwrap() {
             global[key] = value.clone();
         }
@@ -947,4 +969,100 @@ async fn denied_read_leaves_rule_available_for_a_successful_edit() {
     let replay = cyber_server::runtime::SessionState::replay(&events).unwrap();
     assert_eq!(replay.epoch.unwrap().reminded_rules, epoch.reminded_rules);
     f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn patch_rules_follow_completed_files_even_after_a_later_failure() {
+    use cyber_server::runtime::CallStatus;
+    for partial in [true, false] {
+        let f = Fixture::start_with_model(json!({}), true).await;
+        f.write("web/a.txt", "before-a\n");
+        f.write("db/b.txt", "before-b\n");
+        f.write(
+            ".cyber/rules/web.md",
+            "---\npaths: ['web/**']\n---\nPATCH_WEB_RULE",
+        );
+        f.write(
+            ".cyber/rules/db.md",
+            "---\npaths: ['db/**']\n---\nPATCH_DB_RULE",
+        );
+        f.write(
+            ".cyber/rules/assets.md",
+            "---\npaths: ['assets/**']\n---\nPATCH_ASSET_RULE",
+        );
+        f.write("old/d.txt", "delete me\n");
+        f.write(
+            ".cyber/rules/old.md",
+            "---\npaths: ['old/**']\n---\nPATCH_REMOVED_RULE",
+        );
+        f.approve(&f.repo);
+        let id = f.session(&f.repo).await;
+        let prompt = if partial {
+            "patch the app partially"
+        } else {
+            "patch the app"
+        };
+        f.prompt(&id, &f.repo, prompt, 2).await;
+
+        let result = last_tool_result(&f.last_request());
+        assert!(result.contains("PATCH_WEB_RULE"), "{result}");
+        assert_eq!(result.contains("PATCH_DB_RULE"), !partial, "{result}");
+        assert_eq!(result.contains("PATCH_ASSET_RULE"), !partial, "{result}");
+        assert_eq!(result.contains("PATCH_REMOVED_RULE"), !partial, "{result}");
+        assert_eq!(f.repo.join("old/d.txt").exists(), partial);
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join("assets/new/c.txt"))
+                .ok()
+                .as_deref(),
+            (!partial).then_some("created-c\n")
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join("web/a.txt")).unwrap(),
+            "after-a\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join("db/b.txt")).unwrap(),
+            if partial { "before-b\n" } else { "after-b\n" }
+        );
+        let state = f.app.runtime.state(&id).await.unwrap();
+        assert_eq!(
+            state.calls["call_patch"].status,
+            if partial {
+                CallStatus::Error
+            } else {
+                CallStatus::Ok
+            }
+        );
+        let ids = state.epoch.unwrap().reminded_rules;
+        assert_eq!(ids.len(), if partial { 1 } else { 4 });
+        let events = f.app.store.read_events(&id, -1, 500).unwrap().events;
+        let settled = events
+            .iter()
+            .find(|event| event.data["rule_patch"].is_array())
+            .unwrap();
+        let proof = settled.data["rule_patch"].as_array().unwrap();
+        assert_eq!(proof.len(), ids.len());
+        if !partial {
+            assert!(proof[3]["evidence"]["removed_parent_identity"].is_string());
+            assert_eq!(
+                proof[3]["evidence"]["path"],
+                f.repo.join("old/d.txt").to_str().unwrap()
+            );
+        }
+        assert_eq!(
+            proof[0]["evidence"]["path"],
+            f.repo.join("web/a.txt").to_str().unwrap()
+        );
+        let mut wrong_target = events.clone();
+        let event = wrong_target
+            .iter_mut()
+            .find(|event| event.id == settled.id)
+            .unwrap();
+        event.data["rule_patch"][0]["evidence"]["path"] = json!(f.repo.join("web/wrong.txt"));
+        let replay = cyber_server::runtime::SessionState::replay(&wrong_target).unwrap();
+        assert_eq!(replay.epoch.unwrap().reminded_rules.len(), ids.len() - 1);
+        let replay = cyber_server::runtime::SessionState::replay(&events).unwrap();
+        assert_eq!(replay.epoch.unwrap().reminded_rules, ids);
+        f.app.runtime.shutdown().await;
+    }
 }

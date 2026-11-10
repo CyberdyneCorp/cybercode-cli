@@ -1613,13 +1613,11 @@ impl ToolHost for BuiltinHost {
         Box::pin(async move {
             let read_receipt = FileReceiptSlot::default();
             let outcome = self.execute_inner(inv, cancel, read_receipt.clone()).await;
-            let read = read_receipt
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
+            let files =
+                std::mem::take(&mut *read_receipt.lock().unwrap_or_else(PoisonError::into_inner));
             cyber_server::runtime::ObservedExecution {
                 outcome,
-                files: Some(read.into_iter().collect()),
+                files: Some(files),
             }
         })
     }
@@ -1967,7 +1965,10 @@ impl BuiltinHost {
         }
         // A hook retry owns a fresh attempt's observation; never carry a prior
         // read into a directory listing or an uninstrumented retried execution.
-        *read_receipt.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        read_receipt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         Ok(Ctx {
             read_receipt,
             skill_paths: Default::default(),
@@ -2056,7 +2057,7 @@ impl BuiltinHost {
 }
 
 /// Everything a tool needs for one call.
-pub(crate) type FileReceiptSlot = Arc<Mutex<Option<Arc<cyber_core::rules::FileReceipt>>>>;
+pub(crate) type FileReceiptSlot = Arc<Mutex<Vec<Arc<cyber_core::rules::FileReceipt>>>>;
 
 pub(crate) struct Ctx<'a> {
     pub read_receipt: FileReceiptSlot,

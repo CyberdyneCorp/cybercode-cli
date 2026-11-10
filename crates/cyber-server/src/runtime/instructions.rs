@@ -85,6 +85,9 @@ pub struct RuleBinding {
     pub generation: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_root: Option<String>,
+    /// Physical operation target for this delivery. It is excluded from once-per-Epoch identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_path: Option<PathBuf>,
 }
 impl RuleBinding {
     pub fn identity(&self) -> String {
@@ -376,26 +379,45 @@ pub fn load_nested(
     settings: &InstructionSettings,
     attached: &BTreeSet<String>,
 ) -> Instructions {
-    // Canonical on both sides, so a `..` or symlinked path cannot escape the project.
-    let (location, target) = (canonical(location), canonical(target));
-    let dir = if target.is_dir() {
-        Some(target.as_path())
-    } else {
-        target.parent()
-    };
-    let dirs = dir
-        .map(|dir| project_dirs(&location, dir))
-        .unwrap_or_default();
-    if dirs.is_empty() {
+    load_nested_targets(
+        global_dir,
+        location,
+        std::iter::once(target),
+        settings,
+        attached,
+    )
+}
+
+pub(super) fn load_nested_targets<'a>(
+    global_dir: &Path,
+    location: &Path,
+    targets: impl IntoIterator<Item = &'a Path>,
+    settings: &InstructionSettings,
+    attached: &BTreeSet<String>,
+) -> Instructions {
+    let location = canonical(location);
+    let root = canonical(&cyber_core::config::project_root(&location));
+    let targets: Vec<_> = targets
+        .into_iter()
+        .filter_map(|target| {
+            let target = canonical(target);
+            let directory = if target.is_dir() {
+                target.clone()
+            } else {
+                target.parent()?.to_path_buf()
+            };
+            let dirs = project_dirs(&location, &directory);
+            (!dirs.is_empty()).then_some((target, directory, dirs))
+        })
+        .collect();
+    if targets.is_empty() {
         return Instructions::default();
     }
     let mut baseline = Loader::new(settings, settings.max_total_bytes);
     let _ = fill_baseline(&mut baseline, global_dir, &location);
     let budget = NESTED_MAX_TOTAL_BYTES.min(settings.max_total_bytes);
     let mut loader = Loader::new(settings, budget);
-    loader.rule_root = canonical(&cyber_core::config::project_root(&location));
-    loader.rule_scope = dir.unwrap_or(location.as_path()).to_path_buf();
-    loader.rule_target = Some(target.clone());
+    loader.rule_root = root.clone();
     loader.global_rules = canonical(global_dir).join("rules");
     loader.delivered = baseline
         .out
@@ -405,19 +427,25 @@ pub fn load_nested(
         .collect();
     loader.delivered.extend(attached.iter().cloned());
     loader.remaining = budget.saturating_sub(assembly::OPEN.len() + assembly::CLOSE.len());
-    let root = canonical(&cyber_core::config::project_root(&location));
+
     let global_rules = loader.global_rules.clone();
-    loader.rules(&global_rules, &root, Some(&target), false);
-    for dir in dirs {
-        if !settings.project {
-            break;
-        }
-        for file in directory_files(&dir, settings) {
-            if let Err(error) = loader.load(&file, Some(&root)) {
-                loader.out.warnings.push(error);
+    for (target, directory, dirs) in targets {
+        // Applicability depends on the target. Keep the byte, file and output
+        // budgets shared across all targets in the settlement.
+        loader.rule_seen.clear();
+        loader.rule_scope = directory;
+        loader.rule_target = Some(target.clone());
+        loader.rules(&global_rules, &root, Some(&target), false);
+        if settings.project {
+            for dir in dirs {
+                for file in directory_files(&dir, settings) {
+                    if let Err(error) = loader.load(&file, Some(&root)) {
+                        loader.out.warnings.push(error);
+                    }
+                }
+                loader.project_rules(&dir, &root, Some(&target));
             }
         }
-        loader.project_rules(&dir, &root, Some(&target));
     }
     loader.out
 }
@@ -618,6 +646,9 @@ impl<'a> Loader<'a> {
             digest: definition.digest.clone(),
             generation: generation.into(),
             native_root: self.settings.native_root.clone(),
+            operation_path: target
+                .filter(|_| self.settings.native_root.is_some())
+                .map(Path::to_path_buf),
         };
         let identity = binding.identity();
         if !self.seen.insert(identity.clone()) {

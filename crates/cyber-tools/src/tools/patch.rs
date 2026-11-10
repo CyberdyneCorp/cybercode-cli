@@ -408,9 +408,13 @@ pub(crate) async fn apply(
         file_edit: true,
         ..Request::default()
     };
+    let authorized: Vec<_> = changes
+        .iter()
+        .map(|change| crate::host::canonical(&change.path))
+        .collect();
     ctx.authorize_as("apply_patch", req, resources, json!({ "diff": diff }))
         .await?;
-    write_all(ctx, &changes).await
+    write_all(ctx, &changes, &authorized).await
 }
 
 /// A patch may not add a redaction marker; one moved or kept with its file is no addition.
@@ -435,13 +439,17 @@ fn refuse_markers(changes: &[Change]) -> Result<(), ToolError> {
     crate::host::refuse_marker(&before, &after)
 }
 
-async fn write_all(ctx: &Ctx<'_>, changes: &[Change]) -> Result<String, ToolError> {
+async fn write_all(
+    ctx: &Ctx<'_>,
+    changes: &[Change],
+    authorized: &[PathBuf],
+) -> Result<String, ToolError> {
     let mut applied: Vec<String> = Vec::new();
     let mut pending = Vec::new();
-    for change in changes {
+    for (change, target) in changes.iter().zip(authorized) {
         let label = format!("{} {}", change.kind, ctx.resource(&change.path));
         let origin = super::intelligence::capture(ctx, &change.path);
-        if let Err(e) = write_one(ctx, change).await {
+        if let Err(e) = write_one(ctx, change, target).await {
             let message = format!(
                 "Patch partially applied before failing at {}: {e}. Applied: {}",
                 ctx.resource(&change.path),
@@ -482,7 +490,7 @@ async fn patch_feedback(
     results.concat()
 }
 
-async fn write_one(ctx: &Ctx<'_>, change: &Change) -> Result<(), String> {
+async fn write_one(ctx: &Ctx<'_>, change: &Change, authorized: &Path) -> Result<(), String> {
     let workspace =
         cyber_server::workspace::mutation_lock(&ctx.location).map_err(|error| error.to_string())?;
     let _workspace = workspace.lock_owned().await;
@@ -498,12 +506,18 @@ async fn write_one(ctx: &Ctx<'_>, change: &Change) -> Result<(), String> {
                     .await
                     .map_err(|e| e.to_string())?;
             }
-            tokio::fs::write(&change.path, bytes)
-                .await
-                .map_err(|e| e.to_string())?;
+            super::fs::write_observed(
+                ctx,
+                &change.path,
+                bytes,
+                Some(authorized),
+                change.before.is_none(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
             ctx.host.mark_read(&ctx.inv.session_id, &change.path);
         }
-        None => tokio::fs::remove_file(&change.path)
+        None => super::fs::remove_observed(ctx, &change.path, authorized)
             .await
             .map_err(|e| e.to_string())?,
     }

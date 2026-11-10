@@ -59,7 +59,7 @@ impl Tool for Read {
                         .await
                         .map_err(|_| failed("Observed file read failed"))?
                         .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?;
-                    (bytes, Some(std::sync::Arc::new(receipt)))
+                    (bytes, Some(receipt))
                 }
                 None => (
                     tokio::fs::read(&path)
@@ -76,9 +76,9 @@ impl Tool for Read {
             if is_binary(&bytes) {
                 return Err(failed("Binary file: application/octet-stream"));
             }
-            *ctx.read_receipt
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = receipt;
+            if let Some(receipt) = receipt {
+                record_file_receipt(ctx, receipt);
+            }
             ctx.host.mark_read(&ctx.inv.session_id, &path);
             ctx.note_skill_path(&path);
             if let Some(locations) = ctx.host.lsp.get()
@@ -444,7 +444,7 @@ pub(crate) async fn guarded_write(
             .await
             .map_err(|e| failed(format!("Could not create {}: {e}", parent.display())))?;
     }
-    write_observed_edit(ctx, path, after, authorized.as_deref())
+    write_observed(ctx, path, after, authorized.as_deref(), false)
         .await
         .map_err(|e| failed(format!("Could not write {}: {e}", path.display())))?;
     ctx.host.mark_read(&ctx.inv.session_id, path);
@@ -454,45 +454,107 @@ pub(crate) async fn guarded_write(
     Ok(super::intelligence::feedback(ctx, path, after, origin).await)
 }
 
-async fn write_observed_edit(
+enum WriteObservation {
+    Update(cyber_core::rules::ObservedFile),
+    Create(cyber_core::rules::PendingCreation),
+}
+impl WriteObservation {
+    fn after_write(self, file: &std::fs::File) -> Result<cyber_core::rules::FileReceipt, String> {
+        match self {
+            Self::Update(observation) => observation.after_write(file),
+            Self::Create(observation) => observation.after_write(file),
+        }
+    }
+}
+
+pub(super) async fn write_observed(
     ctx: &Ctx<'_>,
     path: &Path,
     bytes: &[u8],
     authorized: Option<&Path>,
+    creating: bool,
 ) -> std::io::Result<()> {
     // An edit approval for an alias does not attest a separately named resource.
     let observation = authorized
-        .filter(|_| ctx.inv.name == "edit")
-        .filter(|target| {
-            ctx.location
-                .canonicalize()
-                .ok()
-                .and_then(|location| {
-                    target
-                        .strip_prefix(location)
-                        .ok()
-                        .map(|relative| ctx.location.join(relative))
-                })
-                .as_deref()
-                == Some(path)
-        })
-        .and_then(|target| cyber_core::rules::ObservedFile::open(&ctx.location, path, target).ok());
+        .filter(|_| matches!(ctx.inv.name.as_str(), "edit" | "apply_patch"))
+        .filter(|target| workspace_spelling_matches(ctx, path, target))
+        .and_then(|target| {
+            if creating {
+                cyber_core::rules::PendingCreation::capture(&ctx.location, path, target)
+                    .ok()
+                    .map(WriteObservation::Create)
+            } else {
+                cyber_core::rules::ObservedFile::open(&ctx.location, path, target)
+                    .ok()
+                    .map(WriteObservation::Update)
+            }
+        });
     let Some(observation) = observation else {
         return tokio::fs::write(path, bytes).await;
     };
     use tokio::io::AsyncWriteExt;
-    let mut file = tokio::fs::File::create(path).await?;
+    let mut file = if creating {
+        tokio::fs::File::options()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await?
+    } else {
+        tokio::fs::File::create(path).await?
+    };
     file.write_all(bytes).await?;
     file.flush().await?;
     let file = file.into_std().await;
     let receipt = tokio::task::spawn_blocking(move || observation.after_write(&file)).await;
     if let Ok(Ok(receipt)) = receipt {
-        *ctx.read_receipt
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some(std::sync::Arc::new(receipt));
+        record_file_receipt(ctx, receipt);
     }
     Ok(())
+}
+
+pub(super) async fn remove_observed(
+    ctx: &Ctx<'_>,
+    path: &Path,
+    authorized: &Path,
+) -> std::io::Result<()> {
+    let observed = (ctx.inv.name == "apply_patch"
+        && workspace_spelling_matches(ctx, path, authorized))
+    .then(|| cyber_core::rules::PendingRemoval::capture(&ctx.location, path, authorized).ok())
+    .flatten();
+    let Some(observed) = observed else {
+        return tokio::fs::remove_file(path).await;
+    };
+    let receipt = tokio::task::spawn_blocking(move || observed.remove())
+        .await
+        .map_err(std::io::Error::other)??;
+    if let Some(receipt) = receipt {
+        record_file_receipt(ctx, receipt);
+    }
+    Ok(())
+}
+
+fn workspace_spelling_matches(ctx: &Ctx<'_>, path: &Path, target: &Path) -> bool {
+    ctx.location
+        .canonicalize()
+        .ok()
+        .and_then(|location| {
+            target
+                .strip_prefix(location)
+                .ok()
+                .map(|relative| ctx.location.join(relative))
+        })
+        .as_deref()
+        == Some(path)
+}
+
+fn record_file_receipt(ctx: &Ctx<'_>, receipt: cyber_core::rules::FileReceipt) {
+    let mut files = ctx
+        .read_receipt
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if files.len() < cyber_core::rules::MAX_OPERATION_RECEIPTS {
+        files.push(std::sync::Arc::new(receipt));
+    }
 }
 
 pub(crate) async fn authorize_edit(

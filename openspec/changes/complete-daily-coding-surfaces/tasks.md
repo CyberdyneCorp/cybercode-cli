@@ -1812,3 +1812,26 @@ configuration generation and revocation/restart acceptance remain open.
 Local edit verification passed 12 filtered Core tests, 17 App instruction tests,
 and all-target Clippy for Core, Tools, Server and App. Formatting, SDK consistency
 and strict OpenSpec checks passed. Windows and platform acceptance remain pending.
+
+Direct patch continuation. A patch now retains up to 32 verified completed file
+effects and loads their rules under one discovery and reminder budget. Updates
+and exclusive creations bind the completed writer handle. A deletion records
+the pinned native parent and removed name after a successful relative unlink and
+verified absence. This evidence describes the namespace operation. The patch
+keeps its error status after a later failure. Only completed targets can deliver
+rules and each labelled binding retains its matching path. Historical read and
+edit settlement fields still decode. Shell-routed patches, exact configuration
+generation, revocation and restart acceptance remain open.
+
+The App regression covers updates, creation under a new parent and deletion,
+plus a later precondition failure that prevents the remaining effects. It checks
+the actual tool output, recorded paths, error status and replay identity. Replay
+does not mark a rule delivered when its matching receipt names another target.
+The Core test confirms a replaced parent prevents the observed removal.
+
+Local patch verification passed 13 filtered Core tests, 18 App instruction tests,
+455 Server library tests (one ignored subprocess probe), and all-target Clippy
+for Core, Tools, Server and App. Strict OpenSpec validated all 100 items. Spec
+lint reported zero errors and 25 warnings. Formatting and generated SDK
+consistency passed. Windows, full workspace and SDK runtime suites were not
+rerun locally. Current-source native acceptance remains pending.

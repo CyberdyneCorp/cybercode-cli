@@ -36,6 +36,7 @@ on:
       - crates/cyber-core/tests/config.rs
       - crates/cyber-tools/src/host.rs
       - crates/cyber-tools/src/tools/fs.rs
+      - crates/cyber-tools/src/tools/patch.rs
       - crates/cyber-server/src/runtime/auto_override.rs
       - crates/cyber-tools/tests/instruction_config.rs
       - crates/cyber-tools/tests/path_skills.rs

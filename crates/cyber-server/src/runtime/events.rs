@@ -394,6 +394,16 @@ impl RuleOperation {
             && self.evidence.root.to_str() == Some(binding.root.as_str())
             && self.evidence.root.is_absolute()
             && self.evidence.path.starts_with(&self.evidence.root)
+            && (tool == "apply_patch"
+                || matches!(
+                    self.evidence.target,
+                    cyber_core::rules::OperationTarget::File { .. }
+                ))
+            && (tool == "apply_patch"
+                || binding
+                    .operation_path
+                    .as_ref()
+                    .is_none_or(|path| path == &self.evidence.path))
     }
 }
 
@@ -413,6 +423,8 @@ pub struct ToolSettled {
     pub rule_read: Option<RuleOperation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule_edit: Option<RuleOperation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_patch: Vec<RuleOperation>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

@@ -1819,6 +1819,7 @@ impl Inner {
         let mut stops = Vec::new();
         let mut loaded = Vec::new();
         let mut edited = Vec::new();
+        let mut patched = Vec::new();
         for (run, nested) in outcomes.into_iter().zip(nested) {
             let nested = run.current_nested(&state, nested);
             let proof = run.operation_proof();
@@ -1835,10 +1836,10 @@ impl Inner {
             );
             let settled = with_operation_proof(settled, &run.def.spec.name, proof);
             events.push(self.with_call_metadata(&session_id, &run.call_id, &directory, settled));
-            if run.def.spec.name == "edit" {
-                edited.extend(instructions);
-            } else {
-                loaded.extend(instructions);
+            match run.def.spec.name.as_str() {
+                "edit" => edited.extend(instructions),
+                "apply_patch" => patched.extend(instructions),
+                _ => loaded.extend(instructions),
             }
             stops.extend(self.take_call_hook_effects(&session_id, &run.call_id, &mut events));
         }
@@ -1847,6 +1848,8 @@ impl Inner {
         self.instructions_loaded(handle, loaded, NESTED_LOAD_REASON)
             .await;
         self.instructions_loaded(handle, edited, "nested_edit")
+            .await;
+        self.instructions_loaded(handle, patched, "nested_patch")
             .await;
         for reason in &stops {
             self.publish_hook_stop(&session_id, reason);
@@ -2073,15 +2076,22 @@ impl Inner {
         };
         let read = match outcome.files {
             None => read.filter(|_| def.spec.name == "read"),
-            Some(mut receipts) if receipts.len() == 1 => read.and_then(|mut target| {
-                let receipt = receipts.pop().unwrap();
-                if target.root.identity() != receipt.evidence().root_identity {
-                    return None;
-                }
-                target.file = receipt.evidence().path.clone();
-                target.receipt = Some(receipt);
-                Some(target)
-            }),
+            Some(receipts)
+                if !receipts.is_empty()
+                    && receipts.len() <= cyber_core::rules::MAX_OPERATION_RECEIPTS
+                    && (def.spec.name == "apply_patch" || receipts.len() == 1) =>
+            {
+                read.and_then(|mut target| {
+                    let root = target.root.identity();
+                    target.receipts = receipts
+                        .into_iter()
+                        .filter(|receipt| {
+                            receipt.evidence().root_identity == root && receipt.verify().is_ok()
+                        })
+                        .collect();
+                    (!target.receipts.is_empty()).then_some(target)
+                })
+            }
             Some(_) => None,
         };
         ToolRun {
@@ -2100,11 +2110,15 @@ impl Inner {
         scope: ReminderScope,
     ) -> Option<FileTarget> {
         if def.scope != super::host::ToolScope::Builtin
-            || !matches!(def.spec.name.as_str(), "read" | "edit")
+            || !matches!(def.spec.name.as_str(), "read" | "edit" | "apply_patch")
         {
             return None;
         }
-        let path = invocation.input.get("path")?.as_str()?;
+        let path = invocation
+            .input
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or(".");
         let settings = self.instruction_settings(&invocation.directory).ok()?;
         let location = std::path::PathBuf::from(&invocation.directory);
         Some(FileTarget {
@@ -2112,7 +2126,7 @@ impl Inner {
             location: location.clone(),
             scope,
             root: Arc::new(cyber_core::rules::RootBinding::capture(&location).ok()?),
-            receipt: None,
+            receipts: Vec::new(),
             operation_key: invocation.operation_key.clone(),
             attempt: invocation.attempt,
         })
@@ -2357,6 +2371,7 @@ fn settled(
         rule_reminders: Vec::new(),
         rule_read: None,
         rule_edit: None,
+        rule_patch: Vec::new(),
         structured_output: None,
         call_id: call_id.into(),
         status,
@@ -2378,15 +2393,21 @@ pub(super) struct ToolRun {
 }
 
 impl ToolRun {
-    pub(super) fn operation_proof(&self) -> Option<super::events::RuleOperation> {
-        let target = self.read.as_ref()?;
-        Some(super::events::RuleOperation {
-            evidence: target.receipt.as_ref()?.evidence().clone(),
-            epoch: target.scope.epoch,
-            location: target.scope.directory.clone(),
-            operation_key: target.operation_key.clone(),
-            attempt: target.attempt,
-        })
+    pub(super) fn operation_proof(&self) -> Vec<super::events::RuleOperation> {
+        let Some(target) = &self.read else {
+            return Vec::new();
+        };
+        target
+            .receipts
+            .iter()
+            .map(|receipt| super::events::RuleOperation {
+                evidence: receipt.evidence().clone(),
+                epoch: target.scope.epoch,
+                location: target.scope.directory.clone(),
+                operation_key: target.operation_key.clone(),
+                attempt: target.attempt,
+            })
+            .collect()
     }
     /// Recheck under the settlement lock, after filesystem discovery. A Location
     /// switch or Epoch replacement during discovery must not consume new identities.
@@ -2406,7 +2427,7 @@ impl ToolRun {
         }
     }
 
-    /// The target to load nested instructions for: only a read that succeeded.
+    /// Targets from a successful operation or the verified effects of a partial patch.
     pub(super) fn nested_target(&self) -> Option<FileTarget> {
         let succeeded = matches!(
             self.outcome,
@@ -2414,7 +2435,12 @@ impl ToolRun {
                 | ToolOutcome::Structured { .. }
                 | ToolOutcome::SkillSuggestions { failed: false, .. }
         );
-        self.read.clone().filter(|_| succeeded)
+        self.read.clone().filter(|target| {
+            succeeded
+                || (self.def.spec.name == "apply_patch"
+                    && !target.receipts.is_empty()
+                    && patch_failure(&self.outcome))
+        })
     }
 }
 
@@ -2454,17 +2480,13 @@ pub(super) struct FileTarget {
     pub file: std::path::PathBuf,
     pub scope: ReminderScope,
     pub root: Arc<cyber_core::rules::RootBinding>,
-    pub receipt: Option<Arc<cyber_core::rules::FileReceipt>>,
+    pub receipts: Vec<Arc<cyber_core::rules::FileReceipt>>,
     pub operation_key: String,
     pub attempt: u32,
 }
 impl FileTarget {
     fn valid_native(&self) -> bool {
-        self.root.verify().is_ok()
-            && self
-                .receipt
-                .as_ref()
-                .is_none_or(|receipt| receipt.verify().is_ok())
+        self.root.verify().is_ok() && self.receipts.iter().all(|receipt| receipt.verify().is_ok())
     }
     fn is_current(&self, state: &SessionState) -> bool {
         self.scope.is_current(state) && self.valid_native()
@@ -2485,18 +2507,30 @@ impl FileTarget {
         if !self.valid_native() {
             return Default::default();
         }
-        settings.scoped_rules = self.receipt.is_some();
+        settings.scoped_rules = !self.receipts.is_empty();
         settings.native_root = self
-            .receipt
-            .as_ref()
+            .receipts
+            .first()
             .map(|receipt| receipt.evidence().root_identity.clone());
-        let loaded = super::instructions::load_nested(
-            global,
-            &self.location,
-            &self.file,
-            &settings,
-            attached,
-        );
+        let loaded = if self.receipts.is_empty() {
+            super::instructions::load_nested(
+                global,
+                &self.location,
+                &self.file,
+                &settings,
+                attached,
+            )
+        } else {
+            super::instructions::load_nested_targets(
+                global,
+                &self.location,
+                self.receipts
+                    .iter()
+                    .map(|receipt| receipt.evidence().path.as_path()),
+                &settings,
+                attached,
+            )
+        };
         if self.valid_native() {
             loaded
         } else {
@@ -2508,23 +2542,39 @@ impl FileTarget {
 pub(super) fn with_operation_proof(
     mut settled: cyber_store::NewEvent,
     tool: &str,
-    proof: Option<super::events::RuleOperation>,
+    proof: Vec<super::events::RuleOperation>,
 ) -> cyber_store::NewEvent {
-    if settled
-        .data
-        .get("rule_reminders")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|rules| !rules.is_empty())
-        && let Some(proof) = proof
+    if proof.is_empty()
+        || !settled
+            .data
+            .get("rule_reminders")
+            .and_then(Value::as_array)
+            .is_some_and(|rules| !rules.is_empty())
     {
-        let field = if tool == "edit" {
-            "rule_edit"
-        } else {
-            "rule_read"
-        };
-        settled.data[field] = serde_json::to_value(proof).expect("rule read metadata serializes");
+        return settled;
+    }
+    match tool {
+        "apply_patch" => {
+            settled.data["rule_patch"] =
+                serde_json::to_value(proof).expect("patch evidence serializes")
+        }
+        "edit" => {
+            settled.data["rule_edit"] =
+                serde_json::to_value(&proof[0]).expect("edit evidence serializes")
+        }
+        _ => {
+            settled.data["rule_read"] =
+                serde_json::to_value(&proof[0]).expect("read evidence serializes")
+        }
     }
     settled
+}
+
+fn patch_failure(outcome: &ToolOutcome) -> bool {
+    matches!(
+        outcome,
+        ToolOutcome::Failed(_) | ToolOutcome::SkillSuggestions { failed: true, .. }
+    )
 }
 
 /// `InstructionsLoaded` `load_reason` for files a read attached.
@@ -2555,7 +2605,7 @@ impl Reminded {
 }
 
 /// Settle a call, appending reminders for matching skills and for `nested` instruction
-/// files (attached only to a successful result). Also returns the instruction files that
+/// files. A partial patch can attach instructions for its completed effects. Returns the files that
 /// entered the context, for `InstructionsLoaded`. The caller holds the Session lock and
 /// commits the resulting events as one transaction.
 pub(super) fn settlement_with_reminders(
@@ -2570,6 +2620,7 @@ pub(super) fn settlement_with_reminders(
     Option<super::context::LoadedInstructions>,
 ) {
     let attach = !nested.is_empty();
+    let partial_patch = attach && def.spec.name == "apply_patch" && patch_failure(&outcome);
     let (failed, output, value, skills) = match outcome {
         ToolOutcome::SkillSuggestions {
             failed,
@@ -2577,6 +2628,7 @@ pub(super) fn settlement_with_reminders(
             value,
             skills,
         } => (failed, output, value, skills),
+        ToolOutcome::Failed(output) if partial_patch => (true, output, None, Vec::new()),
         ToolOutcome::Ok(output) if attach => (false, output, None, Vec::new()),
         ToolOutcome::Structured { output, value } if attach => {
             (false, output, Some(value), Vec::new())
@@ -2585,7 +2637,11 @@ pub(super) fn settlement_with_reminders(
     };
     let (names, skill_reminder) = skill_reminder(skills, &seen.skills);
     let skill_reminder = skill_reminder.unwrap_or_default();
-    let nested = if failed { None } else { Some(nested) };
+    let nested = if failed && !partial_patch {
+        None
+    } else {
+        Some(nested)
+    };
     let (output, instructions) = match with_reminders(
         output,
         nested,
@@ -2636,6 +2692,7 @@ pub(super) fn settlement_with_reminders(
             rule_reminders: rule_bindings,
             rule_read: None,
             rule_edit: None,
+            rule_patch: Vec::new(),
             structured_output: value,
             call_id: call_id.into(),
             status: if failed {
@@ -2737,6 +2794,7 @@ pub(super) fn settlement(
                 rule_reminders: Vec::new(),
                 rule_read: None,
                 rule_edit: None,
+                rule_patch: Vec::new(),
                 structured_output: None,
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -2772,6 +2830,7 @@ pub(super) fn settlement(
                 rule_reminders: Vec::new(),
                 rule_read: None,
                 rule_edit: None,
+                rule_patch: Vec::new(),
                 structured_output: Some(value),
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -2798,6 +2857,7 @@ pub(super) fn settlement(
                 rule_reminders: Vec::new(),
                 rule_read: None,
                 rule_edit: None,
+                rule_patch: Vec::new(),
                 structured_output: value,
                 call_id: call_id.into(),
                 status: if failed {
@@ -2946,7 +3006,7 @@ mod skill_reminder_tests {
                     file: "/repo/web/app.ts".into(),
                     scope,
                     root: root.clone(),
-                    receipt: None,
+                    receipts: Vec::new(),
                     operation_key: String::new(),
                     attempt: 1,
                 }),
@@ -2975,7 +3035,7 @@ mod skill_reminder_tests {
                         file: "/repo/web/app.ts".into(),
                         scope,
                         root: root.clone(),
-                        receipt: None,
+                        receipts: Vec::new(),
                         operation_key: String::new(),
                         attempt: 1,
                     }),
@@ -3197,7 +3257,7 @@ mod skill_reminder_tests {
                 epoch: 1,
             },
             root: Arc::new(cyber_core::rules::RootBinding::capture(root_dir.path()).unwrap()),
-            receipt: None,
+            receipts: Vec::new(),
             operation_key: String::new(),
             attempt: 1,
         };
@@ -3278,7 +3338,7 @@ mod skill_reminder_tests {
                     epoch: 1,
                 },
                 root: Arc::new(cyber_core::rules::RootBinding::capture(root_dir.path()).unwrap()),
-                receipt: None,
+                receipts: Vec::new(),
                 operation_key: String::new(),
                 attempt: 1,
             }),

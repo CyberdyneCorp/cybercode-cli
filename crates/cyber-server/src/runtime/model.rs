@@ -603,6 +603,42 @@ pub(crate) const USER_SOURCES: [&str; 3] = ["user", super::MCP_PROMPT_SOURCE, "l
 /// Digest prefix of a Stop-hook continuation row; public digests are `sha256:`.
 pub(crate) const STOP_CONTINUATION_DIGEST: &str = "hook:Stop:";
 
+fn rule_operation_matches(
+    settled: &ToolSettled,
+    binding: &super::instructions::RuleBinding,
+    epoch: u32,
+    info: &SessionInfo,
+    call: &CallState,
+    stale: bool,
+) -> bool {
+    if !settled.rule_patch.is_empty() {
+        return !stale
+            && binding.native_root.is_some()
+            && settled.rule_read.is_none()
+            && settled.rule_edit.is_none()
+            && binding.operation_path.as_ref().is_some_and(|target| {
+                settled
+                    .rule_patch
+                    .iter()
+                    .any(|op| &op.evidence.path == target)
+            })
+            && settled.rule_patch.len() <= cyber_core::rules::MAX_OPERATION_RECEIPTS
+            && settled
+                .rule_patch
+                .iter()
+                .all(|op| op.matches(binding, epoch, "apply_patch", info, call));
+    }
+    if settled.status != CallStatus::Ok {
+        return false;
+    }
+    match (&binding.native_root, &settled.rule_read, &settled.rule_edit) {
+        (None, None, None) => true,
+        (Some(_), Some(read), None) => !stale && read.matches(binding, epoch, "read", info, call),
+        (Some(_), None, Some(edit)) => !stale && edit.matches(binding, epoch, "edit", info, call),
+        _ => false,
+    }
+}
+
 impl SessionState {
     pub(super) fn ensure_worktree_ready(&self) -> Result<(), super::RuntimeError> {
         if self.child_continuation_unknown {
@@ -1506,41 +1542,23 @@ impl SessionState {
             if matches!(s.status, CallStatus::Ok | CallStatus::Error)
                 && let Some(epoch) = &mut self.epoch
             {
+                epoch.reminded_rules.extend(
+                    s.rule_reminders
+                        .iter()
+                        .filter(|binding| {
+                            rule_operation_matches(
+                                &s,
+                                binding,
+                                epoch.number,
+                                &self.info,
+                                call,
+                                self.epoch_stale,
+                            )
+                        })
+                        .map(super::instructions::RuleBinding::identity),
+                );
                 epoch.reminded_skills.extend(s.skill_reminders);
                 epoch.reminded_instructions.extend(s.instruction_reminders);
-                if s.status == CallStatus::Ok {
-                    epoch.reminded_rules.extend(
-                        s.rule_reminders
-                            .iter()
-                            .filter(|binding| {
-                                match (&binding.native_root, &s.rule_read, &s.rule_edit) {
-                                    (None, None, None) => true,
-                                    (Some(_), Some(read), None) => {
-                                        !self.epoch_stale
-                                            && read.matches(
-                                                binding,
-                                                epoch.number,
-                                                "read",
-                                                &self.info,
-                                                call,
-                                            )
-                                    }
-                                    (Some(_), None, Some(edit)) => {
-                                        !self.epoch_stale
-                                            && edit.matches(
-                                                binding,
-                                                epoch.number,
-                                                "edit",
-                                                &self.info,
-                                                call,
-                                            )
-                                    }
-                                    _ => false,
-                                }
-                            })
-                            .map(super::instructions::RuleBinding::identity),
-                    );
-                }
             }
             call.skill_activation = if s.status == CallStatus::Ok {
                 s.skill_activation

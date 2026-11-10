@@ -144,6 +144,12 @@ pub(crate) struct DirectorySnapshot {
 impl DirectorySnapshot {
     pub(crate) fn capture(path: &Path) -> Result<Self, DiscoveryError> {
         let (directories, bindings) = directory_chain(path)?;
+        let snapshot = Self::from_chain(path.into(), directories, bindings);
+        snapshot.verify()?;
+        Ok(snapshot)
+    }
+
+    fn from_chain(path: PathBuf, directories: Vec<Dir>, bindings: Vec<Identity>) -> Self {
         // NTFS directory handles would freeze ordinary editor/worktree renames.
         // Full Windows file IDs retain reuse protection without open handles.
         #[cfg(windows)]
@@ -153,13 +159,11 @@ impl DirectorySnapshot {
         };
         #[cfg(not(windows))]
         let retained = Some(directories);
-        let snapshot = Self {
-            path: path.into(),
+        Self {
+            path,
             bindings,
             _retained: retained,
-        };
-        snapshot.verify()?;
-        Ok(snapshot)
+        }
     }
     pub(crate) fn verify(&self) -> Result<(), DiscoveryError> {
         let (_, bindings) = directory_chain(&self.path)?;
@@ -270,6 +274,81 @@ impl FileHandleReceipt {
         let mut identities = self.bindings.clone();
         identities.push(self.state.identity.clone());
         fingerprint(&identities)
+    }
+}
+
+/// A removal carried out relative to the pinned physical parent directory.
+pub(crate) struct ObservedRemoval {
+    path: PathBuf,
+    directories: Vec<Dir>,
+    bindings: Vec<Identity>,
+}
+
+pub(crate) struct RemovalReceipt {
+    parent: DirectorySnapshot,
+    path: PathBuf,
+}
+
+impl ObservedRemoval {
+    pub(crate) fn open(path: &Path) -> Result<Self, DiscoveryError> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| error(path, "removal has no parent"))?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| error(path, "removal has no filename"))?;
+        let (directories, bindings) = directory_chain(parent)?;
+        let metadata = directories
+            .last()
+            .unwrap()
+            .symlink_metadata(name)
+            .map_err(|_| error(path, "removal target is unavailable"))?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(error(path, "removal target is not a regular file"));
+        }
+        Ok(Self {
+            path: path.into(),
+            directories,
+            bindings,
+        })
+    }
+
+    pub(crate) fn remove(self) -> std::io::Result<RemovalReceipt> {
+        let (_, current) = directory_chain(self.path.parent().unwrap())
+            .map_err(|error| std::io::Error::other(error.reason))?;
+        if current != self.bindings {
+            return Err(std::io::Error::other("authorized removal parent changed"));
+        }
+        self.directories
+            .last()
+            .unwrap()
+            .remove_file(self.path.file_name().unwrap())?;
+        let parent = DirectorySnapshot::from_chain(
+            self.path.parent().unwrap().into(),
+            self.directories,
+            self.bindings,
+        );
+        Ok(RemovalReceipt {
+            parent,
+            path: self.path,
+        })
+    }
+}
+
+impl RemovalReceipt {
+    pub(crate) fn verify(&self) -> Result<(), DiscoveryError> {
+        self.parent.verify()?;
+        match std::fs::symlink_metadata(&self.path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => self.parent.verify(),
+            _ => Err(error(
+                &self.path,
+                "removed target no longer has a verified absence",
+            )),
+        }
+    }
+
+    pub(crate) fn parent_identity(&self) -> String {
+        fingerprint(&self.parent.bindings)
     }
 }
 

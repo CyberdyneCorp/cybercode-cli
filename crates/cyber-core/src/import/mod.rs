@@ -46,8 +46,8 @@ pub use preview::{
 pub use provenance::SourceReference;
 pub use snapshot::SourceSnapshot;
 pub(crate) use snapshot::{
-    DirectorySnapshot, FileHandleReceipt, ObservedFileHandle, command_directory,
-    verify_command_directory,
+    DirectorySnapshot, FileHandleReceipt, ObservedFileHandle, ObservedRemoval, RemovalReceipt,
+    command_directory, verify_command_directory,
 };
 
 mod opencode_providers;

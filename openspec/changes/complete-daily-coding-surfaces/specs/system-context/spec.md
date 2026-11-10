@@ -76,3 +76,12 @@
 - **AND** the settlement SHALL bind any delivered rule to that read's native root/file identities, Location, Context Epoch, operation key and dispatched attempt
 - **AND** a listing, denied operation or successful result without eligible native evidence SHALL NOT consume scoped rule delivery
 - **AND** replay SHALL NOT consume a new rule identity from a receipt mismatched to the dispatch, root, Location or Epoch
+
+
+#### Scenario: A patch fails after a completed file change
+- **GIVEN** a direct patch has several authorized file changes
+- **WHEN** the first change completes and a later precondition fails
+- **THEN** the patch SHALL retain its error status
+- **AND** rule discovery SHALL consider the verified completed effects under the shared reminder budget
+- **AND** files whose effects failed or never ran SHALL NOT supply or consume rule reminders
+- **AND** replay SHALL associate each delivered rule with a receipt for its actual operation target, Location, dispatched attempt and Context Epoch

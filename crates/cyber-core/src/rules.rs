@@ -6,6 +6,9 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Bound retained native file handles and rule discovery per tool settlement.
+pub const MAX_OPERATION_RECEIPTS: usize = 32;
+
 pub const MAX_FILES: usize = 128;
 pub const MAX_TOTAL_BYTES: usize = 4 * 1024 * 1024;
 const MAX_ENTRIES: usize = 4096;
@@ -59,14 +62,22 @@ impl std::fmt::Debug for RootBinding {
     }
 }
 
-/// Metadata describing a successful read; these hashes are observations, never
+/// Metadata describing a completed file effect. These hashes are observations, never
 /// authority to perform another operation or reopen a source after restart.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileEvidence {
     pub root: PathBuf,
     pub path: PathBuf,
     pub root_identity: String,
-    pub file_identity: String,
+    #[serde(flatten)]
+    pub target: OperationTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum OperationTarget {
+    File { file_identity: String },
+    Removed { removed_parent_identity: String },
 }
 pub struct ObservedFile {
     declared: PathBuf,
@@ -74,12 +85,120 @@ pub struct ObservedFile {
     root: RootBinding,
     reader: crate::import::ObservedFileHandle,
 }
+/// A new file's authorized physical path and parent binding before creation.
+pub struct PendingCreation {
+    declared: PathBuf,
+    physical: PathBuf,
+    root: RootBinding,
+    parent: crate::import::DirectorySnapshot,
+}
+
+impl PendingCreation {
+    pub fn capture(location: &Path, path: &Path, authorized: &Path) -> Result<Self, String> {
+        let root = RootBinding::capture(location)?;
+        let declared = std::path::absolute(path).map_err(|_| "creation path is invalid")?;
+        let directory = declared
+            .parent()
+            .ok_or("creation has no parent")?
+            .canonicalize()
+            .map_err(|_| "creation parent is unavailable")?;
+        let physical = directory.join(declared.file_name().ok_or("creation has no filename")?);
+        if physical != authorized
+            || !physical.starts_with(root.root())
+            || physical.to_str().is_none()
+            || root.root().to_str().is_none()
+        {
+            return Err("creation target differs from the authorized workspace path".into());
+        }
+        let parent = crate::import::DirectorySnapshot::capture(&directory)
+            .map_err(|error| error.reason.to_owned())?;
+        root.verify()?;
+        Ok(Self {
+            declared,
+            physical,
+            root,
+            parent,
+        })
+    }
+
+    /// The caller completed an exclusive creation through this handle.
+    pub fn after_write(self, file: &std::fs::File) -> Result<FileReceipt, String> {
+        let native = crate::import::ObservedFileHandle::open(&self.physical)
+            .and_then(|observed| observed.after_write(file))
+            .map_err(|error| error.reason.to_owned())?;
+        self.parent
+            .verify()
+            .map_err(|error| error.reason.to_owned())?;
+        let receipt = FileReceipt::from_native(self.declared, self.physical, self.root, native);
+        receipt.verify()?;
+        Ok(receipt)
+    }
+}
+
 pub struct FileReceipt {
     declared: PathBuf,
     root: RootBinding,
-    native: crate::import::FileHandleReceipt,
+    native: NativeReceipt,
     evidence: FileEvidence,
 }
+enum NativeReceipt {
+    File(crate::import::FileHandleReceipt),
+    Removed(crate::import::RemovalReceipt),
+}
+
+pub struct PendingRemoval {
+    declared: PathBuf,
+    physical: PathBuf,
+    root: RootBinding,
+    operation: crate::import::ObservedRemoval,
+}
+
+impl PendingRemoval {
+    pub fn capture(location: &Path, path: &Path, authorized: &Path) -> Result<Self, String> {
+        let root = RootBinding::capture(location)?;
+        let declared = std::path::absolute(path).map_err(|_| "removal path is invalid")?;
+        let physical = declared
+            .canonicalize()
+            .map_err(|_| "removal target is unavailable")?;
+        if physical != authorized
+            || !physical.starts_with(root.root())
+            || physical.to_str().is_none()
+            || root.root().to_str().is_none()
+        {
+            return Err("removal target differs from the authorized workspace path".into());
+        }
+        let operation = crate::import::ObservedRemoval::open(&physical)
+            .map_err(|error| error.reason.to_owned())?;
+        root.verify()?;
+        Ok(Self {
+            declared,
+            physical,
+            root,
+            operation,
+        })
+    }
+
+    pub fn remove(self) -> std::io::Result<Option<FileReceipt>> {
+        self.root.verify().map_err(std::io::Error::other)?;
+        let removed = self.operation.remove()?;
+        let evidence = FileEvidence {
+            root: self.root.root().into(),
+            path: self.physical,
+            root_identity: self.root.identity(),
+            target: OperationTarget::Removed {
+                removed_parent_identity: removed.parent_identity(),
+            },
+        };
+        let receipt = FileReceipt {
+            declared: self.declared,
+            root: self.root,
+            native: NativeReceipt::Removed(removed),
+            evidence,
+        };
+        Ok(receipt.verify().is_ok().then_some(receipt))
+    }
+}
+
 impl RootBinding {
     pub fn identity(&self) -> String {
         self.native
@@ -145,12 +264,14 @@ impl FileReceipt {
             root: root.root().into(),
             path: physical,
             root_identity: root.identity(),
-            file_identity: native.identity(),
+            target: OperationTarget::File {
+                file_identity: native.identity(),
+            },
         };
         Self {
             declared,
             root,
-            native,
+            native: NativeReceipt::File(native),
             evidence,
         }
     }
@@ -160,10 +281,26 @@ impl FileReceipt {
     }
     pub fn verify(&self) -> Result<(), String> {
         self.root.verify()?;
-        if self.declared.canonicalize().ok().as_ref() != Some(&self.evidence.path) {
-            return Err("declared read target changed since the operation".into());
+        match &self.native {
+            NativeReceipt::File(native) => {
+                if self.declared.canonicalize().ok().as_ref() != Some(&self.evidence.path) {
+                    return Err("declared operation target changed".into());
+                }
+                native.verify().map_err(|error| error.reason.to_owned())
+            }
+            NativeReceipt::Removed(native) => {
+                let parent = self
+                    .declared
+                    .parent()
+                    .and_then(|path| path.canonicalize().ok());
+                if parent.as_deref() != self.evidence.path.parent()
+                    || self.declared.file_name() != self.evidence.path.file_name()
+                {
+                    return Err("declared removal parent changed".into());
+                }
+                native.verify().map_err(|error| error.reason.to_owned())
+            }
         }
-        self.native.verify().map_err(|e| e.reason.to_owned())
     }
 }
 impl std::fmt::Debug for FileReceipt {
@@ -598,6 +735,28 @@ mod tests {
         let receipt = observed.after_write(&written).unwrap();
         assert!(receipt.verify().is_ok());
         assert_eq!(receipt.evidence().path, physical);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pending_removal_refuses_a_replaced_parent_before_unlinking() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("parent");
+        std::fs::create_dir(&parent).unwrap();
+        let path = parent.join("target.txt");
+        std::fs::write(&path, "original").unwrap();
+        let observed =
+            PendingRemoval::capture(temp.path(), &path, &path.canonicalize().unwrap()).unwrap();
+        let retained = temp.path().join("retained");
+        std::fs::rename(&parent, &retained).unwrap();
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::write(&path, "replacement").unwrap();
+        assert!(observed.remove().is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "replacement");
+        assert_eq!(
+            std::fs::read_to_string(retained.join("target.txt")).unwrap(),
+            "original"
+        );
     }
 
     fn root() -> (tempfile::TempDir, PathBuf) {
