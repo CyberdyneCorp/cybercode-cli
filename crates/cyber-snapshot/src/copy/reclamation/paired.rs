@@ -59,9 +59,6 @@ pub(super) fn reclaim(
         settlement,
         existing.map(|record| record.plan),
     )?;
-    if prepared.plan.files.is_empty() {
-        return Ok(0);
-    }
     policy.reclaim(prepared.plan.clone(), Box::new(move || prepared.delete()))
 }
 
@@ -423,6 +420,9 @@ impl PreparedPair {
                     generation = ownership::generation(&directory)?;
                 }
             }
+            // Empty or already removed inventories still need a durable native
+            // completion boundary for every owner before metadata retirement.
+            storage::sync(&owner.journal)?;
         }
         self.verify()?;
         self.plan.total_bytes().map_err(storage::fail)

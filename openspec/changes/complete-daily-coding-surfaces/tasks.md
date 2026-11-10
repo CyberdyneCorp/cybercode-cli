@@ -1368,3 +1368,57 @@ Native run 42774849027 at b42f5fca now has four successful platform jobs, includ
 macOS Intel. Later managed-retirement and real-cut checkpoints are running/queued;
 that success does not accept later source. Fetching main finds 8266db6c already
 integrated, with no new upstream commits to merge.
+
+Paired/preparation zero-payload continuation: both native adapters now submit a
+verified empty inventory to the existing Store planning/completion protocol instead
+of returning before the callback. Paired cleanup synchronizes every owner journal
+even for an empty or already removed inventory. No receipt, event or API schema
+changes; all owner, intent, acknowledgement, source-phase and reference fences
+remain in force. This extends the approved M6 protocol rather than accepting M6.
+
+Four new real CLI regressions cover file-copy and managed Git deletion-only
+preparation cancellation and kept creation after native completion but before
+Store commit. Preparation uses the existing native kill helper. The completed-
+source cut observes the first creation, holds the actual SQLite writer, observes
+the complete native intent and empty private payload inventory, then kills the
+service. Its client is always killed/reaped on scope exit. The new fixtures use
+256 leaves to keep the cut observable; existing 1,280-leaf partial-cut fixtures and
+their deadlines/assertions stay unchanged. Each case refuses unknown construction,
+interrupts after committing an empty plan, resumes that exact plan, retires the
+expected managed claim/acknowledgement count and all consumed worker/journal leaves,
+and repeats retirement with zero effect. A later source symlink to unreadable owner
+bytes, Git metadata, transcript and inference count survive cleanup and explicit
+receipt acknowledgement after service restart. All four reached the empty-plan
+shortcut before the production fix and failed there. The final native-feature
+selection passes four cases in 47.43 seconds, including the complete managed
+checkout-count assertions. Earlier fixture assumptions about omitted false fields
+and partial-only recovery reviews were corrected before this regression result;
+failed roots remain preserved.
+
+Native run 42784209997 at 991b1519 reports Git App setup failures on both Linux
+platforms: retained fixture paths exceed the sandbox proxy Unix socket address
+limit. The log from Linux x64 is retained locally for inspection. CI now uses a
+short `/tmp/c<workflow-run-number>` fixture root and uploads that same root,
+including hidden files and nested managed process-cut fixtures. A new independent
+step runs all four zero-payload CLI cases and retains its log. YAML parsing and
+fixture/artifact root consistency pass. Production networking and sandbox policy
+are unchanged; fresh-source CI must verify this routing correction.
+
+Default and native-feature CLI/snapshot all-target Clippy with warnings denied pass. Strict
+OpenSpec passes 100 items and spec lint reports 0 errors/25 warnings. The first
+green build attempt failed linking because the disk was full; only regenerable
+Rust incremental compiler cache was cleared before a successful retry, preserving
+source and native failure fixtures. Native C deprecation and linker unwind
+diagnostics were observed without assigning their origin. Focused code-review-skill
+review checks the empty callback's full pre/post verification, per-owner directory
+synchronization, exact frozen plan resume and managed claim cardinality; no
+outstanding issue is found in this continuation. This focused review approves the
+continuation with zero findings; whole-branch review remains required for delivery.
+The existing managed Git selection
+passes three tests in 162.81 seconds: the deliberately caught fixture-preservation
+probe, real partial-kill keep/rollback, and prepared cancellation with file/link
+cleanup. The two file-copy zero-payload cases also pass in the default build in
+16.87 seconds. Main is fetched again with no upstream commits missing from this
+branch. Full workspace/SDK runtime and current-source platform
+acceptance remain required. Constructor, old/removed Location and remaining native
+cut/client acceptance stay open with M6/M8 and all parent tasks.

@@ -1060,8 +1060,19 @@ changes SHALL require its admitted phase. Missing expected leaves without an
 existing exact plan, unknown construction and contradictory admission still refuse.
 Retention, reference and namespace fences apply before these plans as usual.
 Periodic maintenance MAY then retire the exact metadata through the existing
-receipt-bound protocol. Paired and cancelled preparation zero-payload acceptance
-remain separate required paths.
+receipt-bound protocol.
+
+Acknowledged paired recovery and exactly cancelled preparations SHALL also commit
+payload planning and observed completion for a verified empty inventory. A cancelled
+deletion-only preparation has no prepared target leaves; its source remains
+non-admitted. Keeping an owned creation after filesystem completion but before
+Store settlement can leave neither original nor resolution payload leaves; both
+intents, consumed owners, settlement links and their distinct admission states
+remain required. Empty inventories SHALL execute the native verification callback
+and synchronize every participating journal before completion. Zero bytes SHALL
+NOT be interpreted as absence of a plan or permission to skip native proof.
+Interrupted completion SHALL resume only the exact committed plan, with all
+metadata retirement fences unchanged.
 
 ### Paired recovery payload cleanup
 

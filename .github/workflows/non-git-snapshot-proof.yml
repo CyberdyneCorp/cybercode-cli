@@ -78,8 +78,10 @@ jobs:
           set -euo pipefail
           cargo test --locked -p cyber-core --lib worktrees::activity::snapshot::acknowledgement::tests::maintenance_requires_an_existing_acknowledgement_without_publishing_one -- --exact --nocapture 2>&1 | tee managed-checkout-ack-proof.log
       - name: Owned Git runtime acceptance candidate
+        # App proxy sockets include the Session ID. Short roots fit Linux
+        # sockaddr_un; the same root is retained by the artifact step below.
         env:
-          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+          TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
@@ -89,7 +91,7 @@ jobs:
       - name: Exact acknowledged checkout retirement and resumption
         if: ${{ !cancelled() }}
         env:
-          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+          TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
@@ -102,7 +104,7 @@ jobs:
           cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_reclamation -- --nocapture 2>&1 | tee fallback-collection-proof.log
       - name: Managed Git CLI process-death recovery and cancellation candidate
         env:
-          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+          TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
@@ -111,7 +113,7 @@ jobs:
       - name: Pre-effect preparation and TUI lost-reply reconciliation
         if: ${{ !cancelled() }}
         env:
-          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+          TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
@@ -120,7 +122,7 @@ jobs:
       - name: Prepared cancellation metadata retirement
         if: ${{ !cancelled() }}
         env:
-          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+          TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
@@ -129,12 +131,21 @@ jobs:
       - name: Paired metadata retirement after native source kill
         if: ${{ !cancelled() }}
         env:
-          TMPDIR: ${{ runner.temp }}/snapshot-fixtures
+          TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay -- --exact --nocapture --test-threads=1 2>&1 | tee paired-retirement-proof.log
+      - name: Zero-payload preparation and paired retirement after native cuts
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli zero_payload:: -- --nocapture --test-threads=1 2>&1 | tee zero-payload-retirement-proof.log
       - name: JSONL driver and atomic last-message regressions
         if: ${{ !cancelled() }}
         shell: bash
@@ -164,6 +175,7 @@ jobs:
             preparation-client-proof.log
             preparation-retirement-proof.log
             paired-retirement-proof.log
+            zero-payload-retirement-proof.log
             jsonl-driver-proof.log
             structured-result-proof.log
           if-no-files-found: warn
@@ -172,6 +184,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: snapshot-failed-cli-fixtures-${{ matrix.os }}
-          path: ${{ runner.temp }}/snapshot-fixtures
+          path: /tmp/c${{ github.run_number }}
           include-hidden-files: true
           if-no-files-found: warn

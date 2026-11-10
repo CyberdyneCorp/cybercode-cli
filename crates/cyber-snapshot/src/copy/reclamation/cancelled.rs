@@ -65,9 +65,6 @@ pub(super) fn reclaim(
         settlement,
         existing.map(|record| record.plan),
     )?;
-    if prepared.plan.files.is_empty() {
-        return Ok(0);
-    }
     policy.reclaim(prepared.plan.clone(), Box::new(move || prepared.delete()))
 }
 fn prepare(

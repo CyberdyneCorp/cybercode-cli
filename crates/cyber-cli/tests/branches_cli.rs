@@ -15,6 +15,9 @@ use serde_json::{Value, json};
 mod reclamation_support;
 #[path = "../../cyber-app/tests/support/scripted_model.rs"]
 mod scripted_model;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "support/zero_payload.rs"]
+mod zero_payload;
 
 /// `WRITE-A` and `WRITE-B` write a file, `GATE` waits at the model, and anything else is
 /// answered with text.

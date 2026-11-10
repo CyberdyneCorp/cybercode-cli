@@ -36,14 +36,28 @@ files and unchanged restores; all three failed before the fix and pass afterward
 An unchanged restore requires its non-admitted phase, while changed restores still
 require source admission. Unknown construction, live owner locks, contradictory
 phase evidence and unavailable/disabled/zero-retention policy remain fences.
-Paired/preparation zero-payload paths, construction and removed-Location acceptance
-remain required; no parent task or delivery is complete from this increment.
+Cancelled deletion-only preparations and kept creations killed after filesystem
+completion now use the same empty-plan protocol. Four real CLI cases cover both
+file-copy and managed Git ownership, durable plan interruption/resumption, exact
+claim/worker retirement and receipt acknowledgement after source replacement by
+an unreadable later-owner symlink. Construction, removed-Location and complete
+crash/platform acceptance remain required; no parent task or delivery is complete
+from these increments.
 
 Native run [42774849027](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42774849027)
 at `b42f5fca` completed successfully on Linux x64/ARM and macOS ARM/Intel. This is
 source-bound evidence for that checkpoint, not acceptance of later managed
 retirement/process-cut or zero-byte changes. Main was fetched for this continuation;
 `8266db6c` remains fully integrated.
+
+Run 42784209997 at `991b1519` subsequently fails the managed Git App setup on both
+Linux platforms: the retained fixture root makes the sandbox proxy's Unix socket
+path exceed the native address limit. The fixture root is now shortened under
+`/tmp/c<workflow-run-number>`, including nested process-cut fixtures, with the
+artifact upload following the same root. No network policy or production socket
+code changes. The workflow also runs the four zero-payload CLI cases and retains
+their log. This resolves the inspected fixture routing problem in configuration;
+fresh-source native execution is still required to prove acceptance.
 
 ### Focused code-review findings and next actions
 
