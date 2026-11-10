@@ -1,4 +1,5 @@
 //! Durable private-payload cleanup plans. These never settle native activities.
+pub mod metadata;
 use super::{
     SnapshotLifetimeBinding, SnapshotOrigin, SnapshotPreparationReceipt, SnapshotRecoveryReceipt,
     SnapshotRestoreReceipt, activity,
@@ -149,7 +150,12 @@ pub struct Completion {
 #[derive(Debug, Clone)]
 pub struct Record {
     pub plan: Plan,
+    /// Observed payload-completion event; metadata may still be retained.
     pub completed: bool,
+    /// The immutable metadata retirement request, if its writer observed it.
+    pub metadata: Option<metadata::Plan>,
+    /// Observed metadata-completion event, never a standalone native capability.
+    pub retired: bool,
 }
 fn invalid(message: impl Into<String>) -> StoreError {
     StoreError::InvalidAppend(message.into())
@@ -329,27 +335,22 @@ pub fn lookup<R: Clone + Into<Receipt>>(
     if kind != PLANNED || plan.receipt != receipt {
         return Err(invalid("Reclamation request owner differs"));
     }
-    let (seq, kind, raw): (i64, String, String) = db.query_row(
-        "SELECT seq,type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+    let (seq, kind): (i64, String) = db.query_row(
+        "SELECT seq,type FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
         [&id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    let completed = match seq {
-        0 if kind == PLANNED => false,
-        1 if kind == COMPLETED => {
-            let completion: Completion =
-                serde_json::from_str(&raw).map_err(|e| invalid(e.to_string()))?;
-            if completion.plan_id != id || completion.removed_bytes != plan.total_bytes()? {
-                return Err(invalid("Reclamation completion differs"));
-            }
-            true
-        }
-        _ => return Err(invalid("Invalid reclamation history")),
-    };
-    Ok(Some(Record { plan, completed }))
+    let (completed, metadata, retired) = metadata::history(db, &id, &plan, seq, &kind)?;
+    Ok(Some(Record {
+        plan,
+        completed,
+        metadata,
+        retired,
+    }))
 }
 
 pub(super) fn register(registry: &mut EventRegistry) {
+    metadata::register(registry);
     registry
         .register_with(PLANNED, |value| {
             serde_json::from_value::<Plan>(value.clone())
@@ -369,6 +370,9 @@ pub(super) fn register(registry: &mut EventRegistry) {
 /// Validate append ownership while allowing historical projection rebuilds after
 /// later fences or Session deletion. Replaying records never grants file effects.
 pub fn project(db: &Connection, event: &StoredEvent) -> Result<(), String> {
+    if matches!(event.kind.as_str(), metadata::PLANNED | metadata::COMPLETED) {
+        return metadata::project(db, event);
+    }
     let current = if matches!(event.kind.as_str(), PLANNED | COMPLETED) {
         db.query_row(
             "SELECT seq FROM event_sequence WHERE aggregate_id=?1",

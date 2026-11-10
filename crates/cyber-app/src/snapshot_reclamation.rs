@@ -1,4 +1,5 @@
 //! Compose native cleanup with the same serialized writer that owns references.
+mod metadata;
 use cyber_server::runtime::{
     SnapshotOrigin,
     snapshot_reclamation::{self as records, Completion, Plan, Record},
@@ -109,6 +110,14 @@ impl Policy for Reclamation {
             })
             .map_err(|error| error.to_string())?;
         Ok(removed)
+    }
+    fn retire(
+        &self,
+        payload: Plan,
+        plan: records::metadata::Plan,
+        delete: Delete,
+    ) -> Result<u64, String> {
+        metadata::retire(self, payload, plan, delete)
     }
     fn collect(&self, collect: Collect) -> Result<(), String> {
         self.0

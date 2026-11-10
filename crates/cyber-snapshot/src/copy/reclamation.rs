@@ -72,7 +72,7 @@ impl MetadataPin {
 }
 fn due(config: &crate::ConfigFn, root: &Path, settled_at_ms: i64) -> bool {
     let value = config(root);
-    if value.get("snapshots") == Some(&serde_json::Value::Bool(false)) {
+    if !value.is_object() || value.get("snapshots") == Some(&serde_json::Value::Bool(false)) {
         return false;
     }
     let days = value

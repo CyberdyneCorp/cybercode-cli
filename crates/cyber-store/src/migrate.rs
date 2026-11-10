@@ -205,6 +205,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261107030000_snapshot_reference_index",
         sql: include_str!("../migrations/20261107030000_snapshot_reference_index.sql"),
     },
+    Migration {
+        id: "20261110000000_snapshot_metadata_retirement",
+        sql: include_str!("../migrations/20261110000000_snapshot_metadata_retirement.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -584,7 +588,7 @@ mod tests {
             "INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('old','ses_old',0,'retained.1',?1,1)",
             [&evidence],
         ).unwrap();
-        migrate(&mut db, MIGRATIONS).unwrap();
+        migrate(&mut db, &MIGRATIONS[..=at]).unwrap();
         let roots = |db: &Connection| -> Vec<(String, String)> {
             db.prepare("SELECT event_id,root FROM snapshot_reference ORDER BY event_id,root")
                 .unwrap()
@@ -647,6 +651,37 @@ mod tests {
             panic!("previous writer accepted reference-index storage");
         };
         assert_eq!(unknown, [MIGRATIONS[at].id]);
+    }
+
+    #[test]
+    fn metadata_retirement_catalog_survives_reopen_and_preserves_unknown_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("retirement.db");
+        let marker = temp.path().join("retained-intent.next");
+        std::fs::write(&marker, b"unknown native metadata").unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261110000000_snapshot_metadata_retirement")
+            .unwrap();
+        let mut db = Connection::open(&path).unwrap();
+        migrate(&mut db, &MIGRATIONS[..at]).unwrap();
+        let evidence = r#"{"retained":"unknown native owner","metadata_plan":"exact bytes"}"#;
+        db.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_meta','snapshot_reclaim_fixture',2,'snapshot.reclamation.metadata.planned.1',?1,1)", [evidence]).unwrap();
+        migrate(&mut db, &MIGRATIONS[..=at]).unwrap();
+        drop(db);
+        let mut db = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted metadata retirement storage");
+        };
+        assert_eq!(unknown, [MIGRATIONS[at].id]);
+        assert_eq!(
+            db.query_row("SELECT data FROM event WHERE id='evt_meta'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            evidence
+        );
+        assert_eq!(std::fs::read(marker).unwrap(), b"unknown native metadata");
     }
 
     #[test]

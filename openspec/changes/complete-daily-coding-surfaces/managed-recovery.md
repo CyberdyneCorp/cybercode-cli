@@ -946,7 +946,8 @@ bytes and the original plan identity for idempotent retry. The plan lives in the
 Store, so a full snapshot quota cannot prevent recording cleanup eligibility.
 
 Retention uses the durable settlement time, with a fresh policy check before each
-unlink. Disabled snapshots and zero retention preserve payloads. Cap pressure may
+unlink. Unavailable configuration, disabled snapshots and zero retention preserve
+payloads; failed configuration resolution cannot select default retention. Cap pressure may
 attempt this same eligible cleanup and retry capture once; it never overrides
 reference, lifetime, acknowledgement or retention checks. Periodic fallback-object
 collection also takes its reference view at the serialized Store writer, rather
@@ -960,6 +961,31 @@ or rewritten event data and event deletion cascades remove only that event's roo
 The same complete index protects staged, inactive-branch and saved-version history.
 A missing/unreadable/oversized index refuses cleanup. Reference lookup at the writer
 must not repeatedly parse the entire conversation history while other writes wait.
+
+### Durable metadata retirement
+
+After observed payload-cleanup completion, metadata retirement SHALL have separate
+planned/completed events at sequences 2/3 of the same receipt-bound reclamation
+aggregate. The bounded plan SHALL bind each consumed worker and semantic metadata
+role (intent, spare, cancellation, lifetime or source phase) to its exact native
+identity, metadata generation, content hash and byte count. Filenames and ambient
+paths SHALL NOT be caller-supplied metadata capabilities. Unknown/duplicate roles,
+foreign owners, changed plan IDs and inconsistent byte totals SHALL refuse.
+
+Planning and completion SHALL re-attest the original settlement, complete durable
+references and independent native-owner fences at the Store writer. Older writers
+SHALL detect the new event protocol through the migration catalog and refuse
+mutation. Historical projection rebuilds MAY validate the immutable event history
+after later fences or Session deletion without granting any filesystem capability.
+The retained Store receipt SHALL distinguish payload completion, pending metadata
+retirement and observed retirement completion, including after physical Store reopen.
+
+Event validation alone SHALL NOT authorize native deletion or establish that it
+occurred. The native adapter must independently retain the exact namespace,
+reader/lifetime/checkout proof and per-leaf pins around its bounded deletion
+callback. The first writer frame supports empty complete checkout inventories;
+managed checkout claim retirement, partial constructors and all actual native
+retirement/reconciliation/crash paths remain required before M6 acceptance.
 
 ### Paired recovery payload cleanup
 

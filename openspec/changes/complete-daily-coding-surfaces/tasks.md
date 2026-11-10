@@ -1014,3 +1014,49 @@ structured-result binaries; its matrix result is cancelled, not accepted. The jo
 allowance is now 60 minutes without changing any test deadline/assertion. Collection
 source 124c11b9 has its own run 42759174937 in progress and is not accepted from the
 prior source's results.
+
+Metadata-retirement writer continuation (2026-11-10): reclamation sequences 2/3
+now retain a bounded semantic-role native identity/generation/content-hash plan
+and its exact completion, separately from payload completion at sequence 1.
+Owner/plan mismatch, duplicate roles or inode identities, supplied paths, incomplete
+payloads and inconsistent bytes refuse. The App's additive maintenance port commits
+the immutable plan before its guarded callback, serializes it against reference
+writers, re-attests receipt/native fences/references, and returns zero without
+calling an observed completed callback again. Legacy trait implementations default
+to unavailable without invoking the callback. A migration marker makes older Store
+catalogs read-only; physical Store reopen and historical reprojection retain exact
+phase distinctions without conferring native I/O authority.
+
+This is a writer prerequisite, not native retirement acceptance. No native adapter
+calls the port yet; current cleanup still retains all journal/lifetime/phase
+metadata. Implement native per-leaf planning/deletion/resumption and retired-receipt
+lookup/reconciliation, then complete managed checkout/partial-construction and
+crash/platform acceptance. M6 and all parent tasks remain open. HTTP/OpenAPI/SDK
+schemas are unchanged; the Rust maintenance interface and internal event protocol
+have the additive retirement state/port described above.
+
+The real App unavailable-policy regression initially deletes 57,344 bytes under
+null configuration. The common ordinary/paired/cancellation retention guard now
+refuses unavailable policy, and an actual two-payload case loses configuration after
+its first unlink, preserves the second and resumes only under restored policy.
+Final local evidence: 27 App reclamation/writer cases and 14 migration cases pass,
+with an additional exact-inventory re-attestation and retry-counter rerun after
+review refinements. The metadata callback tests deliberately prove Store sequencing
+without deleting native metadata. All-target Store/server/snapshot/App/CLI Clippy,
+formatting/whitespace, OpenAPI artifact and SDK generation checks pass; strict
+OpenSpec passes 100 items and spec lint reports zero errors/25 warnings. macOS
+sandbox deprecation and linker diagnostics were observed. Full workspace, SDK
+runtime suites, native metadata deletion and new-source platform checks remain open.
+
+Review refinement: the metadata registry now bounds vector length and counts JSON
+encoding into a 16 KiB sink before cloning/deserializing; scalar bounds also precede
+typed encoding. Final oversized-owner/vector, duplicate-identity, missing/foreign
+role and supplied-path cases pass, as does final server/App Clippy. This adds no
+native deletion authority. Focused code/security review finds no further issue in
+this writer increment; native producer/reconciliation and full branch review remain
+required before delivery acceptance.
+
+Collection source 124c11b9 completes native run 42759174937 successfully on Linux
+x64/ARM and macOS ARM/Intel. This accepts that source, not the subsequent metadata
+writer protocol. Run 42759434324 at 50e00372 retains the longer workflow allowance
+and is queued at this checkpoint; it also predates these writer changes.

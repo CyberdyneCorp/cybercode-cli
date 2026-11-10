@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 //! Real App restores/receipts and native private payloads; no source writes by cleanup.
+#[path = "support/snapshot_retirement.rs"]
+mod retirement;
 #[path = "support/scripted_model.rs"]
 mod scripted_model;
 use cyber_app::{App, AppOptions};
@@ -330,6 +332,9 @@ async fn retention_disabled_capture_disabled_and_live_lifetime_do_not_license_cl
     let f = Fixture::new().await;
     assert_eq!(f.reclaim().await.unwrap(), 0);
     f.age();
+    *f.config.lock().unwrap() = Value::Null;
+    assert_eq!(f.reclaim().await.unwrap(), 0);
+    assert!(f.record().is_none() && f.journal.join("stage_0").exists());
     *f.config.lock().unwrap() = json!({"snapshots":{"retention_days":0}});
     assert_eq!(f.reclaim().await.unwrap(), 0);
     *f.config.lock().unwrap() = json!({"snapshots":false});
@@ -365,6 +370,48 @@ struct Cut {
     after_delete: bool,
     pause: Option<PathBuf>,
     tamper: Option<PathBuf>,
+}
+
+#[tokio::test]
+async fn unavailable_policy_after_one_unlink_preserves_remaining_payloads_and_resumes() {
+    let f = Fixture::new().await;
+    f.age();
+    let first = f.journal.join("stage_0");
+    let remaining = f.journal.join("stage_1");
+    let bytes = std::fs::read(&remaining).unwrap();
+    let inference = f.model.requests().len();
+    let cut = GitSnapshots::with_reclamation(
+        f.paths.data.clone(),
+        Arc::new(move |_| {
+            if first.exists() {
+                json!({})
+            } else {
+                Value::Null
+            }
+        }),
+        vec![
+            f.paths.config.clone(),
+            f.paths.state.clone(),
+            f.paths.cache.clone(),
+            f.paths.tmp.clone(),
+        ],
+        None,
+        Some(cyber_app::snapshot_reclamation::policy(f.app.store.clone())),
+    );
+    assert!(
+        cut.reclaim(f.project.to_str().unwrap())
+            .await
+            .unwrap_err()
+            .contains("retention")
+    );
+    assert!(!f.journal.join("stage_0").exists());
+    assert_eq!(std::fs::read(&remaining).unwrap(), bytes);
+    assert!(!f.record().unwrap().completed);
+    assert!(f.reclaim().await.unwrap() > 0);
+    assert!(!remaining.exists());
+    assert!(f.record().unwrap().completed);
+    assert_eq!(f.model.requests().len(), inference);
+    f.app.runtime.shutdown().await;
 }
 impl Policy for Cut {
     fn receipt(

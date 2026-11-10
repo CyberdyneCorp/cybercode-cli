@@ -520,3 +520,17 @@
 - **AND** missing or malformed provenance, namespace transplants, aliases, changed metadata, unavailable configuration, disabled snapshots and zero retention SHALL preserve remaining bytes
 - **AND** every protected durable root SHALL resolve to a valid native manifest before collection; a dangling reference SHALL refuse orphan deletion, while valid references in another Location SHALL remain protected without blocking unrelated orphan reclamation
 - **AND** journal/worker fences and retained retry receipts SHALL remain independently required
+
+#### Scenario: Payload cleanup loses configuration after its first unlink
+- **GIVEN** exact native ownership and a durable payload cleanup plan permit reclamation
+- **WHEN** configuration becomes unavailable before a later private unlink
+- **THEN** cleanup SHALL preserve the remaining payloads and leave its durable plan incomplete
+- **AND** a fresh eligible retry SHALL reconcile that exact plan without source changes or inference
+
+#### Scenario: Store retains metadata retirement phases independently of payload completion
+- **GIVEN** an exact receipt-bound payload plan has observed durable completion
+- **WHEN** its metadata retirement writer commits a bounded semantic-role plan
+- **THEN** the Store SHALL distinguish pending metadata retirement from payload completion and observed metadata completion after physical reopen
+- **AND** foreign or duplicate worker roles, supplied paths, changed plan identities, missing payload completion and inconsistent byte counts SHALL refuse
+- **AND** later native-owner fences and incomplete reference views SHALL refuse new retirement writes; historical projection rebuilds SHALL preserve immutable history without authorizing native I/O
+- **AND** accepting the event schema alone SHALL NOT prove native metadata deletion or relax independent checkout, namespace, lifetime, reader or retention checks

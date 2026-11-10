@@ -105,6 +105,24 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    restart, alias, namespace-transplant and reference regressions pass locally.
    This does not retire journal/worker/checkout metadata or complete M6.
 
+8. **Metadata retirement now has a durable writer protocol, not native deletion.**
+   Reclamation history distinguishes payload completion, an immutable metadata
+   role/identity/generation/hash plan, and metadata completion. The App maintenance
+   port commits the plan first, excludes reference writers during its guarded
+   callback, checks byte totals and never repeats an observed completed callback.
+   Migration catalog fencing preserves older evidence; logical history survives
+   Store reopen and reprojection after later native fences or Session deletion.
+   The Rust maintenance port defaults to unavailable for older implementations.
+   No native producer invokes it yet: ordinary cleanup still retains journal,
+   phase and lifetime files. Native deletion/resumption, receipt reconciliation,
+   managed claims and partial-construction acceptance remain required by M6.
+
+   A separate real App regression reproduced 57,344 bytes of payload deletion
+   when configuration resolved to null. Cleanup now preserves bytes initially and
+   stops after policy loss between unlinks, retaining its exact resumable plan.
+   Twenty-seven App cases and 14 migration tests pass locally; native deletion is
+   not inferred from the writer callback tests.
+
 Native run [42733865471](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42733865471)
 passes Linux x64/ARM and macOS ARM/Intel at `e2b3ba18`, including the earlier
 managed Git cleanup and structured CLI cases. It predates the owned intent-slot
@@ -118,7 +136,9 @@ snapshot, core, App, managed Git, preparation/TUI and JSONL steps pass. This is
 incomplete platform evidence, not a passing matrix. The workflow job allowance is
 now 60 minutes; individual test deadlines and assertions are unchanged. The run
 predates the collection-provenance continuation, whose source at `124c11b9` has
-its own run 42759174937 in progress.
+its own run [42759174937](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42759174937),
+now successful on all four Linux/macOS platforms. It predates the metadata writer
+protocol and payload-policy fix; fresh source-bound acceptance remains required.
 
 Verification: three structured-output CLI tests, seven JSONL CLI tests, five
 structured-result server tests and six binary-worker ownership tests pass;
