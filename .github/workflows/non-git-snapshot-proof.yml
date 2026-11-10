@@ -40,7 +40,9 @@ jobs:
   native:
     name: Snapshot native (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # Intel's complete matrix can exceed 45 minutes while compiling the final
+    # structured-result binaries after all native recovery checks have passed.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

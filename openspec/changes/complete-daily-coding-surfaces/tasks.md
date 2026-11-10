@@ -1006,3 +1006,11 @@ denied, formatting and whitespace pass. Strict OpenSpec passes 100 items; spec l
 reports zero errors and 25 warnings. Native macOS sandbox deprecation and linker
 unwind-table diagnostics were observed during builds. No new public/generated
 contract changed; the earlier SDK evidence remains scoped to its tested checkpoint.
+
+Native scheduling correction: run 42753722365 at 2ec1b1c5 finishes both Linux jobs
+and macOS ARM successfully. Intel passes snapshot/core/App, managed Git, preparation/
+TUI and JSONL checks, then reaches the 45-minute job limit while compiling final
+structured-result binaries; its matrix result is cancelled, not accepted. The job
+allowance is now 60 minutes without changing any test deadline/assertion. Collection
+source 124c11b9 has its own run 42759174937 in progress and is not accepted from the
+prior source's results.

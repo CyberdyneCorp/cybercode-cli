@@ -112,8 +112,13 @@ changes and is not evidence for them. The workflow now also selects the three
 pre-effect preparation/TUI client cases serially and retains their log; that
 workflow addition still requires source-bound platform acceptance.
 Run [42753722365](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42753722365)
-at `2ec1b1c5` has passed both Linux jobs and macOS ARM; macOS Intel is still
-running at this checkpoint. It predates the collection-provenance continuation.
+at `2ec1b1c5` passes both Linux jobs and macOS ARM. Intel is cancelled at the
+45-minute job limit while compiling the final structured-result binaries; its
+snapshot, core, App, managed Git, preparation/TUI and JSONL steps pass. This is
+incomplete platform evidence, not a passing matrix. The workflow job allowance is
+now 60 minutes; individual test deadlines and assertions are unchanged. The run
+predates the collection-provenance continuation, whose source at `124c11b9` has
+its own run 42759174937 in progress.
 
 Verification: three structured-output CLI tests, seven JSONL CLI tests, five
 structured-result server tests and six binary-worker ownership tests pass;
