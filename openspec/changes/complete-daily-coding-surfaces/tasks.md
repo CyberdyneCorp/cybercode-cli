@@ -968,3 +968,41 @@ preparation/TUI client cases serially in addition to managed Git recovery; fresh
 source-bound platform evidence remains required. Partial construction, complete
 reference/CAS/metadata retirement, default Git admission and M2–M8/parent task
 acceptance remain open. No public API or SDK schema changes in this increment.
+
+Final intent-slot CLI evidence: all 22 serial branch/recovery cases pass at
+2ec1b1c5 in 837.69s, including both managed Git process-death cases and terminal
+lost-reply reconciliation. SDK generation consistency, typecheck and 136 tests
+pass at that checkpoint, with ten configured external skips. Native run
+42753722365 passes both Linux jobs and macOS ARM; Intel remains running at this
+checkpoint. These results do not accept later source changes.
+
+Collection-provenance continuation (2026-11-10): before any unlink, fallback
+collection now publishes/synchronizes an immutable bounded Location/root/native-
+namespace record derived from complete valid manifests and pins its exact native
+identity/generation through deletion. Restart after the last manifest disappears
+can establish fresh retention without guessing from orphan names. Missing legacy
+provenance, corrupt/foreign records, aliases, changed metadata, unavailable
+configuration and disabled/zero retention protect remaining bytes. Every protected
+copy reference must resolve to a valid manifest in the global private inventory
+before collection; a dangling root cannot silently become an empty object set.
+Valid other-Location roots and unrelated Git IDs retain compatibility. Namespace
+metadata and unknown unpublished construction files count toward quota; none gain
+cleanup authority from their names. Journal/worker fences remain unchanged.
+
+Local verification: the snapshot candidate suite passes 205 cases with nine
+intentional subprocess/diagnostic skips before the final unavailable-policy and
+Git-reference compatibility refinements. Final targeted runs cover all 31 fallback
+cases and seven collection unit cases, including the actual process-kill/physical-
+reopen proof and its invoked ignored child. Eighteen App reclamation cases pass,
+including serialized reference-writer exclusion. The final refinements are confined
+to collection and covered by its targeted runs. Focused code/security review caught
+the missing-reference and null-configuration cases; both now have regression
+coverage. Full metadata/CAS retirement, partial construction and complete M2–M8
+acceptance remain open. Public API/SDK schemas are unchanged; full workspace and
+source-bound native/platform acceptance remain required.
+
+Final collection-provenance checks: all-target snapshot/App/CLI Clippy with warnings
+denied, formatting and whitespace pass. Strict OpenSpec passes 100 items; spec lint
+reports zero errors and 25 warnings. Native macOS sandbox deprecation and linker
+unwind-table diagnostics were observed during builds. No new public/generated
+contract changed; the earlier SDK evidence remains scoped to its tested checkpoint.

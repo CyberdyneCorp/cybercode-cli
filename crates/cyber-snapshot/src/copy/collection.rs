@@ -1,12 +1,9 @@
 //! Policy-bound fallback collection; unresolved worker/journal evidence stays fenced.
 use super::{ENTRY_LIMIT, ImageKind, Manifest, RECORD_LIMIT, now, storage};
 use cap_std::fs::Dir;
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{collections::BTreeSet, path::Path, sync::Arc};
 use storage::{Result, fail};
+mod provenance;
 
 /// Prune only unreferenced, old manifests. Journals keep all their objects pinned;
 /// an unavailable durable-reference view never authorizes deletion.
@@ -27,6 +24,7 @@ pub(crate) fn gc(
         return Ok(());
     }
     let root = storage::existing_child(&snapshot, "global", true)?;
+    verify_references(&root, protected)?;
     for location in storage::names(&root, 100_000)? {
         if !storage::valid_digest(&location) {
             return Err("Invalid snapshot namespace".into());
@@ -39,6 +37,42 @@ pub(crate) fn gc(
         gc_location(&dir, &location, config.as_ref(), protected)?;
     }
     Ok(())
+}
+/// A durable root whose manifest has disappeared has an unknown object set.
+/// Resolve all protected roots before any namespace can collect orphan objects.
+fn verify_references(root: &Dir, protected: &BTreeSet<String>) -> Result<()> {
+    if protected.len() > 100_000 {
+        return Err("Snapshot collection reference limit exceeded".into());
+    }
+    let mut pending = protected
+        .iter()
+        .filter(|id| id.starts_with("copy:"))
+        .map(|id| {
+            id.strip_prefix("copy:")
+                .filter(|id| storage::valid_digest(id))
+                .ok_or_else(|| "Invalid snapshot collection reference".to_string())
+        })
+        .collect::<Result<BTreeSet<_>>>()?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    for namespace in storage::names(root, 100_000)? {
+        if !storage::valid_digest(&namespace) {
+            return Err("Invalid snapshot namespace".into());
+        }
+        let dir = storage::existing_child(root, &namespace, true)?;
+        let manifests = storage::existing_child(&dir, "manifests", true)?;
+        for name in storage::names(&manifests, 100_000)? {
+            if pending.contains(name.as_str()) {
+                read_manifest(&manifests, &name, &namespace)?;
+                pending.remove(name.as_str());
+            }
+        }
+        if pending.is_empty() {
+            return Ok(());
+        }
+    }
+    Err("Snapshot collection reference manifest is unavailable".into())
 }
 pub(super) fn gc_location(
     dir: &Dir,
@@ -67,10 +101,12 @@ pub(super) fn gc_location(
     if names.is_empty() && storage::names(&objects, 100_000)?.is_empty() {
         return Ok(());
     }
-    let Some(retention) = Retention::inspect(&manifests, &names, namespace, config)? else {
+    let provenance = provenance::Provenance::inspect(dir, &manifests, &names, namespace)?;
+    let Some(mut retention) = Retention::inspect(provenance, config)? else {
         return Ok(());
     };
     let object_names = object_inventory(&objects)?;
+    retention.provenance.publish()?;
     let mut keep = BTreeSet::new();
     for name in names {
         if temporary(&name) {
@@ -119,56 +155,42 @@ pub(super) fn gc_location(
 /// A complete validated manifest inventory identifies the Location even when its
 /// source directory is gone. Never infer a default policy from orphan names.
 struct Retention {
-    location: PathBuf,
+    provenance: provenance::Provenance,
     settings: serde_json::Value,
     days: u64,
 }
 impl Retention {
     fn inspect(
-        manifests: &Dir,
-        names: &[String],
-        namespace: &str,
+        provenance: provenance::Provenance,
         config: &crate::ConfigFn,
     ) -> Result<Option<Self>> {
-        let mut policy: Option<Self> = None;
-        for name in names {
-            if temporary(name) {
-                storage::open(manifests, Path::new(name))?;
-                continue;
-            }
-            let manifest = read_manifest(manifests, name, namespace)?;
-            if let Some(policy) = &policy {
-                if policy.location != manifest.tree.location {
-                    return Err("Snapshot collection has inconsistent Location evidence".into());
-                }
-                continue;
-            }
-            let settings = config(&manifest.tree.location);
-            let days = settings
-                .pointer("/snapshots/retention_days")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(7);
-            if settings.get("snapshots") == Some(&serde_json::Value::Bool(false)) || days == 0 {
-                return Ok(None);
-            }
-            policy = Some(Self {
-                location: manifest.tree.location,
-                settings,
-                days,
-            });
+        let settings = config(provenance.location());
+        // The App configuration adapter returns null when resolution fails.
+        // Missing policy authority cannot select the default retention period.
+        if !settings.is_object() {
+            return Err("Snapshot retention configuration is unavailable".into());
         }
-        policy
-            .map(Some)
-            .ok_or_else(|| "Snapshot collection lacks Location policy evidence".into())
+        let days = settings
+            .pointer("/snapshots/retention_days")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(7);
+        if settings.get("snapshots") == Some(&serde_json::Value::Bool(false)) || days == 0 {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            provenance,
+            settings,
+            days,
+        }))
     }
     fn seconds(&self) -> u64 {
         self.days.saturating_mul(86400)
     }
     fn verify(&self, config: &crate::ConfigFn) -> Result<()> {
-        if config(&self.location) != self.settings {
+        if config(self.provenance.location()) != self.settings {
             return Err("Snapshot retention policy changed during collection".into());
         }
-        Ok(())
+        self.provenance.verify()
     }
 }
 fn object_inventory(objects: &Dir) -> Result<Vec<String>> {

@@ -293,7 +293,7 @@ impl Store {
         if let Some(size) = self.usage.get() {
             return Ok(size);
         }
-        let mut size = 0u64;
+        let mut size = self.namespace_metadata_size()?;
         for dir in [&self.objects, &self.manifests] {
             for name in storage::names(dir, 100_000)? {
                 size = size
@@ -346,6 +346,32 @@ impl Store {
             Err(error) => return Err(fail(error)),
         }
         self.usage.set(Some(size));
+        Ok(size)
+    }
+    fn namespace_metadata_size(&self) -> Result<u64> {
+        let mut size = 0u64;
+        for name in storage::names(&self.namespace, ENTRY_LIMIT)? {
+            let metadata = self.namespace.symlink_metadata(&name).map_err(fail)?;
+            if metadata.is_dir() {
+                if !matches!(
+                    name.as_str(),
+                    "files" | "manifests" | "journals" | "workers"
+                ) {
+                    return Err("Unexpected snapshot namespace directory".into());
+                }
+                continue;
+            }
+            // Include durable collection provenance and unpublished construction
+            // bytes. Unknown files stay retained; names never grant cleanup.
+            size = size
+                .checked_add(
+                    storage::open(&self.namespace, Path::new(&name))?
+                        .metadata()
+                        .map_err(fail)?
+                        .len(),
+                )
+                .ok_or("Snapshot storage overflow")?;
+        }
         Ok(size)
     }
     fn reserve(&self, size: u64) -> Result<()> {

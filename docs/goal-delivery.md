@@ -88,7 +88,22 @@ cross-platform, SDK/plugin and full-workspace checks have not been rerun here.
    The broad parallel CLI run failed three old-version assertions (corrected),
    two preparation observation deadlines and one typed storage-busy TUI response.
    The three preparation/TUI cases pass serially; this does not establish the
-   cause of the parallel failures. The complete serial CLI rerun is pending.
+   cause of the parallel failures. The complete serial CLI rerun at `2ec1b1c5`
+   passes all 22 cases in 837.69s, including both managed Git process-death cases
+   and TUI reconciliation. SDK generation/typecheck and 136 SDK tests also pass
+   at that checkpoint, with ten configured external skips.
+
+7. **Collection now retains durable policy provenance across manifest deletion.**
+   A bounded immutable Location/root/native-namespace record is synchronized before
+   deletion and pinned across every unlink. A fresh collector can resume orphan
+   cleanup after the last manifest disappears, while disabled/zero retention,
+   unavailable configuration, unknown provenance and metadata changes preserve
+   remaining bytes. Every protected copy root must resolve to a valid manifest
+   somewhere in the private global inventory before collection; valid roots in
+   another Location do not block unrelated orphan cleanup. Namespace metadata and
+   unpublished construction bytes now count toward quota. Real process-kill,
+   restart, alias, namespace-transplant and reference regressions pass locally.
+   This does not retire journal/worker/checkout metadata or complete M6.
 
 Native run [42733865471](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42733865471)
 passes Linux x64/ARM and macOS ARM/Intel at `e2b3ba18`, including the earlier
@@ -96,6 +111,9 @@ managed Git cleanup and structured CLI cases. It predates the owned intent-slot
 changes and is not evidence for them. The workflow now also selects the three
 pre-effect preparation/TUI client cases serially and retains their log; that
 workflow addition still requires source-bound platform acceptance.
+Run [42753722365](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42753722365)
+at `2ec1b1c5` has passed both Linux jobs and macOS ARM; macOS Intel is still
+running at this checkpoint. It predates the collection-provenance continuation.
 
 Verification: three structured-output CLI tests, seven JSONL CLI tests, five
 structured-result server tests and six binary-worker ownership tests pass;

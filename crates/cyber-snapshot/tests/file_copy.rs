@@ -845,6 +845,14 @@ async fn collection_zero_retention_preserves_orphan_and_temporary_bytes() {
     assert_collection_retained(&retained);
 }
 #[tokio::test]
+async fn collection_unavailable_configuration_preserves_the_complete_inventory() {
+    let (p, retained) = aged_collection_fixture().await;
+    *p.config.lock().unwrap() = Value::Null;
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+    assert!(!namespace(&p).join("collection.json").exists());
+}
+#[tokio::test]
 async fn collection_missing_location_evidence_preserves_orphans() {
     let (p, mut retained) = aged_collection_fixture().await;
     retained.retain(|(path, _)| {
@@ -966,6 +974,22 @@ async fn collection_policy_revocation_after_manifest_deletion_preserves_objects(
         .filter(|(path, _)| path.parent().unwrap().ends_with("files"))
         .collect();
     assert_collection_retained(&objects);
+    // Simulate a fresh collector after the stop between manifest and object
+    // removal. It must use durable Location evidence rather than orphan names.
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(|_| json!({})),
+        vec![],
+        Some(Arc::new(|| Ok(Default::default()))),
+    );
+    p.snapshots.gc().await;
+    for (path, _) in objects {
+        assert!(
+            !path.exists(),
+            "old orphan survived restart: {}",
+            path.display()
+        );
+    }
 }
 
 #[tokio::test]
@@ -995,4 +1019,113 @@ async fn collection_unknown_object_refuses_before_any_manifest_is_removed() {
     p.snapshots.gc().await;
     assert_collection_retained(&retained);
     assert_eq!(std::fs::read(unknown).unwrap(), b"unknown owner");
+}
+
+#[tokio::test]
+async fn collection_dangling_reference_preserves_orphans_despite_valid_provenance() {
+    let (mut p, retained) = aged_collection_fixture().await;
+    let manifest = retained
+        .iter()
+        .find(|(path, _)| {
+            path.parent().unwrap().ends_with("manifests")
+                && !path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("tmp_")
+        })
+        .unwrap()
+        .0
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    p.snapshots.gc().await;
+    let objects = restore_old_orphans(&retained);
+    let provenance = std::fs::read(namespace(&p).join("collection.json")).unwrap();
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(|_| json!({})),
+        vec![],
+        Some(Arc::new(move || {
+            Ok(std::collections::BTreeSet::from([format!(
+                "copy:{manifest}"
+            )]))
+        })),
+    );
+    p.snapshots.gc().await;
+    assert_collection_retained(&objects);
+    assert_eq!(
+        std::fs::read(namespace(&p).join("collection.json")).unwrap(),
+        provenance
+    );
+}
+
+#[tokio::test]
+async fn collection_resolves_other_location_roots_before_reclaiming_old_orphans() {
+    let (mut p, retained) = aged_collection_fixture().await;
+    let original_namespace = namespace(&p);
+    p.snapshots.gc().await;
+    let objects = restore_old_orphans(&retained);
+    let other = p.root.parent().unwrap().join("other-work");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(other.join("owner"), b"other Location bytes").unwrap();
+    let protected = p
+        .snapshots
+        .track(other.to_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let root = protected.tree.clone();
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(|_| json!({})),
+        vec![],
+        Some(Arc::new(move || {
+            Ok(std::collections::BTreeSet::from([
+                root.clone(),
+                "a".repeat(40),
+            ]))
+        })),
+    );
+    p.snapshots.gc().await;
+    for (path, _) in objects {
+        assert!(!path.exists(), "{}", path.display());
+    }
+    assert!(
+        std::fs::read_dir(original_namespace.join("files"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    assert_eq!(
+        std::fs::read(other.join("owner")).unwrap(),
+        b"other Location bytes"
+    );
+    assert!(
+        p.snapshots
+            .changed(other.to_str().unwrap(), &protected.tree, &protected.tree)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+fn restore_old_orphans(retained: &[(PathBuf, Vec<u8>)]) -> Vec<(PathBuf, Vec<u8>)> {
+    retained
+        .iter()
+        .filter(|(path, _)| path.parent().unwrap().ends_with("files"))
+        .map(|(path, bytes)| {
+            std::fs::write(path, bytes).unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
+                .unwrap();
+            (path.clone(), bytes.clone())
+        })
+        .collect()
 }

@@ -511,3 +511,12 @@
 - **THEN** the active intent SHALL remain complete and its native slot binding SHALL permit inspection or exact metadata reconciliation without trusting partial spare bytes
 - **AND** source-phase updates SHALL create no anonymous temporary intent file; cleanup SHALL retain both known metadata slots
 - **AND** equal-byte replacement inodes, aliases, missing slots and legacy unknown entries SHALL refuse without deletion or source replay
+
+#### Scenario: Collection restarts after removing the last manifest
+- **GIVEN** complete valid manifest evidence has established a Location and its native snapshot namespace
+- **WHEN** collection stops after removing the last manifest and before removing old unreferenced objects
+- **THEN** its previously synchronized immutable collection record SHALL permit a fresh owned collector to establish the same Location policy without inferring it from orphan names
+- **AND** collection SHALL revalidate current retention, complete durable references and exact metadata identity/generation before unlinks
+- **AND** missing or malformed provenance, namespace transplants, aliases, changed metadata, unavailable configuration, disabled snapshots and zero retention SHALL preserve remaining bytes
+- **AND** every protected durable root SHALL resolve to a valid native manifest before collection; a dangling reference SHALL refuse orphan deletion, while valid references in another Location SHALL remain protected without blocking unrelated orphan reclamation
+- **AND** journal/worker fences and retained retry receipts SHALL remain independently required

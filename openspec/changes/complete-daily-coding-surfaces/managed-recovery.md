@@ -184,10 +184,24 @@ Fallback manifest/object collection SHALL establish the Location's current
 retention policy from a complete valid, namespace-bound manifest inventory before
 deletion. Disabled snapshots and zero retention preserve manifests, orphan objects
 and temporary files. Configured retention applies to orphan/temporary aging too;
-policy changes refuse before the next unlink. Corrupt/foreign manifests, unknown
+Unavailable configuration SHALL preserve bytes rather than select default
+retention; policy changes refuse before the next unlink. Corrupt/foreign manifests, unknown
 object entries and temporary aliases refuse before manifest deletion. An empty
 namespace is a no-op. Orphans without surviving Location evidence remain retained;
-durable collection/retirement evidence for those namespaces remains part of M6.
+before deleting a namespace's first manifest, collection SHALL publish and sync a
+bounded immutable Location/root/native-namespace record derived from the complete
+valid manifest inventory. This record SHALL preserve policy provenance after the
+last manifest is removed, including across process restart. Later collection SHALL
+validate its namespace binding, agree with every surviving manifest, obtain fresh
+policy and complete references, and recheck the exact metadata route/generation
+before each unlink. Missing, malformed, transplanted or aliased records SHALL NOT
+invent Location authority or be overwritten. Unpublished construction files remain
+retained and count toward quota. Before any namespace collection, every durable
+protected root SHALL resolve to a valid manifest in the private global inventory;
+a missing referenced manifest has an unknown object set and SHALL refuse collection.
+Valid roots in other Locations SHALL NOT by themselves prevent orphan reclamation.
+This record does not retire journal, worker or
+request metadata; complete retirement remains part of M6.
 
 ## Managed checkout payload reclamation
 
