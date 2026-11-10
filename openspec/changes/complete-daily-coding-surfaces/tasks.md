@@ -1621,3 +1621,60 @@ rediscovery and partial-line refusal. Full rules/context review remains open for
 trusted definition identity, source-graph exhaustion, operation/Epoch/restart and
 revocation binding, effective inspection and the TUI flow. Task 4.1 and parent
 acceptance remain incomplete; no goal or delivery completion is claimed.
+
+Trusted rule discovery/read continuation (2026-11-10): global `rules/` and
+project `.claude/rules/*.md` / `.cyber/rules/*.md` now use the fenced native
+definition reader, sorted directory precedence and validated project-relative
+globs. Unscoped bodies join the baseline; matching scoped bodies enter successful
+built-in read results. Claude opt-out and project-config opt-out are respected.
+Frontmatter is not rendered or used to configure permissions. Imports retain
+confinement/read/depth/cycle checks and recognize rule targets, so importing a
+scoped rule cannot turn it into unconditional instruction text.
+
+Exact bounded rule-file bytes enter the existing checkout trust digest. Loading
+requires an approved expected digest and the original Location's read gate before
+project definition capture, followed by fenced byte/binding verification. Nested
+definitions resolve the operation directory's reviewed inventory in the same
+checkout; a foreign nested checkout cannot contribute rules. Changed bytes remain
+held until renewed review. No #92 trust-key policy or approval-file format changes.
+Trust inventory paths are canonicalized at the declared checkout root, preserving
+ordinary caller aliases while retaining no-follow checks below it. Explicit global
+root aliases cannot bypass scoped-import classification.
+
+Read delivery now persists optional typed `rule_reminders` (root, definition path,
+byte digest and approval generation), separate from legacy canonical instruction
+paths. The Epoch tracks rule identities separately; historical events default to
+no rule bindings. Actual App Store-event inspection and replay verify this
+separation. Directory/import duplicates are captured/charged only once per
+discovery, preventing a valid near-limit graph from spuriously exhausting its
+definition budget. Full operation/config-generation/Epoch binding, edit/patch
+and partial-effect delivery, revocation withdrawal, graph-exhaustion and restart
+acceptance remain required under 4.2–4.4. No parent task is checked off.
+
+Verification passes: five selected core library tests (four rule tests and the
+existing untrusted-rule table check); all 89 configuration tests; 454 server
+library tests with one explicit subprocess-fixture entry ignored; all 15 real-App
+instruction tests; 20 context/compaction tests; AppHost forwarding; nine path-skill
+compatibility tests; and the doctor regression. App tests cover withheld/approved
+rules, baseline/read separation, once-per-Epoch identity, renewed review after
+edits, nested/foreign roots, read-denied definitions, Claude opt-out, imports,
+bounded provider text and typed durable bindings. Native link/hardlink refusal,
+invalid/null/empty/escaping glob refusal and inventory bounds have core coverage.
+OpenAPI's exact consistency test and SDK generation check pass; no HTTP schema or
+generated SDK change is required. Full workspace/SDK runtime and fresh-source
+platform acceptance have not run for this continuation.
+
+Focused code-review-skill review resolved empty-array/null fallback risks, alias
+classification, duplicate budget charging and mixing opaque rule IDs into the
+legacy path field. Architecture follows the existing core fenced reader and
+runtime ToolHost authorization port. Full rule/context review remains open for
+exact native operation/config/Epoch revalidation and provenance, withdrawal after
+revocation, graph/restart boundaries and effective inspection/TUI. Native C and
+linker unwind warnings were observed without assigning origin. The focused native
+workflow now includes core rule and trust tests plus skill compatibility checks.
+Task 4.1 and all parent acceptance/delivery obligations remain open.
+
+Final local gates: core/server/tools/App/CLI all-target Clippy with warnings denied,
+formatting, diff checks and workflow YAML/source-selection checks pass. Strict
+OpenSpec 1.13.2 validates 100/100 items; cross-spec lint reports 0 errors/25
+warnings. The worktree must execute on fresh-source CI before platform acceptance.

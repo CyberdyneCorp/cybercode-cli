@@ -375,6 +375,9 @@ pub struct ToolSettled {
     /// Canonical paths of nested instruction files attached to this result.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instruction_reminders: Vec<String>,
+    /// Approved rule definitions actually labelled in this successful result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_reminders: Vec<super::instructions::RuleBinding>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

@@ -261,6 +261,7 @@ mod tests {
                 max_total_bytes: super::super::instructions::DEFAULT_MAX_TOTAL_BYTES,
                 home: None,
                 read_gate: None,
+                rule_gate: None,
             }),
             today: Some("2026-10-03".into()),
         }

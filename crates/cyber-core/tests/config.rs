@@ -491,6 +491,37 @@ fn instructions_concatenate_global_first() {
 }
 
 #[test]
+fn rule_definition_bytes_require_checkout_approval_and_edits_revoke_it() {
+    let mut f = Fixture::new();
+    let rule = f.write(
+        ".cyber/rules/scoped.md",
+        "---\npaths: ['web/**']\n---\nUse the web convention.",
+    );
+    let rule = rule.canonicalize().unwrap();
+    let held = f.load().unwrap();
+    assert!(!held.trust.trusted);
+    assert!(held.trust.definitions.contains(&rule.display().to_string()));
+    assert!(held.trust.rule_digests.contains_key(&rule));
+    f.approve_current();
+    let approved = f.load().unwrap();
+    assert!(approved.trust.trusted);
+    f.write(
+        ".cyber/rules/scoped.md",
+        "---\npaths: ['db/**']\n---\nUse the web convention.",
+    );
+    let changed = f.load().unwrap();
+    assert!(!changed.trust.trusted);
+    assert_ne!(
+        approved.trust.rule_digests[&rule],
+        changed.trust.rule_digests[&rule]
+    );
+    f.env
+        .insert("CYBER_DISABLE_PROJECT_CONFIG".into(), "1".into());
+    let disabled = f.load().unwrap();
+    assert!(disabled.trust.trusted && disabled.trust.rule_digests.is_empty());
+}
+
+#[test]
 fn instruction_limits_layer_by_member_without_changing_instruction_arrays() {
     use config::InstructionLimits;
     let f = Fixture::new();

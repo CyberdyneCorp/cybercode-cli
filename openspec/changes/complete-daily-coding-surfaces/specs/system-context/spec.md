@@ -41,3 +41,16 @@
 - **THEN** the complete rendered instruction-file baseline (`core/instructions`) and each nested reminder SHALL fit their respective byte budgets, including labels, notices, separators and wrappers
 - **AND** only complete file labels actually delivered SHALL consume reminder identity; unlisted imports SHALL remain discoverable after their importer is labelled
 - **AND** a truncated import declaration SHALL NOT load the file named by its partial path
+
+#### Scenario: Rule review and byte identity
+- **WHEN** project rule files are discovered
+- **THEN** their exact bounded definition bytes SHALL enter the checkout trust inventory, and held or read-denied definitions SHALL NOT enter privileged model context
+- **AND** invalid frontmatter/globs SHALL NOT fall back to unscoped guidance
+- **WHEN** a definition changes and is reviewed again
+- **THEN** its new content/approval identity SHALL remain independently eligible for delivery
+
+#### Scenario: Compatible durable rule bindings
+- **WHEN** a successful matching read delivers a scoped rule
+- **THEN** its settlement SHALL retain typed project-root, definition-path, digest and approval-generation metadata separately from canonical instruction-file path markers
+- **AND** replay of historical settlements without rule bindings SHALL remain compatible
+- **AND** a reviewed definition from another checkout SHALL NOT supply rule context for the parent Session

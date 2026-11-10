@@ -149,6 +149,8 @@ fn instructions(ctx: &Context, config: Option<&cyber_core::config::Resolved>) ->
             );
         }
     }
+    settings.rule_gate = config
+        .map(|config| cyber_server::runtime::instructions::RuleGate::from_report(&config.trust));
     settings.read_gate = Some(cyber_tools::permissions::instruction_read_gate(
         config.map(|c| (&c.value, &c.sources)),
         &ctx.location,

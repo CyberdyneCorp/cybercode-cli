@@ -34,6 +34,7 @@ fn reply(body: &Value) -> Value {
     ] {
         if text.contains(prompt) {
             let arguments = json!({"path": "web/src/app.ts"}).to_string();
+            let id = format!("{id}_{}", body["messages"].as_array().unwrap().len());
             return json!({"tool_calls":[{"index":0,"id":id,"type":"function",
                 "function":{"name":"read","arguments":arguments}}]});
         }
@@ -136,6 +137,183 @@ async fn bounded_lists_record_only_labelled_files_and_retry_unlisted_imports() {
     f.app.runtime.shutdown().await;
 }
 
+#[tokio::test]
+async fn project_rules_require_review_then_separate_baseline_from_matching_reads() {
+    let f = Fixture::start().await;
+    f.write(".cyber/rules/base.md", "ROOT_RULE_GUIDANCE");
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    let held = f.session(&f.repo).await;
+    f.prompt(&held, &f.repo, "read the app first", 2).await;
+    assert!(!every_request(&f).contains("ROOT_RULE_GUIDANCE"));
+    assert!(!every_request(&f).contains("WEB_RULE_GUIDANCE"));
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let request = f.last_request();
+    assert!(system_prompt(&request).contains("ROOT_RULE_GUIDANCE"));
+    assert!(!system_prompt(&request).contains("WEB_RULE_GUIDANCE"));
+    let result = last_tool_result(&request);
+    assert!(result.contains("WEB_RULE_GUIDANCE"));
+    assert!(!result.contains("paths:"));
+    let state = f.app.runtime.state(&session).await.unwrap();
+    let ids = state.epoch.unwrap().reminded_rules;
+    assert_eq!(ids.len(), 1, "{ids:?}");
+    assert!(ids.iter().all(|id| id.starts_with("rule:sha256:")));
+    let events = f.app.store.read_events(&session, -1, 500).unwrap().events;
+    let settled = events
+        .iter()
+        .find(|event| {
+            event.kind == "session.tool.settled.1"
+                && event.data["rule_reminders"]
+                    .as_array()
+                    .is_some_and(|rules| !rules.is_empty())
+        })
+        .unwrap();
+    assert!(
+        settled.data.get("instruction_reminders").is_none(),
+        "legacy path field is preserved"
+    );
+    let binding = &settled.data["rule_reminders"][0];
+    assert_eq!(binding["root"], f.repo.to_str().unwrap());
+    assert_eq!(
+        binding["path"],
+        f.repo.join(".cyber/rules/web.md").to_str().unwrap()
+    );
+    assert!(binding["digest"].as_str().unwrap().starts_with("sha256:"));
+    assert!(
+        binding["generation"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    let replayed = cyber_server::runtime::SessionState::replay(&events).unwrap();
+    assert_eq!(replayed.epoch.unwrap().reminded_rules, ids);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn changed_rule_bytes_stay_held_until_the_new_definition_is_reviewed() {
+    let f = Fixture::start().await;
+    let path = ".cyber/rules/web.md";
+    f.write(path, "---\npaths: ['web/**']\n---\nRULE_VERSION_A");
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("RULE_VERSION_A"));
+    f.write(path, "---\npaths: ['web/**']\n---\nRULE_VERSION_B");
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("RULE_VERSION_B"));
+    f.approve(&f.repo);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("RULE_VERSION_B"));
+    assert_eq!(
+        f.app
+            .runtime
+            .state(&session)
+            .await
+            .unwrap()
+            .epoch
+            .unwrap()
+            .reminded_rules
+            .len(),
+        2
+    );
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn rule_imports_keep_read_and_scope_gates_and_claude_compatibility() {
+    let f = Fixture::start_with(
+        json!({"compat":{"claude":false},"permissions":{"read":{".cyber/rules/secret.md":"deny"}}}),
+    )
+    .await;
+    f.write(
+        ".cyber/rules/a.md",
+        "CYBER_GUIDANCE\n@../../docs/extra.md\n@../../../private.md\n@db.md",
+    );
+    f.write(
+        ".cyber/rules/db.md",
+        "---\npaths: ['db/**']\n---\nDB_GUIDANCE",
+    );
+    f.write(".cyber/rules/secret.md", "SECRET_GUIDANCE");
+    f.write(".claude/rules/a.md", "CLAUDE_GUIDANCE");
+    f.write("docs/extra.md", "EXTRA_GUIDANCE");
+    std::fs::write(
+        f.repo.parent().unwrap().join("private.md"),
+        "OUTSIDE_GUIDANCE",
+    )
+    .unwrap();
+    std::fs::create_dir_all(f.config.join("rules")).unwrap();
+    std::fs::write(f.config.join("rules/global.md"), "GLOBAL_GUIDANCE").unwrap();
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "hello", 1).await;
+    let system = system_prompt(&f.last_request());
+    for present in ["GLOBAL_GUIDANCE", "CYBER_GUIDANCE", "EXTRA_GUIDANCE"] {
+        assert!(system.contains(present), "{present}: {system}");
+    }
+    for absent in [
+        "DB_GUIDANCE",
+        "SECRET_GUIDANCE",
+        "CLAUDE_GUIDANCE",
+        "OUTSIDE_GUIDANCE",
+    ] {
+        assert!(!system.contains(absent), "{absent}: {system}");
+    }
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn nested_rules_use_the_reviewed_operation_directory_in_the_same_checkout() {
+    let f = Fixture::start().await;
+    f.write(
+        "web/.cyber/rules/local.md",
+        "---\npaths: ['web/src/**']\n---\nLOCAL_NESTED_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo.join("web"));
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(!system_prompt(&f.last_request()).contains("LOCAL_NESTED_GUIDANCE"));
+    assert!(last_tool_result(&f.last_request()).contains("LOCAL_NESTED_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_nested_checkout_cannot_supply_rules_for_its_parent_session() {
+    let f = Fixture::start().await;
+    f.write("web/.git/marker", "");
+    f.write(
+        "web/.cyber/rules/local.md",
+        "---\npaths: ['web/src/**']\n---\nFOREIGN_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo.join("web"));
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("export const app"));
+    assert!(!every_request(&f).contains("FOREIGN_RULE_GUIDANCE"));
+    assert!(
+        f.app
+            .runtime
+            .state(&session)
+            .await
+            .unwrap()
+            .epoch
+            .unwrap()
+            .reminded_rules
+            .is_empty()
+    );
+    f.app.runtime.shutdown().await;
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     repo: PathBuf,
@@ -147,6 +325,23 @@ struct Fixture {
 }
 
 impl Fixture {
+    fn approve(&self, directory: &Path) {
+        let env = std::collections::HashMap::<String, String>::new();
+        let home = self._temp.path().join("home");
+        let report = cyber_core::config::trust_report(&cyber_core::config::LoadRequest {
+            location: directory,
+            paths: &self.app.paths,
+            env: &env,
+            home: &home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .unwrap();
+        cyber_core::trust::TrustStore::new(self.app.paths.trust_file())
+            .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+            .unwrap();
+    }
     async fn start() -> Self {
         Self::start_with(json!({})).await
     }

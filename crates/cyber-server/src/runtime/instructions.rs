@@ -52,7 +52,80 @@ pub struct InstructionSettings {
     /// Which project files (and imports of them) may be read; `None` allows every one,
     /// for hosts without a permission policy.
     pub read_gate: Option<ReadGate>,
+    pub rule_gate: Option<RuleGate>,
 }
+
+#[derive(Debug, Clone)]
+pub struct RuleAuthorization {
+    pub root: PathBuf,
+    pub digest: String,
+    pub generation: String,
+}
+impl RuleAuthorization {
+    pub fn from_report(report: &cyber_core::config::TrustReport, path: &Path) -> Option<Self> {
+        if !report.trusted {
+            return None;
+        }
+        Some(Self {
+            root: report.checkout_root.clone(),
+            digest: report.rule_digests.get(path)?.clone(),
+            generation: report.digest.clone()?,
+        })
+    }
+}
+
+/// Definition identity retained separately from legacy canonical-path reminders.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RuleBinding {
+    pub root: String,
+    pub path: String,
+    pub digest: String,
+    pub generation: String,
+}
+impl RuleBinding {
+    pub fn identity(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        hash.update(b"cyber-rule-reminder-v1\0");
+        for field in [&self.root, &self.path, &self.digest, &self.generation] {
+            hash.update((field.len() as u64).to_le_bytes());
+            hash.update(field.as_bytes());
+        }
+        format!("rule:sha256:{hash:x}", hash = hash.finalize())
+    }
+}
+
+type RuleCheck = dyn Fn(&Path, &Path) -> Result<Option<RuleAuthorization>, String> + Send + Sync;
+#[derive(Clone)]
+pub struct RuleGate(Arc<RuleCheck>);
+impl RuleGate {
+    pub fn new(
+        check: impl Fn(&Path, &Path) -> Result<Option<RuleAuthorization>, String>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        Self(Arc::new(check))
+    }
+    pub fn from_report(report: &cyber_core::config::TrustReport) -> Self {
+        let report = report.clone();
+        Self::new(move |path, _scope| Ok(RuleAuthorization::from_report(&report, path)))
+    }
+    fn authorize(&self, path: &Path, scope: &Path) -> Result<Option<RuleAuthorization>, String> {
+        (self.0)(path, scope)
+    }
+}
+impl std::fmt::Debug for RuleGate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RuleGate")
+    }
+}
+impl PartialEq for RuleGate {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for RuleGate {}
 
 /// Whether a project instruction file may enter the model context, given its path as
 /// discovered (or as an import resolved it) and its canonical path. Only `true` loads it,
@@ -104,6 +177,7 @@ impl InstructionSettings {
             max_total_bytes: DEFAULT_MAX_TOTAL_BYTES,
             home: cyber_core::paths::home_dir(env),
             read_gate: None,
+            rule_gate: None,
         }
     }
 
@@ -122,6 +196,15 @@ pub struct InstructionFile {
     /// The deduplication key.
     pub canonical: PathBuf,
     pub truncated: bool,
+    pub(crate) rule_binding: Option<RuleBinding>,
+}
+impl InstructionFile {
+    pub(crate) fn identity(&self) -> String {
+        self.rule_binding.as_ref().map_or_else(
+            || self.canonical.display().to_string(),
+            RuleBinding::identity,
+        )
+    }
 }
 
 /// Bounded instruction bodies, the files behind them, and non-fatal problems.
@@ -174,8 +257,7 @@ impl Instructions {
     }
 
     pub(crate) fn reminder_delivery(&self, seen: &BTreeSet<String>) -> Option<InstructionReminder> {
-        let eligible =
-            |file: &&InstructionFile| !seen.contains(&file.canonical.display().to_string());
+        let eligible = |file: &&InstructionFile| !seen.contains(&file.identity());
         // Reserve complete labels first when some files could not enter the body.
         // A bounded prefix is truthful: unlisted files remain eligible next time.
         let pointers = (!self.omitted.is_empty())
@@ -193,7 +275,7 @@ impl Instructions {
         let (mut text, mut files) = assembly::blocks(
             self.blocks
                 .iter()
-                .filter(|block| !seen.contains(&block.file.canonical.display().to_string())),
+                .filter(|block| !seen.contains(&block.file.identity())),
             self.max_file_bytes,
             self.content_budget().saturating_sub(reserved),
         );
@@ -213,7 +295,7 @@ impl Instructions {
             self.files
                 .iter()
                 .chain(&self.omitted)
-                .filter(|file| !seen.contains(&file.canonical.display().to_string())),
+                .filter(|file| !seen.contains(&file.identity())),
             self.content_budget(),
         )?;
         assembly::finish(pointer.text, pointer.files)
@@ -223,11 +305,7 @@ impl Instructions {
     pub fn attached(&self) -> Vec<String> {
         self.reminder_delivery(&BTreeSet::new())
             .map_or_else(Vec::new, |delivery| {
-                delivery
-                    .files
-                    .iter()
-                    .map(|file| file.canonical.display().to_string())
-                    .collect()
+                delivery.files.iter().map(|file| file.identity()).collect()
             })
     }
 }
@@ -294,26 +372,38 @@ pub fn load_nested(
     let dirs = dir
         .map(|dir| project_dirs(&location, dir))
         .unwrap_or_default();
-    if !settings.project || dirs.is_empty() {
+    if dirs.is_empty() {
         return Instructions::default();
     }
     let mut baseline = Loader::new(settings, settings.max_total_bytes);
     let _ = fill_baseline(&mut baseline, global_dir, &location);
     let budget = NESTED_MAX_TOTAL_BYTES.min(settings.max_total_bytes);
     let mut loader = Loader::new(settings, budget);
+    loader.rule_root = canonical(&cyber_core::config::project_root(&location));
+    loader.rule_scope = dir.unwrap_or(location.as_path()).to_path_buf();
+    loader.rule_target = Some(target.clone());
+    loader.global_rules = canonical(global_dir).join("rules");
     loader.delivered = baseline
         .out
         .files
         .iter()
-        .map(|file| file.canonical.clone())
+        .map(InstructionFile::identity)
         .collect();
-    loader.delivered.extend(attached.iter().map(PathBuf::from));
+    loader.delivered.extend(attached.iter().cloned());
     loader.remaining = budget.saturating_sub(assembly::OPEN.len() + assembly::CLOSE.len());
     let root = canonical(&cyber_core::config::project_root(&location));
-    for file in dirs.iter().flat_map(|dir| directory_files(dir, settings)) {
-        if let Err(error) = loader.load(&file, Some(&root)) {
-            loader.out.warnings.push(error);
+    let global_rules = loader.global_rules.clone();
+    loader.rules(&global_rules, &root, Some(&target), false);
+    for dir in dirs {
+        if !settings.project {
+            break;
         }
+        for file in directory_files(&dir, settings) {
+            if let Err(error) = loader.load(&file, Some(&root)) {
+                loader.out.warnings.push(error);
+            }
+        }
+        loader.project_rules(&dir, &root, Some(&target));
     }
     loader.out
 }
@@ -341,23 +431,29 @@ pub fn read_target(location: &Path, home: Option<&Path>, path: &str) -> PathBuf 
 /// Load every baseline file; returns the first read error, if any.
 fn fill_baseline(loader: &mut Loader<'_>, global_dir: &Path, location: &Path) -> Option<String> {
     let mut first = None;
+    loader.rule_root = canonical(&cyber_core::config::project_root(location));
+    loader.global_rules = canonical(global_dir).join("rules");
+    loader.rule_scope = location.into();
     for file in GLOBAL_FILES.iter().map(|name| global_dir.join(name)) {
         if let Err(error) = loader.load(&file, None) {
             first.get_or_insert(error);
         }
     }
+    let project_root = canonical(&cyber_core::config::project_root(location));
+    let global_rules = loader.global_rules.clone();
+    loader.rules(&global_rules, &project_root, None, false);
     if !loader.settings.project {
         return first;
     }
     let root = canonical(&cyber_core::config::project_root(location));
     let dirs = project_dirs(location, location);
-    for file in dirs
-        .iter()
-        .flat_map(|dir| directory_files(dir, loader.settings))
-    {
-        if let Err(error) = loader.load(&file, Some(&root)) {
-            first.get_or_insert(error);
+    for dir in dirs {
+        for file in directory_files(&dir, loader.settings) {
+            if let Err(error) = loader.load(&file, Some(&root)) {
+                first.get_or_insert(error);
+            }
         }
+        loader.project_rules(&dir, &root, None);
     }
     first
 }
@@ -365,9 +461,16 @@ fn fill_baseline(loader: &mut Loader<'_>, global_dir: &Path, location: &Path) ->
 /// Reads each file once by canonical path, expanding `@path` imports depth first.
 struct Loader<'a> {
     settings: &'a InstructionSettings,
-    seen: BTreeSet<PathBuf>,
-    delivered: BTreeSet<PathBuf>,
+    seen: BTreeSet<String>,
+    delivered: BTreeSet<String>,
     discovery_remaining: usize,
+    rule_files: usize,
+    rule_seen: BTreeSet<PathBuf>,
+    rule_bytes: usize,
+    rule_root: PathBuf,
+    rule_scope: PathBuf,
+    rule_target: Option<PathBuf>,
+    global_rules: PathBuf,
     /// Canonical paths of the files whose imports are being expanded.
     stack: Vec<PathBuf>,
     /// Bytes of instruction text still allowed.
@@ -382,10 +485,169 @@ impl<'a> Loader<'a> {
             seen: BTreeSet::new(),
             delivered: BTreeSet::new(),
             discovery_remaining: settings.max_total_bytes,
+            rule_files: 0,
+            rule_seen: BTreeSet::new(),
+            rule_bytes: 0,
+            rule_root: PathBuf::new(),
+            rule_scope: PathBuf::new(),
+            rule_target: None,
+            global_rules: PathBuf::new(),
             stack: Vec::new(),
             remaining: budget,
             out: Instructions::new(settings.max_bytes, budget),
         }
+    }
+
+    fn project_rules(&mut self, directory: &Path, root: &Path, target: Option<&Path>) {
+        if self.settings.claude_md {
+            self.rules(&directory.join(".claude/rules"), root, target, true);
+        }
+        self.rules(&directory.join(".cyber/rules"), root, target, true);
+    }
+
+    fn rules(&mut self, directory: &Path, root: &Path, target: Option<&Path>, project: bool) {
+        let files = match cyber_core::rules::candidates(directory) {
+            Ok(files) => files,
+            Err(error) => {
+                self.out
+                    .warnings
+                    .push(format!("{}: {error}", directory.display()));
+                return;
+            }
+        };
+        for path in files {
+            if self.rule_files >= 2 * cyber_core::rules::MAX_FILES
+                || self.rule_bytes >= cyber_core::rules::MAX_TOTAL_BYTES
+            {
+                self.out.warnings.push(format!(
+                    "{}: rule discovery bound exceeded",
+                    directory.display()
+                ));
+                break;
+            }
+            if let Err(error) = self.rule(&path, root, target, project) {
+                self.out
+                    .warnings
+                    .push(format!("{}: {error}", path.display()));
+            }
+        }
+    }
+
+    fn rule(
+        &mut self,
+        path: &Path,
+        root: &Path,
+        target: Option<&Path>,
+        project: bool,
+    ) -> Result<(), String> {
+        if !self.rule_seen.insert(path.into()) {
+            return Ok(());
+        }
+        self.rule_files += 1;
+        if self.rule_files > 2 * cyber_core::rules::MAX_FILES {
+            return Err("rule file bound exceeded".into());
+        }
+        if project
+            && !self.settings.claude_md
+            && path
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::file_name)
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(".claude"))
+        {
+            return Err("Claude rule compatibility is disabled".into());
+        }
+        // Approval and read policy precede opening project definition bytes.
+        let authorization = if project {
+            if !path.starts_with(root) || !self.settings.read_allowed(path, &canonical(path)) {
+                return Err("rule definition is not allowed by read policy".into());
+            }
+            let authorization = self
+                .settings
+                .rule_gate
+                .as_ref()
+                .map(|gate| gate.authorize(path, &self.rule_scope))
+                .transpose()?
+                .flatten()
+                .ok_or(
+                    "project rule is held until its definition is trusted (cyber trust inspect)",
+                )?;
+            if authorization.root != root {
+                return Err("rule approval belongs to another project root".into());
+            }
+            Some(authorization)
+        } else {
+            None
+        };
+        let definition = cyber_core::rules::Definition::read(path)?;
+        self.rule_bytes = self.rule_bytes.saturating_add(definition.byte_len());
+        if self.rule_bytes > cyber_core::rules::MAX_TOTAL_BYTES {
+            return Err("rule definition byte bound exceeded".into());
+        }
+        if authorization
+            .as_ref()
+            .is_some_and(|auth| auth.digest != definition.digest)
+        {
+            return Err("rule definition differs from its approved digest".into());
+        }
+        if !definition.applies(root, target) {
+            return Ok(());
+        }
+        let generation = authorization
+            .as_ref()
+            .map_or("owner-global", |auth| auth.generation.as_str());
+        let binding = RuleBinding {
+            root: root.to_str().ok_or("rule root must be UTF-8")?.into(),
+            path: path.to_str().ok_or("rule path must be UTF-8")?.into(),
+            digest: definition.digest.clone(),
+            generation: generation.into(),
+        };
+        let identity = binding.identity();
+        if !self.seen.insert(identity.clone()) {
+            return Ok(());
+        }
+        if self.delivered.contains(&identity) {
+            let limit = self.settings.max_bytes.min(self.discovery_remaining);
+            let body = bounded_text(&definition.body, limit);
+            self.discovery_remaining -= body.text.len();
+            definition.verify()?;
+            return self.expand_rule_imports(path, root, project, &body);
+        }
+        let file = InstructionFile {
+            path: path.into(),
+            canonical: path.into(),
+            truncated: false,
+            rule_binding: Some(binding),
+        };
+        let label = format!("{INSTRUCTIONS_FROM}{}\n", path.display());
+        let available = self
+            .remaining
+            .saturating_sub(if self.out.blocks.is_empty() { 0 } else { 2 });
+        if available < label.len() {
+            return self.omit(file);
+        }
+        let limit = self.settings.max_bytes.min(available - label.len());
+        let body = bounded_text(&definition.body, limit);
+        definition.verify()?;
+        if let Some(body) = self.record_body(file, body) {
+            self.expand_rule_imports(path, root, project, &body)?;
+        }
+        Ok(())
+    }
+
+    fn expand_rule_imports(
+        &mut self,
+        path: &Path,
+        root: &Path,
+        project: bool,
+        body: &Bounded,
+    ) -> Result<(), String> {
+        self.stack.push(path.into());
+        for reference in imports(body.complete_lines()) {
+            self.import(path, &reference, project.then_some(root));
+        }
+        self.stack.pop();
+        Ok(())
     }
 
     /// Load a candidate file. A missing file is skipped; a file that resolves outside
@@ -420,15 +682,16 @@ impl<'a> Loader<'a> {
 
     /// Read and render one file whose canonical path is `key`, then its imports.
     fn include(&mut self, path: &Path, key: PathBuf, confine: Option<&Path>) -> Result<(), String> {
-        if !self.seen.insert(key.clone()) {
+        if !self.seen.insert(key.display().to_string()) {
             return Ok(());
         }
-        if self.delivered.contains(&key) {
+        if self.delivered.contains(&key.display().to_string()) {
             return self.discover_imports(path, key, confine);
         }
         let file = InstructionFile {
             path: path.to_path_buf(),
             canonical: key.clone(),
+            rule_binding: None,
             truncated: false,
         };
         let separator = if self.out.blocks.is_empty() { 0 } else { 2 };
@@ -444,9 +707,27 @@ impl<'a> Loader<'a> {
             .min(self.discovery_remaining);
         let read = read_bounded(path, limit)?;
         self.discovery_remaining -= read.text.len();
+        let Some(body) = self.record_body(file, read) else {
+            return Ok(());
+        };
+        let references = imports(body.complete_lines());
+        self.stack.push(key);
+        for reference in references {
+            self.import(path, &reference, confine);
+        }
+        self.stack.pop();
+        Ok(())
+    }
+
+    fn record_body(&mut self, file: InstructionFile, read: Bounded) -> Option<Bounded> {
+        let path = file.path.clone();
+        let path = path.as_path();
+        let separator = if self.out.blocks.is_empty() { 0 } else { 2 };
+        let available = self.remaining.saturating_sub(separator);
         let Some(rendered) = assembly::block(path, &read, self.settings.max_bytes, available)
         else {
-            return self.omit(file);
+            let _ = self.omit(file);
+            return None;
         };
         self.remaining -= rendered.text.len() + separator;
         let file = InstructionFile {
@@ -469,18 +750,13 @@ impl<'a> Loader<'a> {
                     )
                 });
         }
-        let references = imports(rendered.body.complete_lines());
+        let body = rendered.body.clone();
         self.out.files.push(file.clone());
         self.out.blocks.push(assembly::Block {
             file,
             body: rendered.body,
         });
-        self.stack.push(key);
-        for reference in references {
-            self.import(path, &reference, confine);
-        }
-        self.stack.pop();
-        Ok(())
+        Some(body)
     }
 
     /// Revisit authorized import declarations without redelivering an already labelled
@@ -543,9 +819,34 @@ impl<'a> Loader<'a> {
                 "is not allowed by the read permission rules and was not imported",
             );
         }
-        if let Err(e) = self.include(&target, key, confine) {
+        let result = if self.is_rule(&key) {
+            let root = self.rule_root.clone();
+            let target_file = self.rule_target.clone();
+            let global = key.parent() == Some(self.global_rules.as_path());
+            self.rule(&key, &root, target_file.as_deref(), !global)
+        } else {
+            self.include(&target, key, confine)
+        };
+        if let Err(e) = result {
             self.warn(from, reference, &format!("could not be read: {e}"));
         }
+    }
+
+    fn is_rule(&self, path: &Path) -> bool {
+        let Some(parent) = path.parent() else {
+            return false;
+        };
+        parent == self.global_rules
+            || (parent
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("rules"))
+                && parent
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| {
+                        name.to_string_lossy().eq_ignore_ascii_case(".cyber")
+                            || name.to_string_lossy().eq_ignore_ascii_case(".claude")
+                    }))
     }
 
     fn resolve(&self, from: &Path, reference: &str) -> Option<PathBuf> {
@@ -572,6 +873,18 @@ struct Bounded {
     text: String,
     omitted: usize,
     limit: usize,
+}
+
+fn bounded_text(text: &str, limit: usize) -> Bounded {
+    let mut end = text.len().min(limit);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    Bounded {
+        text: text[..end].into(),
+        omitted: text.len() - end,
+        limit,
+    }
 }
 
 impl Bounded {
@@ -948,11 +1261,7 @@ mod tests {
             "{}\nweb cyber\n</system-reminder>",
             web_cyber.display()
         )));
-        let attached = nested
-            .files
-            .iter()
-            .map(|file| file.canonical.display().to_string())
-            .collect();
+        let attached = nested.files.iter().map(|file| file.identity()).collect();
         let again = load_nested(&repo.global, &repo.root, &file, &settings(), &attached);
         assert!(again.files.is_empty());
         let outside = load_nested(
@@ -1153,10 +1462,123 @@ mod tests {
             let before = attached.len();
             for file in delivery.files {
                 assert!(delivery.text.contains(&file.path.display().to_string()));
-                attached.insert(file.canonical.display().to_string());
+                attached.insert(file.identity());
             }
             assert!(attached.len() > before);
         }
         assert_eq!(attached.len(), 21, "{attached:?}");
+    }
+
+    #[test]
+    fn global_scoped_rules_survive_project_opt_out_without_loading_project_rules() {
+        let repo = Repo::new();
+        std::fs::create_dir(repo.global.join("rules")).unwrap();
+        std::fs::write(
+            repo.global.join("rules/web.md"),
+            "---\npaths: ['web/**']\n---\nGLOBAL_SCOPED_RULE",
+        )
+        .unwrap();
+        repo.write(".cyber/rules/web.md", "PROJECT_RULE");
+        let target = repo.write("web/app.ts", "");
+        let mut settings = settings();
+        settings.project = false;
+        assert!(repo.baseline("", &settings).text().is_none());
+        let nested = load_nested(
+            &repo.global,
+            &repo.root,
+            &target,
+            &settings,
+            &BTreeSet::new(),
+        );
+        let text = nested.reminder().unwrap();
+        assert!(text.contains("GLOBAL_SCOPED_RULE"));
+        assert!(!text.contains("PROJECT_RULE"));
+    }
+
+    #[test]
+    fn approval_snapshot_cannot_authorize_changed_rule_bytes() {
+        let repo = Repo::new();
+        let path = repo.write(".cyber/rules/a.md", "APPROVED_RULE");
+        let digests = cyber_core::rules::trust_subset(&repo.root).digests;
+        let root = repo.root.clone();
+        let mut settings = settings();
+        settings.rule_gate = Some(RuleGate::new(move |path, _| {
+            Ok(digests.get(path).map(|digest| RuleAuthorization {
+                root: root.clone(),
+                digest: digest.clone(),
+                generation: "reviewed".into(),
+            }))
+        }));
+        assert!(
+            repo.baseline("", &settings)
+                .text()
+                .unwrap()
+                .contains("APPROVED_RULE")
+        );
+        std::fs::write(path, "CHANGED_RULE").unwrap();
+        let changed = repo.baseline("", &settings);
+        assert!(changed.text().is_none());
+        assert!(
+            changed
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("differs from its approved digest"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_explicit_global_root_alias_cannot_turn_a_scoped_import_into_baseline_text() {
+        let repo = Repo::new();
+        std::fs::create_dir(repo.global.join("rules")).unwrap();
+        std::fs::write(
+            repo.global.join("rules/web.md"),
+            "---\npaths: ['web/**']\n---\nSCOPED_GLOBAL_GUIDANCE",
+        )
+        .unwrap();
+        std::fs::write(repo.global.join("CYBER.md"), "@rules/web.md").unwrap();
+        let alias = repo.global.parent().unwrap().join("global-alias");
+        std::os::unix::fs::symlink(&repo.global, &alias).unwrap();
+        let baseline = load_baseline(&alias, &repo.root, &settings()).unwrap();
+        assert!(!baseline.text().unwrap().contains("SCOPED_GLOBAL_GUIDANCE"));
+        let target = repo.write("web/app.ts", "");
+        let nested = load_nested(&alias, &repo.root, &target, &settings(), &BTreeSet::new());
+        assert!(
+            nested
+                .reminder()
+                .unwrap()
+                .contains("SCOPED_GLOBAL_GUIDANCE")
+        );
+    }
+
+    #[test]
+    fn imported_definitions_are_not_charged_again_when_the_directory_lists_them() {
+        let repo = Repo::new();
+        repo.write(".cyber/rules/a.md", "@b.md\n@c.md\n@d.md");
+        for name in ["b", "c", "d"] {
+            repo.write(&format!(".cyber/rules/{name}.md"), &"x".repeat(1024 * 1024));
+        }
+        let digests = cyber_core::rules::trust_subset(&repo.root).digests;
+        let root = repo.root.clone();
+        let mut settings = settings();
+        settings.rule_gate = Some(RuleGate::new(move |path, _| {
+            Ok(digests.get(path).map(|digest| RuleAuthorization {
+                root: root.clone(),
+                digest: digest.clone(),
+                generation: "reviewed".into(),
+            }))
+        }));
+        let loaded = repo.baseline("", &settings);
+        assert_eq!(loaded.files.len(), 4);
+        assert!(loaded.text().unwrap().len() <= DEFAULT_MAX_TOTAL_BYTES);
+        assert!(
+            !loaded
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("rule discovery bound")
+                    || warning.contains("rule definition byte bound")),
+            "{:?}",
+            loaded.warnings
+        );
     }
 }

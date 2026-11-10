@@ -106,6 +106,13 @@ impl ToolHost for AppHost {
         self.builtin.instruction_read_gate(directory)
     }
 
+    fn instruction_rule_gate(
+        &self,
+        directory: &str,
+    ) -> Option<cyber_server::runtime::instructions::RuleGate> {
+        self.builtin.instruction_rule_gate(directory)
+    }
+
     fn finalize_skill_output(
         &self,
         directory: &str,

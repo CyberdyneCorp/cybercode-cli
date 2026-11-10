@@ -332,6 +332,9 @@ pub struct Epoch {
     /// Canonical paths of nested instruction files attached this epoch.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub reminded_instructions: std::collections::BTreeSet<String>,
+    /// Opaque identities of rule definitions delivered this Epoch.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub reminded_rules: std::collections::BTreeSet<String>,
     pub number: u32,
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
@@ -1384,6 +1387,7 @@ impl SessionState {
     fn on_epoch(&mut self, e: EpochStarted) {
         self.epoch = Some(Epoch {
             reminded_skills: Default::default(),
+            reminded_rules: Default::default(),
             reminded_instructions: Default::default(),
             number: e.epoch,
             baseline: e.baseline,
@@ -1504,6 +1508,13 @@ impl SessionState {
             {
                 epoch.reminded_skills.extend(s.skill_reminders);
                 epoch.reminded_instructions.extend(s.instruction_reminders);
+                if s.status == CallStatus::Ok {
+                    epoch.reminded_rules.extend(
+                        s.rule_reminders
+                            .iter()
+                            .map(super::instructions::RuleBinding::identity),
+                    );
+                }
             }
             call.skill_activation = if s.status == CallStatus::Ok {
                 s.skill_activation

@@ -122,7 +122,7 @@ pub(super) fn finish(text: String, files: Vec<InstructionFile>) -> Option<Remind
     let mut seen = BTreeSet::new();
     let files = files
         .into_iter()
-        .filter(|file| seen.insert(file.canonical.clone()))
+        .filter(|file| seen.insert(file.identity()))
         .collect();
     Some(Reminder {
         text: format!("{OPEN}{text}{CLOSE}"),
@@ -167,6 +167,7 @@ mod tests {
                 canonical: path.clone(),
                 path,
                 truncated: false,
+                rule_binding: None,
             });
         }
         let mut seen = BTreeSet::new();

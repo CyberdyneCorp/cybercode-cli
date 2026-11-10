@@ -27,9 +27,12 @@ on:
       - crates/cyber-app/tests/snapshot_reclamation.rs
       - crates/cyber-app/tests/instructions.rs
       - crates/cyber-core/src/config/**
+      - crates/cyber-core/src/rules.rs
+      - crates/cyber-core/src/lib.rs
       - crates/cyber-core/tests/config.rs
       - crates/cyber-tools/src/host.rs
       - crates/cyber-tools/tests/instruction_config.rs
+      - crates/cyber-tools/tests/path_skills.rs
       - crates/cyber-server/src/runtime/context.rs
       - crates/cyber-server/src/runtime/instructions.rs
       - crates/cyber-server/src/runtime/instructions/**
@@ -194,12 +197,15 @@ jobs:
           set -euo pipefail
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-core --test config instruction_limits -- --nocapture 2>&1 | tee instruction-limits-proof.log
+          cargo test --locked -p cyber-core --lib rules:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-core --test config rule_definition_bytes -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::context:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::instructions:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::drain::skill_reminder_tests:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --test context_compaction -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-app --features native-git-acceptance --test instructions -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-tools --test instruction_config -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-tools --test path_skills -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::doctor::instruction_tests:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
       - name: Retain native evidence
         if: always()

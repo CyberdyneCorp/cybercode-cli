@@ -955,6 +955,7 @@ impl Inner {
             &cyber_core::env::ProcessEnv,
         );
         settings.read_gate = self.tools.instruction_read_gate(directory);
+        settings.rule_gate = self.tools.instruction_rule_gate(directory);
         settings.set_limits(limits);
         Ok(settings)
     }
@@ -2313,6 +2314,7 @@ fn settled(
         skill_activation: None,
         skill_reminders: Vec::new(),
         instruction_reminders: Vec::new(),
+        rule_reminders: Vec::new(),
         structured_output: None,
         call_id: call_id.into(),
         status,
@@ -2371,7 +2373,12 @@ impl Reminded {
             .as_ref()
             .map_or_else(Self::default, |epoch| Self {
                 skills: epoch.reminded_skills.clone(),
-                instructions: epoch.reminded_instructions.clone(),
+                instructions: epoch
+                    .reminded_instructions
+                    .iter()
+                    .chain(&epoch.reminded_rules)
+                    .cloned()
+                    .collect(),
             })
     }
 }
@@ -2422,9 +2429,22 @@ pub(super) fn settlement_with_reminders(
         delivery
             .files
             .iter()
-            .map(|file| file.canonical.display().to_string())
+            .filter(|file| file.rule_binding.is_none())
+            .map(|file| file.identity())
             .collect::<Vec<_>>()
     });
+    let rule_bindings = instructions.as_ref().map_or_else(Vec::new, |delivery| {
+        delivery
+            .files
+            .iter()
+            .filter_map(|file| file.rule_binding.clone())
+            .collect()
+    });
+    seen.instructions.extend(
+        rule_bindings
+            .iter()
+            .map(super::instructions::RuleBinding::identity),
+    );
     seen.skills.extend(names.iter().cloned());
     seen.instructions.extend(attached.iter().cloned());
     let loaded = instructions.map(|delivery| super::context::LoadedInstructions {
@@ -2442,6 +2462,7 @@ pub(super) fn settlement_with_reminders(
             skill_activation: None,
             skill_reminders: names,
             instruction_reminders: attached,
+            rule_reminders: rule_bindings,
             structured_output: value,
             call_id: call_id.into(),
             status: if failed {
@@ -2540,6 +2561,7 @@ pub(super) fn settlement(
                 skill_activation: Some(activation),
                 skill_reminders: Vec::new(),
                 instruction_reminders: Vec::new(),
+                rule_reminders: Vec::new(),
                 structured_output: None,
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -2572,6 +2594,7 @@ pub(super) fn settlement(
                 skill_activation: None,
                 skill_reminders: Vec::new(),
                 instruction_reminders: Vec::new(),
+                rule_reminders: Vec::new(),
                 structured_output: Some(value),
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -2595,6 +2618,7 @@ pub(super) fn settlement(
                 skill_activation: None,
                 skill_reminders: Vec::new(),
                 instruction_reminders: Vec::new(),
+                rule_reminders: Vec::new(),
                 structured_output: value,
                 call_id: call_id.into(),
                 status: if failed {
@@ -2711,6 +2735,13 @@ pub(crate) fn turn_context_for_info(
 mod skill_reminder_tests {
     use super::super::host::{SkillSuggestion, ToolScope};
     use super::*;
+
+    #[test]
+    fn legacy_settlements_keep_canonical_paths_and_have_no_fabricated_rule_bindings() {
+        let settled: ToolSettled = serde_json::from_value(serde_json::json!({"call_id":"old","status":"ok","output":"text","instruction_reminders":["/repo/web/CYBER.md"]})).unwrap();
+        assert_eq!(settled.instruction_reminders, ["/repo/web/CYBER.md"]);
+        assert!(settled.rule_reminders.is_empty());
+    }
 
     #[test]
     fn settlement_preserves_typed_null_and_uses_metadata_instead_of_output_text() {

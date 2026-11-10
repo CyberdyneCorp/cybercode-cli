@@ -1145,6 +1145,39 @@ impl ToolHost for BuiltinHost {
         cyber_core::config::InstructionLimits::from_config(&config)
     }
 
+    fn instruction_rule_gate(
+        &self,
+        directory: &str,
+    ) -> Option<cyber_server::runtime::instructions::RuleGate> {
+        use cyber_server::runtime::instructions::{RuleAuthorization, RuleGate};
+        let resolve = self.hook_config.get()?.resolve.clone();
+        let root = cyber_core::config::project_root(Path::new(directory))
+            .canonicalize()
+            .ok()?;
+        // A discovery may contain many files in one config directory. Resolve its
+        // trust inventory once for this observation, never reuse it across calls.
+        let cache = Mutex::new(BTreeMap::<
+            PathBuf,
+            Result<cyber_core::config::TrustReport, String>,
+        >::new());
+        Some(RuleGate::new(move |path, directory| {
+            if !directory.starts_with(&root) || !path.starts_with(&root) {
+                return Ok(None);
+            }
+            let mut cache = cache
+                .lock()
+                .map_err(|_| "rule trust cache unavailable".to_owned())?;
+            let report = cache
+                .entry(directory.into())
+                .or_insert_with(|| resolve(directory).map(|config| config.trust));
+            let report = report.as_ref().map_err(Clone::clone)?;
+            if report.checkout_root != root {
+                return Ok(None);
+            }
+            Ok(RuleAuthorization::from_report(report, path))
+        }))
+    }
+
     fn finalize_skill_output(
         &self,
         directory: &str,

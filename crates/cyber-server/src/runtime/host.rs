@@ -924,6 +924,11 @@ pub trait ToolHost: Send + Sync {
         None
     }
 
+    /// Exact approved project rule definitions; absent hosts hold project rules.
+    fn instruction_rule_gate(&self, _directory: &str) -> Option<super::instructions::RuleGate> {
+        None
+    }
+
     /// Finalize the complete reminder and tool text before recording delivered skill names.
     fn finalize_skill_output(
         &self,

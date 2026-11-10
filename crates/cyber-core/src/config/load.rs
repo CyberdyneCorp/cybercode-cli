@@ -642,6 +642,7 @@ fn assess_trust(req: &LoadRequest<'_>, project: &[Layer]) -> Result<TrustReport,
     let checkout_root = std::fs::canonicalize(&root).unwrap_or(root.clone());
     let mut subset = Map::new();
     let mut definitions = Vec::new();
+    let mut rule_digests = std::collections::BTreeMap::new();
     for layer in project {
         let split = gate::split_sensitive(&layer.value);
         if split.pointers.is_empty() {
@@ -665,9 +666,12 @@ fn assess_trust(req: &LoadRequest<'_>, project: &[Layer]) -> Result<TrustReport,
     // starts, and project output styles are prompt text, so both take effect only once
     // the checkout approves them.
     if !req.env.flag("CYBER_DISABLE_PROJECT_CONFIG") {
+        let rules = crate::rules::trust_subset(req.location);
+        rule_digests = rules.digests;
         let files = crate::teams::trust_subset(req.location)
             .into_iter()
-            .chain(crate::output_styles::trust_subset(req.location));
+            .chain(crate::output_styles::trust_subset(req.location))
+            .chain(rules.definitions);
         for (relative, path, text) in files {
             definitions.push(path.display().to_string());
             subset.insert(relative, Value::String(text));
@@ -675,6 +679,7 @@ fn assess_trust(req: &LoadRequest<'_>, project: &[Layer]) -> Result<TrustReport,
     }
     if subset.is_empty() {
         return Ok(TrustReport {
+            rule_digests,
             checkout_root,
             digest: None,
             trusted: true,
@@ -692,6 +697,7 @@ fn assess_trust(req: &LoadRequest<'_>, project: &[Layer]) -> Result<TrustReport,
             source,
         })?;
     Ok(TrustReport {
+        rule_digests,
         checkout_root,
         digest: Some(digest),
         trusted,

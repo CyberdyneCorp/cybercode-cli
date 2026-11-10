@@ -2316,6 +2316,7 @@ impl Runtime {
             skill_activation: None,
             skill_reminders: Vec::new(),
             instruction_reminders: Vec::new(),
+            rule_reminders: Vec::new(),
             structured_output: None,
             call_id: call_id.into(),
             status,

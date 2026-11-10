@@ -1201,6 +1201,28 @@ Files in directories below the Location are not in the baseline. When the built-
 
 One complete reminder, including its wrapper, labels, notices and file list, fits the smaller of 32768 bytes and `instruction_limits.max_total_bytes`. Files beyond the content budget are named for an explicit read when their complete labels fit. Only files actually labelled in the delivered reminder count as attached; unlisted files remain eligible. Authorized import declarations are revisited under a bounded discovery budget so naming an importer does not strand its unlisted children. A cut final import line is ignored rather than interpreted as another filename. When even that reminder does not fit the tool output budget (`tool_output`), the read gets a short list of the file paths; when nothing fits, the read keeps its own output and the files can attach on a later read. Instruction files never turn a successful read into an error. Each attachment fires the `InstructionsLoaded` hook with `load_reason: "nested_read"` and the attached `file_paths`, as the baseline does with `session_start` and `changed`.
 
+### Path-scoped rule files
+
+Cyber Code discovers sorted Markdown files in `.claude/rules/` and then `.cyber/rules/` at each directory from the project root toward the Location or successfully read target. Rules follow the ordinary instruction files of their directory; `AGENTS.override.md` keeps its existing replacement behavior. Owner-global rules live in the config directory's `rules/` folder. `compat.claude = false` and the Claude compatibility environment switches suppress Claude rules, including imports of them.
+
+A rule without `paths` joins the instruction baseline. A scoped rule uses optional YAML frontmatter:
+
+```markdown
+---
+paths:
+  - "web/src/**"
+---
+Keep components accessible and test keyboard navigation.
+```
+
+Patterns are relative to the project root, with `/` separators. Invalid, empty, absolute, parent-traversing or oversized patterns are rejected rather than treated as unscoped guidance. A rule accepts only `paths` and optional `description`; frontmatter cannot configure tools or permissions. Ordinary `@path` import rules still apply, and importing another scoped rule does not bypass its path filter or review/read gates.
+
+Project rule bytes are included in the existing checkout trust digest. Review with `cyber trust inspect`, then approve that exact digest with `cyber trust approve --digest <digest>`. For definitions in a nested config directory, inspect at that directory (`cyber --cwd web trust inspect`). The loader resolves the operation directory's reviewed inventory and accepts definitions only from the same checkout. Changed bytes require renewed review. Approvals retain the existing checkout-digest storage semantics; this adds no new trust-policy format.
+
+Definition reads use the fenced native reader: linked files/directories, hard links and special files are refused. The reader caps a definition at 1 MiB; frontmatter is limited to 16 KiB, with up to 64 relative patterns of 256 bytes each. A project inventory covers up to 128 definitions and 4 MiB, with bounded directory enumeration. These review/discovery bounds are separate from the smaller rendered instruction budgets. Unknown inventories grant no rule authority. `cyber doctor` reports held, refused and truncated baseline rules.
+
+The current local implementation activates scoped rules after successful built-in reads and records typed root/path/digest/approval bindings separately from legacy instruction paths. Edit/patch and partial-settlement delivery, exact operation/Epoch binding, withdrawal after revocation, full restart acceptance and effective `/context` inspection remain in progress.
+
 ### Switches
 
 These are read from the server's environment (a value of `1`, `true`, `yes` or `on`):

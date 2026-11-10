@@ -116,6 +116,9 @@ pub enum ConfigError {
 /// Workspace-trust state of the project layers.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrustReport {
+    /// Exact rule-file bytes covered by this approval; not part of public config output.
+    #[serde(skip)]
+    pub rule_digests: BTreeMap<PathBuf, String>,
     /// Canonical checkout root the approval is keyed by.
     pub checkout_root: PathBuf,
     /// `sha256:<hex>` of the security-sensitive definitions, absent when there are none.
