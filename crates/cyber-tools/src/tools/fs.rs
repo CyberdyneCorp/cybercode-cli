@@ -425,7 +425,9 @@ pub(crate) async fn guarded_write(
     )?;
     ctx.check_external_writes(&[path.to_path_buf()]).await?;
     // Capture the physical spelling before permission can suspend the call.
-    let authorized = path.canonicalize().ok();
+    let authorized = (ctx.inv.name == "edit")
+        .then(|| path.canonicalize().ok())
+        .flatten();
     authorize_edit(ctx, path, diff).await?;
     let origin = super::intelligence::capture(ctx, path);
     let workspace = cyber_server::workspace::mutation_lock(&ctx.location)
@@ -476,7 +478,6 @@ pub(super) async fn write_observed(
 ) -> std::io::Result<()> {
     // An edit approval for an alias does not attest a separately named resource.
     let observation = authorized
-        .filter(|_| matches!(ctx.inv.name.as_str(), "edit" | "apply_patch"))
         .filter(|target| workspace_spelling_matches(ctx, path, target))
         .and_then(|target| {
             if creating {
@@ -517,10 +518,9 @@ pub(super) async fn remove_observed(
     path: &Path,
     authorized: &Path,
 ) -> std::io::Result<()> {
-    let observed = (ctx.inv.name == "apply_patch"
-        && workspace_spelling_matches(ctx, path, authorized))
-    .then(|| cyber_core::rules::PendingRemoval::capture(&ctx.location, path, authorized).ok())
-    .flatten();
+    let observed = workspace_spelling_matches(ctx, path, authorized)
+        .then(|| cyber_core::rules::PendingRemoval::capture(&ctx.location, path, authorized).ok())
+        .flatten();
     let Some(observed) = observed else {
         return tokio::fs::remove_file(path).await;
     };

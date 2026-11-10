@@ -506,7 +506,7 @@ impl Inner {
             loaded.into_iter().collect(),
             match run.def.spec.name.as_str() {
                 "edit" => "nested_edit",
-                "apply_patch" => "nested_patch",
+                tool if super::events::is_patch_carrier(tool) => "nested_patch",
                 _ => super::drain::NESTED_LOAD_REASON,
             },
         )

@@ -374,6 +374,13 @@ pub struct RuleOperation {
     pub operation_key: String,
     pub attempt: u32,
 }
+/// Shell tools can carry patch receipts only when the host intercepts the call.
+pub(super) fn is_patch_carrier(tool: &str) -> bool {
+    ["apply_patch", "bash", "powershell"]
+        .iter()
+        .any(|name| tool.eq_ignore_ascii_case(name))
+}
+
 impl RuleOperation {
     pub fn matches(
         &self,
@@ -394,12 +401,12 @@ impl RuleOperation {
             && self.evidence.root.to_str() == Some(binding.root.as_str())
             && self.evidence.root.is_absolute()
             && self.evidence.path.starts_with(&self.evidence.root)
-            && (tool == "apply_patch"
+            && (is_patch_carrier(tool)
                 || matches!(
                     self.evidence.target,
                     cyber_core::rules::OperationTarget::File { .. }
                 ))
-            && (tool == "apply_patch"
+            && (is_patch_carrier(tool)
                 || binding
                     .operation_path
                     .as_ref()

@@ -1838,7 +1838,7 @@ impl Inner {
             events.push(self.with_call_metadata(&session_id, &run.call_id, &directory, settled));
             match run.def.spec.name.as_str() {
                 "edit" => edited.extend(instructions),
-                "apply_patch" => patched.extend(instructions),
+                tool if super::events::is_patch_carrier(tool) => patched.extend(instructions),
                 _ => loaded.extend(instructions),
             }
             stops.extend(self.take_call_hook_effects(&session_id, &run.call_id, &mut events));
@@ -2079,7 +2079,7 @@ impl Inner {
             Some(receipts)
                 if !receipts.is_empty()
                     && receipts.len() <= cyber_core::rules::MAX_OPERATION_RECEIPTS
-                    && (def.spec.name == "apply_patch" || receipts.len() == 1) =>
+                    && (super::events::is_patch_carrier(&def.spec.name) || receipts.len() == 1) =>
             {
                 read.and_then(|mut target| {
                     let root = target.root.identity();
@@ -2110,19 +2110,21 @@ impl Inner {
         scope: ReminderScope,
     ) -> Option<FileTarget> {
         if def.scope != super::host::ToolScope::Builtin
-            || !matches!(def.spec.name.as_str(), "read" | "edit" | "apply_patch")
+            || !(matches!(def.spec.name.as_str(), "read" | "edit")
+                || super::events::is_patch_carrier(&def.spec.name))
         {
             return None;
         }
-        let path = invocation
-            .input
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or(".");
-        let settings = self.instruction_settings(&invocation.directory).ok()?;
         let location = std::path::PathBuf::from(&invocation.directory);
+        let file = if def.spec.name == "read" {
+            let path = invocation.input.get("path")?.as_str()?;
+            let settings = self.instruction_settings(&invocation.directory).ok()?;
+            super::instructions::read_target(&location, settings.home.as_deref(), path)
+        } else {
+            location.clone()
+        };
         Some(FileTarget {
-            file: super::instructions::read_target(&location, settings.home.as_deref(), path),
+            file,
             location: location.clone(),
             scope,
             root: Arc::new(cyber_core::rules::RootBinding::capture(&location).ok()?),
@@ -2437,7 +2439,7 @@ impl ToolRun {
         );
         self.read.clone().filter(|target| {
             succeeded
-                || (self.def.spec.name == "apply_patch"
+                || (super::events::is_patch_carrier(&self.def.spec.name)
                     && !target.receipts.is_empty()
                     && patch_failure(&self.outcome))
         })
@@ -2554,7 +2556,7 @@ pub(super) fn with_operation_proof(
         return settled;
     }
     match tool {
-        "apply_patch" => {
+        tool if super::events::is_patch_carrier(tool) => {
             settled.data["rule_patch"] =
                 serde_json::to_value(proof).expect("patch evidence serializes")
         }
@@ -2620,7 +2622,8 @@ pub(super) fn settlement_with_reminders(
     Option<super::context::LoadedInstructions>,
 ) {
     let attach = !nested.is_empty();
-    let partial_patch = attach && def.spec.name == "apply_patch" && patch_failure(&outcome);
+    let partial_patch =
+        attach && super::events::is_patch_carrier(&def.spec.name) && patch_failure(&outcome);
     let (failed, output, value, skills) = match outcome {
         ToolOutcome::SkillSuggestions {
             failed,

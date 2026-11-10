@@ -1835,3 +1835,21 @@ for Core, Tools, Server and App. Strict OpenSpec validated all 100 items. Spec
 lint reported zero errors and 25 warnings. Formatting and generated SDK
 consistency passed. Windows, full workspace and SDK runtime suites were not
 rerun locally. Current-source native acceptance remains pending.
+
+Intercepted shell patch continuation. The built-in patch path records the same
+authorized receipts for Bash and PowerShell interceptions. Shell settlement
+retains the original dispatch name and the interception metadata. Replay
+requires that marker in addition to the attempt, Location, root, operation
+target and Context Epoch. A regular external command supplies no built-in
+patch receipts. App regressions cover complete and partial Bash interceptions
+and reject replay after removing their interception metadata. The shell suite
+checks that an edit denial and external program execution cannot supply
+receipts. The external program and login shell cases check routing and receipts
+because the external program can legitimately change the fixture file.
+
+Local verification passed 8 shell patch tests, 18 App instruction tests, 455
+Server library tests (one ignored subprocess probe), and all-target Clippy for
+Tools, Server and App. Formatting, workflow YAML, strict OpenSpec (100 items)
+and SDK consistency passed. Spec lint reported zero errors and 25 warnings.
+The PowerShell receipt assertion is Windows-specific and did not run locally.
+Full workspace, SDK runtime and current-source platform acceptance remain open.

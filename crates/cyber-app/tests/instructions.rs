@@ -38,9 +38,17 @@ fn reply(body: &Value) -> Value {
         patch.push_str(
             "*** Add File: assets/new/c.txt\n+created-c\n*** Delete File: old/d.txt\n*** End Patch",
         );
-        let arguments = json!({"patch":patch}).to_string();
+        let (name, input) = if text.contains("via shell") {
+            (
+                "bash",
+                json!({"command":format!("apply_patch <<'PATCH'\n{patch}\nPATCH\n")}),
+            )
+        } else {
+            ("apply_patch", json!({"patch":patch}))
+        };
+        let arguments = input.to_string();
         return json!({"tool_calls":[{"index":0,"id":"call_patch","type":"function",
-            "function":{"name":"apply_patch","arguments":arguments}}]});
+            "function":{"name":name,"arguments":arguments}}]});
     }
     if text.contains("edit the app") {
         let arguments = json!({"path":"web/src/app.ts","old_string":"const version = 1","new_string":"const version = 2"}).to_string();
@@ -974,8 +982,16 @@ async fn denied_read_leaves_rule_available_for_a_successful_edit() {
 #[tokio::test]
 async fn patch_rules_follow_completed_files_even_after_a_later_failure() {
     use cyber_server::runtime::CallStatus;
-    for partial in [true, false] {
-        let f = Fixture::start_with_model(json!({}), true).await;
+    for (shell, partial) in [(false, true), (false, false), (true, true), (true, false)] {
+        if shell && !cfg!(unix) {
+            continue; // PowerShell interception has its own host test.
+        }
+        let config = if shell {
+            json!({"sandbox":{"policy":"workspace-write","env":{"set":{"PATH":"/usr/bin:/bin"}}}})
+        } else {
+            json!({})
+        };
+        let f = Fixture::start_with_model(config, !shell).await;
         f.write("web/a.txt", "before-a\n");
         f.write("db/b.txt", "before-b\n");
         f.write(
@@ -997,12 +1013,16 @@ async fn patch_rules_follow_completed_files_even_after_a_later_failure() {
         );
         f.approve(&f.repo);
         let id = f.session(&f.repo).await;
-        let prompt = if partial {
+        let mut prompt = if partial {
             "patch the app partially"
         } else {
             "patch the app"
-        };
-        f.prompt(&id, &f.repo, prompt, 2).await;
+        }
+        .to_owned();
+        if shell {
+            prompt.push_str(" via shell");
+        }
+        f.prompt(&id, &f.repo, &prompt, 2).await;
 
         let result = last_tool_result(&f.last_request());
         assert!(result.contains("PATCH_WEB_RULE"), "{result}");
@@ -1040,6 +1060,17 @@ async fn patch_rules_follow_completed_files_even_after_a_later_failure() {
             .iter()
             .find(|event| event.data["rule_patch"].is_array())
             .unwrap();
+        if shell {
+            assert_eq!(settled.data["metadata"]["intercepted"], "apply_patch");
+            let mut unmarked = events.clone();
+            let event = unmarked
+                .iter_mut()
+                .find(|event| event.id == settled.id)
+                .unwrap();
+            event.data.as_object_mut().unwrap().remove("metadata");
+            let replay = cyber_server::runtime::SessionState::replay(&unmarked).unwrap();
+            assert!(replay.epoch.unwrap().reminded_rules.is_empty());
+        }
         let proof = settled.data["rule_patch"].as_array().unwrap();
         assert_eq!(proof.len(), ids.len());
         if !partial {

@@ -79,7 +79,7 @@
 
 
 #### Scenario: A patch fails after a completed file change
-- **GIVEN** a direct patch has several authorized file changes
+- **GIVEN** a built-in patch, including one intercepted from a shell call, has several authorized file changes
 - **WHEN** the first change completes and a later precondition fails
 - **THEN** the patch SHALL retain its error status
 - **AND** rule discovery SHALL consider the verified completed effects under the shared reminder budget

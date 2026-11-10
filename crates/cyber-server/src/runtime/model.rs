@@ -612,7 +612,15 @@ fn rule_operation_matches(
     stale: bool,
 ) -> bool {
     if !settled.rule_patch.is_empty() {
+        let intercepted = settled
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("intercepted"))
+            .and_then(Value::as_str)
+            == Some("apply_patch");
         return !stale
+            && (call.name.eq_ignore_ascii_case("apply_patch")
+                || (is_patch_carrier(&call.name) && intercepted))
             && binding.native_root.is_some()
             && settled.rule_read.is_none()
             && settled.rule_edit.is_none()
@@ -626,7 +634,7 @@ fn rule_operation_matches(
             && settled
                 .rule_patch
                 .iter()
-                .all(|op| op.matches(binding, epoch, "apply_patch", info, call));
+                .all(|op| op.matches(binding, epoch, &call.name, info, call));
     }
     if settled.status != CallStatus::Ok {
         return false;
