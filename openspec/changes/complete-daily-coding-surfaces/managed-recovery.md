@@ -1019,6 +1019,19 @@ callback. The first writer frame supports empty complete checkout inventories;
 managed checkout claim retirement, partial constructors and all actual native
 retirement/reconciliation/crash paths remain required before M6 acceptance.
 
+#### Location route continuity
+
+The existing retirement route requires a live original Location identity. Missing,
+replacement and private-root alias routes defer remaining cleanup and preserve
+their committed metadata plan. A separate fully bound Location remains eligible
+through the same App/Store maintenance pass. Returning the original directory
+permits the same frozen plan to resume, including after the active intent has
+already been unlinked; retained Store discovery must find that owner. Source edits
+made while the root was displaced remain untouched, and receipt acknowledgement
+after retirement remains data-only. Permanently removed roots still require a
+separately validated detached maintenance path; these route safeguards do not
+implement that capability.
+
 #### Consumed managed checkout retirement
 
 The managed extension SHALL freeze the complete ordered checkout bindings for each

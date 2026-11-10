@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 //! Real App restores/receipts and native private payloads; no source writes by cleanup.
+#[path = "support/location_retirement.rs"]
+mod location_retirement;
 #[path = "support/snapshot_native_retirement.rs"]
 mod native_retirement;
 #[path = "support/snapshot_retirement.rs"]
@@ -33,6 +35,17 @@ struct Fixture {
     journal: PathBuf,
     config: Arc<Mutex<Value>>,
     snapshots: Arc<GitSnapshots>,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self._temp.disable_cleanup(true);
+            eprintln!(
+                "Preserved failed reclamation fixture at {}",
+                self._temp.path().display()
+            );
+        }
+    }
 }
 impl Fixture {
     async fn new() -> Self {
@@ -71,81 +84,12 @@ impl Fixture {
         })
         .await
         .unwrap();
-        let client = Client::embedded(app.embedded()).at(project.to_str().unwrap());
-        let session = client
-            .post(
-                "/sessions",
-                json!({"model":"test/main","mode":"accept-edits"}),
-            )
-            .await
-            .unwrap()["data"]["id"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        for index in 0..2 {
-            std::fs::write(
-                project.join(format!("file_{index}")),
-                "before\n".repeat(4096),
-            )
-            .unwrap();
-        }
-        prompt(&app, &client, &session, "before snapshot", 1).await;
-        let messages = client
-            .get(&format!("/sessions/{session}/messages?order=asc"))
-            .await
-            .unwrap();
-        let first = messages["data"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|message| message["kind"] == "user")
-            .unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        for index in 0..2 {
-            let path = project.join(format!("file_{index}"));
-            match &current {
-                Some(bytes) => std::fs::write(path, bytes).unwrap(),
-                None => std::fs::remove_file(path).unwrap(),
-            }
-        }
-        prompt(&app, &client, &session, "after snapshot", 2).await;
-        let mut selection = json!({"message_id":first,"target":"code","action":"commit","expected_directory":project});
-        let preview = client
-            .post(
-                &format!("/sessions/{session}/rewind/preview"),
-                selection.clone(),
-            )
-            .await
-            .unwrap();
-        selection["confirmation"] = preview["data"]["confirmation"].clone();
-        client
-            .post(&format!("/sessions/{session}/rewind/confirm"), selection)
-            .await
-            .unwrap();
-        let owner = session.clone();
-        let receipt: SnapshotRestoreReceipt = app.store.read(move |db| {
-            let raw: String = db.query_row("SELECT json_extract(data,'$.snapshot_restore_receipt') FROM event WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_restore_receipt') IS NOT NULL ORDER BY rowid DESC LIMIT 1", [owner], |row| row.get(0))?;
-            Ok(serde_json::from_str(&raw).unwrap())
-        }).unwrap();
-        let journal = std::fs::read_dir(paths.data.join("snapshot/global"))
-            .unwrap()
-            .map(|entry| {
-                entry
-                    .unwrap()
-                    .path()
-                    .join("journals")
-                    .join(&receipt.origin.binding.journal_id)
-            })
-            .find(|path| path.exists())
-            .unwrap();
-        let displaced = current
-            .as_ref()
-            .is_some_and(|bytes| bytes != &"before\n".repeat(4096));
-        for index in 0..2 {
-            assert_eq!(journal.join(format!("stage_{index}")).exists(), displaced);
-        }
+        let Restore {
+            client,
+            session,
+            receipt,
+            journal,
+        } = Restore::new(&app, &paths, &project, current).await;
         let config = Arc::new(Mutex::new(json!({"snapshots":{"retention_days":7}})));
         let snapshots = maintenance(
             &paths,
@@ -190,6 +134,102 @@ impl Fixture {
             .store
             .read(move |db| records::lookup(db, &receipt))
             .unwrap()
+    }
+}
+struct Restore {
+    client: Client,
+    session: String,
+    receipt: SnapshotRestoreReceipt,
+    journal: PathBuf,
+}
+impl Restore {
+    async fn new(
+        app: &App,
+        paths: &Paths,
+        project: &std::path::Path,
+        current: Option<String>,
+    ) -> Self {
+        let client = Client::embedded(app.embedded()).at(project.to_str().unwrap());
+        let session = client
+            .post(
+                "/sessions",
+                json!({"model":"test/main","mode":"accept-edits"}),
+            )
+            .await
+            .unwrap()["data"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for index in 0..2 {
+            std::fs::write(
+                project.join(format!("file_{index}")),
+                "before\n".repeat(4096),
+            )
+            .unwrap();
+        }
+        prompt(app, &client, &session, "before snapshot", 1).await;
+        let messages = client
+            .get(&format!("/sessions/{session}/messages?order=asc"))
+            .await
+            .unwrap();
+        let first = messages["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["kind"] == "user")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for index in 0..2 {
+            let path = project.join(format!("file_{index}"));
+            match &current {
+                Some(bytes) => std::fs::write(path, bytes).unwrap(),
+                None => std::fs::remove_file(path).unwrap(),
+            }
+        }
+        prompt(app, &client, &session, "after snapshot", 2).await;
+        let mut selection = json!({"message_id":first,"target":"code","action":"commit","expected_directory":project});
+        let preview = client
+            .post(
+                &format!("/sessions/{session}/rewind/preview"),
+                selection.clone(),
+            )
+            .await
+            .unwrap();
+        selection["confirmation"] = preview["data"]["confirmation"].clone();
+        client
+            .post(&format!("/sessions/{session}/rewind/confirm"), selection)
+            .await
+            .unwrap();
+        let owner = session.clone();
+        let receipt: SnapshotRestoreReceipt = app.store.read(move |db| {
+            let raw: String = db.query_row("SELECT json_extract(data,'$.snapshot_restore_receipt') FROM event WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_restore_receipt') IS NOT NULL ORDER BY rowid DESC LIMIT 1", [owner], |row| row.get(0))?;
+            Ok(serde_json::from_str(&raw).unwrap())
+        }).unwrap();
+        let journal = std::fs::read_dir(paths.data.join("snapshot/global"))
+            .unwrap()
+            .map(|entry| {
+                entry
+                    .unwrap()
+                    .path()
+                    .join("journals")
+                    .join(&receipt.origin.binding.journal_id)
+            })
+            .find(|path| path.exists())
+            .unwrap();
+        let displaced = current
+            .as_ref()
+            .is_some_and(|bytes| bytes != &"before\n".repeat(4096));
+        for index in 0..2 {
+            assert_eq!(journal.join(format!("stage_{index}")).exists(), displaced);
+        }
+        Self {
+            client,
+            session,
+            receipt,
+            journal,
+        }
     }
 }
 fn maintenance(

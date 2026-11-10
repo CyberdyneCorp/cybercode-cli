@@ -1422,3 +1422,56 @@ cleanup. The two file-copy zero-payload cases also pass in the default build in
 branch. Full workspace/SDK runtime and current-source platform
 acceptance remain required. Constructor, old/removed Location and remaining native
 cut/client acceptance stay open with M6/M8 and all parent tasks.
+
+Location-route acceptance continuation: the existing producer still requires the
+original live directory identity. New tests use two actual Locations and Sessions
+in one App/serialized Store to cover missing, replacement and private-root alias
+routes, both before payload reclamation and with a committed native metadata plan.
+The unavailable owner retains exact journal/worker bytes, plan and event sequences;
+the other Location completes payload and metadata retirement during that same GC
+pass. Returning the original directory resumes cleanup without changing later
+source edits, Session/native-owner sequences or inference count, and explicit HTTP
+acknowledgement returns the retained receipt. This is six route/phase combinations.
+
+A seventh case uses the actual configuration callback after native active-intent
+unlink to rename the source directory. Native verification refuses before removing
+the spare or worker metadata, leaving sequence 2 and the exact stored plan. After
+the directory returns, Store discovery finds the owner without its intent and
+periodic maintenance completes that identical plan. No native delete or source
+effect hook is replaced. The initial race assertion mistakenly expected spare-first
+ordering; observation now follows the producer's actual intent-first order. Its
+failed partial-retirement fixture was preserved and inspected.
+
+Shared real-restore setup is extracted into a reusable `Restore` fixture so the
+second Location uses the same App and writer rather than a fabricated receipt or
+second Store. Reclamation App fixtures now preserve their root on panic. CI runs
+this App suite independently of earlier failures under the same short retained
+fixture root as Git/CLI proofs; its source filter explicitly includes the new
+support module. No production API, wire schema, generated SDK or default Git
+admission changes.
+
+The full default reclamation selection before adding the final race passes 44
+entries in 289.68 seconds. The final three Location tests, including all seven
+scenarios and native-owner sequence assertions, pass in 36.44 seconds by default
+and 37.03 seconds with native-git-acceptance under a short fixture root. Default
+and native-feature App all-target Clippy with warnings denied pass after separating orchestration
+and resumption (the initial combined helper measured 24/15; no allowance added).
+Focused code-review-skill review covers original-identity refusal, unrelated
+Location progress, pending-plan preservation, post-unlink route revalidation,
+exact-plan resumption, source/event invariants and failure evidence retention;
+no outstanding finding is identified in this test continuation. Whole-branch
+review, full workspace/SDK runtime, managed removed-Location cases, constructor
+cuts and fresh-source platform acceptance remain required.
+
+Formatting, whitespace, workflow YAML and independent-step/retained-root checks
+pass. Strict OpenSpec validates all 100 items; spec lint reports 0 errors and 25
+warnings. Native C deprecation and linker unwind diagnostics were observed without
+assigning origin. Fetching main again finds no upstream commits missing from the
+branch. The native workflow must execute the new source before accepting these
+cases as cross-platform evidence.
+
+These tests verify the current live-root route. Positive maintenance after
+permanent root removal still needs a separately validated detached authority and
+coordination path; the current checks were not relaxed or replaced, and this
+remaining capability has not been marked complete. M6/M8, parent tasks and issue
+#93 remain open.

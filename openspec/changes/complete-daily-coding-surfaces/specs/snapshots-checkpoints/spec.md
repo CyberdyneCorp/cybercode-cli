@@ -534,3 +534,12 @@
 - **AND** foreign or duplicate worker roles, supplied paths, changed plan identities, missing payload completion and inconsistent byte counts SHALL refuse
 - **AND** later native-owner fences and incomplete reference views SHALL refuse new retirement writes; historical projection rebuilds SHALL preserve immutable history without authorizing native I/O
 - **AND** accepting the event schema alone SHALL NOT prove native metadata deletion or relax independent checkout, namespace, lifetime, reader or retention checks
+
+#### Scenario: Root-bound cleanup loses the original Location route
+- **GIVEN** native payload or metadata cleanup requires the original live Location identity
+- **WHEN** that route disappears, resolves to a replacement directory or redirects into protected private state
+- **THEN** the root-bound path SHALL preserve the remaining private payloads, worker metadata and committed retirement plan without new completion or owner settlement
+- **AND** a separate settled Location with complete ownership and reference evidence SHALL remain eligible for independent maintenance
+- **WHEN** the exact original directory returns
+- **THEN** periodic maintenance SHALL resume its existing plan without replaying source effects, changing later source edits, moving the transcript or starting inference
+- **AND** this route SHALL revalidate Location identity after each metadata unlink before consuming another leaf

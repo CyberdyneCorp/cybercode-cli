@@ -262,6 +262,24 @@ impl Policy for Cut {
     }
 }
 
+pub(super) async fn plan_before_deletion(f: &Fixture) {
+    let cut = maintenance(
+        &f.paths,
+        f.config.clone(),
+        Arc::new(Cut {
+            inner: cyber_app::snapshot_reclamation::policy(f.app.store.clone()),
+            after: false,
+            tamper: None,
+        }),
+    );
+    let error = cut
+        .retire(f.project.to_str().unwrap(), f.receipt.clone().into())
+        .await
+        .unwrap_err();
+    assert!(error.contains("injected metadata interruption"));
+    assert!(f.record().unwrap().metadata.is_some());
+}
+
 #[tokio::test]
 async fn native_retirement_resumes_before_and_after_deletion_without_rewriting_acknowledgement() {
     for after in [false, true] {

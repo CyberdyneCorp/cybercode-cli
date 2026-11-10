@@ -8,6 +8,7 @@ on:
       - crates/cyber-app/tests/support/scripted_model.rs
       - crates/cyber-app/tests/support/snapshot*.rs
       - crates/cyber-app/tests/support/managed_retirement_cut.rs
+      - crates/cyber-app/tests/support/location_retirement.rs
       - crates/cyber-server/src/runtime/snapshot*.rs
       - crates/cyber-server/src/runtime/snapshot_reclamation/**
       - crates/cyber-server/src/runtime/rewind*.rs
@@ -98,9 +99,13 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-core --lib worktrees::activity::snapshot::retirement:: -- --nocapture 2>&1 | tee checkout-retirement-proof.log
       - name: Store-bound fallback collection and reclamation
+        if: ${{ !cancelled() }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_reclamation -- --nocapture 2>&1 | tee fallback-collection-proof.log
       - name: Managed Git CLI process-death recovery and cancellation candidate
         env:

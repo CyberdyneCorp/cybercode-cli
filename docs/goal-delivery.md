@@ -59,6 +59,19 @@ code changes. The workflow also runs the four zero-payload CLI cases and retains
 their log. This resolves the inspected fixture routing problem in configuration;
 fresh-source native execution is still required to prove acceptance.
 
+### Location continuity acceptance
+
+Location continuity acceptance now exercises six combinations of missing,
+replacement or protected alias routes with payload cleanup or a committed metadata
+plan. The same App/serialized Store retires another settled Location while preserving
+the unavailable owner's exact journal/worker bytes and event sequences. Returning
+the original directory resumes cleanup and data-only receipt acknowledgement.
+A further race moves the Location after the actual active-intent unlink and resumes
+the identical plan through Store discovery. Later source edits remain untouched.
+Permanent-root removal still requires detached maintenance; the current live-root
+checks remain in force. Failed reclamation App fixtures are retained, and their CI
+step now runs independently and uploads them under the short fixture root.
+
 ### Focused code-review findings and next actions
 
 This review covers incoming JSONL behavior and merge overlap, not acceptance of
