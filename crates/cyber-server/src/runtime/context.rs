@@ -262,6 +262,8 @@ mod tests {
                 home: None,
                 read_gate: None,
                 rule_gate: None,
+                scoped_rules: true,
+                native_root: None,
             }),
             today: Some("2026-10-03".into()),
         }

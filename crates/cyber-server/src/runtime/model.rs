@@ -1512,6 +1512,14 @@ impl SessionState {
                     epoch.reminded_rules.extend(
                         s.rule_reminders
                             .iter()
+                            .filter(|binding| match (&binding.native_root, &s.rule_read) {
+                                (None, None) => true, // historical, path-only binding
+                                (Some(_), Some(read)) => {
+                                    !self.epoch_stale
+                                        && read.matches(binding, epoch.number, &self.info, call)
+                                }
+                                _ => false,
+                            })
                             .map(super::instructions::RuleBinding::identity),
                     );
                 }

@@ -252,10 +252,10 @@ pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, ContentSource, FileDecision,
     FileDiff, FileReadError, GoalWorktree, HookEffects, Invocation, LifecycleHook,
     LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots, NoTools,
-    Provenance, Reconciliation, ResolvedModel, RestoreError, RuleEffect, RunWorktree,
-    SessionEnvelope, SkillSuggestion, Snapshot, SnapshotLocationGuard, SnapshotRecovery, Snapshots,
-    TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree,
-    WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
+    ObservedExecution, Provenance, Reconciliation, ResolvedModel, RestoreError, RuleEffect,
+    RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, SnapshotLocationGuard,
+    SnapshotRecovery, Snapshots, TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope,
+    TurnContext, TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -2317,6 +2317,7 @@ impl Runtime {
             skill_reminders: Vec::new(),
             instruction_reminders: Vec::new(),
             rule_reminders: Vec::new(),
+            rule_read: None,
             structured_output: None,
             call_id: call_id.into(),
             status,

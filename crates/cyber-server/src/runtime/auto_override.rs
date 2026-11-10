@@ -474,6 +474,7 @@ impl Inner {
         let nested = nested.pop().unwrap_or_default();
         let mut state = handle.state.lock().await;
         let nested = run.current_nested(&state, nested);
+        let proof = run.read_proof();
         let mut seen = super::drain::Reminded::of(&state);
         let (settled, loaded) = super::drain::settlement_with_reminders(
             &replay.id,
@@ -486,6 +487,7 @@ impl Inner {
                     .finalize_skill_output(&state.info.directory, output, reminder)
             },
         );
+        let settled = super::drain::with_read_proof(settled, proof);
         let session_id = state.info.id.clone();
         let settled =
             self.with_call_metadata(&session_id, &replay.id, &state.info.directory, settled);

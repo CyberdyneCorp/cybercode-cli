@@ -34,6 +34,8 @@ impl Tool for Read {
 
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
         Box::pin(async move {
+            let declared = ctx.resolve(text(&ctx.inv.input, "path"));
+            let authorized = declared.canonicalize().ok();
             let path = readable(ctx).await?;
             // A managed overflow file is re-read in its original result's frame.
             ctx.frame_overflow_reads(&path);
@@ -48,9 +50,24 @@ impl Tool for Read {
                 .lsp
                 .get()
                 .and_then(|_| crate::lsp::read_origin(&ctx.location, &path).ok());
-            let bytes = tokio::fs::read(&path)
-                .await
-                .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?;
+            let reader = authorized
+                .as_deref()
+                .and_then(|target| observed_reader(ctx, &path, target));
+            let (bytes, receipt) = match reader {
+                Some(reader) => {
+                    let (bytes, receipt) = tokio::task::spawn_blocking(move || reader.read())
+                        .await
+                        .map_err(|_| failed("Observed file read failed"))?
+                        .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?;
+                    (bytes, Some(std::sync::Arc::new(receipt)))
+                }
+                None => (
+                    tokio::fs::read(&path)
+                        .await
+                        .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?,
+                    None,
+                ),
+            };
             if let Some(kind) = media_kind(&path) {
                 return Err(failed(format!(
                     "{kind} files are returned as media from a later milestone; this build reads text only"
@@ -59,6 +76,9 @@ impl Tool for Read {
             if is_binary(&bytes) {
                 return Err(failed("Binary file: application/octet-stream"));
             }
+            *ctx.read_receipt
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = receipt;
             ctx.host.mark_read(&ctx.inv.session_id, &path);
             ctx.note_skill_path(&path);
             if let Some(locations) = ctx.host.lsp.get()
@@ -84,6 +104,37 @@ impl Tool for Read {
             ))
         })
     }
+}
+
+/// An alias may have a different policy resource from the physical target.
+/// An authorization of the spelling alone cannot attest a denied or unreviewed
+/// canonical target. Withhold the receipt without changing the read contract.
+fn observed_reader(
+    ctx: &Ctx<'_>,
+    path: &Path,
+    authorized: &Path,
+) -> Option<cyber_core::rules::ObservedRead> {
+    let location = ctx.location.canonicalize().ok()?;
+    let physical_resource = authorized.strip_prefix(&location).map_or_else(
+        |_| ctx.resource(authorized),
+        |relative| ctx.resource(&ctx.location.join(relative)),
+    );
+    if physical_resource != ctx.resource(path) {
+        let request = Request {
+            tool: Some("read".into()),
+            action: "read".into(),
+            resources: vec![physical_resource],
+            read_only: true,
+            ..Request::default()
+        };
+        if ctx.policy.decide(&request) != crate::permissions::Decision::Allow
+            || ctx.policy.taint_holds(&request)
+            || ctx.policy.forces_classifier(&request)
+        {
+            return None;
+        }
+    }
+    cyber_core::rules::ObservedRead::open(&ctx.location, path, authorized).ok()
 }
 
 /// A page of the file redacted as a whole first, so a secret that the page boundary

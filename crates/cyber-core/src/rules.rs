@@ -59,6 +59,99 @@ impl std::fmt::Debug for RootBinding {
     }
 }
 
+/// Metadata describing a successful read; these hashes are observations, never
+/// authority to perform another operation or reopen a source after restart.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReadEvidence {
+    pub root: PathBuf,
+    pub path: PathBuf,
+    pub root_identity: String,
+    pub file_identity: String,
+}
+pub struct ObservedRead {
+    declared: PathBuf,
+    physical: PathBuf,
+    root: RootBinding,
+    reader: crate::import::FileRead,
+}
+pub struct ReadReceipt {
+    declared: PathBuf,
+    root: RootBinding,
+    native: crate::import::FileReadReceipt,
+    evidence: ReadEvidence,
+}
+impl RootBinding {
+    pub fn identity(&self) -> String {
+        self.native
+            .ancestor_identity(&self.root)
+            .expect("project root is an ancestor")
+    }
+}
+impl ObservedRead {
+    pub fn open(location: &Path, path: &Path, authorized: &Path) -> Result<Self, String> {
+        let root = RootBinding::capture(location)?;
+        let declared = std::path::absolute(path).map_err(|_| "read path is invalid")?;
+        let physical = path
+            .canonicalize()
+            .map_err(|_| "read target is unavailable")?;
+        if physical != authorized {
+            return Err("read path changed after authorization".into());
+        }
+        if !physical.starts_with(root.root()) {
+            return Err("read is outside the captured root".into());
+        }
+        // Receipts are persisted as exact paths; do not mint lossy identities.
+        if physical.to_str().is_none() || root.root().to_str().is_none() {
+            return Err("read receipt paths must be UTF-8".into());
+        }
+        let reader = crate::import::FileRead::open(&physical).map_err(|e| e.reason.to_owned())?;
+        root.verify()?;
+        Ok(Self {
+            declared,
+            physical,
+            root,
+            reader,
+        })
+    }
+    pub fn read(self) -> std::io::Result<(Vec<u8>, ReadReceipt)> {
+        let (bytes, native) = self.reader.read()?;
+        let evidence = ReadEvidence {
+            root: self.root.root().into(),
+            path: self.physical,
+            root_identity: self.root.identity(),
+            file_identity: native.identity(),
+        };
+        Ok((
+            bytes,
+            ReadReceipt {
+                declared: self.declared,
+                root: self.root,
+                native,
+                evidence,
+            },
+        ))
+    }
+}
+impl ReadReceipt {
+    pub fn evidence(&self) -> &ReadEvidence {
+        &self.evidence
+    }
+    pub fn verify(&self) -> Result<(), String> {
+        self.root.verify()?;
+        if self.declared.canonicalize().ok().as_ref() != Some(&self.evidence.path) {
+            return Err("declared read target changed since the operation".into());
+        }
+        self.native.verify().map_err(|e| e.reason.to_owned())
+    }
+}
+impl std::fmt::Debug for ReadReceipt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReadReceipt")
+            .field("evidence", &self.evidence)
+            .finish_non_exhaustive()
+    }
+}
+
 pub struct Definition {
     pub path: PathBuf,
     pub digest: String,
@@ -332,6 +425,10 @@ mod tests {
         std::fs::create_dir(root.join(".git")).unwrap();
         let binding = RootBinding::capture(&location).unwrap();
         assert_eq!(binding.root(), root.canonicalize().unwrap());
+        assert_eq!(
+            binding.identity(),
+            RootBinding::capture(&root).unwrap().identity()
+        );
         std::fs::write(location.join("app.ts"), "ordinary edit").unwrap();
         assert!(binding.verify().is_ok());
         // A nested checkout changes scope even though the physical directories remain.
@@ -393,6 +490,71 @@ mod tests {
             binding.verify().is_err(),
             "native lookup must not follow a substituted link"
         );
+    }
+
+    #[test]
+    fn actual_reads_retain_file_and_root_identity_without_the_definition_size_cap() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("repo");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("large.txt");
+        let content = vec![b'x'; 1024 * 1024 + 1];
+        std::fs::write(&path, &content).unwrap();
+        let reader = ObservedRead::open(&root, &path, &path.canonicalize().unwrap()).unwrap();
+        let (bytes, receipt) = reader.read().unwrap();
+        assert_eq!(bytes, content);
+        assert!(receipt.verify().is_ok());
+        assert_eq!(receipt.evidence().path, path.canonicalize().unwrap());
+        assert_eq!(
+            receipt.evidence().root_identity,
+            RootBinding::capture(&root).unwrap().identity()
+        );
+        // Ordinary writes to the same inode do not erase the earlier read operation.
+        std::fs::write(&path, "later content").unwrap();
+        assert!(receipt.verify().is_ok());
+        std::fs::rename(&path, root.join("retained.txt")).unwrap();
+        std::fs::write(&path, &content).unwrap();
+        assert!(
+            receipt.verify().is_err(),
+            "a new inode cannot borrow the actual read"
+        );
+    }
+
+    #[test]
+    fn workspace_hard_links_are_observable_but_definition_hard_links_are_refused() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("file.md");
+        let link = temp.path().join("link.md");
+        std::fs::write(&path, "workspace content").unwrap();
+        std::fs::hard_link(&path, &link).unwrap();
+        let (bytes, receipt) =
+            ObservedRead::open(temp.path(), &link, &link.canonicalize().unwrap())
+                .unwrap()
+                .read()
+                .unwrap();
+        assert_eq!(bytes, b"workspace content");
+        assert!(receipt.verify().is_ok());
+        assert!(Definition::read(&link).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observed_read_uses_its_open_handle_and_refuses_retargeted_aliases() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let a = temp.path().join("a.txt");
+        let b = temp.path().join("b.txt");
+        let alias = temp.path().join("alias.txt");
+        std::fs::write(&a, "actual original bytes").unwrap();
+        std::fs::write(&b, "different bytes").unwrap();
+        symlink(&a, &alias).unwrap();
+        let reader = ObservedRead::open(temp.path(), &alias, &a.canonicalize().unwrap()).unwrap();
+        std::fs::remove_file(&alias).unwrap();
+        symlink(&b, &alias).unwrap();
+        let (bytes, receipt) = reader.read().unwrap();
+        assert_eq!(bytes, b"actual original bytes");
+        assert!(receipt.verify().is_err());
+        assert!(ObservedRead::open(temp.path(), &alias, &a.canonicalize().unwrap()).is_err());
     }
 
     fn root() -> (tempfile::TempDir, PathBuf) {

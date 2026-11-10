@@ -367,6 +367,36 @@ pub struct ToolDispatched {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleRead {
+    pub evidence: cyber_core::rules::ReadEvidence,
+    pub epoch: u32,
+    pub location: String,
+    pub operation_key: String,
+    pub attempt: u32,
+}
+impl RuleRead {
+    pub fn matches(
+        &self,
+        binding: &super::instructions::RuleBinding,
+        epoch: u32,
+        info: &super::model::SessionInfo,
+        call: &super::model::CallState,
+    ) -> bool {
+        call.status == super::model::CallStatus::Dispatched
+            && call.name.eq_ignore_ascii_case("read")
+            && self.epoch == epoch
+            && self.location == info.directory
+            && self.attempt != 0
+            && self.attempt == call.attempt
+            && self.operation_key == format!("{}:{}", info.id, call.call_id)
+            && binding.native_root.as_deref() == Some(self.evidence.root_identity.as_str())
+            && self.evidence.root.to_str() == Some(binding.root.as_str())
+            && self.evidence.root.is_absolute()
+            && self.evidence.path.starts_with(&self.evidence.root)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSettled {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_activation: Option<cyber_core::skills::SkillActivation>,
@@ -378,6 +408,8 @@ pub struct ToolSettled {
     /// Approved rule definitions actually labelled in this successful result.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_reminders: Vec<super::instructions::RuleBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_read: Option<RuleRead>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

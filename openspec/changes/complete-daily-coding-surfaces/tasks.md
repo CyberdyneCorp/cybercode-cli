@@ -1752,3 +1752,48 @@ include the shared native snapshot helper; its existing rules/context/App steps
 exercise the new cases. Current-source native execution and whole-goal review
 remain required before delivery; no goal/task acceptance is inferred from these
 local checks.
+
+
+Native read receipt continuation (2026-11-10): built-in file reads carry the
+receipt of their actual open handle through a typed ToolHost/App execution port.
+The pre-authorization physical target must still match at open. An alias with a
+separate non-allow/taint/classifier decision cannot attest the canonical target.
+Actual workspace reads preserve their size and hard-link behavior; strict rule
+and memory definition readers keep existing link restrictions. Read fallback,
+listings, denied/failed results and unsupported receipts cannot activate scoped
+rules. The capture uses actual post-hook input, not the provider's original path.
+The receipt revalidates native root, file and ancestor IDs and declared aliases
+before/after discovery and under settlement. A successful `rule_read` record
+binds native evidence, Location/Epoch, dispatched attempt and operation key to
+the rule reminders in the same Store event. New rule IDs incorporate the native
+root; historical path-only IDs remain compatible. Replay refuses to consume a
+new identity on a mismatched dispatch, Location, Epoch or root. The native
+metadata describes the past read and grants no future filesystem authority.
+
+Review fixed receipt reuse across host retries, separated workspace hard-link
+observation from strict definition/storage readers, required UTF-8 receipt paths,
+and fenced the authorization-time physical target. Actual App hook-rewrite
+acceptance verifies only the database rule reaches the provider after a web read
+is rewritten, while the original call input remains in the transcript. Store
+replay checks Location/Epoch/attempt/key mismatch, and Core tests exercise actual
+handle bytes, alias retargeting and large/hard-linked targets. This is read
+provenance; edit/patch/partial-effect receipts, exact config generation through
+commit, rule withdrawal, full restart and inspection still prevent completion
+of 4.1–4.4. No parent task closes.
+
+GitHub native run [42890123485](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/42890123485)
+passed at `c9e0c373`. The later `fa2c9dfb` and `25e7e89f` runs were cancelled;
+those results do not establish native acceptance of their changes or the new
+receipt code. Main is fully integrated at `8266db6c` after fetch.
+
+Local receipt verification: 11 filtered Core tests, nine import snapshot tests,
+455 server library tests (one ignored subprocess probe), 22 context tests, 16 App
+instruction tests (the command-hook rewrite fixture is Unix), and the AppHost
+forwarding check passed. Core/Server/Tools/App all-target Clippy with `-D warnings`,
+formatting/diff, workflow YAML, generated SDK consistency and pinned strict
+OpenSpec (100 items) passed; spec lint reports zero errors and 25 warnings.
+Native C/linker warnings were observed without an origin claim. The shared native
+reader's import tests are included in the platform workflow. Windows, whole
+workspace, SDK runtime and current-source native matrix acceptance remain unrun
+locally for this increment. Checkpoint review found no remaining findings in the
+read changes after the fixes above; full-goal review remains open.

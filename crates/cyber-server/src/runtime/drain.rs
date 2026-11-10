@@ -1820,6 +1820,7 @@ impl Inner {
         let mut loaded = Vec::new();
         for (run, nested) in outcomes.into_iter().zip(nested) {
             let nested = run.current_nested(&state, nested);
+            let proof = run.read_proof();
             let (settled, instructions) = settlement_with_reminders(
                 &run.call_id,
                 &run.def,
@@ -1831,6 +1832,7 @@ impl Inner {
                         .finalize_skill_output(&directory, output, reminder)
                 },
             );
+            let settled = with_read_proof(settled, proof);
             events.push(self.with_call_metadata(&session_id, &run.call_id, &directory, settled));
             loaded.extend(instructions);
             stops.extend(self.take_call_hook_effects(&session_id, &run.call_id, &mut events));
@@ -2050,7 +2052,7 @@ impl Inner {
                 read,
             };
         }
-        let run = self.tools.execute(invocation, cancel.clone());
+        let run = self.tools.execute_observed(invocation, cancel.clone());
         tokio::pin!(run);
         let outcome = tokio::select! {
             out = &mut run => out,
@@ -2058,14 +2060,27 @@ impl Inner {
                 Ok(outcome) => outcome,
                 Err(_) => {
                     handle.location_uncertain.store(true, std::sync::atomic::Ordering::SeqCst);
-                    ToolOutcome::Aborted
+                    super::host::ObservedExecution { outcome: ToolOutcome::Aborted, reads: Some(Vec::new()) }
                 }
             },
+        };
+        let read = match outcome.reads {
+            None => read,
+            Some(mut receipts) if receipts.len() == 1 => read.and_then(|mut target| {
+                let receipt = receipts.pop().unwrap();
+                if target.root.identity() != receipt.evidence().root_identity {
+                    return None;
+                }
+                target.file = receipt.evidence().path.clone();
+                target.receipt = Some(receipt);
+                Some(target)
+            }),
+            Some(_) => None,
         };
         ToolRun {
             call_id,
             def,
-            outcome,
+            outcome: outcome.outcome,
             read,
         }
     }
@@ -2088,6 +2103,9 @@ impl Inner {
             location: location.clone(),
             scope,
             root: Arc::new(cyber_core::rules::RootBinding::capture(&location).ok()?),
+            receipt: None,
+            operation_key: invocation.operation_key.clone(),
+            attempt: invocation.attempt,
         })
     }
 
@@ -2328,6 +2346,7 @@ fn settled(
         skill_reminders: Vec::new(),
         instruction_reminders: Vec::new(),
         rule_reminders: Vec::new(),
+        rule_read: None,
         structured_output: None,
         call_id: call_id.into(),
         status,
@@ -2349,6 +2368,16 @@ pub(super) struct ToolRun {
 }
 
 impl ToolRun {
+    pub(super) fn read_proof(&self) -> Option<super::events::RuleRead> {
+        let target = self.read.as_ref()?;
+        Some(super::events::RuleRead {
+            evidence: target.receipt.as_ref()?.evidence().clone(),
+            epoch: target.scope.epoch,
+            location: target.scope.directory.clone(),
+            operation_key: target.operation_key.clone(),
+            attempt: target.attempt,
+        })
+    }
     /// Recheck under the settlement lock, after filesystem discovery. A Location
     /// switch or Epoch replacement during discovery must not consume new identities.
     pub(super) fn current_nested(
@@ -2415,10 +2444,20 @@ pub(super) struct ReadTarget {
     pub file: std::path::PathBuf,
     pub scope: ReminderScope,
     pub root: Arc<cyber_core::rules::RootBinding>,
+    pub receipt: Option<Arc<cyber_core::rules::ReadReceipt>>,
+    pub operation_key: String,
+    pub attempt: u32,
 }
 impl ReadTarget {
+    fn valid_native(&self) -> bool {
+        self.root.verify().is_ok()
+            && self
+                .receipt
+                .as_ref()
+                .is_none_or(|receipt| receipt.verify().is_ok())
+    }
     fn is_current(&self, state: &SessionState) -> bool {
-        self.scope.is_current(state) && self.root.verify().is_ok()
+        self.scope.is_current(state) && self.valid_native()
     }
 
     fn load(
@@ -2427,15 +2466,20 @@ impl ReadTarget {
         attached: &std::collections::BTreeSet<String>,
         resolve: impl FnOnce() -> Result<super::instructions::InstructionSettings, String>,
     ) -> super::instructions::Instructions {
-        if self.root.verify().is_err() {
+        if !self.valid_native() {
             return Default::default();
         }
-        let Ok(settings) = resolve() else {
+        let Ok(mut settings) = resolve() else {
             return Default::default();
         };
-        if self.root.verify().is_err() {
+        if !self.valid_native() {
             return Default::default();
         }
+        settings.scoped_rules = self.receipt.is_some();
+        settings.native_root = self
+            .receipt
+            .as_ref()
+            .map(|receipt| receipt.evidence().root_identity.clone());
         let loaded = super::instructions::load_nested(
             global,
             &self.location,
@@ -2443,12 +2487,29 @@ impl ReadTarget {
             &settings,
             attached,
         );
-        if self.root.verify().is_ok() {
+        if self.valid_native() {
             loaded
         } else {
             Default::default()
         }
     }
+}
+
+pub(super) fn with_read_proof(
+    mut settled: cyber_store::NewEvent,
+    proof: Option<super::events::RuleRead>,
+) -> cyber_store::NewEvent {
+    if settled
+        .data
+        .get("rule_reminders")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|rules| !rules.is_empty())
+        && let Some(proof) = proof
+    {
+        settled.data["rule_read"] =
+            serde_json::to_value(proof).expect("rule read metadata serializes");
+    }
+    settled
 }
 
 /// `InstructionsLoaded` `load_reason` for files a read attached.
@@ -2558,6 +2619,7 @@ pub(super) fn settlement_with_reminders(
             skill_reminders: names,
             instruction_reminders: attached,
             rule_reminders: rule_bindings,
+            rule_read: None,
             structured_output: value,
             call_id: call_id.into(),
             status: if failed {
@@ -2657,6 +2719,7 @@ pub(super) fn settlement(
                 skill_reminders: Vec::new(),
                 instruction_reminders: Vec::new(),
                 rule_reminders: Vec::new(),
+                rule_read: None,
                 structured_output: None,
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -2690,6 +2753,7 @@ pub(super) fn settlement(
                 skill_reminders: Vec::new(),
                 instruction_reminders: Vec::new(),
                 rule_reminders: Vec::new(),
+                rule_read: None,
                 structured_output: Some(value),
                 call_id: call_id.into(),
                 status: CallStatus::Ok,
@@ -2714,6 +2778,7 @@ pub(super) fn settlement(
                 skill_reminders: Vec::new(),
                 instruction_reminders: Vec::new(),
                 rule_reminders: Vec::new(),
+                rule_read: None,
                 structured_output: value,
                 call_id: call_id.into(),
                 status: if failed {
@@ -2862,6 +2927,9 @@ mod skill_reminder_tests {
                     file: "/repo/web/app.ts".into(),
                     scope,
                     root: root.clone(),
+                    receipt: None,
+                    operation_key: String::new(),
+                    attempt: 1,
                 }),
             };
             match changed {
@@ -2888,6 +2956,9 @@ mod skill_reminder_tests {
                         file: "/repo/web/app.ts".into(),
                         scope,
                         root: root.clone(),
+                        receipt: None,
+                        operation_key: String::new(),
+                        attempt: 1,
                     }),
                     ..run
                 };
@@ -3107,6 +3178,9 @@ mod skill_reminder_tests {
                 epoch: 1,
             },
             root: Arc::new(cyber_core::rules::RootBinding::capture(root_dir.path()).unwrap()),
+            receipt: None,
+            operation_key: String::new(),
+            attempt: 1,
         };
         let run = |outcome| ToolRun {
             call_id: "call".into(),
@@ -3185,6 +3259,9 @@ mod skill_reminder_tests {
                     epoch: 1,
                 },
                 root: Arc::new(cyber_core::rules::RootBinding::capture(root_dir.path()).unwrap()),
+                receipt: None,
+                operation_key: String::new(),
+                attempt: 1,
             }),
         };
         assert!(run.nested_target().is_none());

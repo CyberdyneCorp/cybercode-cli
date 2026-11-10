@@ -68,3 +68,11 @@
 - **THEN** same-path replacement sources SHALL NOT supply reminders for the old operation
 - **AND** the operation result SHALL remain intact and its suppressed reminder SHALL NOT consume delivery in the active Epoch
 - **AND** a later operation captured against the replacement Location SHALL remain independently eligible
+
+#### Scenario: A hook rewrites the authorized read target
+- **GIVEN** a PreToolUse hook rewrites a read of a web file to an authorized database file
+- **WHEN** the built-in tool reads through its native file handle
+- **THEN** scoped rule matching SHALL use the actual physical database target
+- **AND** the settlement SHALL bind any delivered rule to that read's native root/file identities, Location, Context Epoch, operation key and dispatched attempt
+- **AND** a listing, denied operation or successful result without eligible native evidence SHALL NOT consume scoped rule delivery
+- **AND** replay SHALL NOT consume a new rule identity from a receipt mismatched to the dispatch, root, Location or Epoch

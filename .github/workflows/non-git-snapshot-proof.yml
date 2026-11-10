@@ -29,10 +29,14 @@ on:
       - crates/cyber-core/src/config/**
       - crates/cyber-core/src/rules.rs
       - crates/cyber-core/src/import/snapshot.rs
+      - crates/cyber-core/src/memory/windows.rs
+      - crates/cyber-core/tests/import_snapshot.rs
       - crates/cyber-core/src/import/mod.rs
       - crates/cyber-core/src/lib.rs
       - crates/cyber-core/tests/config.rs
       - crates/cyber-tools/src/host.rs
+      - crates/cyber-tools/src/tools/fs.rs
+      - crates/cyber-server/src/runtime/auto_override.rs
       - crates/cyber-tools/tests/instruction_config.rs
       - crates/cyber-tools/tests/path_skills.rs
       - crates/cyber-server/src/runtime/context.rs
@@ -200,6 +204,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-core --test config instruction_limits -- --nocapture 2>&1 | tee instruction-limits-proof.log
           cargo test --locked -p cyber-core --lib rules:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-core --test import_snapshot -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-core --test config rule_definition_bytes -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::context:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::instructions:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log

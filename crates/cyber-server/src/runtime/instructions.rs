@@ -53,6 +53,8 @@ pub struct InstructionSettings {
     /// for hosts without a permission policy.
     pub read_gate: Option<ReadGate>,
     pub rule_gate: Option<RuleGate>,
+    pub scoped_rules: bool,
+    pub native_root: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,12 +83,22 @@ pub struct RuleBinding {
     pub path: String,
     pub digest: String,
     pub generation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_root: Option<String>,
 }
 impl RuleBinding {
     pub fn identity(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut hash = Sha256::new();
-        hash.update(b"cyber-rule-reminder-v1\0");
+        hash.update(if self.native_root.is_some() {
+            b"cyber-rule-reminder-v2\0"
+        } else {
+            b"cyber-rule-reminder-v1\0"
+        });
+        if let Some(root) = &self.native_root {
+            hash.update((root.len() as u64).to_le_bytes());
+            hash.update(root.as_bytes());
+        }
         for field in [&self.root, &self.path, &self.digest, &self.generation] {
             hash.update((field.len() as u64).to_le_bytes());
             hash.update(field.as_bytes());
@@ -178,6 +190,8 @@ impl InstructionSettings {
             home: cyber_core::paths::home_dir(env),
             read_gate: None,
             rule_gate: None,
+            scoped_rules: true,
+            native_root: None,
         }
     }
 
@@ -590,7 +604,9 @@ impl<'a> Loader<'a> {
         {
             return Err("rule definition differs from its approved digest".into());
         }
-        if !definition.applies(root, target) {
+        if (definition.paths.is_some() && !self.settings.scoped_rules)
+            || !definition.applies(root, target)
+        {
             return Ok(());
         }
         let generation = authorization
@@ -601,6 +617,7 @@ impl<'a> Loader<'a> {
             path: path.to_str().ok_or("rule path must be UTF-8")?.into(),
             digest: definition.digest.clone(),
             generation: generation.into(),
+            native_root: self.settings.native_root.clone(),
         };
         let identity = binding.identity();
         if !self.seen.insert(identity.clone()) {

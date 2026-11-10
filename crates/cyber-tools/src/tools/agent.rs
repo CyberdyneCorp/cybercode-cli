@@ -392,6 +392,7 @@ pub(crate) async fn fork_skill(
     ctx.host.check_skill_tool(&inv).await.map_err(failed)?;
     let child_ctx = Ctx {
         skill_paths: Default::default(),
+        read_receipt: Default::default(),
         loaded_skill: Default::default(),
         provenance: Default::default(),
         compiler_feedback: Default::default(),

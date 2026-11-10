@@ -488,6 +488,14 @@ pub struct SkillSuggestion {
     pub description: String,
 }
 
+/// An execution with actual file reads, when the host instruments them. `None`
+/// preserves legacy ordinary instruction loading; `Some([])` proves no eligible read.
+#[derive(Debug)]
+pub struct ObservedExecution {
+    pub outcome: ToolOutcome,
+    pub reads: Option<Vec<std::sync::Arc<cyber_core::rules::ReadReceipt>>>,
+}
+
 /// How a tool run ended.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ToolOutcome {
@@ -1075,6 +1083,21 @@ pub trait ToolHost: Send + Sync {
 
     /// Run a call. Implementations stop within 2 s once `cancel` fires.
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome>;
+
+    /// Run with native read observations when the host can supply them. The
+    /// default has no operation receipt and cannot activate scoped rules.
+    fn execute_observed(
+        &self,
+        invocation: Invocation,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, ObservedExecution> {
+        Box::pin(async move {
+            ObservedExecution {
+                outcome: self.execute(invocation, cancel).await,
+                reads: None,
+            }
+        })
+    }
 
     /// An explicit user request for a forked background child. Deny rules still apply.
     fn subtask(

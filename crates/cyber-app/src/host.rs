@@ -365,6 +365,22 @@ impl ToolHost for AppHost {
         self.builtin.execute(call, cancel)
     }
 
+    fn execute_observed(
+        &self,
+        call: Invocation,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, cyber_server::runtime::ObservedExecution> {
+        if self.remote.has(&call.name) {
+            return Box::pin(async move {
+                cyber_server::runtime::ObservedExecution {
+                    outcome: self.execute(call, cancel).await,
+                    reads: None,
+                }
+            });
+        }
+        self.builtin.execute_observed(call, cancel)
+    }
+
     fn lifecycle_hooks(
         &self,
         event: cyber_server::runtime::LifecycleHook,

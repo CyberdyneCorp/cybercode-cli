@@ -134,6 +134,7 @@ async fn execute(
         .map_err(|_| "Sampling permission policy is unavailable")?;
     let ctx = Ctx {
         skill_paths: Default::default(),
+        read_receipt: Default::default(),
         loaded_skill: Default::default(),
         provenance: Default::default(),
         compiler_feedback: Default::default(),

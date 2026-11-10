@@ -190,6 +190,38 @@ async fn project_rules_require_review_then_separate_baseline_from_matching_reads
             .unwrap()
             .starts_with("sha256:")
     );
+    let proof = &settled.data["rule_read"];
+    assert_eq!(
+        proof["evidence"]["path"],
+        f.repo.join("web/src/app.ts").to_str().unwrap()
+    );
+    assert_eq!(proof["evidence"]["root_identity"], binding["native_root"]);
+    assert!(
+        proof["evidence"]["file_identity"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert_eq!(
+        proof["operation_key"],
+        format!("{session}:{}", settled.data["call_id"].as_str().unwrap())
+    );
+    assert_eq!(proof["attempt"], 1);
+    assert_eq!(proof["location"], f.repo.to_str().unwrap());
+    for field in ["epoch", "attempt", "operation_key", "location"] {
+        let mut changed = events.clone();
+        let event = changed
+            .iter_mut()
+            .find(|event| event.id == settled.id)
+            .unwrap();
+        event.data["rule_read"][field] = if matches!(field, "operation_key" | "location") {
+            json!("other-call")
+        } else {
+            json!(999)
+        };
+        let replayed = cyber_server::runtime::SessionState::replay(&changed).unwrap();
+        assert!(replayed.epoch.unwrap().reminded_rules.is_empty(), "{field}");
+    }
     let replayed = cyber_server::runtime::SessionState::replay(&events).unwrap();
     assert_eq!(replayed.epoch.unwrap().reminded_rules, ids);
     f.prompt(&session, &f.repo, "read the app again", 2).await;
@@ -818,5 +850,49 @@ async fn instruction_files_never_import_a_file_a_read_deny_rule_covers() {
     ]});
     let f = Fixture::start_with(json!({"permissions": deny})).await;
     assert_secret_stays_out(&f, "config/secrets.json").await;
+    f.app.runtime.shutdown().await;
+}
+
+/// The provider's input is not operation evidence: PreToolUse can rewrite it.
+#[cfg(unix)]
+#[tokio::test]
+async fn rewritten_reads_deliver_only_rules_for_the_file_actually_opened() {
+    let rewrite = json!({"updated_input":{"path":"db/schema.sql"}});
+    let command = format!("cat >/dev/null; printf '%s' '{rewrite}'");
+    let f = Fixture::start_with(json!({"hooks":{"PreToolUse":[{"matcher":"read","hooks":[{
+        "type":"command","id":"redirect-read","command":command
+    }]}]}}))
+    .await;
+    f.write("web/src/app.ts", "ORIGINAL_WEB_BYTES");
+    f.write("db/schema.sql", "ACTUAL_DATABASE_BYTES");
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWRONG_WEB_RULE",
+    );
+    f.write(
+        ".cyber/rules/db.md",
+        "---\npaths: ['db/**']\n---\nACTUAL_DB_RULE",
+    );
+    f.approve(&f.repo);
+    let id = f.session(&f.repo).await;
+    f.prompt(&id, &f.repo, "read the app first", 2).await;
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("ACTUAL_DATABASE_BYTES"), "{result}");
+    assert!(result.contains("ACTUAL_DB_RULE"), "{result}");
+    assert!(!result.contains("ORIGINAL_WEB_BYTES"), "{result}");
+    assert!(!result.contains("WRONG_WEB_RULE"), "{result}");
+    let events = f.app.store.read_events(&id, -1, 500).unwrap().events;
+    let settled = events
+        .iter()
+        .find(|event| event.data["rule_read"].is_object())
+        .unwrap();
+    assert_eq!(
+        settled.data["rule_read"]["evidence"]["path"],
+        f.repo.join("db/schema.sql").to_str().unwrap()
+    );
+    let state = f.app.runtime.state(&id).await.unwrap();
+    let call = &state.calls[settled.data["call_id"].as_str().unwrap()];
+    assert_eq!(call.input.as_ref().unwrap()["path"], "web/src/app.ts");
+    assert_eq!(state.epoch.unwrap().reminded_rules.len(), 1);
     f.app.runtime.shutdown().await;
 }

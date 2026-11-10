@@ -109,6 +109,7 @@ impl BuiltinHost {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -174,6 +175,7 @@ impl BuiltinHost {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -377,6 +379,7 @@ impl BuiltinHost {
         }
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -469,6 +472,7 @@ impl BuiltinHost {
     ) -> io::Result<Vec<WorktreeListing>> {
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -710,6 +714,7 @@ impl BuiltinHost {
     ) -> io::Result<Ctx<'a>> {
         Ok(Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -977,6 +982,7 @@ impl BuiltinHost {
         }
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
