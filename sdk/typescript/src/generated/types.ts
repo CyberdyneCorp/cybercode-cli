@@ -737,6 +737,9 @@ export type Content2 = {
 };
 
 export type ContextInspection = {
+  /** Latest recorded source observations, without source content. */
+  effective_sources: EffectiveContextSource[];
+  omitted_sources: number;
   /** Sources in the stored projection, ordered by estimated size. */
   sources: ContextSourceEstimate[];
   /**
@@ -1271,6 +1274,16 @@ export type EditGoal = {
 
 /** The tool shape the model edits files with. */
 export type EditTool = "freeform_patch" | "json_patch" | "edit";
+
+export type EffectiveContextSource = {
+  id: string;
+  origin: string;
+  status: SourceStatus;
+  pending_update?: boolean;
+  estimated_tokens?: number | null;
+  file_paths: string[];
+  omitted_file_paths: number;
+};
 
 /** What happens to a derived effort the model does not list. */
 export type EffortClamp = "nearest_lower" | "fail";
@@ -5015,6 +5028,8 @@ export type Source = {
 };
 
 export type Source2 = "live" | "draft";
+
+export type SourceStatus = "active" | "absent" | "retained_unavailable" | "unavailable" | "unknown";
 
 /** A user statement with its source, kept outside generated prose. */
 export type Sourced = {

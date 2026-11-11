@@ -1227,7 +1227,7 @@ The runtime resolves settings after the read and verifies its captured Location,
 
 ### Inspecting the current context
 
-Open `/context` in the TUI to see the stored Context Epoch, projected source groups, estimated token counts and the last measured request. The estimate uses the persisted system text and projected conversation. Tool schemas and instructions added only during a turn are excluded. The panel also reports whether an Epoch rebuild is pending, how many inputs are queued or held, and how many scoped rules were delivered in the Epoch.
+Open `/context` in the TUI to see the stored Context Epoch, projected source groups, estimated token counts and the last measured request. The estimate uses the persisted system text and projected conversation. Tool schemas and instructions added only during a turn are excluded. The panel also reports whether an Epoch rebuild is pending, how many inputs are queued or held, and how many scoped rules were delivered in the Epoch. Individual sources show their last recorded origin, status, estimate and instruction file paths. An unavailable observation retains the admitted source and its provenance. Historical sources without recorded provenance show unknown status and origin. Output-style changes deferred during a turn are marked pending. Inspection reports up to 256 sources, largest first, and up to 128 file paths per source within 16 KiB, with explicit omission counts.
 
 Authenticated clients can use `GET /api/v1/sessions/{sessionID}/context` for the same metadata. Pass `include_content=true` to retrieve the stored baseline, compaction summary and task text. Inspection reads stored Session state without starting a turn or reloading instruction files.
 

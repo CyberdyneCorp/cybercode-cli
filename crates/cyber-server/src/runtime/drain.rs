@@ -843,6 +843,15 @@ impl Inner {
         let payload = EpochStarted {
             epoch: state.epoch.as_ref().map_or(1, |e| e.number + 1),
             baseline: context::render_baseline(&snapshot),
+            sources: super::context_sources::capture(
+                &observed,
+                &snapshot,
+                &state
+                    .epoch
+                    .as_ref()
+                    .map(|epoch| epoch.sources.clone())
+                    .unwrap_or_default(),
+            ),
             snapshot,
             provider: resolved.provider.clone(),
             system_prefix: Some(system_prefix),
@@ -875,6 +884,9 @@ impl Inner {
                 drop(state);
                 return self.start_epoch(handle, resolved).await;
             }
+            observed
+                .pending
+                .insert(super::output_style::CONTEXT_KEY.into());
             let kept = epoch
                 .snapshot
                 .get(super::output_style::CONTEXT_KEY)
@@ -897,13 +909,30 @@ impl Inner {
             text.push_str("\n\nThe default agent instructions now apply:\n");
             text.push_str(&context::base_prompt(resolved.family));
         }
+        let sources = super::context_sources::capture(&observed, &snapshot, &epoch.sources);
+        let source_update = (sources != epoch.sources).then(|| {
+            event(
+                super::context_sources::OBSERVED,
+                &super::context_sources::SourcesObserved {
+                    epoch: epoch.number,
+                    sources,
+                },
+            )
+        });
+        let mut updates = Vec::new();
         if let Some(text) = text {
             let payload = ContextUpdated {
                 message_id: cyber_core::ids::new_id("msg"),
                 text,
                 snapshot,
             };
-            self.commit_locked(&mut state, vec![event(CONTEXT_UPDATED, &payload)])?;
+            updates.push(event(CONTEXT_UPDATED, &payload));
+        }
+        if let Some(source_update) = source_update {
+            updates.push(source_update);
+        }
+        if !updates.is_empty() {
+            self.commit_locked(&mut state, updates)?;
         }
         drop(state);
         self.instructions_loaded(handle, loaded, "changed").await;
@@ -915,6 +944,8 @@ impl Inner {
         let mut observed = context::observe(&self.context_inputs(&state.info.directory));
         let turn = turn_context_for(state, false);
         for (key, value) in self.options.tools.context_observations_owned(&turn).await {
+            observed.files.remove(&key);
+            observed.origins.insert(key.clone(), "tool_host".into());
             observed.sources.insert(key, value);
         }
         // `goals` → Goal context source.
@@ -931,6 +962,13 @@ impl Inner {
         observed
             .sources
             .insert(super::output_style::LANGUAGE_KEY.into(), language);
+        for key in [
+            super::goals::CONTEXT_KEY,
+            super::output_style::CONTEXT_KEY,
+            super::output_style::LANGUAGE_KEY,
+        ] {
+            observed.origins.insert(key.into(), "runtime".into());
+        }
         observed
     }
 

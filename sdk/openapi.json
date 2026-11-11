@@ -9758,6 +9758,18 @@
       "ContextInspection": {
         "type": "object",
         "properties": {
+          "effective_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveContextSource"
+            },
+            "description": "Latest recorded source observations, without source content."
+          },
+          "omitted_sources": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
           "sources": {
             "type": "array",
             "items": {
@@ -9819,11 +9831,75 @@
           }
         },
         "required": [
+          "effective_sources",
+          "omitted_sources",
           "sources",
           "epoch_pending",
           "queued_inputs",
           "held_inputs",
           "delivered_rule_count"
+        ]
+      },
+      "EffectiveContextSource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SourceStatus"
+          },
+          "pending_update": {
+            "type": "boolean",
+            "default": false
+          },
+          "estimated_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "file_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "omitted_file_paths": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "status",
+          "file_paths",
+          "omitted_file_paths"
+        ]
+      },
+      "SourceStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "active",
+              "absent",
+              "retained_unavailable",
+              "unavailable"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "unknown",
+            "description": "No observation metadata was recorded by the historical writer."
+          }
         ]
       },
       "ContextSourceEstimate": {

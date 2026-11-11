@@ -21,6 +21,116 @@ fn small_tail() -> CompactionConfig {
 }
 
 #[tokio::test]
+async fn inspection_preserves_source_provenance_when_a_later_observation_is_unavailable() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("first"), text("second")])],
+        ..Setup::default()
+    });
+    std::fs::write(
+        h.repo.join("CYBER.md"),
+        "Private retained instruction body.",
+    )
+    .unwrap();
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("begin")).await.unwrap();
+    h.settle(&id).await;
+    let before = h.runtime.state(&id).await.unwrap();
+    let first = serde_json::to_value(h.runtime.inspect_context(&before)).unwrap();
+    let source = |inspection: &serde_json::Value| {
+        inspection["effective_sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == "core/instructions")
+            .unwrap()
+            .clone()
+    };
+    let active = source(&first);
+    assert_eq!(active["status"], "active");
+    assert_eq!(active["origin"], "instruction_files");
+    assert!(
+        active["file_paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| { path.as_str().unwrap().ends_with("CYBER.md") })
+    );
+    *h.tools.instruction_limits.lock().unwrap() = Err("private diagnostic sentinel".into());
+    h.runtime.admit(&id, admit("continue")).await.unwrap();
+    h.settle(&id).await;
+    let after = h.runtime.state(&id).await.unwrap();
+    let system_entries = |state: &cyber_server::runtime::SessionState| {
+        state
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry, cyber_server::runtime::Entry::System { .. }))
+            .count()
+    };
+    assert_eq!(system_entries(&before), system_entries(&after));
+    let inspection = serde_json::to_value(h.runtime.inspect_context(&after)).unwrap();
+    let retained = source(&inspection);
+    assert_eq!(retained["status"], "retained_unavailable");
+    assert_eq!(retained["file_paths"], active["file_paths"]);
+    assert_eq!(retained["estimated_tokens"], active["estimated_tokens"]);
+    assert_eq!(
+        before.epoch.unwrap().baseline,
+        after.epoch.unwrap().baseline
+    );
+    assert!(
+        !inspection
+            .to_string()
+            .contains("private diagnostic sentinel")
+    );
+    assert!(
+        !inspection
+            .to_string()
+            .contains("Private retained instruction body.")
+    );
+    let restarted = h.restart();
+    let loaded = restarted.state(&id).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(restarted.inspect_context(&loaded)).unwrap(),
+        inspection
+    );
+    assert_eq!(h.models.requests("test/main").len(), 2);
+}
+
+#[tokio::test]
+async fn historical_source_provenance_stays_unknown_during_read_only_inspection() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    h.store
+        .append(
+            &id,
+            cyber_store::Expected::Seq(seq),
+            vec![cyber_store::NewEvent::new(
+                "session.context.epoch_started.1",
+                serde_json::json!({
+                    "epoch": 1, "baseline": "Private old bytes.",
+                    "snapshot": {"legacy/source": "Private old bytes."}, "provider": "test"
+                }),
+            )],
+        )
+        .unwrap();
+    let restarted = h.restart();
+    let state = restarted.state(&id).await.unwrap();
+    let inspection = serde_json::to_value(restarted.inspect_context(&state)).unwrap();
+    let source = inspection["effective_sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["id"] == "legacy/source")
+        .unwrap();
+    assert_eq!(source["status"], "unknown");
+    assert_eq!(source["origin"], "unknown");
+    assert!(source["estimated_tokens"].as_u64().unwrap() > 0);
+    assert!(!inspection.to_string().contains("Private old bytes."));
+    assert!(h.models.requests("test/main").is_empty());
+    assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq + 1);
+}
+
+#[tokio::test]
 async fn historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes() {
     let h = Harness::new(Setup {
         scripts: vec![("test/main", vec![text("reply")])],

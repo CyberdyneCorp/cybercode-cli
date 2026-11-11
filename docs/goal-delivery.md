@@ -43,8 +43,32 @@ check, SDK typecheck and 136 SDK tests (ten configured skips). Package library
 Clippy passed after routing inspection through the existing loader. Strict
 OpenSpec validation passed 100 items and lint reported zero errors/25 warnings.
 Native macOS C deprecation and linker unwind-size warnings were observed.
-Source-bound native CI remains pending on preceding revision `a4d28df4`.
+The native run for preceding revision `a4d28df4` completed as cancelled.
 This continuation has no native/platform acceptance.
+
+### Recorded source provenance continuation
+
+Epoch events now capture source origin, observation status and bounded file
+provenance from the actual observation. A separate Epoch-bound observation event
+records metadata changes without adding transcript messages. Unavailable sources
+retain the admitted value and its provenance. Historical sources without metadata
+report unknown origin and status. Tool-host overrides record their own origin and
+drop file provenance from the replaced built-in source. Deferred output-style
+changes carry a pending flag.
+
+Inspection lists up to 256 sources, largest first, with explicit omitted counts.
+Each file inventory is bounded to 128 paths and 16 KiB. Content and unavailable
+diagnostic text stay outside the metadata response. The next-request estimate,
+config/revocation provenance and complete pending-change acceptance remain open.
+
+Local verification passed all 24 context/compaction integration cases, the
+standalone authenticated HTTP inspection case, the source-path bounds unit case,
+OpenAPI regeneration and SDK consistency/typecheck with 136 passing tests and ten
+configured skips. Server/TUI all-target Clippy and both focused TUI rendering/stale-reply tests passed. Strict OpenSpec passed all 100
+items; cross-spec lint reported zero errors and 25 warnings. Native workflow YAML
+parsed successfully. The focused review corrected source attribution when a tool
+host replaces a built-in source, retained unavailable provenance, and source
+sorting before response truncation. Platform acceptance remains open.
 
 ### Zero-byte ordinary restore continuation
 

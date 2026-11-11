@@ -4083,6 +4083,13 @@ async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_defa
     assert!(data["baseline"].is_null());
     assert!(data["summary"].is_null());
     let estimate = &data["inspection"];
+    let effective = estimate["effective_sources"].as_array().unwrap();
+    let date = effective
+        .iter()
+        .find(|source| source["id"] == "core/date")
+        .unwrap();
+    assert_eq!(date["status"], "active");
+    assert_eq!(date["origin"], "runtime");
     assert_eq!(estimate["epoch_pending"], false);
     assert_eq!(estimate["last_request_tokens"], 100);
     assert_eq!(estimate["window"], 200_000);
@@ -4098,8 +4105,9 @@ async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_defa
         pair[0]["estimated_tokens"].as_u64().unwrap()
             >= pair[1]["estimated_tokens"].as_u64().unwrap()
     }));
-    let explicit: Value = inspect()
-        .query(&[("include_content", true)])
+    let explicit: Value = client
+        .get(format!("{url}?include_content=true"))
+        .basic_auth("cyber", Some("pw"))
         .send()
         .await
         .unwrap()

@@ -82,6 +82,7 @@ const ALL: &[&str] = &[
     SKILL_FORWARDED,
     EPOCH_STARTED,
     CONTEXT_UPDATED,
+    super::context_sources::OBSERVED,
     super::deferred_tools::LOADED,
     SYSTEM_ADDED,
     SESSION_STARTED,
@@ -227,6 +228,8 @@ pub struct EpochStarted {
     pub epoch: u32,
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, super::context_sources::SourceMetadata>,
     pub provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prefix: Option<String>,

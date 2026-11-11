@@ -338,6 +338,8 @@ pub struct Epoch {
     pub number: u32,
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, super::context_sources::SourceMetadata>,
     pub provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prefix: Option<String>,
@@ -1031,6 +1033,14 @@ impl SessionState {
             }
             "session.context.epoch_started" => self.on_epoch(decode(e)?),
             "session.context.updated" => self.on_context_updated(decode(e)?),
+            "session.context.observed" => {
+                let observed: super::context_sources::SourcesObserved = decode(e)?;
+                if let Some(epoch) = &mut self.epoch
+                    && epoch.number == observed.epoch
+                {
+                    epoch.sources = observed.sources;
+                }
+            }
             "session.system.added" => self.on_system(decode(e)?),
             "session.structured_output.settled" => {
                 let outcome: super::StructuredOutcome = decode(e)?;
@@ -1436,6 +1446,7 @@ impl SessionState {
             number: e.epoch,
             baseline: e.baseline,
             snapshot: e.snapshot,
+            sources: e.sources,
             provider: e.provider,
             system_prefix: e.system_prefix,
             family: e.family,

@@ -4,7 +4,15 @@ use cyber_llm::Message;
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use super::context_sources::{SourceMetadata, SourceStatus};
 use super::{InputStatus, Runtime, SessionState, view};
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct EffectiveContextSource {
+    pub id: String,
+    #[serde(flatten)]
+    pub metadata: SourceMetadata,
+}
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ContextSourceEstimate {
@@ -15,6 +23,9 @@ pub struct ContextSourceEstimate {
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ContextInspection {
+    /// Latest recorded source observations, without source content.
+    pub effective_sources: Vec<EffectiveContextSource>,
+    pub omitted_sources: usize,
     /// Sources in the stored projection, ordered by estimated size.
     pub sources: Vec<ContextSourceEstimate>,
     /// Estimate of the epoch system text and projected messages. Tool schemas
@@ -38,6 +49,8 @@ impl Runtime {
             .as_ref()
             .and_then(|model| (model.context_limit > 0).then_some(model.context_limit));
         let mut inspection = ContextInspection {
+            effective_sources: Vec::new(),
+            omitted_sources: 0,
             sources: Vec::new(),
             estimated_input_tokens: None,
             window,
@@ -58,6 +71,43 @@ impl Runtime {
                 .as_ref()
                 .map_or(0, |epoch| epoch.reminded_rules.len()),
         };
+        if let Some(epoch) = &state.epoch {
+            let ids: std::collections::BTreeSet<_> =
+                epoch.snapshot.keys().chain(epoch.sources.keys()).collect();
+            inspection.omitted_sources = ids.len().saturating_sub(256);
+            inspection.effective_sources = ids
+                .into_iter()
+                .map(|id| {
+                    let metadata =
+                        epoch
+                            .sources
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| SourceMetadata {
+                                origin: "unknown".into(),
+                                status: SourceStatus::Unknown,
+                                pending_update: false,
+                                estimated_tokens: epoch
+                                    .snapshot
+                                    .get(id)
+                                    .map(|text| (text.len() / 4) as u64),
+                                file_paths: Vec::new(),
+                                omitted_file_paths: 0,
+                            });
+                    EffectiveContextSource {
+                        id: id.clone(),
+                        metadata,
+                    }
+                })
+                .collect();
+            inspection.effective_sources.sort_by(|a, b| {
+                b.metadata
+                    .estimated_tokens
+                    .cmp(&a.metadata.estimated_tokens)
+                    .then(a.id.cmp(&b.id))
+            });
+            inspection.effective_sources.truncate(256);
+        }
         let (Some(epoch), Some(model)) = (&state.epoch, model) else {
             return inspection;
         };

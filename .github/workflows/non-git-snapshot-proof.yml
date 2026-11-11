@@ -41,11 +41,13 @@ on:
       - crates/cyber-tools/tests/instruction_config.rs
       - crates/cyber-tools/tests/path_skills.rs
       - crates/cyber-tools/tests/shell_patch.rs
-      - crates/cyber-server/src/runtime/context.rs
+      - crates/cyber-server/src/runtime/context*.rs
       - crates/cyber-server/src/runtime/instructions.rs
       - crates/cyber-server/src/runtime/instructions/**
       - crates/cyber-server/src/runtime/host.rs
       - crates/cyber-server/tests/context_compaction.rs
+      - crates/cyber-server/tests/http.rs
+      - crates/cyber-tui/src/context_inspection.rs
       - crates/cyber-server/tests/support/mod.rs
       - crates/cyber-cli/Cargo.toml
       - crates/cyber-cli/src/**
@@ -210,8 +212,10 @@ jobs:
           cargo test --locked -p cyber-core --test config rule_definition_bytes -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::context:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::instructions:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --lib runtime::context_sources:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --lib runtime::drain::skill_reminder_tests:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-server --test context_compaction -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --test http context_inspection -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-app --features native-git-acceptance --test instructions -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-tools --test instruction_config -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-tools --test path_skills -- --nocapture 2>&1 | tee -a instruction-limits-proof.log

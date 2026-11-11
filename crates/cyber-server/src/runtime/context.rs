@@ -32,6 +32,8 @@ pub enum Observed {
 #[derive(Debug, Default)]
 pub struct Observation {
     pub sources: BTreeMap<String, Observed>,
+    pub origins: BTreeMap<String, String>,
+    pub pending: std::collections::BTreeSet<String>,
     /// Recorded while reading, never parsed back out of rendered (untrusted) text.
     pub files: BTreeMap<String, Vec<String>>,
 }
@@ -46,7 +48,17 @@ pub fn observe(inputs: &ContextInputs) -> Observation {
     let (instructions, read) = instructions(inputs);
     sources.insert("core/instructions".to_string(), instructions);
     let files = BTreeMap::from([("core/instructions".to_string(), read)]);
-    Observation { sources, files }
+    let origins = BTreeMap::from([
+        ("core/date".into(), "runtime".into()),
+        ("core/environment".into(), "runtime".into()),
+        ("core/instructions".into(), "instruction_files".into()),
+    ]);
+    Observation {
+        sources,
+        origins,
+        files,
+        pending: Default::default(),
+    }
 }
 
 /// Values of available sources, or the keys of unavailable ones.

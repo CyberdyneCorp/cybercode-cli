@@ -38,6 +38,8 @@ pub mod computer;
 mod context;
 mod context_inspection;
 mod context_meter;
+mod context_sources;
+pub use context_sources::{SourceMetadata, SourceStatus};
 mod continuation;
 mod delegations;
 mod deletion;
