@@ -123,6 +123,49 @@ All 22 Git snapshot integration tests passed; the ignored entry is the pathspec
 subprocess fixture invoked by its parent test. Formatting and diff checks passed.
 Current-head Windows lint must verify this separate correction.
 
+### 2026-11-11 ownership and CI follow-up
+
+The native snapshot matrix on `90234d37` passed Linux x64/ARM and macOS
+Intel/ARM. Full workspace CI exposed separate command/localization and doctor
+assertion gaps, another Windows-only fixture lint issue, a snapshot disposal race,
+and browser/terminal lifecycle acceptance failures. Current source adds the
+`/context` catalog entry and Spanish/French/Portuguese help text, aligns doctor
+assertions with the approved `instruction_limits` contract, and gates native TUI
+fixture helpers with their callers.
+
+Snapshot disposal now records uncertainty before releasing native ownership.
+Worker guards and admission release before activity completion, and the runtime
+shutdown barrier releases last. A deterministic lifetime-disposal gate fails with
+the previous order and passes with the correction. All 456 server library cases
+pass; the ignored entry is a subprocess fixture invoked by Location-lock tests.
+Partial resource-construction acceptance remains open under M2.
+
+The production-TUI preparation fixture now injects one typed busy refusal for
+metadata acknowledgement. Its explicit retries look up the same retained request
+before each new acknowledgement attempt. It still requires one cancellation
+confirmation and one successful native acknowledgement, and preserves the Rust
+fixture's file/receipt/transcript assertions. The real PTY case passes locally
+with both pre-origin and published-origin preparations. Full concurrent CI
+acceptance remains required for the observed timeout.
+
+Process and subagent Jobs now retain optional `input_origin`: the original
+assistant step/call, dispatched attempt/operation key and complete server-recorded
+input cohort. Capture verifies the current dispatched call and reads its immutable
+step evidence before startup. Detached and historical Jobs retain unknown
+provenance. Actual built-in process/subagent regressions pass 24 cases, including
+handback retention and refusal to infer ownership from a previous prompt. JSONL
+background selection, result retirement and scoped cancellation remain open.
+
+Focused command-catalog, all-locale and eight doctor cases pass. The browser
+monitor fixture settles its owned in-flight Goal turn before independently
+checking headless request refusal; its E2E case passes three repetitions and its
+TypeScript check passes. Workspace all-target Clippy passed, followed by final
+server Clippy and process/subagent tests after tightening the dispatch lookup.
+OpenAPI/SDK consistency, SDK typecheck and 136 SDK tests pass with ten configured
+skips. Strict OpenSpec passes 100 items; lint reports zero errors/25 warnings.
+Native compiler/linker warnings were observed. Current-head platform CI and
+consolidated review remain required.
+
 ### Zero-byte ordinary restore continuation
 
 Ordinary cleanup now records payload completion for exact empty inventories and

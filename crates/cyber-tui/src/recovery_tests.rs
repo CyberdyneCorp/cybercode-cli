@@ -1,5 +1,7 @@
 use super::*;
-use crate::{model::Session, perform::Msg};
+use crate::model::Session;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use crate::perform::Msg;
 use serde_json::json;
 
 fn request(actions: Vec<Action>) -> rewind::Request {
@@ -215,6 +217,7 @@ fn only_positively_settled_attempts_allow_a_new_review_without_replay() {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn run(server: &crate::screens::Server, app: &mut App, mut actions: Vec<Action>) {
     while let Some(action) = actions.pop() {
         let message =
