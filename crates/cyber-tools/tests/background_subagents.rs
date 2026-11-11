@@ -27,6 +27,45 @@ async fn terminal(flow: &Flow, id: &str) -> cyber_server::runtime::Job {
 }
 
 #[tokio::test]
+async fn background_subagent_retains_the_original_parent_call_inputs_after_handback() {
+    let flow = Flow::with_models(
+        support::Fixture::new(),
+        vec![
+            call(
+                "spawn",
+                "agent",
+                json!({
+                    "prompt": "inspect", "background": true, "model": "test/child"
+                }),
+            ),
+            text("parent finished"),
+            text("handback received"),
+        ],
+        false,
+        std::sync::Arc::new(cyber_server::runtime::NoSnapshots),
+        vec![("test/child", vec![text("child finished")])],
+    );
+    flow.f.set_config(json!({"permissions":{"agent":"allow"}}));
+    let parent = flow.session("default").await;
+    let input = flow.prompt(&parent, "start inspection").await;
+    flow.settle(&parent).await;
+    let output: Value = serde_json::from_str(&flow.output(&parent, "spawn").await).unwrap();
+    let job = terminal(&flow, output["job_id"].as_str().unwrap()).await;
+    flow.settle(&parent).await;
+    let origin = job.input_origin.as_ref().expect("durable call provenance");
+    assert_eq!(origin.input_message_ids, vec![input]);
+    assert_eq!(origin.call_id, "spawn");
+    assert_eq!(
+        origin.message_id,
+        flow.runtime.state(&parent).await.unwrap().calls["spawn"].message_id
+    );
+    assert_eq!(
+        flow.runtime.job(&job.id).unwrap().input_origin,
+        job.input_origin
+    );
+}
+
+#[tokio::test]
 async fn background_returns_before_completion_and_survives_parent_interrupt() {
     let flow = Flow::new(
         vec![

@@ -77,7 +77,7 @@ fn collect(state: &SessionState, floor: i64, through: i64) -> Vec<String> {
     if bounded(&owners) { owners } else { Vec::new() }
 }
 
-pub(super) fn recorded(
+pub(crate) fn recorded(
     db: &Connection,
     session: &str,
     message: &str,

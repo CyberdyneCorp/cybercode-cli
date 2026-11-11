@@ -108,7 +108,7 @@ async fn background_bash_returns_job_id_and_log_path_and_survives_turn_end() {
     ]);
     let mut live = flow.runtime.subscribe();
     let session = flow.session("default").await;
-    flow.prompt(&session, "start the job").await;
+    let input = flow.prompt(&session, "start the job").await;
     flow.settle(&session).await;
     let handle: Value = serde_json::from_str(&flow.output(&session, "bg").await).unwrap();
     let id = handle["job_id"].as_str().unwrap();
@@ -123,6 +123,15 @@ async fn background_bash_returns_job_id_and_log_path_and_survives_turn_end() {
     assert_eq!(job.kind, "bash");
     assert_eq!(job.command.as_deref(), Some(command));
     assert_eq!(job.description, "wait for go");
+    let origin = job.input_origin.clone().expect("recorded caller inputs");
+    assert_eq!(origin.input_message_ids, vec![input]);
+    assert_eq!(origin.call_id, "bg");
+    assert_eq!(origin.attempt, 1);
+    assert_eq!(origin.operation_key, format!("{session}:bg"));
+    assert_eq!(
+        origin.message_id,
+        flow.runtime.state(&session).await.unwrap().calls["bg"].message_id
+    );
     until("started in the log", 10, || {
         log(&handle).contains("started")
     })
@@ -150,6 +159,19 @@ async fn background_bash_returns_job_id_and_log_path_and_survives_turn_end() {
     assert_eq!(streamed, "started\nfinished\n");
     flow.settle(&session).await;
     assert_eq!(flow.main.requests().len(), 3, "the notice starts a Turn");
+    assert_eq!(flow.runtime.job(id).unwrap().input_origin, Some(origin));
+}
+
+#[tokio::test]
+async fn detached_process_job_does_not_infer_ownership_from_the_latest_prompt() {
+    let flow = flow(vec![text("previous input finished")]);
+    let session = flow.session("default").await;
+    flow.prompt(&session, "another client's input").await;
+    flow.settle(&session).await;
+    let handle = start(&flow, &session, json!({"command": "true", "notify": false})).await;
+    let job = terminal(&flow, handle["job_id"].as_str().unwrap()).await;
+    assert!(job.input_origin.is_none());
+    assert_eq!(flow.main.requests().len(), 1);
 }
 
 #[tokio::test]

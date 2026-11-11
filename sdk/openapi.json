@@ -2501,6 +2501,16 @@
           "session_id": {
             "type": "string"
           },
+          "input_origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobInputOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "child_id": {
             "type": "string",
             "description": "The child Session of a `subagent` Job; empty for process Jobs."
@@ -2586,6 +2596,39 @@
           "tokens",
           "notified"
         ]
+      },
+      "JobInputOrigin": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "call_id": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "operation_key": {
+            "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "message_id",
+          "call_id",
+          "attempt",
+          "operation_key",
+          "input_message_ids"
+        ],
+        "description": "Immutable input provenance from the dispatched parent call."
       },
       "JobStatus": {
         "type": "string",

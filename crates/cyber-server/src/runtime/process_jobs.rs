@@ -36,6 +36,7 @@ pub struct ProcessJob {
 /// An admitted process Job, counted against the limit until it starts or is dropped.
 /// Session deletion and other starts wait while it is held.
 pub struct ProcessReservation {
+    input_origin: Option<super::jobs::JobInputOrigin>,
     id: String,
     output_path: PathBuf,
     spec: ProcessJob,
@@ -124,12 +125,25 @@ impl Runtime {
         }
         let id = cyber_core::ids::new_id("job");
         Ok(ProcessReservation {
+            input_origin: None,
             output_path: spec.output_dir.join(format!("{id}.log")),
             id,
             spec,
             runtime: self.downgrade(),
             _guard: guard,
         })
+    }
+
+    /// Preserve provenance of the original dispatched call across Job startup.
+    pub async fn reserve_process_job_for_call(
+        &self,
+        spec: ProcessJob,
+        invocation: &super::Invocation,
+    ) -> Result<ProcessReservation, RuntimeError> {
+        let mut reservation = self.reserve_process_job(spec).await?;
+        reservation.input_origin =
+            self.job_input_origin(&reservation.spec.session_id, invocation)?;
+        Ok(reservation)
     }
 
     fn running_process_jobs(&self, session: &str) -> Result<usize, RuntimeError> {
@@ -164,6 +178,7 @@ impl Runtime {
         let job = Job {
             id: reservation.id.clone(),
             session_id: spec.session_id.clone(),
+            input_origin: reservation.input_origin.clone(),
             child_id: String::new(),
             name: reservation.id.clone(),
             kind: spec.kind.clone(),

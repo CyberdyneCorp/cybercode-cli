@@ -59,6 +59,8 @@ to be a pending input of this driver and the exact Session. Scoped interruption,
 input-scoped presence, descendant ownership and other event/result correlation
 remain separate implementation obligations.
 
+Process and subagent Job reservations capture optional `input_origin` metadata from the original parent step/call while its dispatched attempt and operation key match the durable tool-call record. The complete input cohort comes from the recorded step, including across later steering and handbacks. Historical or detached Jobs expose unknown provenance through an absent field. The JSONL driver still requires integration with this evidence before background adoption, result retirement and cancellation can be accepted.
+
 Emit schema_version 2, one result per admitted input with stable correlation, optional partial text/reasoning and hook events, and atomic `--output-last-message`. Session-level usage remains separate from per-input results and descendant usage. Redact errors and bound output buffering; define aggregate exits as 130 for explicit SIGINT, 2 for a fatal protocol error, otherwise the first nonzero input outcome in admission order (0 only when all outcomes succeed). A failing input does not discard already acknowledged later input; fatal protocol errors stop new admission and settle or explicitly cancel only owned work. Cover these precedence rules in protocol tests. Do not silently change text-mode output or the existing review/workflow/Goal command contracts; unsupported option combinations fail before creating work.
 
 ## Delivery and acceptance

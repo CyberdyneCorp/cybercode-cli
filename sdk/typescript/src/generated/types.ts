@@ -2477,6 +2477,7 @@ export type IterationRecord = {
 export type Job = {
   id: string;
   session_id: string;
+  input_origin?: JobInputOrigin | null;
   /** The child Session of a `subagent` Job; empty for process Jobs. */
   child_id: string;
   name: string;
@@ -2497,6 +2498,15 @@ export type Job = {
   unpriced?: boolean;
   tokens: number;
   notified: boolean;
+};
+
+/** Immutable input provenance from the dispatched parent call. */
+export type JobInputOrigin = {
+  message_id: string;
+  call_id: string;
+  attempt: number;
+  operation_key: string;
+  input_message_ids: string[];
 };
 
 /** The end of a process Job's log (`background-tasks` → Tasks view: open output). */

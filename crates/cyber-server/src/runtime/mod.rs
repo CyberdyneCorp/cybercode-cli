@@ -97,7 +97,7 @@ mod subtask;
 mod subtree_reopen;
 mod subtree_stop;
 pub use delegations::{Delegation, DelegationPhase, DelegationStatus};
-pub use jobs::{Job, JobAdmission, JobAttempt, JobStatus, JobUsage};
+pub use jobs::{Job, JobAdmission, JobAttempt, JobInputOrigin, JobStatus, JobUsage};
 pub use names::ChildExecution;
 pub use subtask::UserSubtask;
 pub use subtree_reopen::SubtreeReopenReport;
