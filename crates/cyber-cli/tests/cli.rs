@@ -67,7 +67,9 @@ fn version_has_semver_channel_sha_and_target() {
     let line = stdout(&o);
     let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
     assert_eq!(parts[0], "cyber");
-    assert_eq!(parts[1].split('.').count(), 3, "{line}");
+    // Regression: a pre-release (`0.1.0-beta.1`) has dots in its suffix too.
+    let core = parts[1].split_once('-').map_or(parts[1], |(core, _)| core);
+    assert_eq!(core.split('.').count(), 3, "{line}");
     assert!(
         parts[2].starts_with('(') && parts[2].ends_with(')') && parts[2].matches(", ").count() == 2,
         "{line}"
