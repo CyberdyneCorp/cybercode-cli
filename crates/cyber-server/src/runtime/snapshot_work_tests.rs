@@ -1360,6 +1360,198 @@ impl Drop for LifetimeDisposalGate {
     }
 }
 
+struct ConstructionSnapshots {
+    inner: Lifetimes,
+    cleanup: std::sync::Mutex<
+        Option<(
+            tokio::sync::oneshot::Sender<()>,
+            std::sync::mpsc::Receiver<()>,
+        )>,
+    >,
+}
+impl Snapshots for ConstructionSnapshots {
+    fn reserve_worker(
+        &self,
+        request: super::super::SnapshotLifetimeRequest,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<Option<Box<dyn super::super::SnapshotLifetime>>, String>,
+    > {
+        Box::pin(async move {
+            let inner = self.inner.reserve_worker(request).await?.unwrap();
+            let (entered, release) = self.cleanup.lock().unwrap().take().unwrap();
+            Ok(Some(Box::new(LifetimeDisposalGate {
+                inner,
+                entered: Some(entered),
+                release,
+            })
+                as Box<dyn super::super::SnapshotLifetime>))
+        })
+    }
+    fn track(
+        &self,
+        directory: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Option<super::super::Snapshot>, String>> {
+        self.inner.track(directory)
+    }
+    fn changed(
+        &self,
+        directory: &str,
+        before: &str,
+        after: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<String>, String>> {
+        self.inner.changed(directory, before, after)
+    }
+    fn diff(
+        &self,
+        directory: &str,
+        before: &str,
+        after: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<super::super::FileDiff>, String>> {
+        self.inner.diff(directory, before, after)
+    }
+    fn restore(
+        &self,
+        directory: &str,
+        before: &str,
+        after: &str,
+    ) -> futures::future::BoxFuture<'_, Result<Vec<String>, RestoreError>> {
+        self.inner.restore(directory, before, after)
+    }
+}
+
+struct ConstructionClaim {
+    release: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+impl super::super::ToolHost for ConstructionClaim {
+    fn definitions(&self, _: &super::super::TurnContext) -> Vec<super::super::ToolDef> {
+        vec![]
+    }
+    fn execute(
+        &self,
+        _: super::super::Invocation,
+        _: tokio_util::sync::CancellationToken,
+    ) -> futures::future::BoxFuture<'_, super::super::ToolOutcome> {
+        Box::pin(async { super::super::ToolOutcome::Failed("unused fixture tool".into()) })
+    }
+    fn claim_snapshot_location<'a>(
+        &'a self,
+        _: &'a super::super::SessionInfo,
+        _: &'a str,
+        _: tokio_util::sync::CancellationToken,
+    ) -> futures::future::BoxFuture<'a, Result<super::super::LocationLease, String>> {
+        let release = self.release.lock().unwrap().take().unwrap();
+        Box::pin(async move {
+            let _ = release.await;
+            Err("injected checkout acquisition failure".into())
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn partial_construction_retains_activity_and_admission_through_lifetime_disposal() {
+    for (recovery, abort) in [(false, false), (false, true), (true, false), (true, true)] {
+        let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let request = if recovery {
+            Some(recovery_request(
+                failed_snapshot(&base, &session, temp.path().canonicalize().unwrap()).await,
+            ))
+        } else {
+            None
+        };
+        let permits = Arc::new(tokio::sync::Semaphore::new(1));
+        let (cleanup_started, cleanup_running) = tokio::sync::oneshot::channel();
+        let (release_cleanup, cleanup_gate) = std::sync::mpsc::channel();
+        let (release_claim, claim_gate) = tokio::sync::oneshot::channel();
+        let runtime = runtime_with_snapshot_tools(
+            &base,
+            base.inner.store.clone(),
+            temp.path(),
+            Arc::new(ConstructionSnapshots {
+                inner: Lifetimes {
+                    inner: Acknowledgements(Arc::new(AtomicUsize::new(0))),
+                    permits: permits.clone(),
+                    foreign: false,
+                    reject_resources: false,
+                    resources: Default::default(),
+                },
+                cleanup: std::sync::Mutex::new(Some((cleanup_started, cleanup_gate))),
+            }),
+            Arc::new(ConstructionClaim {
+                release: std::sync::Mutex::new(Some(claim_gate)),
+            }),
+        );
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let handle = handle.clone();
+            async move {
+                let state = handle.state.lock().await;
+                match request {
+                    Some(request) => {
+                        runtime
+                            .snapshot_recovery_worker(&handle, &state, request)
+                            .await
+                    }
+                    None => runtime.snapshot_worker(&handle, &state).await,
+                }
+            }
+        });
+        let (id, control) = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let activity = runtime
+                    .inner
+                    .activities
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|(_, control)| control.source == session)
+                    .map(|(id, control)| (id.clone(), control.clone()));
+                if let Some(activity) = activity {
+                    break activity;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        if abort {
+            task.abort();
+        } else {
+            release_claim.send(()).unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(3), cleanup_running)
+            .await
+            .unwrap()
+            .unwrap();
+        let retained = !control.done.is_cancelled()
+            && handle.snapshot_active.load(Ordering::SeqCst)
+            && runtime.inner.activities.lock().unwrap().contains_key(&id)
+            && permits.available_permits() == 0;
+        let unknown = latest(&runtime, &session)["status"] == "unknown";
+        // Always release the synchronous Drop gate before asserting the regression.
+        release_cleanup.send(()).unwrap();
+        let result = task.await;
+        assert!(
+            retained,
+            "partial construction completed before lifetime disposal (recovery={recovery}, abort={abort})"
+        );
+        assert!(unknown, "partial construction lost durable uncertainty");
+        if abort {
+            assert!(matches!(result, Err(error) if error.is_cancelled()));
+        } else {
+            assert!(
+                matches!(result, Ok(Err(RuntimeError::Invalid(reason))) if reason.contains("checkout acquisition failure"))
+            );
+        }
+        assert!(control.done.is_cancelled());
+        assert!(!handle.snapshot_active.load(Ordering::SeqCst));
+        assert_eq!(permits.available_permits(), 1);
+        runtime.shutdown().await;
+        base.shutdown().await;
+    }
+}
+
 #[tokio::test]
 async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_request_disposal() {
     let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;

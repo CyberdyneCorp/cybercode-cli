@@ -75,6 +75,15 @@ activity. Acquiring the exact bound store/checkout locks plus validating that or
 is proof about this worker only. It cannot acknowledge a shell, child process,
 other document, another runtime's live worker or an unrelated unknown activity.
 
+The runtime retains the same ordered owner during partial construction, beginning
+immediately after activity reservation. Both ordinary and recovery construction
+record durable disposal before releasing acquired native resources. Lifetime
+ownership and admission release before activity completion, and the shutdown
+barrier releases last. Successful construction transfers ownership without an
+intermediate release. Checkout acquisition/publication/proof failure and requester
+cancellation cannot publish completion while a retained lifetime is still being
+disposed. Native constructor crash evidence remains independently fenced.
+
 Runtime Location uncertainty distinguishes exact snapshot activity IDs from opaque
 process/checkout outcomes. Reload preserves both kinds independently. Observing an
 exact durable snapshot acknowledgement can remove only that snapshot reason; it

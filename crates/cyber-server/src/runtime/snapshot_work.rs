@@ -121,6 +121,97 @@ impl Drop for SnapshotWorker {
     }
 }
 
+/// Construction has the same disposal boundary as an admitted worker. In
+/// particular, cancellation while awaiting checkout ownership must not publish
+/// activity completion before the lifetime guard has actually been released.
+struct SnapshotConstruction {
+    lease: Option<super::LocationLease>,
+    location: Option<Box<dyn super::SnapshotLocationGuard>>,
+    original: Option<OriginalResources>,
+    lifetime: Option<Box<dyn super::SnapshotLifetime>>,
+    admission: Option<SnapshotAdmission>,
+    scope: Option<activity::Scope>,
+    lifecycle: Option<OwnedRwLockReadGuard<()>>,
+}
+
+impl Drop for SnapshotConstruction {
+    fn drop(&mut self) {
+        if let Some(scope) = &mut self.scope {
+            scope.dispose_before_completion();
+        }
+    }
+}
+
+impl SnapshotConstruction {
+    fn new(
+        scope: activity::Scope,
+        original: Option<OriginalResources>,
+        lifetime: Option<Box<dyn super::SnapshotLifetime>>,
+        admission: SnapshotAdmission,
+        lifecycle: OwnedRwLockReadGuard<()>,
+    ) -> Self {
+        Self {
+            lease: None,
+            location: None,
+            original,
+            lifetime,
+            admission: Some(admission),
+            scope: Some(scope),
+            lifecycle: Some(lifecycle),
+        }
+    }
+
+    fn scope(&self) -> &activity::Scope {
+        self.scope.as_ref().expect("construction owns its scope")
+    }
+
+    fn retain_checkout(&mut self, worktree: Option<&str>) -> Result<(), RuntimeError> {
+        let bindings = SnapshotWorker::checkout_resources(
+            self.scope(),
+            self.lease.as_ref().expect("checkout acquisition completed"),
+            worktree,
+        )?;
+        if let Some(lifetime) = &self.lifetime {
+            lifetime
+                .bind_checkouts(&bindings)
+                .map_err(RuntimeError::Conflict)?;
+        }
+        self.location = Some(
+            self.lease
+                .take()
+                .expect("checkout acquisition completed")
+                .settle_snapshot_retained()
+                .map_err(RuntimeError::Invalid)?,
+        );
+        SnapshotWorker::verify_checkout(
+            self.location.as_deref().expect("checkout retained"),
+            &bindings,
+        )
+    }
+
+    fn finish(
+        mut self,
+        runtime: &Runtime,
+        state: &SessionState,
+        directory: PathBuf,
+        created_id: String,
+    ) -> SnapshotWorker {
+        SnapshotWorker {
+            sequence: state.last_seq,
+            runtime: runtime.clone(),
+            directory,
+            created_id,
+            worktree_id: state.info.worktree_id.clone(),
+            _location: self.location.take(),
+            _original: self.original.take(),
+            _lifetime: self.lifetime.take(),
+            admission: self.admission.take().expect("construction owns admission"),
+            scope: self.scope.take().expect("construction owns its scope"),
+            _lifecycle: self.lifecycle.take().expect("construction owns lifecycle"),
+        }
+    }
+}
+
 struct SnapshotAdmission(Arc<Handle>);
 
 impl Drop for SnapshotAdmission {
@@ -371,6 +462,7 @@ impl SnapshotWorker {
         }
         Ok(bindings)
     }
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
     fn checkout_proof(
         scope: &activity::Scope,
         lease: super::LocationLease,
@@ -380,13 +472,20 @@ impl SnapshotWorker {
         let proof = lease
             .settle_snapshot_retained()
             .map_err(RuntimeError::Invalid)?;
+        Self::verify_checkout(proof.as_ref(), &bindings)?;
+        Ok(proof)
+    }
+    fn verify_checkout(
+        proof: &dyn super::SnapshotLocationGuard,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<(), RuntimeError> {
         proof.verify().map_err(RuntimeError::Conflict)?;
         if proof.bindings().map_err(RuntimeError::Conflict)? != bindings {
             return Err(RuntimeError::Conflict(
                 "Snapshot checkout binding changed during retained settlement".into(),
             ));
         }
-        Ok(proof)
+        Ok(())
     }
     fn location(&self) -> Result<&dyn super::SnapshotLocationGuard, String> {
         self._location
@@ -692,15 +791,18 @@ impl Runtime {
             authority,
             lifetime.as_ref().map(|owner| owner.binding().clone()),
         )?;
-        let lease = self
-            .inner
-            .claim_snapshot_location(
-                &state.info,
-                scope.id(),
-                scope.snapshot_lifetime(),
-                scope.control.stop.clone(),
-            )
-            .await?;
+        let mut construction =
+            SnapshotConstruction::new(scope, original, lifetime, admission, lifecycle);
+        construction.lease = Some(
+            self.inner
+                .claim_snapshot_location(
+                    &state.info,
+                    construction.scope().id(),
+                    construction.scope().snapshot_lifetime(),
+                    construction.scope().control.stop.clone(),
+                )
+                .await?,
+        );
         let directory = std::fs::canonicalize(&state.info.directory)
             .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
         let created_id = self
@@ -714,34 +816,19 @@ impl Runtime {
             .clone();
         if directory != request.original.binding.directory
             || created_id != request.original.session_created_id
-            || lease.worktree_id != request.original.worktree_id
+            || construction
+                .lease
+                .as_ref()
+                .expect("checkout acquired")
+                .worktree_id
+                != request.original.worktree_id
         {
             return Err(RuntimeError::Conflict(
                 "Recovery native Location/creation binding changed".into(),
             ));
         }
-        let bindings =
-            SnapshotWorker::checkout_resources(&scope, &lease, state.info.worktree_id.as_deref())?;
-        if let Some(lifetime) = &lifetime {
-            lifetime
-                .bind_checkouts(&bindings)
-                .map_err(RuntimeError::Conflict)?;
-        }
-        let location =
-            SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
-        Ok(SnapshotWorker {
-            scope,
-            admission,
-            sequence: state.last_seq,
-            runtime: self.clone(),
-            directory,
-            created_id,
-            worktree_id: state.info.worktree_id.clone(),
-            _location: Some(location),
-            _original: original,
-            _lifecycle: lifecycle,
-            _lifetime: lifetime,
-        })
+        construction.retain_checkout(state.info.worktree_id.as_deref())?;
+        Ok(construction.finish(self, state, directory, created_id))
     }
     pub(crate) async fn snapshot_worker(
         &self,
@@ -772,16 +859,25 @@ impl Runtime {
             lifetime.as_ref().map(|owner| owner.binding().clone()),
         )
         .await?;
-        let lease = self
-            .inner
-            .claim_snapshot_location(
-                &state.info,
-                scope.id(),
-                scope.snapshot_lifetime(),
-                scope.control.stop.clone(),
-            )
-            .await?;
-        if lease.worktree_id != state.info.worktree_id {
+        let mut construction =
+            SnapshotConstruction::new(scope, None, lifetime, admission, lifecycle);
+        construction.lease = Some(
+            self.inner
+                .claim_snapshot_location(
+                    &state.info,
+                    construction.scope().id(),
+                    construction.scope().snapshot_lifetime(),
+                    construction.scope().control.stop.clone(),
+                )
+                .await?,
+        );
+        if construction
+            .lease
+            .as_ref()
+            .expect("checkout acquired")
+            .worktree_id
+            != state.info.worktree_id
+        {
             return Err(RuntimeError::Conflict(
                 "Snapshot checkout binding changed".into(),
             ));
@@ -797,29 +893,8 @@ impl Runtime {
             .ok_or_else(|| RuntimeError::Conflict("Snapshot Session origin is missing".into()))?
             .id
             .clone();
-        let worktree_id = state.info.worktree_id.clone();
-        let bindings =
-            SnapshotWorker::checkout_resources(&scope, &lease, state.info.worktree_id.as_deref())?;
-        if let Some(lifetime) = &lifetime {
-            lifetime
-                .bind_checkouts(&bindings)
-                .map_err(RuntimeError::Conflict)?;
-        }
-        let location =
-            SnapshotWorker::checkout_proof(&scope, lease, state.info.worktree_id.as_deref())?;
-        Ok(SnapshotWorker {
-            scope,
-            runtime: self.clone(),
-            directory,
-            created_id,
-            worktree_id,
-            _location: Some(location),
-            _original: None,
-            _lifecycle: lifecycle,
-            _lifetime: lifetime,
-            admission,
-            sequence: state.last_seq,
-        })
+        construction.retain_checkout(state.info.worktree_id.as_deref())?;
+        Ok(construction.finish(self, state, directory, created_id))
     }
 }
 

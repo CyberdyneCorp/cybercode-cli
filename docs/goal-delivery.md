@@ -140,6 +140,22 @@ the previous order and passes with the correction. All 456 server library cases
 pass; the ignored entry is a subprocess fixture invoked by Location-lock tests.
 Partial resource-construction acceptance remains open under M2.
 
+Runtime construction now uses an ordered partial owner immediately after activity
+reservation, for both ordinary restore and recovery workers. Failed checkout
+acquisition, checkout proof validation, resource publication and requester
+cancellation retain the lifetime/admission/shutdown barrier through disposal.
+Uncertainty is recorded before the retained resources release; activity completion
+follows their actual disposal. Completed construction transfers those same guards
+to the worker. A gated-lifetime regression failed on the previous order and now
+passes acquisition failure and requester cancellation for both entry points.
+The complete server library suite passes 457 cases with one ignored subprocess
+fixture. Native partial-journal construction/crash acceptance and M2 remain open.
+Server all-target Clippy passes with warnings denied. Strict OpenSpec validation
+passes 100 items; lint reports zero errors and 25 warnings. Formatting and diff
+checks pass. The focused code-review-skill review covers the construction owner,
+both callers, regression fixtures and these evidence updates; whole-branch review
+and current-source native/platform execution remain required.
+
 The production-TUI preparation fixture now injects one typed busy refusal for
 metadata acknowledgement. Its explicit retries look up the same retained request
 before each new acknowledgement attempt. It still requires one cancellation
