@@ -172,6 +172,22 @@ provenance. Actual built-in process/subagent regressions pass 24 cases, includin
 handback retention and refusal to infer ownership from a previous prompt. JSONL
 background selection, result retirement and scoped cancellation remain open.
 
+The new authenticated `POST /jobs/input-state` read query accepts at most 32
+unique bounded input identities and aggregates complete-cohort Job ownership at
+the Store. Its response has one small record per input and contains no Job
+payloads/history pages. It excludes foreign/mixed cohorts and missing, malformed,
+duplicate or oversized provenance. Three query regressions, all 82 server HTTP
+cases and all 12 background Bash cases pass, including an actual dispatched Job
+before and after handback. Generated OpenAPI/SDK consistency, SDK typecheck and
+136 SDK cases pass with ten configured skips. Server/tools all-target Clippy
+passes with warnings denied. Strict OpenSpec passes 100 items; spec lint reports
+zero errors and 25 warnings. Native C/linker warnings were observed during builds.
+Focused review covers the query, route, generated API/SDK, fixtures and evidence.
+The query does not establish processing of a queued handback, and the CLI has not
+adopted it yet. Exact background/descendant ownership, retirement and cancellation
+remain open. The native matrix now includes the query regressions; current-source
+platform execution and consolidated review remain required.
+
 Focused command-catalog, all-locale and eight doctor cases pass. The browser
 monitor fixture settles its owned in-flight Goal turn before independently
 checking headless request refusal; its E2E case passes three repetitions and its

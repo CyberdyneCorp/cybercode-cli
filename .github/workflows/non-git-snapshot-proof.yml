@@ -19,6 +19,7 @@ on:
       - crates/cyber-server/src/runtime/events.rs
       - crates/cyber-server/src/runtime/activity.rs
       - crates/cyber-server/src/runtime/jobs.rs
+      - crates/cyber-server/src/runtime/input_jobs.rs
       - crates/cyber-server/src/runtime/process_jobs.rs
       - crates/cyber-server/src/runtime/requests.rs
       - crates/cyber-server/src/runtime/requests/**
@@ -237,6 +238,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-server --lib runtime::snapshot_work:: -- --nocapture 2>&1 | tee worker-ownership-proof.log
+          cargo test --locked -p cyber-server --lib runtime::input_jobs:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
           cargo test --locked -p cyber-tools --test background_bash --test background_subagents -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
       - name: Retain native evidence
         if: always()

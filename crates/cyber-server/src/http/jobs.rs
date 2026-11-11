@@ -23,9 +23,20 @@ struct Filter {
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/jobs", get(list))
+        .route("/jobs/input-state", post(input_state))
         .route("/jobs/{id}", get(show))
         .route("/jobs/{id}/stop", post(stop))
         .route("/jobs/{id}/output", get(output))
+}
+
+async fn input_state(
+    State(state): State<AppState>,
+    Json(query): Json<crate::runtime::InputJobQuery>,
+) -> Result<Json<Data<Vec<crate::runtime::InputJobState>>>, ApiError> {
+    state.runtime.state(&query.session_id).await?;
+    Ok(Json(Data {
+        data: state.runtime.input_job_state(query)?,
+    }))
 }
 
 /// Bytes of a Job log returned by default, and at most.

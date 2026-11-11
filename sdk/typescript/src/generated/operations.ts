@@ -722,6 +722,12 @@ export interface Operations {
     body: undefined;
     response: S.Job;
   };
+  "v1.job.inputState": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.InputJobQuery;
+    response: S.InputJobState[];
+  };
   "v1.job.list": {
     path: Record<string, never>;
     query: {
@@ -3187,6 +3193,18 @@ export const operations = {
     pathParams: ["id"],
     query: [],
     body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.job.inputState": {
+    tag: "job",
+    name: "inputState",
+    method: "POST",
+    path: "/api/v1/jobs/input-state",
+    pathParams: [],
+    query: [],
+    body: "required",
     located: false,
     unwrap: true,
     stream: false,
@@ -5863,6 +5881,9 @@ export function createGroups(caller: Caller) {
       /** Read a background task (`GET /api/v1/jobs/{id}`) */
       get: (id: string, options?: RequestOptions): Promise<Operations["v1.job.get"]["response"]> =>
         caller.call("v1.job.get", { path: { id } }, options),
+      /** Read bounded background settlement for a complete input cohort (`POST /api/v1/jobs/input-state`) */
+      inputState: (body: Operations["v1.job.inputState"]["body"], options?: RequestOptions): Promise<Operations["v1.job.inputState"]["response"]> =>
+        caller.call("v1.job.inputState", { body }, options),
       /** List durable background tasks (`GET /api/v1/jobs`) */
       list: (query?: Operations["v1.job.list"]["query"], options?: RequestOptions): Promise<Operations["v1.job.list"]["response"]> =>
         caller.call("v1.job.list", { query }, options),

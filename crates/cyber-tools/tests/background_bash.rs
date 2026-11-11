@@ -124,7 +124,23 @@ async fn background_bash_returns_job_id_and_log_path_and_survives_turn_end() {
     assert_eq!(job.command.as_deref(), Some(command));
     assert_eq!(job.description, "wait for go");
     let origin = job.input_origin.clone().expect("recorded caller inputs");
-    assert_eq!(origin.input_message_ids, vec![input]);
+    assert_eq!(origin.input_message_ids, vec![input.clone()]);
+    let owned = flow
+        .runtime
+        .input_job_state(cyber_server::runtime::InputJobQuery {
+            session_id: session.clone(),
+            input_message_ids: vec![input.clone()],
+        })
+        .unwrap();
+    assert!(owned[0].running);
+    let foreign = flow
+        .runtime
+        .input_job_state(cyber_server::runtime::InputJobQuery {
+            session_id: session.clone(),
+            input_message_ids: vec!["msg_other_driver".into()],
+        })
+        .unwrap();
+    assert!(!foreign[0].running && !foreign[0].awaiting_handback);
     assert_eq!(origin.call_id, "bg");
     assert_eq!(origin.attempt, 1);
     assert_eq!(origin.operation_key, format!("{session}:bg"));
@@ -160,6 +176,14 @@ async fn background_bash_returns_job_id_and_log_path_and_survives_turn_end() {
     flow.settle(&session).await;
     assert_eq!(flow.main.requests().len(), 3, "the notice starts a Turn");
     assert_eq!(flow.runtime.job(id).unwrap().input_origin, Some(origin));
+    let settled = flow
+        .runtime
+        .input_job_state(cyber_server::runtime::InputJobQuery {
+            session_id: session.clone(),
+            input_message_ids: vec![input],
+        })
+        .unwrap();
+    assert!(!settled[0].running && !settled[0].awaiting_handback);
 }
 
 #[tokio::test]

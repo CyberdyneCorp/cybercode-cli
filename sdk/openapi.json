@@ -2657,6 +2657,67 @@
           }
         }
       },
+      "InputJobQuery": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "session_id",
+          "input_message_ids"
+        ]
+      },
+      "Data_Array_of_InputJobState": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputJobState"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "InputJobState": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "awaiting_handback": {
+            "type": "boolean",
+            "description": "An ended Job has not yet admitted its completion notice. False does not\nestablish that the parent has processed an already admitted handback."
+          },
+          "oldest_unnotified_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        },
+        "required": [
+          "message_id",
+          "running",
+          "awaiting_handback"
+        ],
+        "description": "One small Job record per supplied input; no logs/results/history. Handback\nadmission is separate from the parent Turn processing that queued input."
+      },
       "Data_Job": {
         "type": "object",
         "properties": {
@@ -21494,6 +21555,57 @@
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/input-state": {
+      "post": {
+        "operationId": "v1.job.inputState",
+        "summary": "Read bounded background settlement for a complete input cohort",
+        "tags": [
+          "job"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_InputJobState"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputJobQuery"
               }
             }
           }

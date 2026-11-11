@@ -328,6 +328,9 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .query(&["session_id", "limit", "cursor"])
         .ok::<Page<crate::runtime::Job>>(g),
+        op("post", "/jobs/input-state", "v1.job.inputState", "Read bounded background settlement for a complete input cohort")
+            .body::<crate::runtime::InputJobQuery>(g)
+            .ok::<Data<Vec<crate::runtime::InputJobState>>>(g),
         op("get", "/jobs/{id}", "v1.job.get", "Read a background task")
             .ok::<Data<crate::runtime::Job>>(g),
         op(

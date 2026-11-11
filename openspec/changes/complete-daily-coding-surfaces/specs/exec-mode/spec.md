@@ -21,6 +21,12 @@
 - **WHEN** an active JSONL driver sends an interrupt while its model request is streaming
 - **THEN** the reader processes it without waiting for model completion and interruption applies only to the driver's owned execution
 
+#### Scenario: Bounded background ownership lookup
+- **WHEN** an authenticated client queries Job state for 1–32 unique input identities, each at most 256 UTF-8 bytes
+- **THEN** the server SHALL return one small record per supplied identity without returning Job payloads or collecting Session history pages
+- **AND** a Job SHALL count only when its complete valid durable input cohort belongs to that Session and the supplied set; missing, malformed, oversized, duplicate or mixed-cohort provenance SHALL grant no inferred ownership
+- **AND** the lookup SHALL NOT mutate, cancel or settle work, and handback admission SHALL NOT be treated as proof that its parent Turn has completed
+
 #### Scenario: EOF with a pending approval
 - **WHEN** the driver's input closes while one of its requests awaits a reply
 - **THEN** that request follows the defined disconnected/non-interactive policy and the process does not wait forever or fabricate approval

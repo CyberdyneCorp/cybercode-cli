@@ -61,6 +61,16 @@ remain separate implementation obligations.
 
 Process and subagent Job reservations capture optional `input_origin` metadata from the original parent step/call while its dispatched attempt and operation key match the durable tool-call record. The complete input cohort comes from the recorded step, including across later steering and handbacks. Historical or detached Jobs expose unknown provenance through an absent field. The JSONL driver still requires integration with this evidence before background adoption, result retirement and cancellation can be accepted.
 
+`POST /jobs/input-state` accepts one Session and 1–32 unique input identities,
+each at most 256 UTF-8 bytes. It returns one small running/unadmitted-handback
+summary per supplied identity, aggregating only Jobs whose complete nonempty,
+bounded durable cohort belongs to the supplied set. Missing, malformed, duplicate,
+oversized or mixed-cohort Job provenance does not grant ownership. The query
+aggregates at the Store and returns no Job payloads or accumulated history pages.
+This is a read-only Job observation: admitted handbacks may still be queued or
+executing. Driver retirement must also establish completion of the original input
+and its owned handback Turns; the summary alone is not that completion proof.
+
 Emit schema_version 2, one result per admitted input with stable correlation, optional partial text/reasoning and hook events, and atomic `--output-last-message`. Session-level usage remains separate from per-input results and descendant usage. Redact errors and bound output buffering; define aggregate exits as 130 for explicit SIGINT, 2 for a fatal protocol error, otherwise the first nonzero input outcome in admission order (0 only when all outcomes succeed). A failing input does not discard already acknowledged later input; fatal protocol errors stop new admission and settle or explicitly cancel only owned work. Cover these precedence rules in protocol tests. Do not silently change text-mode output or the existing review/workflow/Goal command contracts; unsupported option combinations fail before creating work.
 
 ## Delivery and acceptance

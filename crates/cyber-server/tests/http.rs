@@ -1800,6 +1800,70 @@ async fn background_job_routes_list_scope_and_stop_a_child() {
     assert_eq!(api.get("/jobs/missing").await.0, StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn input_job_state_is_authenticated_bounded_and_read_only() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let body = json!({"session_id":session,"input_message_ids":["msg_driver"]});
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    assert_eq!(
+        client
+            .post(format!("{base}/jobs/input-state"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .post(format!("{base}/jobs/input-state"))
+            .basic_auth("cyber", Some("secret"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let api = Api::new(&h);
+    let before = h.runtime.state(&session).await.unwrap().last_seq;
+    let (status, result) = api.post("/jobs/input-state", body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(
+        result["data"],
+        json!([{"message_id":"msg_driver","running":false,
+        "awaiting_handback":false,"oldest_unnotified_ms":null}])
+    );
+    for ids in [
+        json!([]),
+        json!(vec!["msg_driver"; 33]),
+        json!(["msg_driver", "msg_driver"]),
+        json!(["x".repeat(257)]),
+        json!([""]),
+    ] {
+        let (status, result) = api
+            .post(
+                "/jobs/input-state",
+                json!({"session_id":session,"input_message_ids":ids}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{result}");
+    }
+    assert_eq!(
+        api.post(
+            "/jobs/input-state",
+            json!({"session_id":"ses_missing","input_message_ids":["msg_driver"]})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(h.runtime.state(&session).await.unwrap().last_seq, before);
+}
+
 async fn stream_binding_fixture(
     h: &Harness,
 ) -> (

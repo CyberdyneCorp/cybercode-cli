@@ -915,6 +915,10 @@ export type Data_Array_of_InboxRow = {
   data: InboxRow[];
 };
 
+export type Data_Array_of_InputJobState = {
+  data: InputJobState[];
+};
+
 export type Data_Array_of_IntegrationBatch = {
   data: IntegrationBatch[];
 };
@@ -2357,6 +2361,26 @@ export type Inflight = {
   n: number;
   message_id: string;
   started_ms: number;
+};
+
+export type InputJobQuery = {
+  session_id: string;
+  input_message_ids: string[];
+};
+
+/**
+ * One small Job record per supplied input; no logs/results/history. Handback
+ * admission is separate from the parent Turn processing that queued input.
+ */
+export type InputJobState = {
+  message_id: string;
+  running: boolean;
+  /**
+   * An ended Job has not yet admitted its completion notice. False does not
+   * establish that the parent has processed an already admitted handback.
+   */
+  awaiting_handback: boolean;
+  oldest_unnotified_ms?: number | null;
 };
 
 export type InputStatus = "pending" | "held" | "promoted" | "refused";
