@@ -14,8 +14,8 @@ The merge retains snapshot admission/reclamation and the incoming root-schema
 validation/settlement events, plus the binary-worker activity-drain wait. The
 seven pre-existing uncommitted files were restored from a retained backup stash.
 The branch still contains substantial undelivered recovery work; it must not be
-confused with accepted main behavior. GitHub reported both issues open and no
-open PRs at audit time. The issue #93 checklist trails the repository's merged
+confused with accepted main behavior. Both issues remain open. Draft PR #123 now consolidates this branch for
+review and full CI. The issue #93 checklist trails the repository's merged
 section 5/6 implementation state; reconcile it at delivery.
 
 | Area | Evidence and remaining work |
@@ -93,6 +93,24 @@ case, OpenAPI regeneration and SDK consistency/typecheck passed. SDK tests passe
 warnings denied. Strict OpenSpec passed 100 items and lint reported zero errors
 with 25 warnings. Native C deprecation and linker unwind-size warnings were
 observed during compilation. Current-source native acceptance remains required.
+
+### Consolidated PR and Windows core lint
+
+Draft PR [#123](https://github.com/CyberdyneCorp/cybercode-cli/pull/123) carries
+the remaining goal implementation. Its first full CI revision `64052cba` failed
+Windows binary-core Clippy because four acknowledgement-retirement helpers were
+compiled without their Linux/macOS native consumers. The helpers now use the same
+platform condition as those consumers. Shared acknowledgement verification stays
+available to its existing callers.
+
+The binary proof workflow now also watches the worktree source subtree, which
+contains these shared core dependencies. Windows verification of this correction
+requires the new revision's CI; the local toolchain has only a macOS target.
+Local core library/test Clippy passed with warnings denied, and 17 snapshot
+acknowledgement/publication/retirement tests passed. Two ignored entries are
+subprocess fixtures invoked by the process-kill parent tests. Workflow YAML,
+formatting and diff checks passed. The other checks and full-goal acceptance
+remain open.
 
 ### Zero-byte ordinary restore continuation
 

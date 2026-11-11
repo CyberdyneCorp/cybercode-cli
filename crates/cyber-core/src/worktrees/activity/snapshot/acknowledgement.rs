@@ -69,15 +69,18 @@ fn stage_owner(name: &str) -> io::Result<&str> {
     Ok(owner)
 }
 impl Acknowledged {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) fn retirement_context(&self) -> (String, String) {
         (
             self.record.resources_digest.clone(),
             self.record.receipt_digest.clone(),
         )
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) fn into_retirement_file(self) -> LockedRecord {
         self.file
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(super) fn file_for_retirement(&self) -> &File {
         &self.file
     }
@@ -126,6 +129,7 @@ impl Acknowledged {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(super) fn verify_retirement_context(
     file: &File,
     plan: &super::CheckoutRetirementPlan,
