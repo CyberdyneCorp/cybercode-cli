@@ -34,6 +34,7 @@ class Proxy(socketserver.ThreadingMixIn, http.server.HTTPServer):
         self.held = threading.Event()
         self.release = threading.Event()
         self.receipt = None
+        self.ack_busy_refused = False
 
 
 class Forward(http.server.BaseHTTPRequestHandler):
@@ -52,13 +53,29 @@ class Forward(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         call = {"method": self.command, "path": self.path, "done": False}
         self.server.calls.append(call)
+        if self.path.endswith("/acknowledge") and not self.server.ack_busy_refused:
+            self.server.ack_busy_refused = True
+            failure = json.dumps({
+                "_tag": "ConflictError", "message": "Snapshot storage is busy",
+            }).encode()
+            call.update(status=409, error=failure.decode())
+            self.send_response(409)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(failure)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            self.wfile.write(failure)
+            self.wfile.flush()
+            call["done"] = True
+            return
         upstream = http.client.HTTPConnection(self.server.upstream, timeout=45)
         try:
             upstream.request(self.command, self.path, body, dict(self.headers))
             response = upstream.getresponse()
             call["status"] = response.status
             failure = None
-            if self.path.endswith("/review") and response.status != 200:
+            if self.path.endswith(("/review", "/acknowledge")) and response.status != 200:
                 failure = response.read(65536)
                 call["error"] = failure.decode("utf-8", errors="replace")
             if self.command == "POST" and "/rewind/preparations/" in self.path and self.path.endswith("/confirm"):
@@ -203,6 +220,28 @@ def positive_review(terminal, proxy):
         terminal.send(b"\r")
     raise AssertionError(f"native pre-effect review refused: {reply}; terminal: {terminal.text()[-3000:]!r}")
 
+def positive_acknowledgement(terminal, proxy, key):
+    path = f"/requests/{key}/acknowledge"
+    for _ in range(20):
+        attempts = completed(proxy, path, success=False)
+        terminal.send(b"a")
+        terminal.wait(lambda: completed(proxy, path, success=False) > attempts, "explicit reconciliation response")
+        reply = [call for call in proxy.calls if call["done"] and call["path"].endswith(path)][-1]
+        if reply["status"] == 200:
+            return
+        error = json.loads(reply["error"])
+        busy = error.get("_tag") == "SessionBusyError" or error == {
+            "_tag": "ConflictError", "message": "Snapshot storage is busy",
+        }
+        assert reply["status"] == 409 and busy, reply
+        # Look up the same durable receipt before another explicit metadata action.
+        # Cancellation review/confirmation and source effects are never repeated.
+        lookups = completed(proxy, f"/requests/{key}")
+        terminal.pump(0.5)
+        terminal.send(b"r")
+        terminal.wait(lambda: completed(proxy, f"/requests/{key}") > lookups, "retained request lookup after busy refusal")
+    raise AssertionError(f"native reconciliation stayed busy: {reply}")
+
 
 def exercise(binary, session, activity, proxy):
     first = Terminal(binary, session)
@@ -227,8 +266,7 @@ def exercise(binary, session, activity, proxy):
         second.send(b"r")
         second.wait(lambda: completed(proxy, f"/requests/{key}") == 1, "original request lookup")
         assert not any(call["path"].endswith("/acknowledge") for call in proxy.calls), "receipt discovery acknowledged native metadata without an explicit action"
-        second.send(b"a")
-        second.wait(lambda: completed(proxy, f"/requests/{key}/acknowledge") == 1, "explicit reconciliation")
+        positive_acknowledgement(second, proxy, key)
         second.send(b"\x1b")
         second.pump()
         second.stop()
@@ -238,6 +276,7 @@ def exercise(binary, session, activity, proxy):
     confirmations = [call for call in proxy.calls if call["path"].endswith("/confirm")]
     assert len(confirmations) == 1, "fresh terminal replayed cancellation"
     assert completed(proxy, f"/requests/{key}/acknowledge") == 1
+    assert proxy.ack_busy_refused, "busy reconciliation path was not exercised"
     assert completed(proxy, "/review", success=False) == review_attempts, "fresh terminal requested a new cancellation review"
     return receipt
 

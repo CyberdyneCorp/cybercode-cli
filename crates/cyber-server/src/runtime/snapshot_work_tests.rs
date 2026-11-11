@@ -1333,6 +1333,33 @@ async fn cancelling_an_unstarted_resolution_keeps_its_original_failed_restore_fe
     base.shutdown().await;
 }
 
+struct LifetimeDisposalGate {
+    inner: Box<dyn super::super::SnapshotLifetime>,
+    entered: Option<tokio::sync::oneshot::Sender<()>>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+impl super::super::SnapshotLifetime for LifetimeDisposalGate {
+    fn binding(&self) -> &super::super::SnapshotLifetimeBinding {
+        self.inner.binding()
+    }
+    fn verify(&self) -> Result<(), String> {
+        self.inner.verify()
+    }
+    fn checkout_bindings(
+        &self,
+    ) -> Result<Option<Vec<cyber_core::worktrees::CheckoutBinding>>, String> {
+        self.inner.checkout_bindings()
+    }
+}
+impl Drop for LifetimeDisposalGate {
+    fn drop(&mut self) {
+        if let Some(entered) = self.entered.take() {
+            let _ = entered.send(());
+        }
+        let _ = self.release.recv();
+    }
+}
+
 #[tokio::test]
 async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_request_disposal() {
     let (temp, base, session, _, _) = super::super::binary_documents_tests::fixture().await;
@@ -1349,7 +1376,14 @@ async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_re
             resources: Default::default(),
         }),
     );
-    let owner = worker(&runtime, &session).await;
+    let mut owner = worker(&runtime, &session).await;
+    let (cleanup_started, cleanup_running) = tokio::sync::oneshot::channel();
+    let (release_cleanup, cleanup_gate) = std::sync::mpsc::channel();
+    owner._lifetime = Some(Box::new(LifetimeDisposalGate {
+        inner: owner._lifetime.take().unwrap(),
+        entered: Some(cleanup_started),
+        release: cleanup_gate,
+    }));
     let id = owner.scope.id().to_owned();
     assert_eq!(permits.available_permits(), 0);
     let record = latest(&runtime, &session);
@@ -1381,6 +1415,15 @@ async fn pre_origin_lifetime_is_bound_before_reservation_and_retained_through_re
             .is_err()
     );
     finish.send(()).unwrap();
+    cleanup_running.await.unwrap();
+    let retained = tokio::time::timeout(Duration::from_millis(50), &mut shutdown)
+        .await
+        .is_err();
+    release_cleanup.send(()).unwrap();
+    assert!(
+        retained,
+        "shutdown acknowledged a worker before lifetime disposal"
+    );
     tokio::time::timeout(Duration::from_secs(3), shutdown)
         .await
         .unwrap()

@@ -99,9 +99,6 @@ impl SnapshotNativeResult {
 }
 
 pub struct SnapshotWorker {
-    // Scope disposal records unknown evidence before releasing Session ownership.
-    scope: activity::Scope,
-    admission: SnapshotAdmission,
     sequence: i64,
     runtime: Runtime,
     directory: PathBuf,
@@ -109,9 +106,19 @@ pub struct SnapshotWorker {
     worktree_id: Option<String>,
     _location: Option<Box<dyn super::SnapshotLocationGuard>>,
     _original: Option<OriginalResources>,
-    _lifecycle: OwnedRwLockReadGuard<()>,
-    // Last: releasing this lock proves all earlier worker resources were dropped.
+    // Release native lifetime ownership after checkout and journal guards.
     _lifetime: Option<Box<dyn super::SnapshotLifetime>>,
+    admission: SnapshotAdmission,
+    // Completion is observed only after all native guards and admission drop.
+    scope: activity::Scope,
+    // Shutdown's admission barrier must cover the complete worker disposal.
+    _lifecycle: OwnedRwLockReadGuard<()>,
+}
+
+impl Drop for SnapshotWorker {
+    fn drop(&mut self) {
+        self.scope.dispose_before_completion();
+    }
 }
 
 struct SnapshotAdmission(Arc<Handle>);

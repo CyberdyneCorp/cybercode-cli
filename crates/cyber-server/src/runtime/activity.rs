@@ -56,6 +56,7 @@ pub(super) struct Scope {
     pub control: Arc<Control>,
     launched: bool,
     settled: bool,
+    disposal_started: bool,
     source_admitted: std::sync::Mutex<bool>,
 }
 enum Authority {
@@ -184,6 +185,7 @@ impl Scope {
             control,
             launched: false,
             settled: false,
+            disposal_started: false,
             source_admitted: std::sync::Mutex::new(false),
         })
     }
@@ -242,6 +244,7 @@ impl Scope {
             control,
             launched: false,
             settled: false,
+            disposal_started: false,
             source_admitted: std::sync::Mutex::new(false),
         })
     }
@@ -687,8 +690,14 @@ impl Scope {
         Ok(uncertain)
     }
 }
-impl Drop for Scope {
-    fn drop(&mut self) {
+impl Scope {
+    /// Persist disposal while the worker still retains native ownership.
+    /// Final scope destruction releases the activity and its completion signal.
+    pub(super) fn dispose_before_completion(&mut self) {
+        if self.disposal_started {
+            return;
+        }
+        self.disposal_started = true;
         self.control.stop.cancel();
         if !self.settled {
             let filesystem_only = self.record.binary_document.is_some();
@@ -729,6 +738,11 @@ impl Drop for Scope {
                 );
             }
         }
+    }
+}
+impl Drop for Scope {
+    fn drop(&mut self) {
+        self.dispose_before_completion();
         if let Some(inner) = self.inner.upgrade() {
             inner
                 .activities
