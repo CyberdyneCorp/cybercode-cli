@@ -816,11 +816,7 @@ impl Inner {
     ) -> Result<(), RuntimeError> {
         {
             let state = handle.state.lock().await;
-            let version = cyber_core::prompts::base_prompt_version();
-            if let Some(epoch) = &state.epoch
-                && !state.epoch_stale
-                && epoch.serves(&resolved.provider, resolved.family.as_str(), version)
-            {
+            if !super::context::epoch_pending(&state, resolved) {
                 return Ok(());
             }
         }
@@ -1214,13 +1210,7 @@ impl Inner {
             .as_ref()
             .ok_or_else(|| RuntimeError::Corrupt("no context epoch".into()))?;
         let mut request = resolved.template.clone();
-        request.system = vec![
-            epoch
-                .system_prefix
-                .clone()
-                .unwrap_or_else(|| context::base_prompt(resolved.family)),
-            epoch.baseline.clone(),
-        ];
+        request.system = context::request_system(epoch, resolved.family).into();
         // Only this request: the epoch's system text stays byte-stable.
         if finalizer.is_some() && root {
             request

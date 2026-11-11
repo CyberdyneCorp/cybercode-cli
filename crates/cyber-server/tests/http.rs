@@ -4054,6 +4054,63 @@ async fn context_meter_reports_last_request_prompt_tokens_window_and_compaction_
     assert_eq!(session["data"]["context"], expected);
 }
 
+#[tokio::test]
+async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_default() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("hello")])],
+        ..Setup::default()
+    });
+    let api = Api::new(&h);
+    let id = h.session().await;
+    let base = tcp(&h, "pw").await;
+    let url = format!("{base}/sessions/{id}/context");
+    let client = reqwest::Client::new();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 401);
+    let inspect = || client.get(&url).basic_auth("cyber", Some("pw"));
+    let fresh: Value = inspect().send().await.unwrap().json().await.unwrap();
+    assert_eq!(fresh["data"]["inspection"]["epoch_pending"], true);
+    assert_eq!(
+        fresh["data"]["inspection"]["estimated_input_tokens"],
+        Value::Null
+    );
+    assert!(h.models.requests("test/main").is_empty());
+
+    api.post(&format!("/sessions/{id}/prompt"), prompt("hi"))
+        .await;
+    h.settle(&id).await;
+    let result: Value = inspect().send().await.unwrap().json().await.unwrap();
+    let data = &result["data"];
+    assert!(data["baseline"].is_null());
+    assert!(data["summary"].is_null());
+    let estimate = &data["inspection"];
+    assert_eq!(estimate["epoch_pending"], false);
+    assert_eq!(estimate["last_request_tokens"], 100);
+    assert_eq!(estimate["window"], 200_000);
+    let tokens = estimate["estimated_input_tokens"].as_u64().unwrap();
+    assert!(tokens > 0);
+    assert_eq!(
+        estimate["estimated_input_utilization"],
+        tokens as f64 / 200_000.0
+    );
+    let sources = estimate["sources"].as_array().unwrap();
+    assert!(sources.iter().any(|source| source["id"] == "history"));
+    assert!(sources.windows(2).all(|pair| {
+        pair[0]["estimated_tokens"].as_u64().unwrap()
+            >= pair[1]["estimated_tokens"].as_u64().unwrap()
+    }));
+    let explicit: Value = inspect()
+        .query(&[("include_content", true)])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(explicit["data"]["baseline"].is_string());
+    assert_eq!(explicit["data"]["inspection"], *estimate);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+}
+
 impl Api {
     /// Start an inline run owned by `session` and wait until it ends.
     async fn ended_run(&self, session: &str, script: &str) -> String {

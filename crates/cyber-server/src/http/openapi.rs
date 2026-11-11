@@ -947,8 +947,9 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/sessions/{sessionID}/context",
             "v1.session.context",
-            "Context baseline, summary and task state",
+            "Inspect recorded context and estimates. Use include_content to return baseline, summary and task text.",
         )
+        .query(&["include_content"])
         .ok::<Data<SessionContext>>(g),
         op(
             "get",

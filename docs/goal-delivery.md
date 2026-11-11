@@ -21,11 +21,30 @@ section 5/6 implementation state; reconcile it at delivery.
 | Area | Evidence and remaining work |
 | --- | --- |
 | #93 rewind/snapshots, tasks 2.4/3.2–3.4 and M2–M8 | Local worker origins, reviewed keep/rollback, paired Store settlement, native acknowledgements, CLI/TUI recovery and several payload-reclamation paths exist. Managed Git partial-kill and fully prepared cancellation cleanup acceptance pass locally, including typed private links, but default Git admission remains gated. Finish partial resource construction, complete reference/CAS/metadata and managed/Git reclamation, remaining crash cuts, platform/client acceptance and delivery. Preserve legacy unknown fences. |
-| #93 rules/context, tasks 4.1–4.4 | Local `instruction_limits` validation and runtime/doctor wiring now bound complete rendered baselines/reminders, including labels/notices and bounded file lists with exact delivery identities. Local fenced/trusted rule discovery, validated relative globs, baseline/scoped-read separation and typed delivery bindings now exist. Built-in reads, edits and patches, including intercepted shell patches, use actual native file receipts after hook rewriting; nested delivery reloads settings and checks Location, native root/file binding and Epoch before discovery and settlement. Durable rule delivery records the native operation and dispatched attempt. A partial patch can deliver rules for completed files. Finish exact config-generation and revocation/restart provenance. Extend the existing `/sessions/:id/context` endpoint beyond epoch/baseline/summary/task to effective source inventory, estimates/status/pending changes; add the owner-facing `/context` flow and leakage/restart/revocation acceptance. The sidebar meter is not that inspection feature. |
+| #93 rules/context, tasks 4.1–4.4 | Local `instruction_limits` validation and runtime/doctor wiring now bound complete rendered baselines/reminders, including labels/notices and bounded file lists with exact delivery identities. Local fenced/trusted rule discovery, validated relative globs, baseline/scoped-read separation and typed delivery bindings now exist. Built-in reads, edits and patches, including intercepted shell patches, use actual native file receipts after hook rewriting; nested delivery reloads settings and checks Location, native root/file binding and Epoch before discovery and settlement. Durable rule delivery records the native operation and dispatched attempt. A partial patch can deliver rules for completed files. Finish exact config-generation and revocation/restart provenance. The authenticated Session context route and TUI `/context` now show stored source groups, projected token estimates, measured usage and pending Epoch state. The default response hides stored text. Finish per-source provenance, revocation and pending source changes, and complete leakage, restart and native acceptance. |
 | #93 structured results, tasks 5.1–5.4 | Local functional coverage now includes compaction, retry/budget/interruption handling, terminal-writer recovery, physical Store reopen after committed acknowledgement loss, and atomic ownership under steering. Five real CLI and 16 structured-root cases pass; current-source platform acceptance remains required before accepting 5.4. |
 | #93 JSONL, tasks 6.1–6.4 | #117 merged basic typed parsing, correlation, replies and EOF draining. Complete exact driver ownership, bounded retained state and output backpressure, hook-event output, safe atomic last-message publication, and steering/capacity/SIGINT/restart/lost-ack/shared-Session acceptance. Task 6.2 is reopened on inspected code evidence below. |
 | #92 native enforcement, tasks 2/N/R | Foundation/probe evidence exists, but production launch still uses the legacy sandbox route. Finish generation/image-bound native admission, revocation/quarantine/lifetime, independently intersected capabilities, real tool execution and native runtime/platform positives/denials. Linux R1 direction/support review and later R6 activation remain distinct gates. |
 | #92 protocol/callbacks/producers, tasks 3–6/S/D | Finish contribution ownership, hooks/providers/catalog transforms and TypeScript kit, durable scoped callbacks (`session/prompt` still explicitly refuses), Setup and DirectoryAdded plus combined producer acceptance. Preserve accepted FileChanged and CwdChanged fixes. Complete S1 epoch/directory-key/legacy-deletion and D1 directory-admission/Safe Boundary/child-policy review before their dependent code. |
+
+### Stored context inspection continuation
+
+The authenticated context route now adds source-group estimates from the shared
+persisted system text and replay projection. Default responses omit baseline,
+summary and task text. Explicit `include_content=true` restores those fields.
+The TUI `/context` panel fences replies by Session, Location and request identity.
+Epoch rebuild status uses the runtime's provider/family/prompt-version predicate.
+These estimates exclude tool schemas and turn-only additions. Individual source
+provenance and pending source changes remain required by task 4.3.
+
+Local verification passed 18 application instruction tests, 13 server context
+unit tests, two HTTP context tests, ten TUI context tests, the OpenAPI artifact
+check, SDK typecheck and 136 SDK tests (ten configured skips). Package library
+Clippy passed after routing inspection through the existing loader. Strict
+OpenSpec validation passed 100 items and lint reported zero errors/25 warnings.
+Native macOS C deprecation and linker unwind-size warnings were observed.
+Source-bound native CI remains pending on preceding revision `a4d28df4`.
+This continuation has no native/platform acceptance.
 
 ### Zero-byte ordinary restore continuation
 

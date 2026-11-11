@@ -70,6 +70,26 @@ pub fn snapshot(
         .collect())
 }
 
+/// Persisted system text shared by request assembly and context inspection.
+pub(super) fn request_system(epoch: &super::model::Epoch, family: ModelFamily) -> [String; 2] {
+    [
+        epoch
+            .system_prefix
+            .clone()
+            .unwrap_or_else(|| base_prompt(family)),
+        epoch.baseline.clone(),
+    ]
+}
+
+pub(super) fn epoch_pending(state: &super::SessionState, model: &super::ResolvedModel) -> bool {
+    let version = cyber_core::prompts::base_prompt_version();
+    state.epoch_stale
+        || state
+            .epoch
+            .as_ref()
+            .is_none_or(|epoch| !epoch.serves(&model.provider, model.family.as_str(), version))
+}
+
 /// The snapshot of a new epoch. After the first one an unavailable source keeps its
 /// previous value (or stays absent), so a transient read failure never blocks a Turn;
 /// only the first epoch is blocked by one.

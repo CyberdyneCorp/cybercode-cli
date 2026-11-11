@@ -1211,7 +1211,9 @@ export interface Operations {
   };
   "v1.session.context": {
     path: { sessionID: string };
-    query: Record<string, never>;
+    query: {
+      include_content?: QueryValue;
+    };
     body: undefined;
     response: S.SessionContext;
   };
@@ -4084,7 +4086,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/context",
     pathParams: ["sessionID"],
-    query: [],
+    query: ["include_content"],
     body: "none",
     located: false,
     unwrap: true,
@@ -6113,9 +6115,9 @@ export function createGroups(caller: Caller) {
       /** Revoke this Session's native grant (`POST /api/v1/sessions/{sessionID}/computer/stop`) */
       computerStop: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.computerStop"]["response"]> =>
         caller.call("v1.session.computerStop", { path: { sessionID } }, options),
-      /** Context baseline, summary and task state (`GET /api/v1/sessions/{sessionID}/context`) */
-      context: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.context"]["response"]> =>
-        caller.call("v1.session.context", { path: { sessionID } }, options),
+      /** Inspect recorded context and estimates. Use include_content to return baseline, summary and task text. (`GET /api/v1/sessions/{sessionID}/context`) */
+      context: (sessionID: string, query?: Operations["v1.session.context"]["query"], options?: RequestOptions): Promise<Operations["v1.session.context"]["response"]> =>
+        caller.call("v1.session.context", { path: { sessionID }, query }, options),
       /** Create a Session (`POST /api/v1/sessions`) */
       create: (body?: Operations["v1.session.create"]["body"], options?: RequestOptions): Promise<Operations["v1.session.create"]["response"]> =>
         caller.call("v1.session.create", { body }, options),

@@ -627,11 +627,27 @@ async fn cyber_md_reaches_the_model_after_agents_md_nested_and_after_edits() {
     let context = f
         .call(
             Method::GET,
+            &format!("/sessions/{session}/context?include_content=true"),
+            &repo,
+            None,
+        )
+        .await;
+    let safe = f
+        .call(
+            Method::GET,
             &format!("/sessions/{session}/context"),
             &repo,
             None,
         )
         .await;
+    assert!(safe["data"]["baseline"].is_null());
+    assert!(!safe.to_string().contains("Root cyber rule."));
+    assert!(
+        safe["data"]["inspection"]["estimated_input_tokens"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
     let baseline = context["data"]["baseline"].as_str().unwrap();
     let source = format!("Instructions from: {}", repo.join("CYBER.md").display());
     assert!(baseline.contains(&source), "{baseline}");

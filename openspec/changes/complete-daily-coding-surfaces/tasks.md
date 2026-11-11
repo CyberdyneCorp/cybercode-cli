@@ -130,6 +130,7 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 - [ ] 4.1 Implement trusted path-scoped rule discovery/precedence, validated globs, overrides and bounded instruction assembly without changing `instructions` array compatibility.
 - [ ] 4.2 Bind reminder delivery to successful authorized operations and Context Epoch identity, including edits/patches, partial settlements, compaction/restart and changed/revoked rules.
 - [ ] 4.3 Add authenticated read-only context inspection and `/context`, source estimates/origins/status/pending updates and honest utilization; synchronize OpenAPI/SDK and doctor diagnostics.
+  - The Session endpoint and TUI panel expose stored source groups and an estimate based on request replay. The default response omits stored text. Individual source provenance, pending source changes and next-request estimates remain open.
 - [ ] 4.4 Test no rule leakage across Location/Epoch, denied/failed calls, truncation, untrusted sources, stale response and token-count consistency with actual request assembly.
 
 ## 5. Root structured output

@@ -736,6 +736,25 @@ export type Content2 = {
   truncated: boolean;
 };
 
+export type ContextInspection = {
+  /** Sources in the stored projection, ordered by estimated size. */
+  sources: ContextSourceEstimate[];
+  /**
+   * Estimate of the epoch system text and projected messages. Tool schemas
+   * and instructions added only while assembling a turn are excluded.
+   */
+  estimated_input_tokens?: number | null;
+  window?: number | null;
+  estimated_input_utilization?: number | null;
+  /** Measured prompt tokens of the last finished request, when available. */
+  last_request_tokens?: number | null;
+  /** The next turn needs to rebuild the epoch. */
+  epoch_pending: boolean;
+  queued_inputs: number;
+  held_inputs: number;
+  delivered_rule_count: number;
+};
+
 export type ContextMeter = {
   /** Prompt tokens of the last request: input + cache read + cache write. */
   used_tokens: number;
@@ -755,6 +774,12 @@ export type ContextMeter = {
   measured: boolean;
   /** No step has finished since the last compaction. */
   compacted: boolean;
+};
+
+export type ContextSourceEstimate = {
+  id: string;
+  origin: string;
+  estimated_tokens: number;
 };
 
 export type Contribution = {
@@ -4464,7 +4489,9 @@ export type SessionContext = {
   epoch?: number | null;
   baseline?: string | null;
   summary?: string | null;
+  /** Task text is included only on explicit request. */
   task: TaskState;
+  inspection: ContextInspection;
 };
 
 /** One exported Session. */

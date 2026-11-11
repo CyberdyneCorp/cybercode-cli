@@ -1223,7 +1223,13 @@ Definition reads use the fenced native reader: linked files/directories, hard li
 
 Scoped rules activate after a successful built-in read, edit, or file change from `apply_patch` with a native receipt. Rule matching uses the physical file from the completed operation after authorization and any hook rewrite. Writes are bound to the handle that completed the effect. Patch deletions bind the physical parent directory and removed name. A partially applied patch keeps its error status and can deliver rules for its verified completed files. A directory listing, unsupported observation, or changed root/target binding does not consume delivery. The tool's own result is preserved. Ordinary instruction behavior remains available to legacy hosts without native receipts; those hosts cannot activate path-scoped rules.
 
-The runtime resolves settings after the read and verifies its captured Location, project root, file binding and Context Epoch before discovery and settlement. A delivered rule records its native root, definition path, digest and approval generation. The settlement also records the actual read's file identity, call attempt, operation key, Location and Epoch. Historical path-only reminders still replay. Patch rule discovery shares the reminder budget across up to 32 verified file effects. Patches intercepted by the built-in Bash or PowerShell path use the same receipts. Shell settlements record the interception and replay requires it. Exact configuration-generation fencing through commit, withdrawal after revocation, full restart acceptance and effective `/context` inspection remain in progress.
+The runtime resolves settings after the read and verifies its captured Location, project root, file binding and Context Epoch before discovery and settlement. A delivered rule records its native root, definition path, digest and approval generation. The settlement also records the actual read's file identity, call attempt, operation key, Location and Epoch. Historical path-only reminders still replay. Patch rule discovery shares the reminder budget across up to 32 verified file effects. Patches intercepted by the built-in Bash or PowerShell path use the same receipts. Shell settlements record the interception and replay requires it. Exact configuration-generation fencing through commit, withdrawal after revocation, full restart acceptance and per-source provenance in `/context` remain in progress.
+
+### Inspecting the current context
+
+Open `/context` in the TUI to see the stored Context Epoch, projected source groups, estimated token counts and the last measured request. The estimate uses the persisted system text and projected conversation. Tool schemas and instructions added only during a turn are excluded. The panel also reports whether an Epoch rebuild is pending, how many inputs are queued or held, and how many scoped rules were delivered in the Epoch.
+
+Authenticated clients can use `GET /api/v1/sessions/{sessionID}/context` for the same metadata. Pass `include_content=true` to retrieve the stored baseline, compaction summary and task text. Inspection reads stored Session state without starting a turn or reloading instruction files.
 
 ### Switches
 
@@ -1236,7 +1242,7 @@ These are read from the server's environment (a value of `1`, `true`, `yes` or `
 
 ### Checking what loads
 
-`cyber doctor` has an `instructions` line that lists, in load order, the files a new Session at the current directory loads (`N loaded: <path>, ...`), and warns about truncated files and unresolved or refused imports. `GET /api/v1/sessions/{id}/context` returns the rendered baseline with its `Instructions from:` labels.
+`cyber doctor` has an `instructions` line that lists, in load order, the files a new Session at the current directory loads (`N loaded: <path>, ...`), and warns about truncated files and unresolved or refused imports. `GET /api/v1/sessions/{id}/context?include_content=true` returns the rendered baseline with its `Instructions from:` labels.
 
 ### Migrating from Claude Code
 

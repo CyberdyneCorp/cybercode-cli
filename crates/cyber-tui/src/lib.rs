@@ -10,6 +10,7 @@ mod children;
 mod collaboration;
 mod composer;
 mod computer;
+mod context_inspection;
 mod explorer;
 mod export;
 mod fuzzy;

@@ -79,7 +79,9 @@ pub struct SessionContext {
     pub epoch: Option<u32>,
     pub baseline: Option<String>,
     pub summary: Option<String>,
+    /// Task text is included only on explicit request.
     pub task: TaskState,
+    pub inspection: crate::runtime::ContextInspection,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1187,18 +1189,45 @@ async fn release(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize)]
+struct ContextQuery {
+    #[serde(default)]
+    include_content: bool,
+}
+
 async fn context(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<ContextQuery>,
 ) -> Result<Json<Data<SessionContext>>> {
     let s = state.runtime.state(&id).await?;
-    let data = SessionContext {
-        epoch: s.epoch.as_ref().map(|e| e.number),
-        baseline: s.epoch.map(|e| e.baseline),
-        summary: s.compacted.map(|c| c.summary),
-        task: s.task,
+    let inspection = state.runtime.inspect_context(&s);
+    let epoch = s.epoch.as_ref().map(|e| e.number);
+    let (baseline, summary, task) = if query.include_content {
+        (
+            s.epoch.map(|e| e.baseline),
+            s.compacted.map(|c| c.summary),
+            s.task,
+        )
+    } else {
+        (
+            None,
+            None,
+            TaskState {
+                version: s.task.version,
+                ..TaskState::default()
+            },
+        )
     };
-    Ok(Json(Data { data }))
+    Ok(Json(Data {
+        data: SessionContext {
+            epoch,
+            baseline,
+            summary,
+            task,
+            inspection,
+        },
+    }))
 }
 
 async fn diff(

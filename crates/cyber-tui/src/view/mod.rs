@@ -163,6 +163,9 @@ pub fn draw(f: &mut Frame, app: &App) {
             text,
             scroll,
         } => overlays::task_log(f, app, title, text, *scroll, area),
+        Overlay::Context { text, scroll, .. } => {
+            overlays::task_log(f, app, "Context", text, *scroll, area)
+        }
         Overlay::SideChat(chat) => overlays::side_chat(f, app, chat, area),
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmExport(request) => overlays::confirm_export(f, app, request, area),

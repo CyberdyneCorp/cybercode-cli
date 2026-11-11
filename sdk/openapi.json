@@ -9695,11 +9695,16 @@
             ]
           },
           "task": {
-            "$ref": "#/components/schemas/TaskState"
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Task text is included only on explicit request."
+          },
+          "inspection": {
+            "$ref": "#/components/schemas/ContextInspection"
           }
         },
         "required": [
-          "task"
+          "task",
+          "inspection"
         ]
       },
       "TaskState": {
@@ -9749,6 +9754,98 @@
           "text"
         ],
         "description": "A user statement with its source, kept outside generated prose."
+      },
+      "ContextInspection": {
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextSourceEstimate"
+            },
+            "description": "Sources in the stored projection, ordered by estimated size."
+          },
+          "estimated_input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Estimate of the epoch system text and projected messages. Tool schemas\nand instructions added only while assembling a turn are excluded."
+          },
+          "window": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "estimated_input_utilization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "last_request_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Measured prompt tokens of the last finished request, when available."
+          },
+          "epoch_pending": {
+            "type": "boolean",
+            "description": "The next turn needs to rebuild the epoch."
+          },
+          "queued_inputs": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "held_inputs": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "delivered_rule_count": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "sources",
+          "epoch_pending",
+          "queued_inputs",
+          "held_inputs",
+          "delivered_rule_count"
+        ]
+      },
+      "ContextSourceEstimate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "estimated_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "estimated_tokens"
+        ]
       },
       "Data_Array_of_FileDiff": {
         "type": "object",
@@ -26714,7 +26811,7 @@
     "/api/v1/sessions/{sessionID}/context": {
       "get": {
         "operationId": "v1.session.context",
-        "summary": "Context baseline, summary and task state",
+        "summary": "Inspect recorded context and estimates. Use include_content to return baseline, summary and task text.",
         "tags": [
           "session"
         ],
@@ -26723,6 +26820,14 @@
             "name": "sessionID",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_content",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
