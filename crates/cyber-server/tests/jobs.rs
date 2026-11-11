@@ -223,6 +223,55 @@ async fn a_notice_admitted_before_notification_settlement_is_not_duplicated() {
 }
 
 #[tokio::test]
+async fn notification_failure_rolls_back_handback_admission_before_inference() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("notice handled")])],
+        ..Default::default()
+    });
+    let parent = h.session().await;
+    let child = child(&h, &parent).await;
+    let job = h
+        .runtime
+        .start_child_job(
+            &parent,
+            &child,
+            "scan".into(),
+            "background work".into(),
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    h.store.transaction(|tx| {
+        tx.execute_batch("CREATE TEMP TRIGGER reject_job_notice BEFORE INSERT ON event
+            WHEN NEW.type='job.notified.1' BEGIN SELECT RAISE(ABORT,'injected notifier failure'); END;")?;
+        Ok(())
+    }).unwrap();
+    h.runtime.cancel_job(&job.id).await.unwrap();
+    h.runtime.wait_idle(&parent).await;
+    let admitted_before = h.runtime.state(&parent).await.unwrap().inbox.len();
+    let inference_before = h.models.requests("test/main").len();
+    let notified_before = h.runtime.job(&job.id).unwrap().notified;
+    h.store
+        .transaction(|tx| {
+            tx.execute_batch("DROP TRIGGER reject_job_notice")?;
+            Ok(())
+        })
+        .unwrap();
+    h.runtime.recover_jobs().await.unwrap();
+    h.runtime.wait_idle(&parent).await;
+    assert_eq!(
+        admitted_before, 0,
+        "failed notifier published a handback input"
+    );
+    assert_eq!(inference_before, 0, "failed notifier started inference");
+    assert!(!notified_before);
+    assert_eq!(h.runtime.state(&parent).await.unwrap().inbox.len(), 1);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    assert!(h.runtime.job(&job.id).unwrap().notified);
+}
+
+#[tokio::test]
 async fn duplicate_active_names_do_not_register_a_second_owner() {
     let h = Harness::new(Setup {
         scripts: vec![("test/main", vec![text("cancel notice handled")])],

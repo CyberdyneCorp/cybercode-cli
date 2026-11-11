@@ -692,17 +692,25 @@ impl Runtime {
         } else {
             None
         };
+        // Commit the exact notifier's acceptance with its canonical handback,
+        // before waking inference. Requests from that Turn can then resolve the
+        // immutable original cohort without a source-label or naming heuristic.
+        job.notified = true;
         self.admit_recorded(
             &job.session_id,
             admission,
             None,
             super::PromptCheck::Checked(None),
-            Vec::new(),
+            vec![super::events::event(NOTIFIED, &job)],
             untrusted,
         )
         .await?;
-        job.notified = true;
-        self.record_job(NOTIFIED, &job).await
+        // Historical replies may have committed the input before the notifier
+        // record. An exact admission retry returns that receipt without extras.
+        if !self.job(&job.id)?.notified {
+            self.record_job(NOTIFIED, &job).await?;
+        }
+        Ok(())
     }
 
     pub async fn cancel_job(&self, id: &str) -> Result<Job, RuntimeError> {

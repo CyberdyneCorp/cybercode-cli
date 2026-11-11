@@ -24,6 +24,7 @@ on:
       - crates/cyber-server/src/runtime/requests.rs
       - crates/cyber-server/src/runtime/requests/**
       - crates/cyber-server/tests/requests.rs
+      - crates/cyber-server/tests/jobs.rs
       - crates/cyber-server/tests/structured_root.rs
       - crates/cyber-server/tests/support/structured_terminal_fault.rs
       - crates/cyber-server/src/http/sessions.rs
@@ -239,6 +240,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-server --lib runtime::snapshot_work:: -- --nocapture 2>&1 | tee worker-ownership-proof.log
           cargo test --locked -p cyber-server --lib runtime::input_jobs:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --test jobs -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
           cargo test --locked -p cyber-tools --test background_bash --test background_subagents -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
       - name: Retain native evidence
         if: always()

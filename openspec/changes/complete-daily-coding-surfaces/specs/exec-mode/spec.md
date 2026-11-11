@@ -27,6 +27,13 @@
 - **AND** a Job SHALL count only when its complete valid durable input cohort belongs to that Session and the supplied set; missing, malformed, oversized, duplicate or mixed-cohort provenance SHALL grant no inferred ownership
 - **AND** the lookup SHALL NOT mutate, cancel or settle work, and handback admission SHALL NOT be treated as proof that its parent Turn has completed
 
+#### Scenario: A handback starts a request or another Job
+- **WHEN** a Job's handback is admitted
+- **THEN** its notifier acceptance SHALL commit with that input before inference starts, and a rejected notifier write SHALL publish neither the input nor inference
+- **WHEN** the handback-driven step opens a request or starts another Job
+- **THEN** its input provenance SHALL preserve the complete original input cohort and any new steering inputs through exact durable admission/notification/Job-origin evidence preceding that step
+- **AND** a source label, synthetic name, later notification or contradictory Job origin SHALL NOT grant inferred ancestry; unknown or excessive cohorts SHALL NOT become partial ownership
+
 #### Scenario: EOF with a pending approval
 - **WHEN** the driver's input closes while one of its requests awaits a reply
 - **THEN** that request follows the defined disconnected/non-interactive policy and the process does not wait forever or fabricate approval

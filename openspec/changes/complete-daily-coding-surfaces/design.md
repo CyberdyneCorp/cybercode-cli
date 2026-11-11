@@ -61,6 +61,17 @@ remain separate implementation obligations.
 
 Process and subagent Job reservations capture optional `input_origin` metadata from the original parent step/call while its dispatched attempt and operation key match the durable tool-call record. The complete input cohort comes from the recorded step, including across later steering and handbacks. Historical or detached Jobs expose unknown provenance through an absent field. The JSONL driver still requires integration with this evidence before background adoption, result retirement and cancellation can be accepted.
 
+Job completion admits its canonical handback input and `job.notified` record in
+one Session commit before waking inference. An exact-retry path also reconciles a
+historical admission without its notification record. Request/Job provenance for
+a handback-driven call resolves its direct step inputs through the immutable
+`job.started` origin only when the corresponding handback admission and matching
+notification precede that step. A public prompt's source label or handback-shaped
+ID alone grants no ancestry. Merge the complete original cohorts with any new
+steering input, deduplicate in order and refuse inferred ownership when the
+result is unknown or exceeds the 32-identity/256-byte limits. No history-dependent
+latest-promotion heuristic or unbounded in-memory Job ancestry map is introduced.
+
 `POST /jobs/input-state` accepts one Session and 1–32 unique input identities,
 each at most 256 UTF-8 bytes. It returns one small running/unadmitted-handback
 summary per supplied identity, aggregating only Jobs whose complete nonempty,

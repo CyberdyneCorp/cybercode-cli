@@ -188,6 +188,28 @@ adopted it yet. Exact background/descendant ownership, retirement and cancellati
 remain open. The native matrix now includes the query regressions; current-source
 platform execution and consolidated review remain required.
 
+Handback admission now commits atomically with notifier acceptance before waking
+inference. A rejected notification write rolls back the handback and starts no
+model request; exact retry still reconciles historical split admissions. Requests
+and nested Jobs resolve their original inputs through earlier matching durable
+admission/notification and immutable Job-origin evidence. Names/source labels,
+late notifications, changed origins and unknown/oversized cohorts grant no
+inferred ancestry. The complete union includes any later steering and remains
+bounded; no in-memory history map is added.
+
+The original handback-cohort regression failed before the change. All 463 server
+library tests pass with one ignored subprocess fixture; all 14 Job and 22 request
+integration cases pass. The six final provenance tests and 26 actual
+process/subagent cases pass, including an original-input permission after handback
+and a nested running Job retained by the original input's bounded query. Final
+server/tools all-target Clippy passes with warnings denied. Strict OpenSpec passes
+100 items; lint reports zero errors/25 warnings. Formatting, diff and workflow
+YAML checks pass. Native C deprecation warnings were observed. Focused review
+covers these ownership/transaction changes and fixtures. The native matrix now
+also runs the notifier rollback/recovery suite. CLI retirement, handback completion,
+event correlation, scoped interruption/presence and consolidated/native acceptance
+remain open; task 6.2 is not complete.
+
 Focused command-catalog, all-locale and eight doctor cases pass. The browser
 monitor fixture settles its owned in-flight Goal turn before independently
 checking headless request refusal; its E2E case passes three repetitions and its

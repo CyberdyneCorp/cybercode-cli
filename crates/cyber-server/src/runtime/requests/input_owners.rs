@@ -83,12 +83,12 @@ pub(crate) fn recorded(
     message: &str,
     call: &str,
 ) -> Result<Vec<String>, StoreError> {
-    let raw: Option<Option<String>> = db
+    let raw: Option<(Option<String>, i64)> = db
         .query_row(
             "SELECT CASE WHEN json_type(s.data,'$.input_message_ids')='array'
             AND json_array_length(s.data,'$.input_message_ids')<=?4
             AND length(CAST(json_extract(s.data,'$.input_message_ids') AS BLOB))<=?5
-            THEN json_extract(s.data,'$.input_message_ids') ELSE NULL END
+            THEN json_extract(s.data,'$.input_message_ids') ELSE NULL END, s.seq
         FROM event s WHERE s.aggregate_id=?1 AND s.type='session.step.started.1'
         AND json_extract(s.data,'$.message_id')=?2
         AND EXISTS (SELECT 1 FROM event c WHERE c.aggregate_id=s.aggregate_id
@@ -102,15 +102,108 @@ pub(crate) fn recorded(
                 MAX_INPUTS as i64,
                 MAX_ENCODED as i64
             ],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    let Some(raw) = raw.flatten() else {
+    let Some((Some(raw), before)) = raw else {
         return Ok(Vec::new());
     };
     let owners: Vec<String> = serde_json::from_str(&raw)
         .map_err(|_| StoreError::Unavailable("request input provenance is malformed".into()))?;
-    Ok(if bounded(&owners) { owners } else { Vec::new() })
+    if !bounded(&owners)
+        || owners
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != owners.len()
+    {
+        return Ok(Vec::new());
+    }
+    let mut roots = Vec::new();
+    for input in owners {
+        let inherited = handback_inputs(db, session, &input, before)?;
+        let inputs = inherited.unwrap_or_else(|| vec![input]);
+        if !bounded(&inputs) {
+            return Ok(Vec::new());
+        }
+        for input in inputs {
+            if !roots.contains(&input) {
+                roots.push(input);
+            }
+            if roots.len() > MAX_INPUTS {
+                return Ok(Vec::new());
+            }
+        }
+    }
+    Ok(roots)
+}
+
+/// A canonical name or source label is insufficient: the actual notifier must
+/// have durably accepted this input before the requesting step started.
+fn handback_inputs(
+    db: &Connection,
+    session: &str,
+    input: &str,
+    before: i64,
+) -> Result<Option<Vec<String>>, StoreError> {
+    let raw: Option<Option<String>> = db
+        .query_row(
+            "SELECT CASE WHEN json_type(b.data,'$.input_origin.input_message_ids')='array'
+            AND json_array_length(b.data,'$.input_origin.input_message_ids') BETWEEN 1 AND ?4
+            AND length(CAST(json_extract(b.data,'$.input_origin.input_message_ids') AS BLOB))<=?5
+            AND json_type(b.data,'$.input_origin.message_id')='text'
+            AND length(json_extract(b.data,'$.input_origin.message_id'))>0
+            AND json_type(b.data,'$.input_origin.call_id')='text'
+            AND length(json_extract(b.data,'$.input_origin.call_id'))>0
+            AND json_type(b.data,'$.input_origin.operation_key')='text'
+            AND length(json_extract(b.data,'$.input_origin.operation_key'))>0
+            AND json_type(b.data,'$.input_origin.attempt')='integer'
+            AND json_extract(b.data,'$.input_origin.attempt') BETWEEN 1 AND 4294967295
+            THEN json_extract(b.data,'$.input_origin.input_message_ids') ELSE NULL END
+        FROM event n JOIN event a ON a.aggregate_id=n.aggregate_id
+            AND a.type='session.prompt.admitted.1' AND a.seq<n.seq
+            AND json_extract(a.data,'$.message_id')=?2
+        JOIN event b ON b.aggregate_id=n.aggregate_id AND b.type='job.started.1'
+            AND b.seq<a.seq AND json_extract(b.data,'$.id')=json_extract(n.data,'$.id')
+        WHERE n.aggregate_id=?1 AND n.type='job.notified.1' AND n.seq<?3
+            AND json_type(n.data,'$.notified')='true'
+            AND ('msg_handback_'||json_extract(n.data,'$.id'))=?2
+            AND json_extract(n.data,'$.input_origin') IS json_extract(b.data,'$.input_origin')
+        ORDER BY n.seq DESC LIMIT 1",
+            params![
+                session,
+                input,
+                before,
+                MAX_INPUTS as i64,
+                MAX_ENCODED as i64
+            ],
+            |row| row.get(0),
+        )
+        .optional()?;
+    raw.map(|raw| {
+        let inputs: Vec<String> = raw
+            .map(|raw| {
+                serde_json::from_str(&raw).map_err(|_| {
+                    StoreError::Unavailable("Job input provenance is malformed".into())
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        Ok(
+            if bounded(&inputs)
+                && inputs
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+                    == inputs.len()
+            {
+                inputs
+            } else {
+                Vec::new()
+            },
+        )
+    })
+    .transpose()
 }
 
 #[cfg(test)]
@@ -178,6 +271,117 @@ mod tests {
             ("session", "first", "call_a"),
         ] {
             assert!(recorded(&db, session, message, call).unwrap().is_empty());
+        }
+    }
+    #[test]
+    fn committed_job_handback_preserves_original_inputs_with_later_steering() {
+        let db = database();
+        let job = json!({"id":"job_original","notified":true,"input_origin":{
+            "message_id":"assistant_root","call_id":"root_call","attempt":1,
+            "operation_key":"session:root_call","input_message_ids":["first","second"]}});
+        insert(&db, 1, "job.started.1", job.clone());
+        insert(
+            &db,
+            2,
+            "session.prompt.admitted.1",
+            json!({"message_id":"msg_handback_job_original","source":"session"}),
+        );
+        insert(&db, 3, "job.notified.1", job);
+        step(
+            &db,
+            4,
+            "assistant_handback",
+            "nested_call",
+            json!(["msg_handback_job_original", "steer"]),
+        );
+        assert_eq!(
+            recorded(&db, "session", "assistant_handback", "nested_call").unwrap(),
+            ["first", "second", "steer"]
+        );
+    }
+    #[test]
+    fn handback_names_and_late_or_contradictory_notifications_grant_no_ancestry() {
+        for case in ["absent", "late", "changed", "foreign", "not_notified"] {
+            let db = database();
+            let job = json!({"id":"job_original","notified":true,"input_origin":{
+                "message_id":"assistant","call_id":"call","attempt":1,
+                "operation_key":"session:call","input_message_ids":["original"]}});
+            insert(&db, 1, "job.started.1", job.clone());
+            insert(
+                &db,
+                2,
+                "session.prompt.admitted.1",
+                json!({"message_id":"msg_handback_job_original","source":"session"}),
+            );
+            let mut notified = job;
+            if case == "changed" {
+                notified["input_origin"]["input_message_ids"] = json!(["foreign"]);
+            }
+            if case == "not_notified" {
+                notified["notified"] = json!(false);
+            }
+            if case != "absent" {
+                insert(
+                    &db,
+                    if case == "late" { 9 } else { 3 },
+                    "job.notified.1",
+                    notified,
+                );
+            }
+            if case == "foreign" {
+                db.execute(
+                    "UPDATE event SET aggregate_id='other' WHERE type='job.notified.1'",
+                    [],
+                )
+                .unwrap();
+            }
+            step(
+                &db,
+                4,
+                "assistant_handback",
+                "nested_call",
+                json!(["msg_handback_job_original"]),
+            );
+            assert_eq!(
+                recorded(&db, "session", "assistant_handback", "nested_call").unwrap(),
+                ["msg_handback_job_original"],
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_or_excessive_handback_roots_never_become_partial_proof() {
+        for inputs in [
+            json!([]),
+            json!(["original", "original"]),
+            json!(["x".repeat(257)]),
+            json!((0..32).map(|i| format!("root_{i}")).collect::<Vec<_>>()),
+        ] {
+            let db = database();
+            let job = json!({"id":"job_original","notified":true,"input_origin":{
+                "message_id":"assistant","call_id":"call","attempt":1,
+                "operation_key":"session:call","input_message_ids":inputs}});
+            insert(&db, 1, "job.started.1", job.clone());
+            insert(
+                &db,
+                2,
+                "session.prompt.admitted.1",
+                json!({"message_id":"msg_handback_job_original"}),
+            );
+            insert(&db, 3, "job.notified.1", job);
+            step(
+                &db,
+                4,
+                "assistant_handback",
+                "nested_call",
+                json!(["msg_handback_job_original", "steer"]),
+            );
+            assert!(
+                recorded(&db, "session", "assistant_handback", "nested_call")
+                    .unwrap()
+                    .is_empty()
+            );
         }
     }
     #[test]
