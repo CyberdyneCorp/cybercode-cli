@@ -291,14 +291,56 @@ Job selection, late handback refusal and requester disposal during shutdown.
 Server all-target Clippy passes with warnings denied and the configured complexity
 limit of 15. Strict OpenSpec passes 100 items; lint reports zero errors/25 warnings.
 
-This is the runtime control foundation. HTTP/SDK and JSONL driver integration,
-input-scoped presence, descendant ownership and complete restart/lost-reply/native
-platform acceptance remain open. The JSONL driver still uses its previous global
-interrupt endpoint until that integration is implemented and verified. CLI/TUI/SDK
-suites and current-source platform CI are not acceptance evidence for this increment.
-Task 6.2 and the whole issue remain open. A fresh GitHub fetch found no new main
+At `34033f9d`, this was the runtime control foundation, before HTTP/SDK and
+JSONL integration. The following continuation integrates those direct controls.
+Input-scoped presence, descendant ownership and complete restart/lost-reply/native
+platform acceptance remain open. Task 6.2 and the whole issue remain open. A fresh GitHub fetch found no new main
 commits; the preceding `71fc43dd` CI observation had 31 successes, 12 queued and
 two running checks, with no observed failures. It does not accept this new source.
+
+### HTTP/SDK and JSONL interruption integration
+
+Authenticated `POST /sessions/{id}/interrupt-inputs` and retained
+`GET /sessions/{id}/interrupt-inputs/{request_id}` now expose the runtime controls.
+OpenAPI and the TypeScript SDK include both methods. Lookup returns `session_seq`
+from the actual committed receipt event, overriding stale serialized metadata.
+Missing/foreign Sessions, invalid input sets and conflicting request reuse refuse.
+
+The JSONL driver no longer calls the global Session interrupt endpoint. Interrupt
+frames, SIGINT and fatal protocol errors retain exact input selections and poll
+those same requests while continuing stdin/event processing. Each request has a
+five-second network bound; uncertain controls retain a 30-second reconciliation
+window. An absent receipt after a lost submission can resubmit only the original
+identity/cohort. No missing route or unknown receipt falls back to global control.
+An acknowledged receipt cannot retire input slots ahead of consumed event history.
+Additional controls require a previously uncovered pending input, bounding retained
+operations by the 32-input capacity. Overlapping controls release each slot once;
+newer input and request reply authority survive older control retirement. EOF and
+SIGINT completion no longer wait for unrelated Session activity.
+
+Local verification passes 105 CLI binary unit cases, including six actual shared
+App/Session controller cases, and 18 real JSONL binary cases. New cases interrupt
+gated inference while admitting another input, settle a fatal malformed frame
+during inference with exit 2, and stop an actual owned background process before
+SIGINT exit 130. Server verification passes 469 library cases with one ignored
+Location-lock subprocess fixture, nine runtime interruption cases and all 86 HTTP
+cases. SDK typecheck and 138 tests pass with ten configured end-to-end skips.
+CLI/client/server all-target Clippy passes with warnings denied and the configured
+complexity limit of 15. API/SDK generation consistency and formatting/diff checks
+pass. Native C deprecation and linker unwind-size warnings were observed.
+
+Focused review covers the API, generated contracts, receipt revision source and
+client control/retirement path. It corrected loss of newer request authority,
+bounded network waits and preserved the original reconciliation diagnostic after
+a failed control. Full-branch review and source-bound platform acceptance remain
+open. Seven observed Linux CI failures on `34033f9d` occurred during package
+installation before compilation/tests: Ubuntu mirror DNS resolution failed on
+x64 and ARM. The affected jobs' logs were inspected; no passing acceptance is
+claimed from those failures. Current-source CI must verify this integration.
+
+This does not complete input-scoped interactive presence, descendant/hook control,
+complete mixed-cohort handling, backpressure, hook events or full restart/lost-reply
+acceptance. The recovery, rules/context and platform obligations remain unchanged.
 
 ### Zero-byte ordinary restore continuation
 

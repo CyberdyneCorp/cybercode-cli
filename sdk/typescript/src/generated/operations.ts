@@ -1376,6 +1376,12 @@ export interface Operations {
     body: undefined;
     response: void;
   };
+  "v1.session.inputInterruption": {
+    path: { id: string; request_id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InputInterruptReceipt;
+  };
   "v1.session.interactiveAttach": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -1399,6 +1405,12 @@ export interface Operations {
     query: Record<string, never>;
     body: undefined;
     response: void;
+  };
+  "v1.session.interruptInputs": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.InputInterrupt;
+    response: S.InputInterruptReceipt;
   };
   "v1.session.label": {
     path: { sessionID: string; name: string };
@@ -4393,6 +4405,18 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.inputInterruption": {
+    tag: "session",
+    name: "inputInterruption",
+    method: "GET",
+    path: "/api/v1/sessions/{id}/interrupt-inputs/{request_id}",
+    pathParams: ["id", "request_id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.interactiveAttach": {
     tag: "session",
     name: "interactiveAttach",
@@ -4439,6 +4463,18 @@ export const operations = {
     body: "none",
     located: false,
     unwrap: false,
+    stream: false,
+  },
+  "v1.session.interruptInputs": {
+    tag: "session",
+    name: "interruptInputs",
+    method: "POST",
+    path: "/api/v1/sessions/{id}/interrupt-inputs",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.session.label": {
@@ -6227,6 +6263,9 @@ export function createGroups(caller: Caller) {
       /** Remove an unpromoted input (`DELETE /api/v1/sessions/{sessionID}/inbox/{messageID}`) */
       inboxRemove: (sessionID: string, messageID: string, options?: RequestOptions): Promise<Operations["v1.session.inboxRemove"]["response"]> =>
         caller.call("v1.session.inboxRemove", { path: { sessionID, messageID } }, options),
+      /** Look up the original interruption receipt without targeting replacement execution (`GET /api/v1/sessions/{id}/interrupt-inputs/{request_id}`) */
+      inputInterruption: (id: string, request_id: string, options?: RequestOptions): Promise<Operations["v1.session.inputInterruption"]["response"]> =>
+        caller.call("v1.session.inputInterruption", { path: { id, request_id } }, options),
       /** Create a 45-second owner-authenticated browser attachment (`POST /api/v1/sessions/{sessionID}/interactive-clients`) */
       interactiveAttach: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interactiveAttach"]["response"]> =>
         caller.call("v1.session.interactiveAttach", { path: { sessionID } }, options),
@@ -6239,6 +6278,9 @@ export function createGroups(caller: Caller) {
       /** Interrupt the running Drain (`POST /api/v1/sessions/{sessionID}/interrupt`) */
       interrupt: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interrupt"]["response"]> =>
         caller.call("v1.session.interrupt", { path: { sessionID } }, options),
+      /** Retain input-scoped interruption without targeting unrelated execution (`POST /api/v1/sessions/{id}/interrupt-inputs`) */
+      interruptInputs: (id: string, body: Operations["v1.session.interruptInputs"]["body"], options?: RequestOptions): Promise<Operations["v1.session.interruptInputs"]["response"]> =>
+        caller.call("v1.session.interruptInputs", { path: { id }, body }, options),
       /** Label a message of the branch tree (`PUT /api/v1/sessions/{sessionID}/labels/{name}`) */
       label: (sessionID: string, name: string, body: Operations["v1.session.label"]["body"], options?: RequestOptions): Promise<Operations["v1.session.label"]["response"]> =>
         caller.call("v1.session.label", { path: { sessionID, name }, body }, options),

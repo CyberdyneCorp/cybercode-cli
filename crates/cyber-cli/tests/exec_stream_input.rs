@@ -696,3 +696,108 @@ fn a_nullable_structured_object_is_a_terminal_answer() {
     assert_eq!(run.until("end", &mut seen)["exit_code"], 0);
     assert_eq!(run.exit(), Some(0));
 }
+
+#[test]
+fn interrupt_during_inference_keeps_stdin_live_for_a_later_input() {
+    let provider = Provider::start(&["gate:text:cancelled answer", "text:later answer"]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"first","text":"start"}"#);
+    let first = run.until("input", &mut seen);
+    provider.wait_for_gate();
+    run.send(r#"{"type":"interrupt"}"#);
+    run.send(r#"{"type":"user","id":"later","text":"continue"}"#);
+    let later = run.until("input", &mut seen);
+    assert_eq!(later["id"], "later");
+    assert_eq!(
+        later["status"], "admitted",
+        "reader blocked behind interrupted inference"
+    );
+    run.send(r#"{"type":"end"}"#);
+    provider.release();
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["exit_code"], 1, "{seen:#?}");
+    let results: Vec<_> = seen
+        .iter()
+        .filter(|line| line["type"] == "result")
+        .collect();
+    assert_eq!(results.len(), 2, "{seen:#?}");
+    let cancelled = results.iter().find(|line| line["id"] == "first").unwrap();
+    assert_eq!(cancelled["message_id"], first["message_id"]);
+    assert_eq!(cancelled["exit_code"], 1);
+    let completed = results.iter().find(|line| line["id"] == "later").unwrap();
+    assert_eq!(completed["message_id"], later["message_id"]);
+    assert_eq!(completed["exit_code"], 0);
+    assert_eq!(completed["result"], "later answer");
+    assert_eq!(run.exit(), Some(1));
+}
+#[test]
+fn malformed_input_during_inference_settles_owned_work_and_exits_2() {
+    let provider = Provider::start(&["gate:text:cancelled answer"]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"first","text":"start"}"#);
+    let input = run.until("input", &mut seen);
+    provider.wait_for_gate();
+    run.send("invalid json");
+    let end = run.until("end", &mut seen);
+    provider.release();
+    assert_eq!(end["exit_code"], 2, "{seen:#?}");
+    let result = seen.iter().find(|line| line["type"] == "result").unwrap();
+    assert_eq!(result["message_id"], input["message_id"]);
+    assert_eq!(result["exit_code"], 1);
+    assert_eq!(run.exit(), Some(2));
+}
+#[cfg(unix)]
+#[test]
+fn sigint_stops_owned_background_process_before_exit_130() {
+    let provider = Provider::start(&[
+        r#"bash {"command":"i=0; while [ $i -lt 1000 ]; do echo tick >> ticks; i=$((i+1)); sleep 0.02; done","background":true}"#,
+        "text:background started",
+    ]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"background","text":"start"}"#);
+    let input = run.until("input", &mut seen);
+    let request = run.until("permission_request", &mut seen);
+    run.send(
+        &json!({"type":"permission_reply","request_id":request["id"],"reply":"once"}).to_string(),
+    );
+    run.until("assistant_text", &mut seen);
+    let ticks = run._root.join("repo/ticks");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !ticks.exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    let start = Instant::now();
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &run.child.id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["exit_code"], 130, "{seen:#?}");
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "waited for natural background exit instead of stopping it"
+    );
+    let result = seen.iter().find(|line| line["type"] == "result").unwrap();
+    assert_eq!(result["message_id"], input["message_id"]);
+    assert_eq!(result["exit_code"], 1);
+    let stopped = std::fs::read(&ticks).unwrap();
+    thread::sleep(Duration::from_millis(150));
+    assert_eq!(
+        std::fs::read(&ticks).unwrap(),
+        stopped,
+        "process kept writing after acknowledged interruption"
+    );
+    assert_eq!(run.exit(), Some(130));
+    assert_eq!(
+        provider.turns().len(),
+        2,
+        "cancelled Job dispatched a handback"
+    );
+}

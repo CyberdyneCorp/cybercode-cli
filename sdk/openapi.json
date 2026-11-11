@@ -2737,6 +2737,119 @@
         ],
         "description": "One small Job record per supplied input; no logs/results/history. Handback\nadmission is separate from the parent Turn processing that queued input."
       },
+      "InputInterrupt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "request_id",
+          "input_message_ids"
+        ]
+      },
+      "Data_InputInterruptReceipt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InputInterruptReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "InputInterruptReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "generation": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InputInterruptStatus"
+          },
+          "session_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Exact durable receipt revision, populated from the committed event on lookup."
+          },
+          "drain_selected": {
+            "type": "boolean"
+          },
+          "refused": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Original queued/held inputs refused at admission; excludes Job notices."
+          },
+          "jobs_cancelled": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputInterruptProblem"
+            }
+          }
+        },
+        "required": [
+          "request_id",
+          "input_message_ids",
+          "generation",
+          "status",
+          "drain_selected",
+          "refused",
+          "jobs_cancelled",
+          "problems"
+        ],
+        "description": "Bounded control evidence. No tool payload, output, or native acknowledgement."
+      },
+      "InputInterruptStatus": {
+        "type": "string",
+        "enum": [
+          "requested",
+          "acknowledged",
+          "unknown"
+        ]
+      },
+      "InputInterruptProblem": {
+        "type": "string",
+        "enum": [
+          "mixed_drain",
+          "mixed_job",
+          "unknown_drain",
+          "drain_timeout",
+          "descendant_job",
+          "missing_job_control",
+          "job_timeout",
+          "unowned_activity",
+          "reconciliation_required",
+          "cleanup_failed"
+        ]
+      },
       "Data_Array_of_string": {
         "type": "object",
         "properties": {
@@ -21625,6 +21738,114 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/InputJobQuery"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/interrupt-inputs": {
+      "post": {
+        "operationId": "v1.session.interruptInputs",
+        "summary": "Retain input-scoped interruption without targeting unrelated execution",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InputInterruptReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputInterrupt"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/interrupt-inputs/{request_id}": {
+      "get": {
+        "operationId": "v1.session.inputInterruption",
+        "summary": "Look up the original interruption receipt without targeting replacement execution",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InputInterruptReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
               }
             }
           }

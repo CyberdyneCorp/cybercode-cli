@@ -687,11 +687,22 @@ cyber exec --output-schema findings.schema.json --format json "audit the depende
 
 - **Output:** the `init` line has `schema_version: 2`. Each prompt gets an `input` line when it is admitted (`status: admitted` or `refused`) and one `result` line when its answer ends, with its `id`, `message_id`, `result`, `error` and `exit_code`. Requests appear as `permission_request` and `question` lines. The run ends with one `end` line: the aggregate `exit_code`, `inputs`, usage, cost and duration. `--include-partial-messages` adds `text_delta` and `reasoning_delta` lines, and `--output-last-message <file>` writes the last answer's text to the file atomically when the run ends.
 - **Requests:** the driver holds an interactive lease while reading input, and starts in `default` mode unless `--mode` says otherwise. Direct permission/question lines carry server-derived `input_message_ids`: the complete input cohort recorded for their exact assistant step and tool call. The driver accepts a request only for its own Session when every identity is one of its pending admitted inputs. Missing or legacy provenance stays unknown; a request ID from another input is a protocol error on reply. Nothing is ever approved automatically.
-- **Ending:** after `end` or EOF nothing new is admitted, tracked owned requests are declined (`reject` for permissions, dismissed questions), and the process exits once every admitted prompt has its result and the Session is idle.
-- **Shared-Session work still in progress:** scoped interruption, input-scoped interactive presence, descendant/hook request ownership and general result/event correlation remain required. The direct-request guard does not complete those guarantees.
-- **Limits and errors:** a line is at most 1 MiB and at most 32 prompts may wait for an answer. A line that is not a valid envelope, an over-long line or a 33rd waiting prompt is a fatal protocol error: an `error` line, no more input, the Session interrupted, and exit 2.
+- **Ending:** after `end` or EOF nothing new is admitted and tracked owned requests are declined (`reject` for permissions, dismissed questions). The process exits once its own inputs and retained controls settle, including while another driver still has active work in the Session.
+- **Interruption:** `interrupt`, SIGINT and fatal protocol errors select only this driver's pending input identities. The runtime retains the request before stopping an owned Drain or direct process Jobs; queued inputs are refused. The driver polls that same request while continuing to read stdin and events, and waits through its acknowledged event revision before releasing input slots. Repeated controls without new inputs share the outstanding request. A later input keeps its own reply authority. Unknown/mixed ownership or a missing acknowledgement fails explicitly with Session/request identities for inspection and preserves recovery evidence; there is no fallback to Session-wide interruption.
+- **Shared-Session work still in progress:** input-scoped interactive presence, descendant/hook ownership, complete mixed-cohort control and broader result/event and restart acceptance remain required. Direct input/Job interruption does not establish those remaining guarantees.
+- **Limits and errors:** a line is at most 1 MiB and at most 32 prompts may wait for an answer. A line that is not a valid envelope, an over-long line or a 33rd waiting prompt is a fatal protocol error: an `error` line, no more input, interruption of the driver's owned inputs, and exit 2.
 - **Exit code:** 130 after SIGINT, 2 after a fatal protocol error, otherwise the first failed prompt's code in admission order (1), else 0. Failure to publish `--output-last-message` makes an otherwise successful run exit 1 and reports the error in `end`; per-input results remain available. Publication uses an exclusively created sibling file, replaces a destination symlink without writing its target, and removes its temporary file on failure. `--output-schema` applies to every prompt, whose `result` is then the validated object.
 - **Not combined with:** a prompt argument, `--command`, `--goal`, `--timeout`, `--max-cost` or `--max-tokens` (exit 2 before any Session). `--include-hook-events` is not available yet.
+
+The API controls are `POST /sessions/{id}/interrupt-inputs` with
+`request_id` and `input_message_ids` (1–32 unique original user inputs), and
+`GET /sessions/{id}/interrupt-inputs/{request_id}` for retained lookup. SDK methods
+are `session.interruptInputs` and `session.inputInterruption`. Receipts identify
+`requested`, `acknowledged` or `unknown` control status and the exact durable
+`session_seq` to consume. A reused request identity with a different selection
+conflicts. A pending receipt from a different runtime generation requires
+reconciliation and never targets replacement execution. These receipts grant no
+native-effect acknowledgement or rollback authority.
 
 ## Budgets and deferred input
 

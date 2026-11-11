@@ -24,6 +24,11 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/jobs", get(list))
         .route("/jobs/input-state", post(input_state))
+        .route("/sessions/{id}/interrupt-inputs", post(interrupt_inputs))
+        .route(
+            "/sessions/{id}/interrupt-inputs/{request_id}",
+            get(interruption),
+        )
         .route(
             "/sessions/{id}/steps/{message_id}/input-origin",
             get(step_inputs),
@@ -31,6 +36,33 @@ pub fn routes() -> Router<AppState> {
         .route("/jobs/{id}", get(show))
         .route("/jobs/{id}/stop", post(stop))
         .route("/jobs/{id}/output", get(output))
+}
+
+async fn interrupt_inputs(
+    State(state): State<AppState>,
+    Path(session): Path<String>,
+    Json(request): Json<crate::runtime::InputInterrupt>,
+) -> Result<Json<Data<crate::runtime::InputInterruptReceipt>>, ApiError> {
+    Ok(Json(Data {
+        data: state.runtime.interrupt_inputs(&session, request).await?,
+    }))
+}
+
+async fn interruption(
+    State(state): State<AppState>,
+    Path((session, request)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::InputInterruptReceipt>>, ApiError> {
+    state.runtime.state(&session).await?;
+    let data = state
+        .runtime
+        .input_interrupt_receipt(&session, &request)?
+        .ok_or_else(|| {
+            ApiError::not_found(
+                "InputInterruptionNotFoundError",
+                "No retained input interruption",
+            )
+        })?;
+    Ok(Json(Data { data }))
 }
 
 async fn step_inputs(

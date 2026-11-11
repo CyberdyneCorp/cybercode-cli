@@ -120,6 +120,22 @@ preserves its ordinary recovery fences. Resume remaining queued inputs without
 waiting for an unrelated replacement Drain. A control receipt acknowledges only
 its proven runtime scope, never native-effect acknowledgement or rollback.
 
+Expose scoped control through authenticated POST
+`/sessions/{id}/interrupt-inputs` and retained GET
+`/sessions/{id}/interrupt-inputs/{request_id}`, with generated SDK methods. Receipt
+lookup derives `session_seq` from the actual committed receipt event instead of
+trusting a serialized revision. The JSONL driver polls retained controls in its
+existing event loop, bounds each control HTTP request to five seconds and retains
+uncertain attempts for up to 30 seconds before reporting reconciliation. It waits
+through the acknowledged receipt revision before retiring selected inputs, and
+preserves newer inputs and their reply authority. Each additional outstanding
+control must select a previously uncovered pending input, so the 32-input capacity
+also bounds retained overlapping controls. A lost POST response looks up the same
+request; an absent original receipt can resubmit that exact identity/cohort. Missing
+scope routes, conflicting receipts and unknown outcomes never fall back to global
+Session interruption. SIGINT retains aggregate exit 130 and fatal protocol errors
+retain exit 2 while ordinary interrupt frames leave stdin open for later input.
+
 Emit schema_version 2, one result per admitted input with stable correlation, optional partial text/reasoning and hook events, and atomic `--output-last-message`. Session-level usage remains separate from per-input results and descendant usage. Redact errors and bound output buffering; define aggregate exits as 130 for explicit SIGINT, 2 for a fatal protocol error, otherwise the first nonzero input outcome in admission order (0 only when all outcomes succeed). A failing input does not discard already acknowledged later input; fatal protocol errors stop new admission and settle or explicitly cancel only owned work. Cover these precedence rules in protocol tests. Do not silently change text-mode output or the existing review/workflow/Goal command contracts; unsupported option combinations fail before creating work.
 
 ## Delivery and acceptance

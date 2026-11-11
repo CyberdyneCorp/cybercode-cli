@@ -45,6 +45,9 @@ pub struct InputInterruptReceipt {
     pub input_message_ids: Vec<String>,
     pub generation: String,
     pub status: InputInterruptStatus,
+    /// Exact durable receipt revision, populated from the committed event on lookup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_seq: Option<i64>,
     pub drain_selected: bool,
     /// Original queued/held inputs refused at admission; excludes Job notices.
     pub refused: u64,
@@ -100,17 +103,19 @@ fn recorded(
     session: &str,
     request: &str,
 ) -> Result<Option<InputInterruptReceipt>, StoreError> {
-    let raw: Option<String> = db
+    let raw: Option<(String, i64)> = db
         .query_row(
-            "SELECT data FROM event WHERE aggregate_id=?1 AND type=?2
+            "SELECT data,seq FROM event WHERE aggregate_id=?1 AND type=?2
          AND json_extract(data,'$.request_id')=?3 ORDER BY seq DESC LIMIT 1",
             params![session, CHANGED, request],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    raw.map(|raw| {
-        serde_json::from_str(&raw)
-            .map_err(|_| StoreError::Unavailable("Malformed input interruption receipt".into()))
+    raw.map(|(raw, seq)| {
+        let mut receipt: InputInterruptReceipt = serde_json::from_str(&raw)
+            .map_err(|_| StoreError::Unavailable("Malformed input interruption receipt".into()))?;
+        receipt.session_seq = Some(seq);
+        Ok(receipt)
     })
     .transpose()
 }
@@ -217,6 +222,7 @@ impl Runtime {
             input_message_ids: request.input_message_ids,
             generation: self.inner.input_interrupt_generation.clone(),
             status: InputInterruptStatus::Requested,
+            session_seq: None,
             drain_selected: false,
             refused: 0,
             jobs_cancelled: 0,
@@ -249,7 +255,11 @@ impl Runtime {
         events.push(events::event(CHANGED, &receipt));
         // Promotion cannot cross the state lock. Completion/replacement may
         // proceed: signalling retains the old token and never selects anew.
-        self.inner.commit_locked(&mut state, events)?;
+        let stored = self.inner.commit_locked(&mut state, events)?;
+        receipt.session_seq = stored
+            .iter()
+            .find(|event| event.kind == CHANGED)
+            .map(|event| event.seq);
         if refuse_pending(&self.inner, &mut state).is_err() {
             receipt.problem(InputInterruptProblem::CleanupFailed);
         }
@@ -641,6 +651,7 @@ mod tests {
             input_message_ids: vec!["first".into()],
             generation: "generation".into(),
             status: InputInterruptStatus::Requested,
+            session_seq: None,
             drain_selected: false,
             refused: 0,
             jobs_cancelled: 0,

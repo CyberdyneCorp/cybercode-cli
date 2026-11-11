@@ -5153,3 +5153,178 @@ async fn budget_reservation_http_requires_owner_auth_and_checks_origin_before_mu
         .unwrap();
     assert_eq!(released.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn scoped_interruption_http_is_authenticated_idempotent_and_revision_bound() {
+    use cyber_server::runtime::{Admission, Delivery};
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let mut admission = Admission::text("held", Delivery::Hold);
+    admission.resume = false;
+    let input = h.runtime.admit(&session, admission).await.unwrap();
+    let body = json!({"request_id":"op_http_stop","input_message_ids":[input.message_id]});
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{session}/interrupt-inputs");
+    assert_eq!(
+        client
+            .post(&path)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    assert_eq!(
+        client
+            .get(format!("{path}/op_http_stop"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let response: Value = client
+        .post(&path)
+        .basic_auth("cyber", Some("secret"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["data"]["request_id"], "op_http_stop");
+    let api = Api::new(&h);
+    let receipt = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (status, response) = api
+                .get(&format!(
+                    "/sessions/{session}/interrupt-inputs/op_http_stop"
+                ))
+                .await;
+            assert_eq!(status, StatusCode::OK);
+            if response["data"]["status"] != "requested" {
+                break response["data"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(receipt["status"], "acknowledged");
+    let history = h.store.read_events(&session, -1, 500).unwrap();
+    let event = history
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "session.input.interruption.1")
+        .unwrap();
+    assert_eq!(receipt["session_seq"], event.seq);
+    let before = h.runtime.state(&session).await.unwrap().last_seq;
+    let (status, retry) = api
+        .post(&format!("/sessions/{session}/interrupt-inputs"), body)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(retry["data"], receipt);
+    assert_eq!(h.runtime.state(&session).await.unwrap().last_seq, before);
+    assert_eq!(
+        api.get(&format!("/sessions/{session}/interrupt-inputs/op_unknown"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        api.get("/sessions/ses_unknown/interrupt-inputs/op_http_stop")
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    h.runtime.shutdown().await;
+}
+#[tokio::test]
+async fn scoped_interruption_http_refuses_invalid_foreign_and_reused_scopes_without_signalling() {
+    use cyber_server::runtime::{Admission, Delivery, InputStatus};
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let other = h.session().await;
+    let input = h
+        .runtime
+        .admit(&session, Admission::text("held", Delivery::Hold))
+        .await
+        .unwrap();
+    let api = Api::new(&h);
+    let path = format!("/sessions/{session}/interrupt-inputs");
+    for ids in [
+        json!([]),
+        json!(vec![input.message_id.clone(); 33]),
+        json!([input.message_id, input.message_id]),
+        json!(["x".repeat(257)]),
+        json!([""]),
+        json!(["msg_unknown"]),
+    ] {
+        assert_eq!(
+            api.post(
+                &path,
+                json!({"request_id":"op_invalid","input_message_ids":ids})
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        api.post(
+            &format!("/sessions/{other}/interrupt-inputs"),
+            json!({"request_id":"op_foreign","input_message_ids":[input.message_id]})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        h.runtime
+            .state(&session)
+            .await
+            .unwrap()
+            .input(&input.message_id)
+            .unwrap()
+            .status,
+        InputStatus::Held
+    );
+    assert_eq!(
+        api.post(
+            &path,
+            json!({"request_id":"op_scope","input_message_ids":[input.message_id]})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let next = h
+        .runtime
+        .admit(&session, Admission::text("other held", Delivery::Hold))
+        .await
+        .unwrap();
+    assert_eq!(
+        api.post(
+            &path,
+            json!({"request_id":"op_scope","input_message_ids":[next.message_id]})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        h.runtime
+            .state(&session)
+            .await
+            .unwrap()
+            .input(&next.message_id)
+            .unwrap()
+            .status,
+        InputStatus::Held
+    );
+    h.runtime.shutdown().await;
+}

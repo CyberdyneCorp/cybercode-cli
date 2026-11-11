@@ -9,7 +9,9 @@
 //! after `end` or EOF nothing new is admitted, unanswered requests are declined, and the
 //! process exits once its owned inputs and background work have settled.
 
-use std::collections::BTreeMap;
+mod interruption;
+
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use cyber_client::{Client, Event};
@@ -50,6 +52,7 @@ enum Wake {
 struct Ask {
     session_id: String,
     question: bool,
+    inputs: Vec<String>,
 }
 
 struct Driver<'a> {
@@ -61,6 +64,9 @@ struct Driver<'a> {
     step: Option<String>,
     seen_seq: Option<i64>,
     background_failed: bool,
+    /// Each new control must cover a previously uncovered pending input, so
+    /// the 32-input capacity also bounds retained overlapping controls to 32.
+    interruptions: VecDeque<interruption::Pending>,
     inputs: Inputs,
     /// Exact message identities of promoted inputs whose answer is in progress.
     answering: Vec<String>,
@@ -159,6 +165,7 @@ impl<'a> Driver<'a> {
             step: None,
             seen_seq: None,
             background_failed: false,
+            interruptions: VecDeque::new(),
             inputs: Inputs::default(),
             answering: Vec::new(),
             answer_done: false,
@@ -187,7 +194,7 @@ impl<'a> Driver<'a> {
             let wake = tokio::select! {
                 line = lines.recv(), if !self.closed => Wake::Input(line.unwrap_or(Line::Eof)),
                 event = events.next() => Wake::Event(event),
-                _ = settle_poll.tick(), if self.inputs.has_ready() => Wake::Poll,
+                _ = settle_poll.tick(), if self.inputs.has_ready() || !self.interruptions.is_empty() => Wake::Poll,
                 _ = renewal.tick(), if self.lease.is_some() => Wake::Renew,
                 _ = &mut interrupt, if !self.interrupted => Wake::Interrupt,
             };
@@ -201,12 +208,18 @@ impl<'a> Driver<'a> {
         match wake {
             Wake::Input(line) => self.line(line).await,
             Wake::Event(event) => return self.consume_event(event).await,
-            Wake::Poll => self.refresh_background().await,
+            Wake::Poll => {
+                self.poll_interruption().await;
+                if !self.background_failed {
+                    self.refresh_background().await;
+                }
+            }
             Wake::Renew => self.renew().await,
             Wake::Interrupt => {
                 self.interrupted = true;
-                self.close().await;
+                self.closed = true;
                 self.interrupt().await;
+                self.release().await;
             }
         }
         false
@@ -298,14 +311,6 @@ impl<'a> Driver<'a> {
         }
     }
 
-    async fn interrupt(&mut self) {
-        let path = format!("/sessions/{}/interrupt", self.id);
-        if let Err(error) = self.client.post(&path, json!({})).await {
-            self.out
-                .error(&format!("interrupt was not acknowledged: {error}"));
-        }
-    }
-
     /// Answer a request bound to this driver's live inputs; any other ID is a
     /// protocol error that leaves the run going.
     async fn reply(&mut self, request_id: &str, question: bool, body: Value) {
@@ -365,6 +370,11 @@ impl<'a> Driver<'a> {
     /// waits on a driver that is gone.
     async fn close(&mut self) {
         self.closed = true;
+        if self.fatal.is_some() {
+            self.interrupt().await;
+            self.release().await;
+            return;
+        }
         self.release().await;
         let asks = std::mem::take(&mut self.asks);
         for (request_id, ask) in asks {
@@ -378,9 +388,6 @@ impl<'a> Driver<'a> {
             };
             let path = format!("/sessions/{}/{route}/{request_id}/reply", ask.session_id);
             let _ = self.client.post(&path, body).await;
-        }
-        if self.fatal.is_some() {
-            self.interrupt().await;
         }
     }
 
@@ -489,7 +496,7 @@ impl<'a> Driver<'a> {
     }
 
     async fn refresh_background(&mut self) {
-        if let Err(error) = self.poll_background(false).await {
+        if let Err(error) = self.poll_background().await {
             self.background_error(error.message).await;
         }
     }
@@ -568,6 +575,12 @@ impl<'a> Driver<'a> {
             Ask {
                 session_id: session_id.to_owned(),
                 question,
+                inputs: data["input_message_ids"]
+                    .as_array()
+                    .expect("validated ownership")
+                    .iter()
+                    .filter_map(|id| id.as_str().map(str::to_owned))
+                    .collect(),
             },
         );
         let line = if question {
@@ -617,22 +630,11 @@ impl<'a> Driver<'a> {
             .stream_line("error", json!({ "code": "protocol", "message": why }));
     }
 
-    /// Completion belongs to these inputs; another driver's Turn may remain active.
-    /// A stopping run still waits for its own running Jobs.
+    /// Completion follows owned inputs and retained control, independently of
+    /// another driver's Session activity.
     async fn done(&mut self) -> bool {
-        if self.background_failed || (self.closed && self.inputs.is_empty()) {
-            return true;
-        }
-        if !(self.closed && self.idle && (self.interrupted || self.fatal.is_some())) {
-            return false;
-        }
-        match self.poll_background(true).await {
-            Ok(settled) => settled,
-            Err(error) => {
-                self.background_error(error.message).await;
-                true
-            }
-        }
+        self.background_failed
+            || (self.closed && self.inputs.is_empty() && self.interruptions.is_empty())
     }
 
     fn owns_step(&self, data: &Value) -> bool {
@@ -681,7 +683,7 @@ impl<'a> Driver<'a> {
         }
     }
 
-    async fn poll_background(&mut self, stopping: bool) -> Result<bool, CliError> {
+    async fn poll_background(&mut self) -> Result<bool, CliError> {
         let ids = self.inputs.identities();
         if ids.is_empty() {
             return Ok(true);
@@ -717,8 +719,10 @@ impl<'a> Driver<'a> {
         }
         let mut settled = true;
         for state in states {
-            settled &= !state.running
-                && (stopping || !(state.awaiting_handback || state.handback_pending));
+            settled &= !(state.running || state.awaiting_handback || state.handback_pending);
+            if self.stopping_input(&state.message_id) {
+                continue;
+            }
             let Some(input) = self.inputs.get_mut(&state.message_id) else {
                 continue;
             };

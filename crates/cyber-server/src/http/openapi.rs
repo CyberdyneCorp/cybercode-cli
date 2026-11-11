@@ -331,6 +331,11 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         op("post", "/jobs/input-state", "v1.job.inputState", "Read bounded background settlement for a complete input cohort")
             .body::<crate::runtime::InputJobQuery>(g)
             .ok::<Data<Vec<crate::runtime::InputJobState>>>(g),
+        op("post", "/sessions/{id}/interrupt-inputs", "v1.session.interruptInputs", "Retain input-scoped interruption without targeting unrelated execution")
+            .body::<crate::runtime::InputInterrupt>(g)
+            .ok::<Data<crate::runtime::InputInterruptReceipt>>(g),
+        op("get", "/sessions/{id}/interrupt-inputs/{request_id}", "v1.session.inputInterruption", "Look up the original interruption receipt without targeting replacement execution")
+            .ok::<Data<crate::runtime::InputInterruptReceipt>>(g),
         op("get", "/sessions/{id}/steps/{message_id}/input-origin", "v1.session.stepInputOrigin", "Read the bounded original input cohort of an exact recorded step")
             .ok::<Data<Vec<String>>>(g),
         op("get", "/jobs/{id}", "v1.job.get", "Read a background task")

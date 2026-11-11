@@ -29,6 +29,13 @@
 - **THEN** cleanup SHALL retain its runtime shutdown owner, wait for the captured owner's actual disposal, and return the original receipt without selecting replacement execution
 - **AND** a different cohort under the same request identity SHALL refuse; missing retained cleanup or a changed runtime generation SHALL report unknown reconciliation rather than inventing acknowledgement
 
+#### Scenario: Interruption acknowledgement is ahead of client replay
+- **WHEN** the server has acknowledged the exact retained interruption but its receipt revision is ahead of the driver's consumed durable events
+- **THEN** the driver SHALL retain the selected input slots until replay reaches that revision
+- **AND** polling SHALL leave stdin and event processing live; a newer input and its request reply authority SHALL remain independent
+- **WHEN** a submission response is lost
+- **THEN** lookup and any necessary resubmission SHALL use the same request identity and original cohort, without a Session-wide fallback
+
 #### Scenario: An interrupted input has direct process Jobs
 - **WHEN** the captured Drain has released and pending Job publication has crossed its admission barrier
 - **THEN** cancellation SHALL select only proven direct process Jobs of the exact Session and complete selected cohort, in bounded identity pages

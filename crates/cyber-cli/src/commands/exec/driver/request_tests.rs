@@ -286,7 +286,7 @@ async fn completed_driver_retires_without_waiting_for_another_drivers_active_que
     let first_input = first.inputs.identities()[0].clone();
     first.inputs.get_mut(&first_input).unwrap().answer_ready = true;
     assert!(
-        !first.poll_background(false).await.unwrap(),
+        !first.poll_background().await.unwrap(),
         "retired ahead of unread durable answer events"
     );
     assert!(first.inputs.contains(&first_input));
@@ -310,7 +310,7 @@ async fn completed_driver_retires_without_waiting_for_another_drivers_active_que
             .await;
     }
     assert!(!first.idle, "the other driver is still executing");
-    assert!(first.poll_background(false).await.unwrap());
+    assert!(first.poll_background().await.unwrap());
     assert!(first.inputs.is_empty());
     first.close().await;
     assert!(
@@ -328,5 +328,283 @@ async fn completed_driver_retires_without_waiting_for_another_drivers_active_que
         .await
         .unwrap();
     second.close().await;
+    f.app.runtime.shutdown().await;
+}
+
+async fn replay(f: &Fixture, driver: &mut Driver<'_>) {
+    let cursor = driver.seen_seq.unwrap_or(-1);
+    let history = f
+        .client
+        .get(&format!(
+            "/sessions/{}/history?after={cursor}&limit=500",
+            f.session
+        ))
+        .await
+        .unwrap();
+    assert_eq!(history["hasMore"], false);
+    for stored in history["data"].as_array().unwrap() {
+        driver
+            .event(Event {
+                kind: stored["type"].as_str().unwrap().into(),
+                data: stored["data"].clone(),
+                seq: stored["durable"]["seq"].as_i64(),
+                session_id: Some(f.session.clone()),
+            })
+            .await;
+    }
+}
+async fn settle_interruption(f: &Fixture, driver: &mut Driver<'_>) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            replay(f, driver).await;
+            driver.poll_interruption().await;
+            if driver.interruptions.is_empty() || driver.background_failed {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("driver interruption did not settle");
+    assert!(!driver.background_failed, "{:?}", driver.run.error);
+}
+#[tokio::test]
+async fn queued_driver_interrupt_retires_only_its_input_while_foreign_question_stays_active() {
+    let f = Fixture::new().await;
+    let args = ExecArgs::default();
+    let session = json!({"id":f.session});
+    let mut first_out = Out::new(Format::Text, &args, &session);
+    let mut second_out = Out::new(Format::Text, &args, &session);
+    let mut first = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut first_out,
+        Run::new(&args, Instant::now()),
+    );
+    let mut second = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut second_out,
+        Run::new(&args, Instant::now()),
+    );
+    first.attach().await;
+    second.attach().await;
+    first
+        .admit(
+            Some("first".into()),
+            vec![json!({"type":"text","text":"QUESTION_CASE"})],
+            "queue",
+        )
+        .await;
+    let active = f.request().await;
+    second
+        .admit(
+            Some("second".into()),
+            vec![json!({"type":"text","text":"TEXT_CASE"})],
+            "queue",
+        )
+        .await;
+    second.interrupt().await;
+    assert_eq!(second.interruptions.len(), 1);
+    // A repeated interrupt with no new input reuses the retained operation.
+    second.interrupt().await;
+    assert_eq!(second.interruptions.len(), 1);
+    second.close().await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let history = f
+                .client
+                .get(&format!(
+                    "/sessions/{}/history?after=-1&limit=500",
+                    f.session
+                ))
+                .await
+                .unwrap();
+            if history["data"].as_array().unwrap().iter().any(|event| {
+                event["type"] == "session.input.interruption.1"
+                    && event["data"]["status"] == "acknowledged"
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    second.poll_interruption().await;
+    assert!(
+        !second.inputs.is_empty(),
+        "retired before consuming the acknowledged receipt revision"
+    );
+    assert_eq!(second.interruptions.len(), 1);
+    settle_interruption(&f, &mut second).await;
+    assert!(second.inputs.is_empty());
+    assert_eq!(second.inputs.failure_code(), Some(1));
+    assert!(second.done().await);
+    assert_eq!(
+        f.app.runtime.pending_requests(Some(&f.session))[0].id,
+        active.id
+    );
+    let (base, data) = event(&active);
+    first.asked(base, &data).await;
+    first.reply(&active.id, true, reply(true)).await;
+    f.app.runtime.wait_idle(&f.session).await;
+    first.close().await;
+    f.app.runtime.shutdown().await;
+}
+#[tokio::test]
+async fn active_driver_interrupt_finishes_without_waiting_for_another_drivers_replacement_question()
+{
+    let f = Fixture::new().await;
+    let args = ExecArgs::default();
+    let session = json!({"id":f.session});
+    let mut first_out = Out::new(Format::Text, &args, &session);
+    let mut second_out = Out::new(Format::Text, &args, &session);
+    let mut first = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut first_out,
+        Run::new(&args, Instant::now()),
+    );
+    let mut second = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut second_out,
+        Run::new(&args, Instant::now()),
+    );
+    first.attach().await;
+    second.attach().await;
+    first
+        .admit(
+            Some("first".into()),
+            vec![json!({"type":"text","text":"QUESTION_CASE"})],
+            "queue",
+        )
+        .await;
+    let original = f.request().await;
+    second
+        .admit(
+            Some("second".into()),
+            vec![json!({"type":"text","text":"QUESTION_CASE"})],
+            "queue",
+        )
+        .await;
+    first.interrupt().await;
+    first.close().await;
+    settle_interruption(&f, &mut first).await;
+    assert!(first.done().await);
+    let replacement = f.request().await;
+    assert_ne!(replacement.id, original.id);
+    assert!(
+        second
+            .inputs
+            .owns_request(&f.session, &serde_json::to_value(&replacement).unwrap())
+    );
+    let (base, data) = event(&replacement);
+    second.asked(base, &data).await;
+    assert_eq!(second.asks.len(), 1);
+    second.reply(&replacement.id, true, reply(true)).await;
+    f.app.runtime.wait_idle(&f.session).await;
+    second.close().await;
+    f.app.runtime.shutdown().await;
+}
+#[tokio::test]
+async fn interruption_retirement_preserves_a_newer_input_and_its_reply_authority() {
+    let f = Fixture::new().await;
+    let args = ExecArgs::default();
+    let session = json!({"id":f.session});
+    let mut out = Out::new(Format::Text, &args, &session);
+    let mut driver = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut out,
+        Run::new(&args, Instant::now()),
+    );
+    driver.attach().await;
+    driver
+        .admit(
+            Some("old".into()),
+            vec![json!({"type":"text","text":"QUESTION_CASE"})],
+            "queue",
+        )
+        .await;
+    f.request().await;
+    let old = driver.inputs.identities()[0].clone();
+    driver.interrupt().await;
+    driver
+        .admit(
+            Some("new".into()),
+            vec![json!({"type":"text","text":"QUESTION_CASE"})],
+            "queue",
+        )
+        .await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            replay(&f, &mut driver).await;
+            if driver.asks.values().any(|ask| !ask.inputs.contains(&old)) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    settle_interruption(&f, &mut driver).await;
+    assert!(!driver.inputs.contains(&old));
+    assert_eq!(driver.inputs.identities().len(), 1);
+    assert_eq!(
+        driver.asks.len(),
+        1,
+        "old interruption erased newer reply authority"
+    );
+    let request = f.request().await;
+    driver.reply(&request.id, true, reply(true)).await;
+    f.app.runtime.wait_idle(&f.session).await;
+    driver.close().await;
+    f.app.runtime.shutdown().await;
+}
+#[tokio::test]
+async fn overlapping_interrupts_keep_each_original_scope_and_release_all_pending_slots() {
+    let f = Fixture::new().await;
+    let args = ExecArgs::default();
+    let session = json!({"id":f.session});
+    let mut out = Out::new(Format::Text, &args, &session);
+    let mut driver = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut out,
+        Run::new(&args, Instant::now()),
+    );
+    driver.attach().await;
+    driver
+        .admit(
+            Some("old".into()),
+            vec![json!({"type":"text","text":"QUESTION_CASE"})],
+            "queue",
+        )
+        .await;
+    f.request().await;
+    driver.interrupt().await;
+    driver
+        .admit(
+            Some("new".into()),
+            vec![json!({"type":"text","text":"QUESTION_CASE"})],
+            "queue",
+        )
+        .await;
+    driver.interrupt().await;
+    assert_eq!(driver.interruptions.len(), 2);
+    settle_interruption(&f, &mut driver).await;
+    assert!(driver.inputs.is_empty());
+    assert_eq!(driver.inputs.total(), 2);
+    assert_eq!(driver.inputs.failure_code(), Some(1));
+    driver.close().await;
+    assert!(driver.done().await);
     f.app.runtime.shutdown().await;
 }

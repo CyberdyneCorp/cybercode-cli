@@ -1023,6 +1023,10 @@ export type Data_GoalsView = {
   data: GoalsView;
 };
 
+export type Data_InputInterruptReceipt = {
+  data: InputInterruptReceipt;
+};
+
 export type Data_IntegrationBatch = {
   data: IntegrationBatch;
 };
@@ -2362,6 +2366,30 @@ export type Inflight = {
   message_id: string;
   started_ms: number;
 };
+
+export type InputInterrupt = {
+  request_id: string;
+  input_message_ids: string[];
+};
+
+export type InputInterruptProblem = "mixed_drain" | "mixed_job" | "unknown_drain" | "drain_timeout" | "descendant_job" | "missing_job_control" | "job_timeout" | "unowned_activity" | "reconciliation_required" | "cleanup_failed";
+
+/** Bounded control evidence. No tool payload, output, or native acknowledgement. */
+export type InputInterruptReceipt = {
+  request_id: string;
+  input_message_ids: string[];
+  generation: string;
+  status: InputInterruptStatus;
+  /** Exact durable receipt revision, populated from the committed event on lookup. */
+  session_seq?: number | null;
+  drain_selected: boolean;
+  /** Original queued/held inputs refused at admission; excludes Job notices. */
+  refused: number;
+  jobs_cancelled: number;
+  problems: InputInterruptProblem[];
+};
+
+export type InputInterruptStatus = "requested" | "acknowledged" | "unknown";
 
 export type InputJobQuery = {
   session_id: string;
