@@ -737,6 +737,11 @@ export type Content2 = {
 };
 
 export type ContextInspection = {
+  /**
+   * Final assembly of the most recently prepared request, including schemas
+   * and turn instructions. Historical events may have no estimate.
+   */
+  last_prepared_request?: PreparedContextEstimate | null;
   /** Latest recorded source observations, without source content. */
   effective_sources: EffectiveContextSource[];
   omitted_sources: number;
@@ -3758,6 +3763,18 @@ export type PrDescriptionRequest = {
 /** A discovery response always contains `data`, including an explicit absent receipt. */
 export type PreparationReceiptData = {
   data: SnapshotPreparationReceipt | null;
+};
+
+/** The complete input estimate captured from a final assembled provider request. */
+export type PreparedContextEstimate = {
+  step_id: string;
+  epoch: number;
+  provider: string;
+  model: string;
+  window?: number | null;
+  estimated_input_tokens: number;
+  estimated_input_utilization?: number | null;
+  sources: ContextSourceEstimate[];
 };
 
 /** Product telemetry is not implemented and always off. */

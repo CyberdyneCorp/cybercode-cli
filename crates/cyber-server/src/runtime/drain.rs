@@ -1291,6 +1291,13 @@ impl Inner {
         let message_id = cyber_core::ids::new_id("msg");
         let origin = super::usage_origin::step_origin(&self.store, &state)?;
         let payload = StepStarted {
+            context_estimate: Some(super::context_inspection::PreparedContextEstimate::capture(
+                &request,
+                resolved,
+                epoch.number,
+                state.compacted.is_some(),
+                message_id.clone(),
+            )),
             input_message_ids: super::requests::input_owners::capture(&state),
             agent: Some(state.info.agent.clone()),
             mode: Some(mode),

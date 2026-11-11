@@ -556,6 +556,8 @@ pub struct SessionState {
     /// Boxed: Session state is held in deeply nested futures, so it stays small.
     #[serde(skip)]
     pub last_step: Option<Box<LastStep>>,
+    #[serde(skip)]
+    pub(crate) prepared_context: Option<super::context_inspection::PreparedContextEstimate>,
     pub steps: Vec<StepSnapshot>,
     /// File diffs by user message.
     pub diffs: BTreeMap<String, Vec<super::host::FileDiff>>,
@@ -823,6 +825,7 @@ impl SessionState {
             turn_mode: None,
             turn_agent: None,
             last_step: None,
+            prepared_context: None,
             steps: Vec::new(),
             diffs: BTreeMap::new(),
             revert: None,
@@ -1480,6 +1483,7 @@ impl SessionState {
 
     fn on_step_started(&mut self, s: StepStarted, time_ms: i64) -> Result<(), String> {
         super::requests::input_owners::validate(self, &s.input_message_ids)?;
+        self.prepared_context = s.context_estimate;
         self.first_turn_started = true;
         self.turn_mode = Some(s.mode.unwrap_or_else(|| self.info.mode.clone()));
         let agent = s.agent.unwrap_or_else(|| self.info.agent.clone());

@@ -268,6 +268,8 @@ pub struct SystemAdded {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepStarted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_estimate: Option<super::context_inspection::PreparedContextEstimate>,
     /// Complete active input cohort captured before this inference step.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_message_ids: Vec<String>,

@@ -4073,6 +4073,7 @@ async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_defa
         fresh["data"]["inspection"]["estimated_input_tokens"],
         Value::Null
     );
+    assert!(fresh["data"]["inspection"]["last_prepared_request"].is_null());
     assert!(h.models.requests("test/main").is_empty());
 
     api.post(&format!("/sessions/{id}/prompt"), prompt("hi"))
@@ -4092,6 +4093,12 @@ async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_defa
     assert_eq!(date["origin"], "runtime");
     assert_eq!(estimate["epoch_pending"], false);
     assert_eq!(estimate["last_request_tokens"], 100);
+    assert!(
+        estimate["last_prepared_request"]["estimated_input_tokens"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
     assert_eq!(estimate["window"], 200_000);
     let tokens = estimate["estimated_input_tokens"].as_u64().unwrap();
     assert!(tokens > 0);

@@ -53,6 +53,64 @@ fn harness(main: Vec<Vec<cyber_llm::adapters::ScriptStep>>) -> Harness {
 }
 
 #[tokio::test]
+async fn inspected_request_estimate_includes_the_finalizer_and_every_assembled_input() {
+    let h = harness(vec![structured("final", r#"{"summary":"done"}"#)]);
+    let id = h.session().await;
+    let mut output_schema = schema();
+    output_schema["description"] = "Describe the completed audit. ".repeat(200).into();
+    ask(&h, &id, "audit this workspace", Some(output_schema)).await;
+    h.settle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert!(request.system.len() > 2);
+    assert!(
+        request
+            .tools
+            .iter()
+            .any(|tool| tool.name == "structured_output")
+    );
+    let serialized_bytes = request.system.iter().map(String::len).sum::<usize>()
+        + serde_json::to_vec(&request.messages).unwrap().len()
+        + serde_json::to_vec(&request.tools).unwrap().len();
+    let state = h.state(&id).await;
+    let estimate = h
+        .runtime
+        .inspect_context(&state)
+        .last_prepared_request
+        .unwrap();
+    assert_eq!(
+        estimate.estimated_input_tokens,
+        (serialized_bytes / 4) as u64
+    );
+    assert_eq!(estimate.step_id, state.steps.last().unwrap().step_id);
+    assert_eq!(
+        estimate.estimated_input_utilization,
+        Some(estimate.estimated_input_tokens as f64 / 200_000.0)
+    );
+    assert!(
+        estimate
+            .sources
+            .iter()
+            .any(|source| source.id == "turn_instructions" && source.estimated_tokens > 0)
+    );
+    assert!(
+        estimate
+            .sources
+            .iter()
+            .any(|source| source.id == "tool_schemas" && source.estimated_tokens > 1000)
+    );
+    let restarted = h.restart();
+    assert_eq!(
+        restarted
+            .inspect_context(&restarted.state(&id).await.unwrap())
+            .last_prepared_request,
+        Some(estimate)
+    );
+    assert_eq!(h.models.requests("test/main").len(), 1);
+}
+
+#[tokio::test]
 async fn lost_terminal_commit_ack_reopens_the_original_outcome_without_dispatch() {
     use std::sync::atomic::Ordering;
     let h = harness(vec![structured("final", r#"{"summary":"committed"}"#)]);

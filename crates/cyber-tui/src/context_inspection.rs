@@ -56,8 +56,51 @@ pub(crate) fn format(data: &Value) -> String {
             }
         }
     }
+    lines.extend(prepared_request(&inspection["last_prepared_request"]));
     lines.extend(effective_sources(inspection));
     lines.join("\n")
+}
+
+fn prepared_request(prepared: &Value) -> Vec<String> {
+    if !prepared.is_object() {
+        return Vec::new();
+    }
+    let mut lines = vec![
+        String::new(),
+        format!(
+            "Last prepared request · {}",
+            crate::messaging::clean_line(prepared["step_id"].as_str().unwrap_or("unknown"))
+        ),
+        format!(
+            "Estimated complete input · {} tokens",
+            prepared["estimated_input_tokens"]
+                .as_u64()
+                .map_or_else(|| "unknown".into(), |n| n.to_string())
+        ),
+        format!(
+            "Model · {}/{} · Epoch {}",
+            crate::messaging::clean_line(prepared["provider"].as_str().unwrap_or("unknown")),
+            crate::messaging::clean_line(prepared["model"].as_str().unwrap_or("unknown")),
+            prepared["epoch"]
+                .as_u64()
+                .map_or_else(|| "unknown".into(), |n| n.to_string())
+        ),
+        format!(
+            "Estimated prepared window use · {}",
+            prepared["estimated_input_utilization"]
+                .as_f64()
+                .map_or_else(
+                    || "unknown".into(),
+                    |fraction| format!("{:.1}%", fraction * 100.0)
+                )
+        ),
+    ];
+    for source in prepared["sources"].as_array().into_iter().flatten() {
+        let id = crate::messaging::clean_line(source["id"].as_str().unwrap_or("unknown"));
+        let tokens = source["estimated_tokens"].as_u64().unwrap_or(0);
+        lines.push(format!("{id} · ~{tokens} tokens"));
+    }
+    lines
 }
 
 fn effective_sources(inspection: &Value) -> Vec<String> {
@@ -105,6 +148,11 @@ mod tests {
         let text = super::format(&serde_json::json!({
             "epoch": 3,
             "inspection": {
+                "last_prepared_request": {
+                    "step_id": "msg_1", "epoch": 2, "provider": "test", "model": "main",
+                    "estimated_input_tokens": 1280, "estimated_input_utilization": 0.5,
+                    "sources": [{"id": "tool_schemas", "estimated_tokens": 280}]
+                },
                 "effective_sources": [{
                     "id": "core/instructions", "origin": "instruction_files",
                     "status": "retained_unavailable", "estimated_tokens": 42,
@@ -115,6 +163,11 @@ mod tests {
             }
         }));
         assert!(text.contains("Estimated window use: unknown"));
+        assert!(text.contains("Last prepared request · msg_1"));
+        assert!(text.contains("Estimated complete input · 1280 tokens"));
+        assert!(text.contains("Model · test/main · Epoch 2"));
+        assert!(text.contains("Estimated prepared window use · 50.0%"));
+        assert!(text.contains("tool_schemas · ~280 tokens"));
         assert!(text.contains("retained unavailable · ~42 tokens"));
         assert!(text.contains("Update pending at the next safe boundary"));
         assert!(text.contains("/repo/CYBER .md"));

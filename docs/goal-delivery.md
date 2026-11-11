@@ -21,8 +21,8 @@ section 5/6 implementation state; reconcile it at delivery.
 | Area | Evidence and remaining work |
 | --- | --- |
 | #93 rewind/snapshots, tasks 2.4/3.2–3.4 and M2–M8 | Local worker origins, reviewed keep/rollback, paired Store settlement, native acknowledgements, CLI/TUI recovery and several payload-reclamation paths exist. Managed Git partial-kill and fully prepared cancellation cleanup acceptance pass locally, including typed private links, but default Git admission remains gated. Finish partial resource construction, complete reference/CAS/metadata and managed/Git reclamation, remaining crash cuts, platform/client acceptance and delivery. Preserve legacy unknown fences. |
-| #93 rules/context, tasks 4.1–4.4 | Local `instruction_limits` validation and runtime/doctor wiring now bound complete rendered baselines/reminders, including labels/notices and bounded file lists with exact delivery identities. Local fenced/trusted rule discovery, validated relative globs, baseline/scoped-read separation and typed delivery bindings now exist. Built-in reads, edits and patches, including intercepted shell patches, use actual native file receipts after hook rewriting; nested delivery reloads settings and checks Location, native root/file binding and Epoch before discovery and settlement. Durable rule delivery records the native operation and dispatched attempt. A partial patch can deliver rules for completed files. Finish exact config-generation and revocation/restart provenance. The authenticated Session context route and TUI `/context` now show stored source groups, projected token estimates, measured usage and pending Epoch state. The default response hides stored text. Finish per-source provenance, revocation and pending source changes, and complete leakage, restart and native acceptance. |
-| #93 structured results, tasks 5.1–5.4 | Local functional coverage now includes compaction, retry/budget/interruption handling, terminal-writer recovery, physical Store reopen after committed acknowledgement loss, and atomic ownership under steering. Five real CLI and 16 structured-root cases pass; current-source platform acceptance remains required before accepting 5.4. |
+| #93 rules/context, tasks 4.1–4.4 | Local `instruction_limits` validation and runtime/doctor wiring now bound complete rendered baselines/reminders, including labels/notices and bounded file lists with exact delivery identities. Local fenced/trusted rule discovery, validated relative globs, baseline/scoped-read separation and typed delivery bindings now exist. Built-in reads, edits and patches, including intercepted shell patches, use actual native file receipts after hook rewriting; nested delivery reloads settings and checks Location, native root/file binding and Epoch before discovery and settlement. Durable rule delivery records the native operation and dispatched attempt. A partial patch can deliver rules for completed files. Finish exact config-generation and revocation/restart provenance. The authenticated Session context route and TUI `/context` now show stored source groups, projected token estimates, measured usage and pending Epoch state. The default response hides stored text. Recorded source provenance/status, unavailable retention and deferred style updates now survive restart. The last prepared request includes complete assembled input estimates. Finish next-request projection, revocation and remaining pending source changes, and complete leakage and native acceptance. |
+| #93 structured results, tasks 5.1–5.4 | Local functional coverage now includes compaction, retry/budget/interruption handling, terminal-writer recovery, physical Store reopen after committed acknowledgement loss, and atomic ownership under steering. Five real CLI cases passed previously and all 17 current structured-root cases pass; current-source platform acceptance remains required before accepting 5.4. |
 | #93 JSONL, tasks 6.1–6.4 | #117 merged basic typed parsing, correlation, replies and EOF draining. Complete exact driver ownership, bounded retained state and output backpressure, hook-event output, safe atomic last-message publication, and steering/capacity/SIGINT/restart/lost-ack/shared-Session acceptance. Task 6.2 is reopened on inspected code evidence below. |
 | #92 native enforcement, tasks 2/N/R | Foundation/probe evidence exists, but production launch still uses the legacy sandbox route. Finish generation/image-bound native admission, revocation/quarantine/lifetime, independently intersected capabilities, real tool execution and native runtime/platform positives/denials. Linux R1 direction/support review and later R6 activation remain distinct gates. |
 | #92 protocol/callbacks/producers, tasks 3–6/S/D | Finish contribution ownership, hooks/providers/catalog transforms and TypeScript kit, durable scoped callbacks (`session/prompt` still explicitly refuses), Setup and DirectoryAdded plus combined producer acceptance. Preserve accepted FileChanged and CwdChanged fixes. Complete S1 epoch/directory-key/legacy-deletion and D1 directory-admission/Safe Boundary/child-policy review before their dependent code. |
@@ -69,6 +69,30 @@ items; cross-spec lint reported zero errors and 25 warnings. Native workflow YAM
 parsed successfully. The focused review corrected source attribution when a tool
 host replaces a built-in source, retained unavailable provenance, and source
 sorting before response truncation. Platform acceptance remains open.
+
+### Prepared request estimate continuation
+
+The final request assembly now captures its input estimate in the durable
+`StepStarted` event. It includes projected attachments, structured-output
+instructions, deferred tool descriptions and callable schemas. Replay retains
+only the most recent estimate in Session state. Historical step events retain
+an explicit unknown estimate. API/TUI inspection identifies the prepared step,
+model and Epoch separately from the current stored projection and measured
+provider usage. It performs no new source observations or model calls.
+
+The scripted-provider regression compares the estimate with the serialized
+request that the adapter actually received, including a large structured-output
+schema, and verifies restart without dispatch. All 17 structured-root and 24
+context/compaction cases pass locally. Complete next-request projection remains
+open because configuration, tool visibility and pending sources can change at
+the next ordinary request boundary.
+
+The authenticated HTTP metadata/content case, the TUI prepared-request rendering
+case, OpenAPI regeneration and SDK consistency/typecheck passed. SDK tests passed
+136 cases with ten configured skips. Server/TUI all-target Clippy passed with
+warnings denied. Strict OpenSpec passed 100 items and lint reported zero errors
+with 25 warnings. Native C deprecation and linker unwind-size warnings were
+observed during compilation. Current-source native acceptance remains required.
 
 ### Zero-byte ordinary restore continuation
 

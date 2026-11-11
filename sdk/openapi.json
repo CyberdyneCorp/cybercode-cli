@@ -9758,6 +9758,17 @@
       "ContextInspection": {
         "type": "object",
         "properties": {
+          "last_prepared_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreparedContextEstimate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Final assembly of the most recently prepared request, including schemas\nand turn instructions. Historical events may have no estimate."
+          },
           "effective_sources": {
             "type": "array",
             "items": {
@@ -9840,6 +9851,81 @@
           "delivered_rule_count"
         ]
       },
+      "PreparedContextEstimate": {
+        "type": "object",
+        "properties": {
+          "step_id": {
+            "type": "string"
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "window": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "estimated_input_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "estimated_input_utilization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextSourceEstimate"
+            }
+          }
+        },
+        "required": [
+          "step_id",
+          "epoch",
+          "provider",
+          "model",
+          "estimated_input_tokens",
+          "sources"
+        ],
+        "description": "The complete input estimate captured from a final assembled provider request."
+      },
+      "ContextSourceEstimate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "estimated_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "estimated_tokens"
+        ]
+      },
       "EffectiveContextSource": {
         "type": "object",
         "properties": {
@@ -9900,27 +9986,6 @@
             "const": "unknown",
             "description": "No observation metadata was recorded by the historical writer."
           }
-        ]
-      },
-      "ContextSourceEstimate": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "origin": {
-            "type": "string"
-          },
-          "estimated_tokens": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "id",
-          "origin",
-          "estimated_tokens"
         ]
       },
       "Data_Array_of_FileDiff": {

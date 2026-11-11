@@ -2,7 +2,7 @@
 
 use cyber_llm::Message;
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::context_sources::{SourceMetadata, SourceStatus};
 use super::{InputStatus, Runtime, SessionState, view};
@@ -14,15 +14,76 @@ pub struct EffectiveContextSource {
     pub metadata: SourceMetadata,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextSourceEstimate {
     pub id: String,
     pub origin: String,
     pub estimated_tokens: u64,
 }
 
+/// The complete input estimate captured from a final assembled provider request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PreparedContextEstimate {
+    pub step_id: String,
+    pub epoch: u32,
+    pub provider: String,
+    pub model: String,
+    pub window: Option<u64>,
+    pub estimated_input_tokens: u64,
+    pub estimated_input_utilization: Option<f64>,
+    pub sources: Vec<ContextSourceEstimate>,
+}
+
+impl PreparedContextEstimate {
+    pub(super) fn capture(
+        request: &cyber_llm::LlmRequest,
+        resolved: &super::ResolvedModel,
+        epoch: u32,
+        compacted: bool,
+        step_id: String,
+    ) -> Self {
+        let window = (resolved.context_limit > 0).then_some(resolved.context_limit);
+        let estimated_input_tokens =
+            view::estimate_tokens(&request.system, &request.messages, &request.tools);
+        let mut sources = estimates(&request.system[..2], &request.messages, compacted);
+        let turn_bytes = request
+            .system
+            .iter()
+            .skip(2)
+            .map(String::len)
+            .sum::<usize>();
+        if turn_bytes > 0 {
+            sources.push(source(
+                "turn_instructions",
+                "request_assembly",
+                (turn_bytes / 4) as u64,
+            ));
+        }
+        sources.push(source(
+            "tool_schemas",
+            "request_assembly",
+            serde_json::to_string(&request.tools).map_or(0, |text| (text.len() / 4) as u64),
+        ));
+        sort_sources(&mut sources);
+        Self {
+            step_id,
+            epoch,
+            provider: resolved.provider.clone(),
+            model: resolved.model.clone(),
+            window,
+            estimated_input_tokens,
+            estimated_input_utilization: window
+                .map(|window| estimated_input_tokens as f64 / window as f64),
+            sources,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ContextInspection {
+    /// Final assembly of the most recently prepared request, including schemas
+    /// and turn instructions. Historical events may have no estimate.
+    pub last_prepared_request: Option<PreparedContextEstimate>,
     /// Latest recorded source observations, without source content.
     pub effective_sources: Vec<EffectiveContextSource>,
     pub omitted_sources: usize,
@@ -49,6 +110,7 @@ impl Runtime {
             .as_ref()
             .and_then(|model| (model.context_limit > 0).then_some(model.context_limit));
         let mut inspection = ContextInspection {
+            last_prepared_request: state.prepared_context.clone(),
             effective_sources: Vec::new(),
             omitted_sources: 0,
             sources: Vec::new(),
@@ -131,7 +193,7 @@ fn count_inputs(state: &SessionState, status: InputStatus) -> usize {
 }
 
 fn estimates(
-    system: &[String; 2],
+    system: &[String],
     messages: &[Message],
     compacted: bool,
 ) -> Vec<ContextSourceEstimate> {
@@ -160,12 +222,16 @@ fn estimates(
             view::estimate_tokens(&[], history, &[]),
         ));
     }
+    sort_sources(&mut sources);
+    sources
+}
+
+fn sort_sources(sources: &mut [ContextSourceEstimate]) {
     sources.sort_by(|a, b| {
         b.estimated_tokens
             .cmp(&a.estimated_tokens)
             .then(a.id.cmp(&b.id))
     });
-    sources
 }
 
 fn source(id: &str, origin: &str, estimated_tokens: u64) -> ContextSourceEstimate {
