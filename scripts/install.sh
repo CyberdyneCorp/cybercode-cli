@@ -136,7 +136,7 @@ detect_target() {
     case "$os" in
         Darwin) target="$cpu-apple-darwin" ;;
         Linux) target="$cpu-unknown-linux-$(detect_libc)" ;;
-        *) die 1 "unsupported OS: $os (on Windows, use the .zip from the release page)" ;;
+        *) die 1 "unsupported OS: $os (Windows builds are not released yet; build from source)" ;;
     esac
 }
 

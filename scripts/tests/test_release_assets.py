@@ -61,22 +61,28 @@ def packaged_release(tmp: Path) -> Path:
 
 
 class ReleaseAssets(unittest.TestCase):
-    def test_eight_targets_with_windows_zips(self):
-        self.assertEqual(len(ra.TARGETS), 8)
+    def test_windows_is_built_but_not_released(self):
+        self.assertFalse(ra.WINDOWS_RELEASED)
+        self.assertEqual(len(ra.ALL_TARGETS), 8)
+        self.assertEqual(len(ra.TARGETS), 6)
+        self.assertFalse(any(ra.is_windows(t) for t in ra.TARGETS))
         names = [ra.archive_name(VERSION, t) for t in ra.TARGETS]
         self.assertIn("cyber-1.4.0-x86_64-unknown-linux-musl.tar.gz", names)
-        self.assertIn("cyber-1.4.0-aarch64-pc-windows-msvc.zip", names)
-        self.assertEqual(sum(n.endswith(".zip") for n in names), 2)
+        self.assertFalse(any(n.endswith(".zip") for n in names))
+        self.assertFalse(any(k.startswith("win32") for k in ra.NPM_PLATFORMS))
+        assets = ra.release_assets(VERSION)
+        for name in ["cyber.scoop.json", "cyber.winget.yaml"]:
+            self.assertNotIn(name, assets)
 
     def test_release_asset_names(self):
         assets = ra.release_assets(VERSION)
         archives = [a for a in assets if a.endswith((".tar.gz", ".zip")) and "npm" not in a]
-        self.assertEqual(len(archives), 8)
+        self.assertEqual(len(archives), len(ra.TARGETS))
         for archive in archives:
             self.assertIn(f"{archive}.sigstore.json", assets)
         for name in ["SHA256SUMS", "SHA256SUMS.sigstore.json", "install.sh"]:
             self.assertIn(name, assets)
-        for name in ["cyber.rb", "cyber.scoop.json", "cyber.winget.yaml", "PKGBUILD"]:
+        for name in ["cyber.rb", "PKGBUILD", "cyber.nix"]:
             self.assertIn(name, assets)
 
     def test_sums_cover_every_archive_and_refuse_a_missing_one(self):
@@ -84,7 +90,7 @@ class ReleaseAssets(unittest.TestCase):
             dist = Path(tmp)
             fake_release(dist)
             sums = ra.parse_sums(ra.write_sums(VERSION, dist))
-            self.assertEqual(len(sums), 8)
+            self.assertEqual(len(sums), len(ra.TARGETS))
             name = ra.archive_name(VERSION, "aarch64-apple-darwin")
             self.assertEqual(sums[name], hashlib.sha256(b"aarch64-apple-darwin").hexdigest())
             # The strict form `cyber upgrade` parses: `<64 hex>  <name>\n` per line.
@@ -208,8 +214,6 @@ class RenderedManifests(unittest.TestCase):
             sums, out = self.render(Path(tmp))
             expected = {
                 "cyber.rb": ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"],
-                "cyber.scoop.json": ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"],
-                "cyber.winget.yaml": ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"],
                 "PKGBUILD": ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"],
                 "cyber.nix": ["aarch64-apple-darwin", "x86_64-unknown-linux-musl"],
             }
@@ -221,7 +225,8 @@ class RenderedManifests(unittest.TestCase):
                     name = ra.archive_name(VERSION, target)
                     self.assertIn(sums[name], text, f"{asset}: {target}")
                     self.assertIn(f"{ra.DEFAULT_BASE_URL}/v{VERSION}/{name}", text)
-            json.loads((out / "cyber.scoop.json").read_text())
+            self.assertEqual(sorted(p.name for p in out.iterdir() if "npm" not in p.name),
+                             sorted(expected))
 
     def test_npm_packages(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -233,6 +238,11 @@ class RenderedManifests(unittest.TestCase):
             self.assertEqual(cli["version"], VERSION)
             self.assertEqual(cli["bin"], {"cyber": "bin/cyber.js"})
             self.assertIn("cli/bin/cyber.js", files)
+            # Regression: no optional dependency on a platform package that is not published.
+            self.assertEqual(
+                set(cli["optionalDependencies"]),
+                {f"@cyber-code/cli-{key}" for key in ra.NPM_PLATFORMS},
+            )
             for key in ra.NPM_PLATFORMS:
                 name = f"@cyber-code/cli-{key}"
                 self.assertEqual(cli["optionalDependencies"][name], VERSION)
