@@ -183,6 +183,8 @@ pub struct SubtaskBody {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PromptBody {
     pub id: Option<String>,
+    /// Bind direct request attendance to an input-client lease; null client means unattended.
+    pub input_client: Option<crate::runtime::InputClient>,
     /// Text and media parts; at most 20 media parts.
     pub parts: Vec<PromptPart>,
     #[serde(default = "steer")]
@@ -730,6 +732,7 @@ pub(crate) async fn submit_prompt(
     let inputs = prompt_parts::inputs(body.parts)?;
     let stored = state.runtime.store_prompt_parts(id, inputs).await?;
     let admission = Admission {
+        input_client: body.input_client,
         skill_command: None,
         template: None,
         message_id: body.id,

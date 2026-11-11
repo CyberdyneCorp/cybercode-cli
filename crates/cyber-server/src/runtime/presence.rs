@@ -52,6 +52,12 @@ struct Lease {
     receipt: InteractiveClient,
     directory: String,
     deadline: tokio::time::Instant,
+    kind: ClientKind,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClientKind {
+    Session,
+    Input,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InteractiveClientError {
@@ -92,7 +98,8 @@ impl Presence {
     pub fn last_seen(&self, scopes: &[Watching]) -> Option<Instant> {
         let counts = self.lock();
         if counts.leases.values().any(|lease| {
-            lease.deadline > tokio::time::Instant::now()
+            lease.kind == ClientKind::Session
+                && lease.deadline > tokio::time::Instant::now()
                 && scopes.iter().any(
                     |scope| matches!(scope,Watching::Session(id) if id==&lease.receipt.session_id),
                 )
@@ -117,6 +124,14 @@ impl Presence {
         session: &str,
         directory: &str,
     ) -> Result<InteractiveClient, InteractiveClientError> {
+        self.create_kind(session, directory, ClientKind::Session)
+    }
+    pub(crate) fn create_kind(
+        &self,
+        session: &str,
+        directory: &str,
+        kind: ClientKind,
+    ) -> Result<InteractiveClient, InteractiveClientError> {
         let mut counts = self.lock();
         expire_locked(&mut counts);
         if counts.leases.len() >= MAX_LEASES
@@ -126,20 +141,25 @@ impl Presence {
                 .filter(|l| l.receipt.session_id == session)
                 .count()
                 >= MAX_SESSION_LEASES
-            || counts.managed.len() >= MAX_MANAGED_SESSIONS && !counts.managed.contains_key(session)
+            || kind == ClientKind::Session
+                && counts.managed.len() >= MAX_MANAGED_SESSIONS
+                && !counts.managed.contains_key(session)
         {
             return Err(InteractiveClientError::Limit);
         }
         let receipt = receipt(cyber_core::ids::new_id("icl"), session);
-        counts
-            .managed
-            .insert(session.to_owned(), directory.to_owned());
+        if kind == ClientKind::Session {
+            counts
+                .managed
+                .insert(session.to_owned(), directory.to_owned());
+        }
         counts.leases.insert(
             receipt.client_id.clone(),
             Lease {
                 receipt: receipt.clone(),
                 directory: directory.to_owned(),
                 deadline: tokio::time::Instant::now() + INTERACTIVE_TTL,
+                kind,
             },
         );
         drop(counts);
@@ -152,12 +172,23 @@ impl Presence {
         directory: &str,
         id: &str,
     ) -> Result<InteractiveClient, InteractiveClientError> {
+        self.renew_kind(session, directory, id, ClientKind::Session)
+    }
+    pub(crate) fn renew_kind(
+        &self,
+        session: &str,
+        directory: &str,
+        id: &str,
+        kind: ClientKind,
+    ) -> Result<InteractiveClient, InteractiveClientError> {
         let mut counts = self.lock();
         expire_locked(&mut counts);
         let lease = counts
             .leases
             .get_mut(id)
-            .filter(|l| l.receipt.session_id == session && l.directory == directory)
+            .filter(|l| {
+                l.receipt.session_id == session && l.directory == directory && l.kind == kind
+            })
             .ok_or(InteractiveClientError::Missing)?;
         lease.receipt = receipt(id.to_owned(), session);
         lease.deadline = tokio::time::Instant::now() + INTERACTIVE_TTL;
@@ -172,17 +203,26 @@ impl Presence {
         directory: &str,
         id: &str,
     ) -> Result<(), InteractiveClientError> {
+        self.release_kind(session, directory, id, ClientKind::Session)
+    }
+    pub(crate) fn release_kind(
+        &self,
+        session: &str,
+        directory: &str,
+        id: &str,
+        kind: ClientKind,
+    ) -> Result<(), InteractiveClientError> {
         let mut counts = self.lock();
         expire_locked(&mut counts);
-        if counts
-            .leases
-            .get(id)
-            .is_some_and(|l| l.receipt.session_id != session || l.directory != directory)
-        {
+        if counts.leases.get(id).is_some_and(|l| {
+            l.receipt.session_id != session || l.directory != directory || l.kind != kind
+        }) {
             return Err(InteractiveClientError::Missing);
         }
         counts.leases.remove(id);
-        native_loss(&mut counts, session);
+        if kind == ClientKind::Session {
+            native_loss(&mut counts, session);
+        }
         drop(counts);
         self.1.notify_one();
         Ok(())
@@ -233,6 +273,43 @@ impl Presence {
         let counts = self.lock();
         apply(attended(&counts, scopes, legacy))
     }
+    pub(super) fn with_input_admission<T>(
+        &self,
+        session: &str,
+        directory: &str,
+        client: Option<&str>,
+        apply: impl FnOnce(bool) -> T,
+    ) -> T {
+        let counts = self.lock();
+        let live = client.is_none_or(|id| input_live(&counts, session, directory, id));
+        apply(live)
+    }
+    pub(super) fn with_request_attendance<T>(
+        &self,
+        scopes: &[InteractiveScope],
+        legacy: bool,
+        authority: &super::input_clients::Attendance,
+        apply: impl FnOnce(bool) -> T,
+    ) -> T {
+        if matches!(authority, super::input_clients::Attendance::Legacy) {
+            return self.with_attendance(scopes, legacy, apply);
+        }
+        let counts = self.lock();
+        let live = match authority {
+            super::input_clients::Attendance::Legacy => attended(&counts, scopes, legacy),
+            super::input_clients::Attendance::Unknown => false,
+            super::input_clients::Attendance::Bound {
+                session,
+                directory,
+                client,
+            } => client.as_deref().is_some_and(|id| {
+                scopes.first().is_some_and(|scope| {
+                    &scope.session_id == session && &scope.directory == directory
+                }) && input_live(&counts, session, directory, id)
+            }),
+        };
+        apply(live)
+    }
     /// Preliminary same-Session check for synchronous tool adapters. Opening a real
     /// request additionally checks all authoritative ancestor/team routes.
     pub(crate) fn session_attended(&self, session: &str, legacy: bool) -> bool {
@@ -261,7 +338,9 @@ impl Presence {
             .get(&Watching::Session(session.to_owned()))
             .is_some_and(|count| *count > 0)
             || counts.leases.values().any(|lease| {
-                lease.receipt.session_id == session && lease.deadline > tokio::time::Instant::now()
+                lease.kind == ClientKind::Session
+                    && lease.receipt.session_id == session
+                    && lease.deadline > tokio::time::Instant::now()
             })
     }
     fn lock(&self) -> std::sync::MutexGuard<'_, Counts> {
@@ -302,7 +381,9 @@ fn expire_locked(counts: &mut Counts) {
     let mut expired = HashSet::new();
     counts.leases.retain(|_, lease| {
         if lease.deadline <= now {
-            expired.insert(lease.receipt.session_id.clone());
+            if lease.kind == ClientKind::Session {
+                expired.insert(lease.receipt.session_id.clone());
+            }
             false
         } else {
             true
@@ -323,7 +404,9 @@ fn native_loss(counts: &mut Counts, session: &str) {
         .get(&Watching::Session(session.to_owned()))
         .is_some_and(|n| *n > 0)
         || counts.leases.values().any(|lease| {
-            lease.receipt.session_id == session && lease.deadline > tokio::time::Instant::now()
+            lease.kind == ClientKind::Session
+                && lease.receipt.session_id == session
+                && lease.deadline > tokio::time::Instant::now()
         })
     {
         return;
@@ -354,10 +437,20 @@ fn attended(counts: &Counts, scopes: &[InteractiveScope], legacy: bool) -> bool 
         return true;
     }
     counts.leases.values().any(|l| {
-        l.deadline > tokio::time::Instant::now()
+        l.kind == ClientKind::Session
+            && l.deadline > tokio::time::Instant::now()
             && scopes
                 .iter()
                 .any(|s| s.session_id == l.receipt.session_id && s.directory == l.directory)
+    })
+}
+
+fn input_live(counts: &Counts, session: &str, directory: &str, id: &str) -> bool {
+    counts.leases.get(id).is_some_and(|lease| {
+        lease.kind == ClientKind::Input
+            && lease.receipt.session_id == session
+            && lease.directory == directory
+            && lease.deadline > tokio::time::Instant::now()
     })
 }
 
@@ -414,5 +507,94 @@ mod tests {
                 .last_seen(&[Watching::Location("/other".into())])
                 .is_some()
         );
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use crate::runtime::input_clients::Attendance;
+    fn scope() -> Vec<InteractiveScope> {
+        vec![InteractiveScope {
+            session_id: "session".into(),
+            directory: "/repo".into(),
+        }]
+    }
+    fn owned(client: &str) -> Attendance {
+        Attendance::Bound {
+            session: "session".into(),
+            directory: "/repo".into(),
+            client: Some(client.into()),
+        }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn input_expiry_never_borrows_other_presence_or_changes_native_authority() {
+        let presence = Presence::default();
+        presence.manage("session", "/repo").unwrap();
+        let a = presence
+            .create_kind("session", "/repo", ClientKind::Input)
+            .unwrap();
+        let b = presence
+            .create_kind("session", "/repo", ClientKind::Input)
+            .unwrap();
+        let epoch = presence.native_epoch("session");
+        assert!(!presence.live_session("session"));
+        assert_eq!(
+            presence.last_seen(&[Watching::Session("session".into())]),
+            None
+        );
+        assert!(!presence.session_attended("session", true));
+        assert!(
+            presence.with_request_attendance(&scope(), true, &owned(&a.client_id), |live| live)
+        );
+        assert!(matches!(
+            presence.renew("session", "/repo", &a.client_id),
+            Err(InteractiveClientError::Missing)
+        ));
+        assert!(matches!(
+            presence.release("session", "/repo", &a.client_id),
+            Err(InteractiveClientError::Missing)
+        ));
+        tokio::time::advance(Duration::from_secs(30)).await;
+        presence
+            .renew_kind("session", "/repo", &b.client_id, ClientKind::Input)
+            .unwrap();
+        tokio::time::advance(Duration::from_secs(16)).await;
+        presence.expire();
+        let _observer = presence.attach(Watching::All);
+        let _browser = presence.create("session", "/repo").unwrap();
+        assert!(
+            !presence.with_request_attendance(&scope(), true, &owned(&a.client_id), |live| live)
+        );
+        assert!(
+            presence.with_request_attendance(&scope(), true, &owned(&b.client_id), |live| live)
+        );
+        assert!(
+            presence
+                .renew_kind("session", "/repo", &a.client_id, ClientKind::Input)
+                .is_err()
+        );
+        assert_eq!(presence.native_epoch("session"), epoch);
+        assert!(
+            presence.with_input_admission("session", "/other", Some(&b.client_id), |live| !live)
+        );
+    }
+    #[tokio::test]
+    async fn input_and_browser_leases_share_capacity_without_sharing_authority() {
+        let presence = Presence::default();
+        for _ in 0..MAX_SESSION_LEASES {
+            presence
+                .create_kind("session", "/repo", ClientKind::Input)
+                .unwrap();
+        }
+        assert!(matches!(
+            presence.create("session", "/repo"),
+            Err(InteractiveClientError::Limit)
+        ));
+        assert!(matches!(
+            presence.create_kind("session", "/repo", ClientKind::Input),
+            Err(InteractiveClientError::Limit)
+        ));
+        assert!(!presence.live_session("session"));
     }
 }

@@ -2367,6 +2367,11 @@ export type Inflight = {
   started_ms: number;
 };
 
+export type InputClient = {
+  /** A live input-client lease, or null to explicitly request unattended input. */
+  client_id?: string | null;
+};
+
 export type InputInterrupt = {
   request_id: string;
   input_message_ids: string[];
@@ -3860,6 +3865,8 @@ export type ProjectInfo = {
 
 export type PromptBody = {
   id?: string | null;
+  /** Bind direct request attendance to an input-client lease; null client means unattended. */
+  input_client?: InputClient | null;
   /** Text and media parts; at most 20 media parts. */
   parts: PromptPart[];
   delivery?: Delivery;

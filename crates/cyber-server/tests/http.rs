@@ -5328,3 +5328,157 @@ async fn scoped_interruption_http_refuses_invalid_foreign_and_reused_scopes_with
     );
     h.runtime.shutdown().await;
 }
+
+#[tokio::test]
+async fn input_client_routes_bind_live_admissions_and_cannot_upgrade_browser_authority() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let other = h.session().await;
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{session}/input-clients");
+    assert_eq!(client.post(&path).send().await.unwrap().status(), 401);
+    let response = client
+        .post(&path)
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let lease: Value = response.json().await.unwrap();
+    let id = lease["data"]["client_id"].as_str().unwrap();
+    let api = Api::new(&h);
+    assert_eq!(
+        api.call(
+            Method::PUT,
+            &format!("/sessions/{session}/interactive-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        api.call(
+            Method::DELETE,
+            &format!("/sessions/{session}/interactive-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        api.call(
+            Method::PUT,
+            &format!("/sessions/{session}/input-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let body = json!({"id":"msg_http_input_client","parts":[{"type":"text","text":"held"}],"delivery":"hold","input_client":{"client_id":id}});
+    assert_eq!(
+        api.post(&format!("/sessions/{other}/prompt"), body.clone())
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, accepted) = api
+        .post(&format!("/sessions/{session}/prompt"), body.clone())
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    assert_eq!(
+        api.call(
+            Method::DELETE,
+            &format!("/sessions/{session}/input-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let (status, retry) = api
+        .post(&format!("/sessions/{session}/prompt"), body.clone())
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(retry, accepted);
+    let mut later = body;
+    later["id"] = json!("msg_after_release");
+    assert_eq!(
+        api.post(&format!("/sessions/{session}/prompt"), later)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        api.call(
+            Method::PUT,
+            &format!("/sessions/{session}/input-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    h.runtime.shutdown().await;
+}
+#[tokio::test]
+async fn observational_session_stream_has_no_presence_and_default_stream_stays_compatible() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let directory = h.repo.display().to_string();
+    let lease = h
+        .runtime
+        .add_interactive_client(&session, &directory)
+        .await
+        .unwrap();
+    h.runtime
+        .release_interactive_client(&session, &directory, &lease.client_id)
+        .await
+        .unwrap();
+    let asker = h.runtime.operation_asker(&session).await.unwrap();
+    assert!(!asker.attended());
+    let api = Api::new(&h);
+    let response=api.client.request(Request::builder().uri(format!("http://cyber.internal/api/v1/sessions/{session}/events?live=true&presence=false")).body(Body::empty()).unwrap()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        !asker.attended(),
+        "observational replay advertised broad attendance"
+    );
+    let invalid = api
+        .client
+        .request(
+            Request::builder()
+                .uri(format!(
+                    "http://cyber.internal/api/v1/sessions/{session}/events?presence=invalid"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    let compatible = api
+        .client
+        .request(
+            Request::builder()
+                .uri(format!(
+                    "http://cyber.internal/api/v1/sessions/{session}/events?live=true"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(compatible.status(), StatusCode::OK);
+    assert!(asker.attended(), "changed legacy stream defaults");
+    drop(response);
+    drop(compatible);
+    h.runtime.shutdown().await;
+}

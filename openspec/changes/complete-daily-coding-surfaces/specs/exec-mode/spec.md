@@ -17,6 +17,29 @@
 - **AND** the first driver SHALL retain normal reply authority, while a closed driver SHALL decline only its own later direct requests
 - **AND** user-provided correlation labels SHALL NOT grant request ownership
 
+#### Scenario: Only the bound input client can keep an owned ask waiting
+- **WHEN** an input-client lease admits an original root user input
+- **THEN** its immutable binding SHALL commit atomically with admission, participate in exact retry identity, and match that admission's digest
+- **WHEN** its complete recorded input cohort opens a direct request, including through an authenticated Job handback
+- **THEN** only one live input client bound to that complete cohort and Location SHALL keep it waiting
+- **WHEN** that client releases or expires while another client, browser or stream remains present
+- **THEN** its requests SHALL settle unattended without borrowing other attendance, and the other client's requests SHALL remain independent
+- **AND** scoped input leases SHALL grant neither Session-wide attendance nor native computer authority; malformed, missing scoped evidence and mixed bindings SHALL NOT fall back to legacy attendance
+
+#### Scenario: Input presence survives as provenance rather than live authority
+- **WHEN** an already admitted input is retried after expiry or restart
+- **THEN** the original admission receipt SHALL remain retrievable without renewing its lease, and a different client under that input identity SHALL conflict
+- **AND** replayed binding metadata SHALL NOT recreate live attendance; legacy admissions without scoped negotiation SHALL preserve their existing behavior
+- **WHEN** the driver observes its Session events
+- **THEN** its connection SHALL explicitly opt out of broad Session presence while preserving replay/live cursor behavior and ordinary stream defaults
+
+#### Scenario: Replies cannot cross input clients or consume a different request type
+- **WHEN** an input client's request is answered
+- **THEN** a scoped reply SHALL select its waiter under the live attendance check, and reject/always cascades SHALL NOT select another input client's pending requests
+- **AND** a stop reply SHALL signal only the exact Drain whose complete current cohort belongs to that request, while legacy behavior remains compatible
+- **WHEN** a question reply names a permission request or conversely
+- **THEN** the API SHALL refuse without consuming the original request or stopping its work
+
 #### Scenario: Interrupt while inference runs
 - **WHEN** an active JSONL driver sends an interrupt while its model request is streaming
 - **THEN** the reader processes it without waiting for model completion and interruption applies only to the driver's owned execution

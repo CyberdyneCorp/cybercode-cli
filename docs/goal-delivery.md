@@ -342,6 +342,59 @@ This does not complete input-scoped interactive presence, descendant/hook contro
 complete mixed-cohort handling, backpressure, hook events or full restart/lost-reply
 acceptance. The recovery, rules/context and platform obligations remain unchanged.
 
+### Direct input-client presence and reply isolation
+
+JSONL now uses a dedicated 45-second input-client lease and an observational
+replay/live stream (`presence=false`). Input leases grant no broad Session or
+native computer presence. Admission validates the exact live Session/Location
+lease while committing an immutable binding beside the original input. The
+binding participates in retry identity; an exact retry after expiry returns the
+original admission, while a different client conflicts. A null client explicitly
+negotiates unattended input. Readback requires the adjacent original admission
+and matching digest. Missing scoped evidence, malformed metadata, duplicate or
+mixed bindings cannot borrow legacy attendance. Historical unbound admissions
+preserve their existing behavior.
+
+Direct requests and synchronous tool attendance resolve the complete recorded
+input cohort, including authenticated handback ancestry, to its one bound client.
+Release/expiry settles that client's requests even while another client, browser
+or stream remains present. Restart retains provenance without restoring live
+authority. Reply selection checks scoped liveness while taking the exact waiter;
+reject/always cascades stay with that input client. Stop replies signal only an
+exact Drain whose complete current cohort belongs to the request. A mismatched
+reply type no longer consumes the original waiter. Existing browser/TUI and
+legacy reply behavior remain compatible. Goal attention checks use the same
+owned attendance. Descendant/hook routing and complete mixed-cohort integration
+remain open and gain no inferred authority from this direct-input continuation.
+
+Local verification passes 472 server library cases with one ignored subprocess
+fixture invoked by its Location-lock parent, six input-client integration cases,
+ten browser attachment cases, 22 request cases, nine interruption cases, 16 Goal
+cases and all 88 HTTP cases. New tests cover disconnect isolation, exact retry
+and rejected binding writes, restart without live authority, cross-client reply
+cascades, reply-type mismatch, expiry/native separation, malformed/mixed evidence,
+HTTP route separation/authentication and observational stream compatibility.
+All 19 client library cases, 105 CLI binary unit cases and 18 real JSONL cases pass.
+SDK typecheck and 139 tests pass with ten configured end-to-end skips. CLI/client/
+server all-target Clippy passes with warnings denied and complexity limit 15;
+admission-specific binding/commit helpers keep the main admission path within that
+limit. The added request-type regression also passes its target's warnings-denied
+lint. Native C deprecation and linker unwind-size warnings were observed.
+
+The preceding `b6f72d0c` CI observation had 19 successes, ten queued, three running
+and 13 failures. All failing job logs were inspected. Eleven failed dependency
+installation due to Ubuntu mirror DNS resolution; two native snapshot jobs ran
+without bubblewrap because a later setup command masked the failed installation.
+The native workflow now fails that prerequisite visibly, records its log, and
+requires successful Linux sandbox setup before its dependent proofs. The matrix
+and mandatory cases remain intact; a failed prerequisite still fails the job and
+no skipped proof is accepted. Watch paths and ownership runs include the new input
+and interruption modules/cases. Current-source platform execution remains required.
+
+The user also requested merging the open PRs while this objective continues.
+Review current heads, checks, requested changes and composition before each merge;
+preserve the unfinished goal scope and native acceptance gates.
+
 ### Zero-byte ordinary restore continuation
 
 Ordinary cleanup now records payload completion for exact empty inventories and

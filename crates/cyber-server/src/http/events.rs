@@ -488,13 +488,23 @@ pub(crate) async fn session_events(
         })?,
         None => -1,
     };
+    let advertise_presence = match parts
+        .uri
+        .query()
+        .and_then(|query| query_value(query, "presence"))
+        .as_deref()
+    {
+        None | Some("true") => true,
+        Some("false") => false,
+        _ => return Err(ApiError::invalid("presence must be true or false")),
+    };
     let directory = state.runtime.state(&id).await?.info.directory;
     // Subscribe before replaying so nothing committed in between is missed.
     let live = state.runtime.subscribe();
     let (tx, rx) = mpsc::channel(256);
     let runtime = state.runtime.clone();
-    let present =
-        (!browser_stream(&parts)).then(|| runtime.attach_client(Watching::Session(id.clone())));
+    let present = (advertise_presence && !browser_stream(&parts))
+        .then(|| runtime.attach_client(Watching::Session(id.clone())));
     spawn_stream(runtime.clone(), tx.clone(), async move {
         let _present = present;
         follow(state, id, directory, after, live, tx, include_live).await;

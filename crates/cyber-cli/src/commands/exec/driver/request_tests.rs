@@ -192,7 +192,7 @@ async fn exercise(text: &str) {
         )
         .await;
     protect_first(&f, &mut first, &mut second, &request).await;
-    finish_second(&f, &mut first, &mut second).await;
+    finish_second(&f, &mut second).await;
     first.close().await;
     f.app.runtime.shutdown().await;
 }
@@ -220,18 +220,32 @@ async fn protect_first(
     assert_eq!(first.asks.len(), 1);
     first.reply(&request.id, question, reply(question)).await;
 }
-async fn finish_second(f: &Fixture, first: &mut Driver<'_>, second: &mut Driver<'_>) {
-    let request = f.request().await;
-    let (base, data) = event(&request);
-    first.asked(base, &data).await;
-    assert!(first.asks.is_empty());
-    second.asked(base, &data).await;
-    // The closed driver declines only its own late request.
-    assert!(second.asks.is_empty());
+async fn finish_second(f: &Fixture, second: &mut Driver<'_>) {
     tokio::time::timeout(Duration::from_secs(30), f.app.runtime.wait_idle(&f.session))
         .await
         .unwrap();
     assert!(f.app.runtime.pending_requests(Some(&f.session)).is_empty());
+    assert!(second.asks.is_empty());
+    let history = f
+        .client
+        .get(&format!(
+            "/sessions/{}/history?after=-1&limit=500",
+            f.session
+        ))
+        .await
+        .unwrap();
+    assert!(
+        history["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| matches!(
+                event["type"].as_str(),
+                Some("permission.asked.1" | "question.asked.1")
+            ))
+            .all(|event| !second.inputs.owns_request(&f.session, &event["data"])),
+        "closed input client borrowed another driver's presence"
+    );
 }
 
 #[tokio::test]

@@ -136,6 +136,32 @@ scope routes, conflicting receipts and unknown outcomes never fall back to globa
 Session interruption. SIGINT retains aggregate exit 130 and fatal protocol errors
 retain exit 2 while ordinary interrupt frames leave stdin open for later input.
 
+Input-scoped presence uses a separate 45-second input-client lease, with the
+existing monotonic expiry and Session/Location/capacity fences. It grants no
+Session-wide or native computer presence. A JSONL prompt carries `input_client`
+with its lease ID (or an explicit null client when attachment failed). Admission
+validates the exact live input lease and commits an immutable client-binding event
+with the input; that binding participates in exact retry identity. Retrying an
+already admitted input returns its original receipt even after lease expiry and
+cannot rebind it to another client. Bindings survive restart, while live authority
+does not. Missing bindings retain legacy behavior; malformed or mixed scoped
+bindings do not borrow another driver's, browser's or stream's attendance.
+
+Direct requests and synchronous asker attendance resolve complete durable input
+provenance, including authenticated Job handback ancestry, to that immutable binding.
+Only one live input client bound to the whole cohort can keep its request waiting.
+Release/expiry settles requests that lost their own approver without touching other
+clients' requests. Scoped reply selection shares the attendance lock; expiry cannot
+lend authority to a late reply. Reply-type mismatch preserves the original waiter.
+Reject/always cascades select the same input client, and stop replies signal only
+an exact Drain whose complete current cohort belongs to that request. Binding reads
+require the adjacent original admission and matching digest; a scoped admission
+with missing binding evidence stays unknown rather than borrowing legacy presence. Input leases neither authorize native control nor keep unrelated
+legacy requests attended. The JSONL replay/live connection explicitly opts out of
+Session-wide presence; ordinary event-stream defaults and browser/TUI attendance
+remain compatible. Child/hook routing still requires its separate complete ownership
+integration and does not gain authority from this direct-input work.
+
 Emit schema_version 2, one result per admitted input with stable correlation, optional partial text/reasoning and hook events, and atomic `--output-last-message`. Session-level usage remains separate from per-input results and descendant usage. Redact errors and bound output buffering; define aggregate exits as 130 for explicit SIGINT, 2 for a fatal protocol error, otherwise the first nonzero input outcome in admission order (0 only when all outcomes succeed). A failing input does not discard already acknowledged later input; fatal protocol errors stop new admission and settle or explicitly cancel only owned work. Cover these precedence rules in protocol tests. Do not silently change text-mode output or the existing review/workflow/Goal command contracts; unsupported option combinations fail before creating work.
 
 ## Delivery and acceptance

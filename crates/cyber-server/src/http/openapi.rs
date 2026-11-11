@@ -647,6 +647,11 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .error::<ErrorBody>(g, 413, "AttachmentTooLargeError with size and limit")
         .error::<ErrorBody>(g, 415, "UnsupportedAttachmentError with media_type")
         .error::<ErrorBody>(g, 422, "UnsupportedModalityError with model and modality"),
+        op("post","/sessions/{sessionID}/input-clients","v1.session.inputClientAttach","Create a 45-second input-only request attachment")
+            .status(201).ok::<Data<super::interactive::InteractiveClientLease>>(g),
+        op("put","/sessions/{sessionID}/input-clients/{clientID}","v1.session.inputClientRenew","Renew a live input-only attachment")
+            .ok::<Data<super::interactive::InteractiveClientLease>>(g),
+        op("delete","/sessions/{sessionID}/input-clients/{clientID}","v1.session.inputClientRelease","Release input-only attendance and settle its unattended requests").status(204),
         op("post","/sessions/{sessionID}/interactive-clients","v1.session.interactiveAttach","Create a 45-second owner-authenticated browser attachment")
             .status(201).ok::<Data<super::interactive::InteractiveClientLease>>(g),
         op("put","/sessions/{sessionID}/interactive-clients/{clientID}","v1.session.interactiveRenew","Renew only a live browser attachment")
@@ -983,7 +988,7 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "v1.session.events",
             "Replay durable events, then follow",
         )
-        .query(&["after", "live"])
+        .query(&["after", "live", "presence"])
         .stream(),
         op(
             "post",

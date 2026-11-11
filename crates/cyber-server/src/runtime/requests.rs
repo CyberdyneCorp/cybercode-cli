@@ -184,9 +184,12 @@ impl Asker {
     /// Whether a client can answer requests; when false every request resolves `Unattended`.
     pub fn attended(&self) -> bool {
         self.inner.upgrade().is_some_and(|inner| {
-            inner
-                .presence
-                .session_attended(&self.session_id, inner.options.interactive)
+            super::input_clients::asker_attended(
+                &inner,
+                &self.session_id,
+                &self.message_id,
+                &self.call_id,
+            )
         })
     }
 
@@ -398,10 +401,20 @@ impl Inner {
             asked.data["admission_bindings"] =
                 serde_json::to_value(&authority.bindings).expect("authority serializes");
         }
+        let authority = match super::input_clients::attendance(
+            &self.store,
+            &request.session_id,
+            &request.input_message_ids,
+        ) {
+            Ok(authority) => authority,
+            Err(_) => return false,
+        };
         let scopes = interactive_scopes(&request, &info.directory);
-        let stored = self
-            .presence
-            .with_attendance(&scopes, self.options.interactive, |attended| {
+        let stored = self.presence.with_request_attendance(
+            &scopes,
+            self.options.interactive,
+            &authority,
+            |attended| {
                 if !attended {
                     return None;
                 }
@@ -424,7 +437,8 @@ impl Inner {
                         reply,
                     });
                 Some(stored)
-            });
+            },
+        );
         let Some(stored) = stored else {
             return false;
         };
@@ -481,15 +495,23 @@ impl Inner {
             let handle = self.handle(&request.session_id).await?;
             let directory = handle.state.lock().await.info.directory.clone();
             let scopes = interactive_scopes(&request, &directory);
-            let waiter =
-                self.presence
-                    .with_attendance(&scopes, self.options.interactive, |attended| {
-                        if attended {
-                            None
-                        } else {
-                            self.take_waiter(&request.id)
-                        }
-                    });
+            let authority = super::input_clients::attendance(
+                &self.store,
+                &request.session_id,
+                &request.input_message_ids,
+            )?;
+            let waiter = self.presence.with_request_attendance(
+                &scopes,
+                self.options.interactive,
+                &authority,
+                |attended| {
+                    if attended {
+                        None
+                    } else {
+                        self.take_waiter(&request.id)
+                    }
+                },
+            );
             let Some(waiter) = waiter else {
                 continue;
             };
@@ -604,6 +626,99 @@ impl Inner {
         Some(waiters.remove(index))
     }
 
+    async fn take_live_waiter(
+        &self,
+        id: &str,
+        question: bool,
+    ) -> Result<(Waiter, super::input_clients::Attendance), RuntimeError> {
+        let request = self
+            .waiters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|waiter| waiter.request.id == id)
+            .map(|waiter| waiter.request.clone())
+            .ok_or_else(|| RuntimeError::Invalid(format!("no pending request {id}")))?;
+        if matches!(&request.kind, PendingKind::Question { .. }) != question {
+            return Err(RuntimeError::Invalid("Request type mismatch".into()));
+        }
+        let authority = super::input_clients::attendance(
+            &self.store,
+            &request.session_id,
+            &request.input_message_ids,
+        )?;
+        let waiter = if matches!(&authority, super::input_clients::Attendance::Legacy) {
+            self.take_waiter(id)
+        } else {
+            let handle = self.handle(&request.session_id).await?;
+            let directory = handle.state.lock().await.info.directory.clone();
+            self.presence.with_request_attendance(
+                &interactive_scopes(&request, &directory),
+                self.options.interactive,
+                &authority,
+                |live| live.then(|| self.take_waiter(id)).flatten(),
+            )
+        }
+        .ok_or_else(|| {
+            RuntimeError::Invalid("Request no longer has its own live input client".into())
+        })?;
+        Ok((waiter, authority))
+    }
+    async fn stop_request_drain(
+        &self,
+        request: &PendingRequest,
+        authority: &super::input_clients::Attendance,
+    ) {
+        if matches!(authority, super::input_clients::Attendance::Legacy) {
+            self.halt(&request.session_id).await;
+            return;
+        }
+        let Ok(handle) = self.handle(&request.session_id).await else {
+            return;
+        };
+        let state = handle.state.lock().await;
+        let (session, before, raw) = (
+            request.session_id.clone(),
+            state.last_seq + 1,
+            input_owners::capture(&state),
+        );
+        let Ok(cohort) = self
+            .store
+            .read(move |db| input_owners::resolve(db, &session, raw, before))
+        else {
+            return;
+        };
+        if !cohort.is_empty()
+            && cohort
+                .iter()
+                .all(|id| request.input_message_ids.contains(id))
+        {
+            let cancel = self
+                .drains
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&request.session_id)
+                .map(|entry| entry.cancel.clone());
+            if let Some(cancel) = cancel {
+                cancel.cancel();
+            }
+        }
+    }
+    fn same_request_client(
+        &self,
+        request: &PendingRequest,
+        authority: &super::input_clients::Attendance,
+    ) -> bool {
+        super::input_clients::attendance(
+            &self.store,
+            &request.session_id,
+            &request.input_message_ids,
+        )
+        .is_ok_and(|target| {
+            &target == authority && !matches!(target, super::input_clients::Attendance::Unknown)
+        })
+    }
+
     /// Apply a permission reply and its cascades.
     pub(crate) async fn reply_permission(
         &self,
@@ -616,15 +731,16 @@ impl Inner {
                 self.require_computer_stopped()?;
             }
         }
-        let waiter = self
-            .take_waiter(id)
-            .ok_or_else(|| RuntimeError::Invalid(format!("no pending request {id}")))?;
+        let (waiter, authority) = self.take_live_waiter(id, false).await?;
         let PendingKind::Permission(ask) = &waiter.request.kind else {
             return Err(RuntimeError::Invalid(format!("{id} is a question")));
         };
         let session_id = waiter.request.session_id.clone();
         let ask = ask.clone();
         self.record_reply(&waiter.request, &reply).await?;
+        if matches!(&reply, PermissionReply::Reject { message: None }) {
+            self.stop_request_drain(&waiter.request, &authority).await;
+        }
         if let Reply::Permission(tx) = waiter.reply {
             let _ = tx.send(reply.clone());
         }
@@ -632,13 +748,10 @@ impl Inner {
             // Refusing an attach concerns the peer only, not the Session's own work.
             PermissionReply::Reject { .. } if ask.action == super::peers::attach::REMOTE_ATTACH => {
             }
-            PermissionReply::Reject { message } => {
-                if message.is_none() {
-                    self.halt(&session_id).await;
-                }
-                self.decline_all(&session_id).await?;
+            PermissionReply::Reject { .. } => {
+                self.decline_all(&session_id, &authority).await?;
             }
-            PermissionReply::Always => self.approve_covered(&session_id, &ask).await?,
+            PermissionReply::Always => self.approve_covered(&session_id, &ask, &authority).await?,
             _ => {}
         }
         Ok(())
@@ -652,13 +765,11 @@ impl Inner {
         if !matches!(reply, QuestionReply::Dismissed) {
             self.require_computer_stopped()?;
         }
-        let waiter = self
-            .take_waiter(id)
-            .ok_or_else(|| RuntimeError::Invalid(format!("no pending request {id}")))?;
-        if matches!(reply, QuestionReply::Dismissed) {
-            self.halt(&waiter.request.session_id).await;
-        }
+        let (waiter, authority) = self.take_live_waiter(id, true).await?;
         self.record_question_reply(&waiter.request, &reply).await?;
+        if matches!(reply, QuestionReply::Dismissed) {
+            self.stop_request_drain(&waiter.request, &authority).await;
+        }
         match waiter.reply {
             Reply::Question(tx) => {
                 let _ = tx.send(reply);
@@ -763,10 +874,15 @@ impl Inner {
     }
 
     /// Any reject declines every other pending request of the Session.
-    async fn decline_all(&self, session_id: &str) -> Result<(), RuntimeError> {
+    async fn decline_all(
+        &self,
+        session_id: &str,
+        authority: &super::input_clients::Attendance,
+    ) -> Result<(), RuntimeError> {
         let ids: Vec<String> = self
             .owned_pending(session_id)
             .into_iter()
+            .filter(|request| self.same_request_client(request, authority))
             .map(|r| r.id)
             .collect();
         for id in ids {
@@ -796,10 +912,12 @@ impl Inner {
         &self,
         session_id: &str,
         approved: &PermissionAsk,
+        authority: &super::input_clients::Attendance,
     ) -> Result<(), RuntimeError> {
         let covered: Vec<String> = self
             .owned_pending(session_id)
             .into_iter()
+            .filter(|request| self.same_request_client(request, authority))
             .filter(|r| match &r.kind {
                 // A taint ask is answered on its own: an "always" never approves another
                 // tainted call (`permissions-modes` → Taint-aware approvals).

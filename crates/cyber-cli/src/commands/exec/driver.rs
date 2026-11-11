@@ -97,7 +97,7 @@ pub async fn execute(
     out.init_version(client, session, 2).await;
     let mut events = Box::pin(
         client
-            .session_live_event_stream(&id, baseline["data"]["seq"].as_i64().unwrap_or(-1))
+            .session_input_event_stream(&id, baseline["data"]["seq"].as_i64().unwrap_or(-1))
             .await
             .map_err(api)?,
     );
@@ -281,7 +281,8 @@ impl<'a> Driver<'a> {
             self.fatal = Some(format!("protocol error: {error}"));
             return self.close().await;
         }
-        let mut body = json!({ "id": message_id, "parts": parts, "delivery": delivery });
+        let mut body = json!({ "id": message_id, "parts": parts, "delivery": delivery,
+            "input_client":{"client_id":self.lease} });
         if let Some(schema) = &self.args.schema {
             body["format"] = json!({ "type": "json_schema", "schema": schema });
         }
@@ -341,7 +342,7 @@ impl<'a> Driver<'a> {
     /// Hold an interactive lease while the driver is live, so the Session's requests
     /// come here instead of being denied as unattended.
     async fn attach(&mut self) {
-        let path = format!("/sessions/{}/interactive-clients", self.id);
+        let path = format!("/sessions/{}/input-clients", self.id);
         match self.client.post(&path, json!({})).await {
             Ok(body) => self.lease = body["data"]["client_id"].as_str().map(str::to_owned),
             Err(error) => self.out.error(&format!(
@@ -352,7 +353,7 @@ impl<'a> Driver<'a> {
 
     async fn renew(&mut self) {
         let Some(lease) = &self.lease else { return };
-        let path = format!("/sessions/{}/interactive-clients/{lease}", self.id);
+        let path = format!("/sessions/{}/input-clients/{lease}", self.id);
         if let Err(error) = self.client.request("PUT", &path, Some(json!({}))).await {
             self.out.error(&format!("interactive lease lost: {error}"));
             self.lease = None;
@@ -361,7 +362,7 @@ impl<'a> Driver<'a> {
 
     async fn release(&mut self) {
         if let Some(lease) = self.lease.take() {
-            let path = format!("/sessions/{}/interactive-clients/{lease}", self.id);
+            let path = format!("/sessions/{}/input-clients/{lease}", self.id);
             let _ = self.client.request("DELETE", &path, None).await;
         }
     }

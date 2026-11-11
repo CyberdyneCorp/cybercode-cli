@@ -33,3 +33,19 @@ test("a scoped interruption conflict cannot fall back to Session-wide interrupti
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.url.pathname, "/api/v1/sessions/ses_shared/interrupt-inputs");
 });
+
+test("input-only attachment methods bind prompt attendance without using browser leases", async () => {
+  const { client, calls } = mockClient((request) => {
+    if (request.method === "DELETE") return new Response(null, { status: 204 });
+    return json(200, { data: { client_id: "icl_input", session_id: "ses_shared", expires_at: 100 } });
+  });
+  const lease = await client.session.inputClientAttach("ses_shared");
+  await client.session.prompt("ses_shared", { parts: [{ type: "text", text: "run" }], input_client: { client_id: lease.client_id } });
+  await client.session.inputClientRenew("ses_shared", lease.client_id);
+  await client.session.inputClientRelease("ses_shared", lease.client_id);
+  assert.deepEqual(calls.map((call) => call.url.pathname), [
+    "/api/v1/sessions/ses_shared/input-clients", "/api/v1/sessions/ses_shared/prompt",
+    "/api/v1/sessions/ses_shared/input-clients/icl_input", "/api/v1/sessions/ses_shared/input-clients/icl_input",
+  ]);
+  assert.deepEqual(JSON.parse(calls[1]?.body ?? "null").input_client, { client_id: "icl_input" });
+});

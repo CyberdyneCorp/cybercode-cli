@@ -6790,6 +6790,17 @@
               "null"
             ]
           },
+          "input_client": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputClient"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bind direct request attendance to an input-client lease; null client means unattended."
+          },
           "parts": {
             "type": "array",
             "items": {
@@ -6827,6 +6838,19 @@
         "required": [
           "parts"
         ]
+      },
+      "InputClient": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A live input-client lease, or null to explicitly request unattended input."
+          }
+        }
       },
       "Delivery": {
         "oneOf": [
@@ -24541,6 +24565,160 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionID}/input-clients": {
+      "post": {
+        "operationId": "v1.session.inputClientAttach",
+        "summary": "Create a 45-second input-only request attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InteractiveClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/input-clients/{clientID}": {
+      "put": {
+        "operationId": "v1.session.inputClientRenew",
+        "summary": "Renew a live input-only attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InteractiveClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.inputClientRelease",
+        "summary": "Release input-only attendance and settle its unattended requests",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/interactive-clients": {
       "post": {
         "operationId": "v1.session.interactiveAttach",
@@ -27574,6 +27752,14 @@
           },
           {
             "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "presence",
             "in": "query",
             "required": false,
             "schema": {

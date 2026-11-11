@@ -20,6 +20,15 @@ on:
       - crates/cyber-server/src/runtime/activity.rs
       - crates/cyber-server/src/runtime/jobs.rs
       - crates/cyber-server/src/runtime/input_jobs.rs
+      - crates/cyber-server/src/runtime/input_clients.rs
+      - crates/cyber-server/src/runtime/input_interrupt.rs
+      - crates/cyber-server/src/runtime/presence.rs
+      - crates/cyber-server/src/runtime/interactive.rs
+      - crates/cyber-server/src/runtime/goals/unattended.rs
+      - crates/cyber-server/tests/input_clients.rs
+      - crates/cyber-server/tests/input_interrupt.rs
+      - crates/cyber-server/tests/interactive_clients.rs
+      - crates/cyber-server/src/http/interactive.rs
       - crates/cyber-server/src/runtime/process_jobs.rs
       - crates/cyber-server/src/runtime/requests.rs
       - crates/cyber-server/src/runtime/requests/**
@@ -103,12 +112,17 @@ jobs:
         with:
           key: non-git-snapshot-proof
       - name: Sandbox prerequisites
+        id: sandbox
         if: runner.os == 'Linux'
         run: |
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap
+          set -euo pipefail
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update 2>&1 | tee sandbox-prerequisites.log
+          sudo apt-get install -y bubblewrap 2>&1 | tee -a sandbox-prerequisites.log
+          command -v bwrap | tee -a sandbox-prerequisites.log
           # Ubuntu 24.04 restricts the user namespaces required by bubblewrap.
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec 2>&1 | tee -a sandbox-prerequisites.log
       - name: Native storage, conflict and process-kill proof
         shell: bash
         run: |
@@ -131,7 +145,7 @@ jobs:
           cargo test --locked -p cyber-snapshot --features native-git-acceptance -- --nocapture 2>&1 | tee git-adapter-proof.log
           cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_git_runtime -- --nocapture 2>&1 | tee git-runtime-proof.log
       - name: Exact acknowledged checkout retirement and resumption
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -140,7 +154,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-core --lib worktrees::activity::snapshot::retirement:: -- --nocapture 2>&1 | tee checkout-retirement-proof.log
       - name: Store-bound fallback collection and reclamation
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -157,7 +171,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_git_ -- --nocapture --test-threads=1 2>&1 | tee git-cli-recovery-proof.log
       - name: Pre-effect preparation and TUI lost-reply reconciliation
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -166,7 +180,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli preparation_ -- --nocapture --test-threads=1 2>&1 | tee preparation-client-proof.log
       - name: Prepared cancellation metadata retirement
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -175,7 +189,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli fully_prepared_pre_effect_cancellation_reclaims_only_persisted_target_inodes -- --exact --nocapture --test-threads=1 2>&1 | tee preparation-retirement-proof.log
       - name: Paired metadata retirement after native source kill
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -184,7 +198,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay -- --exact --nocapture --test-threads=1 2>&1 | tee paired-retirement-proof.log
       - name: Zero-payload preparation and paired retirement after native cuts
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -193,7 +207,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli zero_payload:: -- --nocapture --test-threads=1 2>&1 | tee zero-payload-retirement-proof.log
       - name: JSONL driver and atomic last-message regressions
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -205,13 +219,13 @@ jobs:
           cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::exec:: -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
           cargo test --locked -p cyber-cli --features native-git-acceptance --test exec_stream_input -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
       - name: Root structured result recovery and CLI stop regressions
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         shell: bash
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-server -p cyber-cli --features cyber-cli/native-git-acceptance --test structured_root --test exec_output_schema -- --nocapture 2>&1 | tee structured-result-proof.log
       - name: Instruction limits and context observation regressions
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -234,7 +248,7 @@ jobs:
           cargo test --locked -p cyber-tools --test shell_patch -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
           cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::doctor::instruction_tests:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
       - name: Snapshot worker and Job ownership
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
           TMPDIR: /tmp/c${{ github.run_number }}
         shell: bash
@@ -244,6 +258,10 @@ jobs:
           cargo test --locked -p cyber-server --lib runtime::snapshot_work:: -- --nocapture 2>&1 | tee worker-ownership-proof.log
           cargo test --locked -p cyber-server --lib runtime::input_jobs:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
           cargo test --locked -p cyber-server --test jobs -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --lib runtime::input_clients:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --lib runtime::input_interrupt:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --lib runtime::presence::input_tests:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --test input_clients --test input_interrupt --test interactive_clients --test requests -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
           cargo test --locked -p cyber-tools --test background_bash --test background_subagents -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
       - name: Retain native evidence
         if: always()
@@ -251,6 +269,7 @@ jobs:
         with:
           name: non-git-snapshot-proof-${{ matrix.os }}
           path: |
+            sandbox-prerequisites.log
             non-git-snapshot-proof.log
             managed-checkout-ack-proof.log
             checkout-retirement-proof.log

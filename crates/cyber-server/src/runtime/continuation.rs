@@ -35,6 +35,14 @@ impl Runtime {
         let lifecycle = self.inner.open().await?;
         let handle = self.inner.handle(id).await?;
         let state = handle.state.lock().await.clone();
+        if let Some(client) = &admission.input_client {
+            super::input_clients::validate(client)?;
+            if state.info.parent_id.is_some() {
+                return Err(RuntimeError::Invalid(
+                    "Input-client continuation requires descendant ownership".into(),
+                ));
+            }
+        }
         let message = admission
             .message_id
             .get_or_insert_with(|| cyber_core::ids::new_id("msg"))

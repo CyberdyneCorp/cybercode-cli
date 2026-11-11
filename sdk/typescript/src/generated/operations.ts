@@ -1272,6 +1272,7 @@ export interface Operations {
     query: {
       after?: QueryValue;
       live?: QueryValue;
+      presence?: QueryValue;
     };
     body: undefined;
     response: S.EventEnvelope;
@@ -1375,6 +1376,24 @@ export interface Operations {
     query: Record<string, never>;
     body: undefined;
     response: void;
+  };
+  "v1.session.inputClientAttach": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InteractiveClient;
+  };
+  "v1.session.inputClientRelease": {
+    path: { sessionID: string; clientID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
+  "v1.session.inputClientRenew": {
+    path: { sessionID: string; clientID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InteractiveClient;
   };
   "v1.session.inputInterruption": {
     path: { id: string; request_id: string };
@@ -4219,7 +4238,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/events",
     pathParams: ["sessionID"],
-    query: ["after", "live"],
+    query: ["after", "live", "presence"],
     body: "none",
     located: false,
     unwrap: false,
@@ -4403,6 +4422,42 @@ export const operations = {
     body: "none",
     located: false,
     unwrap: false,
+    stream: false,
+  },
+  "v1.session.inputClientAttach": {
+    tag: "session",
+    name: "inputClientAttach",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/input-clients",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.inputClientRelease": {
+    tag: "session",
+    name: "inputClientRelease",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/input-clients/{clientID}",
+    pathParams: ["sessionID", "clientID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.session.inputClientRenew": {
+    tag: "session",
+    name: "inputClientRenew",
+    method: "PUT",
+    path: "/api/v1/sessions/{sessionID}/input-clients/{clientID}",
+    pathParams: ["sessionID", "clientID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.session.inputInterruption": {
@@ -6263,6 +6318,15 @@ export function createGroups(caller: Caller) {
       /** Remove an unpromoted input (`DELETE /api/v1/sessions/{sessionID}/inbox/{messageID}`) */
       inboxRemove: (sessionID: string, messageID: string, options?: RequestOptions): Promise<Operations["v1.session.inboxRemove"]["response"]> =>
         caller.call("v1.session.inboxRemove", { path: { sessionID, messageID } }, options),
+      /** Create a 45-second input-only request attachment (`POST /api/v1/sessions/{sessionID}/input-clients`) */
+      inputClientAttach: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.inputClientAttach"]["response"]> =>
+        caller.call("v1.session.inputClientAttach", { path: { sessionID } }, options),
+      /** Release input-only attendance and settle its unattended requests (`DELETE /api/v1/sessions/{sessionID}/input-clients/{clientID}`) */
+      inputClientRelease: (sessionID: string, clientID: string, options?: RequestOptions): Promise<Operations["v1.session.inputClientRelease"]["response"]> =>
+        caller.call("v1.session.inputClientRelease", { path: { sessionID, clientID } }, options),
+      /** Renew a live input-only attachment (`PUT /api/v1/sessions/{sessionID}/input-clients/{clientID}`) */
+      inputClientRenew: (sessionID: string, clientID: string, options?: RequestOptions): Promise<Operations["v1.session.inputClientRenew"]["response"]> =>
+        caller.call("v1.session.inputClientRenew", { path: { sessionID, clientID } }, options),
       /** Look up the original interruption receipt without targeting replacement execution (`GET /api/v1/sessions/{id}/interrupt-inputs/{request_id}`) */
       inputInterruption: (id: string, request_id: string, options?: RequestOptions): Promise<Operations["v1.session.inputInterruption"]["response"]> =>
         caller.call("v1.session.inputInterruption", { path: { id, request_id } }, options),

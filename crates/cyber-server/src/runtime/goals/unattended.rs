@@ -62,13 +62,21 @@ impl Runtime {
         let (settings, _) = self.goal_settings(&directory)?;
         let wait = Duration::from_secs(settings.unattended_ask_seconds);
         let scopes = watchers(&request, &directory);
+        let authority = crate::runtime::input_clients::attendance(
+            &self.inner.store,
+            &request.session_id,
+            &request.input_message_ids,
+        )?;
         let opened = Instant::now();
         loop {
-            let seen = self
-                .inner
-                .presence
-                .last_seen(&scopes)
-                .map_or(opened, |seen| seen.max(opened));
+            let seen = crate::runtime::input_clients::last_seen(
+                &self.inner,
+                &authority,
+                &scopes,
+                &request.session_id,
+                &directory,
+            )
+            .map_or(opened, |seen| seen.max(opened));
             let deadline = seen + wait;
             if Instant::now() < deadline {
                 tokio::time::sleep_until(deadline.into()).await;
@@ -76,7 +84,13 @@ impl Runtime {
             if !self.still_pending(&request) {
                 return Ok(());
             }
-            let seen = self.inner.presence.last_seen(&scopes);
+            let seen = crate::runtime::input_clients::last_seen(
+                &self.inner,
+                &authority,
+                &scopes,
+                &request.session_id,
+                &directory,
+            );
             if seen.is_none_or(|seen| seen.max(opened) + wait <= Instant::now()) {
                 return self.pause_for_approval(&request).await;
             }

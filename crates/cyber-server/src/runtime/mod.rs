@@ -79,6 +79,8 @@ mod handoff;
 mod import;
 pub use import::{ImportDocument, ImportedMessage, ImportedSession};
 mod host;
+mod input_clients;
+pub use input_clients::InputClient;
 mod input_interrupt;
 mod input_jobs;
 pub mod instructions;
@@ -630,6 +632,7 @@ impl CommandPlan {
             request.delivery = delivery;
         }
         Admission {
+            input_client: None,
             skill_command: self.skill,
             template: self.template,
             message_id,
@@ -680,6 +683,8 @@ pub struct Admission {
     /// A JSON Schema the answer to this root prompt must satisfy (`session-runtime` →
     /// Structured output); validated before admission.
     pub output_schema: Option<serde_json::Value>,
+    /// Bind this original input to a dedicated client; absent keeps legacy presence.
+    pub input_client: Option<InputClient>,
 }
 
 impl Admission {
@@ -693,6 +698,13 @@ impl Admission {
             self.template.as_ref(),
             files,
         );
+        let base = match &self.input_client {
+            Some(client) => format!(
+                "{base}+input-client:{}",
+                serde_json::to_string(client).expect("input client serializes")
+            ),
+            None => base,
+        };
         // A retry with another schema is another prompt.
         match &self.output_schema {
             Some(schema) => format!("{base}+schema:{:x}", Sha256::digest(schema.to_string())),
@@ -702,6 +714,7 @@ impl Admission {
 
     pub fn text(text: impl Into<String>, delivery: Delivery) -> Self {
         Self {
+            input_client: None,
             skill_command: None,
             template: None,
             message_id: None,
@@ -1734,6 +1747,7 @@ impl Runtime {
         extra: Vec<NewEvent>,
         untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
     ) -> Result<Receipt, RuntimeError> {
+        input_clients::validate_admission(admission.input_client.as_ref())?;
         let untrusted = untrusted.or_else(|| untrusted_input::channel_record(&admission));
         let message_id = admission
             .message_id
@@ -1807,6 +1821,11 @@ impl Runtime {
             }
             events.push(event(ADMITTED, &payload));
             let admitted = events.len() - 1;
+            events.extend(input_clients::admission_event(
+                &state,
+                &payload,
+                admission.input_client.as_ref(),
+            )?);
             let interrupted = input_interrupt::notifier_refused(
                 &self.inner.store,
                 session_id,
@@ -1817,7 +1836,12 @@ impl Runtime {
             if interrupted {
                 events.push(input_interrupt::refused(&message_id));
             }
-            let stored = self.inner.commit_locked(&mut state, events)?;
+            let stored = input_clients::commit(
+                &self.inner,
+                &mut state,
+                events,
+                admission.input_client.as_ref(),
+            )?;
             blobs.keep();
             let observed_input = (prompt && payload.source == "user")
                 .then(|| (state.info.clone(), stored[admitted].id.clone()));
