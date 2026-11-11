@@ -272,7 +272,7 @@ async fn plan(ctx: &Ctx<'_>, ops: Vec<Op>) -> Result<Vec<Change>, ToolError> {
     for op in ops {
         match op {
             Op::Add { path, content } => {
-                let path = ctx.resolve(&path);
+                let path = ctx.resolve_target(&path);
                 crate::sandboxing::refuse_hidden(ctx, &[&path]).await?;
                 let before = tokio::fs::read(&path).await.ok();
                 changes.push(Change {
@@ -283,7 +283,7 @@ async fn plan(ctx: &Ctx<'_>, ops: Vec<Op>) -> Result<Vec<Change>, ToolError> {
                 });
             }
             Op::Delete { path } => {
-                let path = ctx.resolve(&path);
+                let path = ctx.resolve_entry(&path);
                 crate::sandboxing::refuse_hidden(ctx, &[&path]).await?;
                 let before = tokio::fs::read(&path).await.map_err(|_| {
                     failed(format!("Cannot delete missing file {}", path.display()))
@@ -312,8 +312,8 @@ async fn update(
     chunks: &[Chunk],
     out: &mut Vec<Change>,
 ) -> Result<(), ToolError> {
-    let source = ctx.resolve(path);
-    let dest = move_to.map(|dest| ctx.resolve(&dest));
+    let source = ctx.resolve_target(path);
+    let dest = move_to.map(|dest| ctx.resolve_target(&dest));
     let checked: Vec<&Path> = std::iter::once(source.as_path())
         .chain(dest.as_deref())
         .collect();

@@ -106,7 +106,7 @@ fn redacted_page(ctx: &Ctx<'_>, content: &str, offset: usize, limit: usize) -> S
 /// The `path` input, once `external_directory`, the `read` permission and the hidden
 /// paths allow reading it.
 pub(crate) async fn readable(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
-    let path = ctx.resolve(text(&ctx.inv.input, "path"));
+    let path = ctx.resolve_target(text(&ctx.inv.input, "path"));
     ctx.check_external(std::slice::from_ref(&path)).await?;
     let resource = ctx.resource(&path);
     let req = Request {
@@ -432,7 +432,7 @@ impl Tool for Write {
 
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
         Box::pin(async move {
-            let path = ctx.resolve(text(&ctx.inv.input, "path"));
+            let path = ctx.resolve_target(text(&ctx.inv.input, "path"));
             let content = text(&ctx.inv.input, "content");
             crate::sandboxing::refuse_hidden(ctx, &[&path]).await?;
             let before = tokio::fs::read(&path).await.ok();
@@ -479,7 +479,7 @@ impl Tool for Edit {
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
         Box::pin(async move {
             let input = &ctx.inv.input;
-            let path = ctx.resolve(text(input, "path"));
+            let path = ctx.resolve_target(text(input, "path"));
             let (old, new) = (
                 text(input, "old_string").replace("\r\n", "\n"),
                 text(input, "new_string").replace("\r\n", "\n"),

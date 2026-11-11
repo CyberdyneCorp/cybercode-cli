@@ -72,6 +72,23 @@ async fn bypass_app(root: &std::path::Path) -> App {
     .unwrap()
 }
 
+/// Approves the checkout at `location` as `cyber trust` would.
+fn trust_checkout(location: &std::path::Path, p: &Paths, home: &std::path::Path) {
+    let report = cyber_core::config::trust_report(&cyber_core::config::LoadRequest {
+        location,
+        paths: p,
+        home,
+        env: &cyber_core::env::ProcessEnv,
+        profile: None,
+        overrides: &[],
+        flags: Default::default(),
+    })
+    .unwrap();
+    cyber_core::trust::TrustStore::new(p.trust_file())
+        .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+        .unwrap();
+}
+
 /// [`app`] with explicit `full-access` on Windows: creating a worktree runs its setup
 /// under the sandbox, which Windows cannot enforce, so the opt-out must be explicit there.
 async fn worktree_app(root: &std::path::Path) -> App {
@@ -1045,20 +1062,7 @@ fn worktree_start_fixture(
         }
     }
     if approve {
-        let home = root.join("home");
-        let report = cyber_core::config::trust_report(&cyber_core::config::LoadRequest {
-            location: &repo,
-            paths: &p,
-            home: &home,
-            env: &cyber_core::env::ProcessEnv,
-            profile: None,
-            overrides: &[],
-            flags: Default::default(),
-        })
-        .unwrap();
-        cyber_core::trust::TrustStore::new(p.trust_file())
-            .approve(&report.checkout_root, report.digest.as_deref().unwrap())
-            .unwrap();
+        trust_checkout(&repo, &p, &root.join("home"));
     }
     (repo, p)
 }
@@ -2104,6 +2108,8 @@ async fn authenticated_skill_commands_capture_declarations_and_refuse_denials() 
     let skill = tmp.path().join(".cyber/skills/release");
     std::fs::create_dir_all(&skill).unwrap();
     std::fs::write(skill.join("SKILL.md"),"---\nname: release\ndescription: Release changes\nmodel: test/skill\ndisable-model-invocation: true\nallowed-tools: ['write:*']\n---\nRelease $ARGUMENTS\n").unwrap();
+    // A repository's skill grants tools only once its checkout is trusted.
+    trust_checkout(tmp.path(), &application.paths, &tmp.path().join("home"));
     let info = application
         .runtime
         .create_session(cyber_server::runtime::CreateSession {

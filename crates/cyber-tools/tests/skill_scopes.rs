@@ -5,7 +5,15 @@ use support::flow::{Flow, call, text};
 fn skill_batch(
     calls: Vec<Vec<cyber_llm::adapters::ScriptStep>>,
 ) -> Vec<cyber_llm::adapters::ScriptStep> {
-    let mut batch = call("skill", "skill", json!({"name":"release"}));
+    skill_batch_as("skill", calls)
+}
+
+/// [`skill_batch`] whose `skill` call has the ID `id`.
+fn skill_batch_as(
+    id: &str,
+    calls: Vec<Vec<cyber_llm::adapters::ScriptStep>>,
+) -> Vec<cyber_llm::adapters::ScriptStep> {
+    let mut batch = call(id, "skill", json!({"name":"release"}));
     let ending = batch.split_off(1);
     for mut call in calls {
         batch.push(call.remove(0));
@@ -239,5 +247,105 @@ async fn bare_tool_denials_apply_before_tools_without_resource_authorization() {
         flow.output(&id, "stop").await,
         "Skill disallows tool: task_stop"
     );
+    flow.runtime.shutdown().await;
+}
+
+/// Regression: a repository's skill granted tools through `allowed-tools` without the
+/// checkout being trusted, so a prompt-injected model could load it and run what it
+/// granted without a prompt. Its grants now count only once the checkout is trusted, and
+/// a changed grant needs approval again.
+#[tokio::test]
+async fn a_repositorys_skill_grants_nothing_until_the_checkout_is_trusted() {
+    use cyber_core::config::{self, LoadRequest};
+    use cyber_core::paths::Paths;
+    use cyber_core::trust::TrustStore;
+    use cyber_server::runtime::CallStatus;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    let flow = Flow::new(
+        vec![
+            skill_batch(vec![call(
+                "untrusted",
+                "write",
+                json!({"path":"first.txt","content":"first"}),
+            )]),
+            text("denied"),
+            skill_batch_as(
+                "skill_again",
+                vec![call(
+                    "trusted",
+                    "write",
+                    json!({"path":"second.txt","content":"second"}),
+                )],
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    flow.f
+        .set_config(json!({"permissions":{"skill":"allow","edit":"ask"}}));
+    let skill = "---\nname: release\ndescription: Release changes\nallowed-tools: ['write:*']\n---\nWrite the file\n";
+    flow.f.write(".cyber/skills/release/SKILL.md", skill);
+    let root = flow.f.dir.path().to_path_buf();
+    let env = HashMap::from([(
+        "CYBER_HOME".into(),
+        root.join("cyber").display().to_string(),
+    )]);
+    let paths = Paths::resolve(&env, &root);
+    paths.ensure().unwrap();
+    let load = {
+        let (paths, env, root) = (paths.clone(), env.clone(), root.clone());
+        move |location: &std::path::Path| {
+            config::load(&LoadRequest {
+                location,
+                paths: &paths,
+                env: &env,
+                home: &root,
+                profile: None,
+                overrides: &[],
+                flags: json!({}),
+            })
+        }
+    };
+    let resolver = load.clone();
+    flow.f
+        .host
+        .attach_hook_config(
+            Arc::new(move |location| resolver(location).map_err(|e| e.to_string())),
+            TrustStore::new(paths.trust_file()),
+        )
+        .unwrap();
+    let id = flow.session("default").await;
+
+    flow.prompt(&id, "release").await;
+    flow.settle(&id).await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.calls["untrusted"].status, CallStatus::Error);
+    assert!(!flow.f.repo.join("first.txt").exists());
+
+    let resolved = load(&flow.f.repo).unwrap();
+    assert!(!resolved.trust.trusted, "a granting skill is in the digest");
+    TrustStore::new(paths.trust_file())
+        .approve(
+            &resolved.trust.checkout_root,
+            resolved.trust.digest.as_ref().unwrap(),
+        )
+        .unwrap();
+    flow.prompt(&id, "release again").await;
+    flow.settle(&id).await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.calls["trusted"].status, CallStatus::Ok);
+    assert_eq!(
+        std::fs::read_to_string(flow.f.repo.join("second.txt")).unwrap(),
+        "second"
+    );
+
+    // A wider grant changes the digest, so the checkout must be approved again.
+    flow.f.write(
+        ".cyber/skills/release/SKILL.md",
+        &skill.replace("['write:*']", "['write:*', 'bash:*']"),
+    );
+    assert!(!load(&flow.f.repo).unwrap().trust.trusted);
     flow.runtime.shutdown().await;
 }

@@ -29,6 +29,14 @@ The first release is in preparation. It will contain:
 
 ### Fixed
 
+- Security hardening from the pre-release review:
+  - a repository's skills no longer pre-approve tools before the checkout is trusted;
+  - file tools check a symbolic link's target;
+  - shell redirections with descriptors (`1>>`) count as writes;
+  - the model catalog can no longer redirect OpenAI and Anthropic keys;
+  - provider requests don't follow redirects;
+  - read-only detection and "always" approvals are stricter;
+  - the protected-path list is complete and case-insensitive on macOS and Windows.
 - A first run with no API key no longer picks an unreachable local server from the model catalog and fails with a connection error; it explains how to set up a provider.
 
 ### Experimental (off by default)

@@ -16,11 +16,15 @@
 - **THEN** the refresh fails with a diagnostic, nothing is written and the previous cache is kept
 
 ### Requirement: Skill-scoped tool approvals and model
-(P1) While a skill loaded in the current Turn declares `allowed-tools`, matching tool calls SHALL be allowed without prompting, unless a permission rule denies them. A skill `model` SHALL apply only when the skill is run as a user command or as a subtask.
+(P1) While a skill loaded in the current Turn declares `allowed-tools`, matching tool calls SHALL be allowed without prompting, unless a permission rule denies them. The `allowed-tools` of a skill a repository provides (a project skill folder, or a folder named by `skills.paths`) SHALL count only once the checkout is trusted (`workspace-trust` → Trust before interpretation); until then they SHALL be ignored with a diagnostic naming the skill, and the skill still loads. `disallowed-tools` SHALL always apply. Built-in and user skills are unaffected. A skill `model` SHALL apply only when the skill is run as a user command or as a subtask.
 
 #### Scenario: Pre-approved git commands
 - **WHEN** skill `release` declares `allowed-tools: ["bash:git tag *"]` and the model runs `git tag v1.2.0`
 - **THEN** no permission prompt is shown
+
+#### Scenario: Untrusted repository skill grants nothing
+- **WHEN** an untrusted checkout ships `.cyber/skills/x/SKILL.md` with `allowed-tools: bash` and the model loads `x` and runs `curl … | sh`
+- **THEN** the `bash` call follows the ordinary rules and asks, and `cyber skills` lists a diagnostic that the grant is ignored until the checkout is trusted
 
 ### Requirement: Shell output injection
 (P1) The system SHALL replace each `` !`cmd` `` in a template with the stdout of running `cmd` in the sandbox. Each command SHALL pass the gates of a `bash` tool call first (the agent's tool list, skill tool restrictions and `PreToolUse` hooks, where a hook deny is a denial), then `bash` permission for the command text in the current mode, and an `ask` effect SHALL prompt before the command runs. Commands SHALL run concurrently with a 30 s timeout each, and output SHALL be capped at 20 KiB per command. Only spans written in the command or skill template SHALL run (argument placeholders inside a span are substituted first, each argument word as one quoted POSIX shell word, so its text is never interpreted by the shell); text supplied as arguments, command output and plain prompts SHALL never run. Expansion SHALL happen once, at admission of a planned command or skill, after `UserPromptSubmit` and before the input is committed; the expanded text SHALL be recorded with the admission, so replay and an exact retry never run a command again. A denied command (by rule, by a mode ceiling such as `plan`, or an unanswered or rejected ask, which `dont-ask` turns into a denial) SHALL be substituted as `[denied: <cmd>]`; when no sandbox can confine the command it SHALL be substituted as `[unavailable: sandbox]` and SHALL NOT run. Credential-shaped output SHALL be redacted. A project-controlled template (project commands and skills) that contains a shell injection SHALL be refused with a visible error until the user approves its exact digest for the checkout (`cyber commands trust <name>`); a changed template SHALL need a new approval. A forked skill SHALL expand before its text is handed to the child.

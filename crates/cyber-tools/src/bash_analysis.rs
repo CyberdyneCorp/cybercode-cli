@@ -201,6 +201,38 @@ fn collect(node: Node<'_>, src: &[u8], cwd: &Path, out: &mut Vec<SimpleCommand>)
     }
 }
 
+/// Programs whose "always" approval is the exact command (see [`simple`]).
+const EXACT_APPROVAL: &[&str] = &[
+    "find",
+    "sed",
+    "awk",
+    "gawk",
+    "xargs",
+    "env",
+    "sudo",
+    "doas",
+    "timeout",
+    "nohup",
+    "nice",
+    "bash",
+    "sh",
+    "zsh",
+    "fish",
+    "dash",
+    "node",
+    "deno",
+    "bun",
+    "python",
+    "python3",
+    "ruby",
+    "perl",
+    "php",
+    "lua",
+    "osascript",
+    "pwsh",
+    "powershell",
+];
+
 fn simple(node: Node<'_>, src: &[u8], cwd: &Path) -> SimpleCommand {
     let text = node.utf8_text(src).unwrap_or_default().trim().to_string();
     let words = words(node, src);
@@ -210,15 +242,21 @@ fn simple(node: Node<'_>, src: &[u8], cwd: &Path) -> SimpleCommand {
     } else {
         1
     };
-    let always = format!(
-        "{} *",
-        words
-            .iter()
-            .take(arity)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
+    // A program that runs code or edits files from its arguments gets an exact approval:
+    // `find *` would also approve `find . -exec …`, `sed *` would approve `sed -i …`.
+    let always = if EXACT_APPROVAL.contains(&name) {
+        text.clone()
+    } else {
+        format!(
+            "{} *",
+            words
+                .iter()
+                .take(arity)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    };
     let mutates = if MUTATING.contains(&name) {
         words
             .iter()
@@ -256,10 +294,20 @@ fn redirect_targets(node: Node<'_>, src: &[u8], cwd: &Path) -> Vec<PathBuf> {
     node.children(&mut cursor)
         .filter(|c| c.kind() == "file_redirect")
         .filter_map(|r| {
-            let op = r.child(0)?.utf8_text(src).ok()?;
-            let output = op.contains('>');
+            // The operator is an unnamed token: with a file descriptor (`1>>`) the first
+            // child is the descriptor, so look at every operator token.
+            let mut tokens = r.walk();
+            let ops: Vec<&str> = r
+                .children(&mut tokens)
+                .filter(|c| !c.is_named())
+                .filter_map(|c| c.utf8_text(src).ok())
+                .collect();
+            let output = ops.iter().any(|op| op.contains('>'));
             let target = r.child_by_field_name("destination")?.utf8_text(src).ok()?;
-            (output && target != "/dev/null" && !target.starts_with('&'))
+            // `>&1` and `>&-` duplicate or close a descriptor; they write no file.
+            let duplicates = ops.iter().any(|op| op.ends_with(">&"))
+                && (target == "-" || target.bytes().all(|b| b.is_ascii_digit()));
+            (output && !duplicates && target != "/dev/null" && !target.starts_with('&'))
                 .then(|| resolve(cwd, target.trim_matches('"')))
         })
         .collect()
@@ -338,6 +386,45 @@ mod tests {
                 .mutates
                 .is_empty()
         );
+    }
+
+    /// Regression: the operator was read from the redirect's first child, which is the
+    /// file descriptor in `1>>`, so such a write was invisible to protected-path checks
+    /// and the read-only classifier.
+    #[test]
+    fn redirections_with_a_file_descriptor_are_writes() {
+        let cwd = Path::new("/repo");
+        for (command, target) in [
+            ("echo x 1>> .git/config", "/repo/.git/config"),
+            ("echo x 1> out.txt", "/repo/out.txt"),
+            ("make 2> errors.log", "/repo/errors.log"),
+            ("echo x &> both.log", "/repo/both.log"),
+            ("echo x >| forced.txt", "/repo/forced.txt"),
+        ] {
+            assert_eq!(
+                analyze(command, cwd).commands[0].mutates,
+                vec![PathBuf::from(target)],
+                "{command}"
+            );
+        }
+        assert!(
+            analyze("cat 0< input.txt", cwd).commands[0]
+                .mutates
+                .is_empty()
+        );
+    }
+
+    /// Regression: "always" for `find .` saved `find *`, which also approved
+    /// `find . -exec …`; programs that run code from their arguments get exact approvals.
+    #[test]
+    fn code_running_programs_get_exact_always_approvals() {
+        let cwd = Path::new("/repo");
+        let always = |command: &str| analyze(command, cwd).commands[0].always.clone();
+        assert_eq!(always("find . -name '*.rs'"), "find . -name '*.rs'");
+        assert_eq!(always("sed -n 1,5p file"), "sed -n 1,5p file");
+        assert_eq!(always("python3 -c 'print(1)'"), "python3 -c 'print(1)'");
+        assert_eq!(always("ls -la"), "ls *");
+        assert_eq!(always("git status"), "git status *");
     }
 
     #[test]

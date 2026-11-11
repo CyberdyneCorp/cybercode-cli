@@ -148,7 +148,7 @@ fn paths(input: &Value) -> Result<Vec<&str>, ToolError> {
 /// The `read` permission, the external-directory check and `deny_read`, as for `read`,
 /// then the size cap.
 async fn check(ctx: &Ctx<'_>, raw: &str) -> Result<Outgoing, ToolError> {
-    let path = ctx.resolve(raw);
+    let path = ctx.resolve_target(raw);
     ctx.check_external(std::slice::from_ref(&path)).await?;
     let resource = ctx.resource(&path);
     let req = Request {

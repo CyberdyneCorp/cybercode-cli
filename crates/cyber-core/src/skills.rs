@@ -313,6 +313,49 @@ pub fn discover(scope: &SkillScope) -> Discovery {
     found
 }
 
+/// Project skills that grant tools (`allowed-tools`), for the checkout's trust digest
+/// (`workspace-trust` → Trust before interpretation): `(relative path, SKILL.md, grant)`.
+/// A skill that grants nothing changes no digest, so most repositories need no approval.
+pub fn trust_subset(location: &Path, home: &Path) -> Vec<(String, PathBuf, String)> {
+    let scope = SkillScope {
+        location: location.to_path_buf(),
+        home: home.to_path_buf(),
+        // Only project folders matter here; a path that holds no skills adds none.
+        global_config_dir: location.join(".cyber-no-user-skills"),
+        compat: SkillCompat {
+            agents: true,
+            claude: true,
+            opencode: true,
+            codex: true,
+        },
+        extra: Vec::new(),
+        plugins: Vec::new(),
+    };
+    let root = crate::config::project_root(location);
+    let mut scanner = discovery::Scanner::new(Discovery::default());
+    for (dir, origin) in roots(&scope) {
+        if origin == SkillOrigin::Project {
+            scanner.root(&dir, origin);
+        }
+    }
+    scanner
+        .out
+        .skills
+        .into_values()
+        .filter(|skill| !skill.allowed_tools.is_empty())
+        .filter_map(|skill| {
+            let path = skill.directory()?.join("SKILL.md");
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            let grant = format!("{}: {}", skill.name, skill.allowed_tools.join(", "));
+            Some((relative, path, grant))
+        })
+        .collect()
+}
+
 /// The names of the skills embedded in the binary.
 pub fn bundled_names() -> Vec<String> {
     bundled::discover().skills.into_keys().collect()
