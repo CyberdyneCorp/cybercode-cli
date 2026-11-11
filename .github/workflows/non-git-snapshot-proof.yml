@@ -28,6 +28,9 @@ on:
       - crates/cyber-server/tests/structured_root.rs
       - crates/cyber-server/tests/support/structured_terminal_fault.rs
       - crates/cyber-server/src/http/sessions.rs
+      - crates/cyber-server/src/http/events.rs
+      - crates/cyber-server/src/http/jobs.rs
+      - crates/cyber-client/src/lib.rs
       - crates/cyber-app/tests/snapshot_git_runtime.rs
       - crates/cyber-app/tests/snapshot_reclamation.rs
       - crates/cyber-app/tests/instructions.rs

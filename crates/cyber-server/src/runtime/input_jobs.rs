@@ -14,15 +14,38 @@ pub struct InputJobQuery {
 /// admission is separate from the parent Turn processing that queued input.
 #[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InputJobState {
+    /// Session revision observed in the same Store snapshot as the Job state.
+    pub session_seq: i64,
     pub message_id: String,
     pub running: bool,
     /// An ended Job has not yet admitted its completion notice. False does not
     /// establish that the parent has processed an already admitted handback.
     pub awaiting_handback: bool,
+    /// An admitted completion notice still has unfinished parent model/tool work.
+    pub handback_pending: bool,
+    /// Latest admitted notice of these Jobs; the input's answer boundary must
+    /// follow this revision before its result can retire.
+    pub handback_seq: Option<i64>,
     pub oldest_unnotified_ms: Option<i64>,
 }
 
 impl Runtime {
+    pub fn step_input_origin(
+        &self,
+        session: &str,
+        message: &str,
+    ) -> Result<Vec<String>, RuntimeError> {
+        if message.is_empty() || message.len() > 256 {
+            return Err(RuntimeError::Invalid(
+                "Invalid step message identity".into(),
+            ));
+        }
+        let (session, message) = (session.to_owned(), message.to_owned());
+        self.inner
+            .store
+            .read(move |db| super::requests::input_owners::recorded_step(db, &session, &message))
+            .map_err(Into::into)
+    }
     pub fn input_job_state(
         &self,
         query: InputJobQuery,
@@ -61,9 +84,44 @@ fn states(
     let mut statement = db.prepare(
         "SELECT input.value,
             coalesce(max(j.status='running'),0),
-            coalesce(max(j.status<>'running' AND json_extract(j.data,'$.notified')=0),0),
-            min(CASE WHEN j.status<>'running' AND json_extract(j.data,'$.notified')=0
-                THEN coalesce(json_extract(j.data,'$.ended_ms'),json_extract(j.data,'$.started_ms')) END)
+            coalesce(max(j.status<>'running' AND json_type(j.data,'$.notified') IS NOT 'true'),0),
+            min(CASE WHEN j.status<>'running' AND json_type(j.data,'$.notified') IS NOT 'true'
+                THEN coalesce(json_extract(j.data,'$.ended_ms'),json_extract(j.data,'$.started_ms')) END),
+            coalesce(max(EXISTS (SELECT 1 FROM event a WHERE a.aggregate_id=j.session_id
+                AND a.type='session.prompt.admitted.1'
+                AND json_extract(a.data,'$.message_id')=('msg_handback_'||j.id)
+                AND EXISTS (SELECT 1 FROM event n WHERE n.aggregate_id=a.aggregate_id
+                    AND n.type='job.notified.1' AND n.seq>a.seq
+                    AND json_type(n.data,'$.notified')='true' AND json_extract(n.data,'$.id')=j.id
+                    AND json_extract(n.data,'$.input_origin') IS json_extract(j.data,'$.input_origin')))
+                AND NOT EXISTS (SELECT 1 FROM event s JOIN event e ON e.aggregate_id=s.aggregate_id
+                    AND e.seq>s.seq AND json_extract(e.data,'$.message_id')=json_extract(s.data,'$.message_id')
+                    AND (e.type='session.step.failed.1' OR (e.type='session.step.ended.1'
+                        AND (json_extract(e.data,'$.finish')<>'tool_calls'
+                            OR (EXISTS (SELECT 1 FROM event c WHERE c.aggregate_id=s.aggregate_id
+                                AND c.type='session.tool.called.1' AND c.seq>s.seq AND c.seq<e.seq
+                                AND json_extract(c.data,'$.message_id')=json_extract(s.data,'$.message_id'))
+                            AND NOT EXISTS (SELECT 1 FROM event c WHERE c.aggregate_id=s.aggregate_id
+                                AND c.type='session.tool.called.1' AND c.seq>s.seq AND c.seq<e.seq
+                                AND json_extract(c.data,'$.message_id')=json_extract(s.data,'$.message_id')
+                                AND NOT EXISTS (SELECT 1 FROM event settled WHERE settled.aggregate_id=s.aggregate_id
+                                    AND settled.type='session.tool.settled.1' AND settled.seq>e.seq
+                                    AND json_extract(settled.data,'$.call_id')=json_extract(c.data,'$.call_id')))))))
+                    WHERE s.aggregate_id=j.session_id AND s.type='session.step.started.1'
+                    AND EXISTS (SELECT 1 FROM json_each(s.data,'$.input_message_ids') owner
+                        WHERE owner.value=('msg_handback_'||j.id))
+                    AND NOT EXISTS (SELECT 1 FROM event later WHERE later.aggregate_id=s.aggregate_id
+                        AND later.type='session.step.started.1' AND later.seq>s.seq
+                        AND EXISTS (SELECT 1 FROM json_each(later.data,'$.input_message_ids') owner
+                            WHERE owner.value=('msg_handback_'||j.id))))),0),
+            (SELECT coalesce(max(seq),-1) FROM event WHERE aggregate_id=?1),
+            max((SELECT max(a.seq) FROM event a WHERE a.aggregate_id=j.session_id
+                AND a.type='session.prompt.admitted.1'
+                AND json_extract(a.data,'$.message_id')=('msg_handback_'||j.id)
+                AND EXISTS (SELECT 1 FROM event n WHERE n.aggregate_id=a.aggregate_id
+                    AND n.type='job.notified.1' AND n.seq>a.seq
+                    AND json_type(n.data,'$.notified')='true' AND json_extract(n.data,'$.id')=j.id
+                    AND json_extract(n.data,'$.input_origin') IS json_extract(j.data,'$.input_origin'))))
         FROM json_each(?2) input LEFT JOIN job j ON j.session_id=?1
             AND json_type(j.data,'$.input_origin.input_message_ids')='array'
             AND json_array_length(j.data,'$.input_origin.input_message_ids') BETWEEN 1 AND 32
@@ -90,6 +148,9 @@ fn states(
             running: row.get(1)?,
             awaiting_handback: row.get(2)?,
             oldest_unnotified_ms: row.get(3)?,
+            handback_pending: row.get(4)?,
+            session_seq: row.get(5)?,
+            handback_seq: row.get(6)?,
         })
     })?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -103,7 +164,8 @@ mod tests {
     fn database() -> Connection {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(
-            "CREATE TABLE job(id TEXT PRIMARY KEY,session_id TEXT,status TEXT,data TEXT);
+            "CREATE TABLE event(aggregate_id TEXT,seq INTEGER,type TEXT,data TEXT);
+            CREATE TABLE job(id TEXT PRIMARY KEY,session_id TEXT,status TEXT,data TEXT);
             CREATE INDEX job_session ON job(session_id)",
         )
         .unwrap();
@@ -246,5 +308,142 @@ mod tests {
         )
         .unwrap();
         assert!(!lookup(&db, json!(["two"]))[0].awaiting_handback);
+        db.execute(
+            "UPDATE job SET data=json_remove(data,'$.notified') WHERE id='waiting'",
+            [],
+        )
+        .unwrap();
+        assert!(lookup(&db, json!(["two"]))[0].awaiting_handback);
+        for invalid in [Value::Null, json!(1), json!("true")] {
+            db.execute(
+                "UPDATE job SET data=json_set(data,'$.notified',json(?1)) WHERE id='waiting'",
+                [invalid.to_string()],
+            )
+            .unwrap();
+            assert!(
+                lookup(&db, json!(["two"]))[0].awaiting_handback,
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn admitted_handback_waits_for_its_latest_terminal_step_and_reports_the_same_revision() {
+        let db = database();
+        insert(
+            &db,
+            "own",
+            "session",
+            "completed",
+            true,
+            origin(json!(["one"])),
+        );
+        let put = |seq, kind: &str, data: Value| {
+            let seq = if seq >= 2 { seq + 1 } else { seq };
+            db.execute(
+                "INSERT INTO event VALUES('session',?1,?2,?3)",
+                params![seq, kind, data.to_string()],
+            )
+            .unwrap();
+        };
+        put(
+            1,
+            "session.prompt.admitted.1",
+            json!({"message_id":"msg_handback_own"}),
+        );
+        db.execute(
+            "INSERT INTO event VALUES('session',2,'job.notified.1',?1)",
+            [
+                json!({"id":"own","notified":true,"input_origin":origin(json!(["one"]))})
+                    .to_string(),
+            ],
+        )
+        .unwrap();
+        assert!(lookup(&db, json!(["one"]))[0].handback_pending);
+        put(
+            2,
+            "session.step.started.1",
+            json!({"message_id":"assistant","input_message_ids":["msg_handback_own"]}),
+        );
+        put(
+            3,
+            "session.step.ended.1",
+            json!({"message_id":"assistant","finish":"tool_calls"}),
+        );
+        assert!(lookup(&db, json!(["one"]))[0].handback_pending);
+        put(
+            4,
+            "session.step.started.1",
+            json!({"message_id":"final","input_message_ids":["msg_handback_own"]}),
+        );
+        put(
+            5,
+            "session.step.ended.1",
+            json!({"message_id":"final","finish":"stop"}),
+        );
+        let done = lookup(&db, json!(["one"]));
+        assert!(!done[0].handback_pending);
+        assert_eq!(done[0].session_seq, 6);
+        assert_eq!(done[0].handback_seq, Some(1));
+        put(
+            6,
+            "session.step.started.1",
+            json!({"message_id":"continuation","input_message_ids":["msg_handback_own"]}),
+        );
+        assert!(lookup(&db, json!(["one"]))[0].handback_pending);
+        put(
+            7,
+            "session.step.failed.1",
+            json!({"message_id":"continuation"}),
+        );
+        assert!(!lookup(&db, json!(["one"]))[0].handback_pending);
+        put(
+            8,
+            "session.step.started.1",
+            json!({"message_id":"tools","input_message_ids":["msg_handback_own"]}),
+        );
+        put(
+            9,
+            "session.tool.called.1",
+            json!({"message_id":"tools","call_id":"first"}),
+        );
+        put(
+            10,
+            "session.tool.called.1",
+            json!({"message_id":"tools","call_id":"second"}),
+        );
+        put(
+            11,
+            "session.step.ended.1",
+            json!({"message_id":"tools","finish":"tool_calls"}),
+        );
+        put(12, "session.tool.settled.1", json!({"call_id":"first"}));
+        assert!(lookup(&db, json!(["one"]))[0].handback_pending);
+        put(13, "session.tool.settled.1", json!({"call_id":"second"}));
+        assert!(!lookup(&db, json!(["one"]))[0].handback_pending);
+    }
+
+    #[test]
+    fn a_handback_shaped_foreign_input_cannot_extend_an_owned_jobs_lifetime() {
+        let db = database();
+        insert(
+            &db,
+            "own",
+            "session",
+            "completed",
+            true,
+            origin(json!(["one"])),
+        );
+        db.execute(
+            "INSERT INTO event VALUES('session',1,'session.prompt.admitted.1',?1)",
+            [json!({"message_id":"msg_handback_own","source":"session"}).to_string()],
+        )
+        .unwrap();
+        let state = lookup(&db, json!(["one"]));
+        assert!(!state[0].running && !state[0].awaiting_handback && !state[0].handback_pending);
+        assert_eq!(
+            state[0].handback_seq, None,
+            "a synthetic name is not notifier acceptance"
+        );
     }
 }

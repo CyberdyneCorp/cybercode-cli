@@ -331,6 +331,8 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         op("post", "/jobs/input-state", "v1.job.inputState", "Read bounded background settlement for a complete input cohort")
             .body::<crate::runtime::InputJobQuery>(g)
             .ok::<Data<Vec<crate::runtime::InputJobState>>>(g),
+        op("get", "/sessions/{id}/steps/{message_id}/input-origin", "v1.session.stepInputOrigin", "Read the bounded original input cohort of an exact recorded step")
+            .ok::<Data<Vec<String>>>(g),
         op("get", "/jobs/{id}", "v1.job.get", "Read a background task")
             .ok::<Data<crate::runtime::Job>>(g),
         op(
@@ -976,7 +978,7 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "v1.session.events",
             "Replay durable events, then follow",
         )
-        .query(&["after"])
+        .query(&["after", "live"])
         .stream(),
         op(
             "post",

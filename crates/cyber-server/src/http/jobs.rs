@@ -24,9 +24,23 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/jobs", get(list))
         .route("/jobs/input-state", post(input_state))
+        .route(
+            "/sessions/{id}/steps/{message_id}/input-origin",
+            get(step_inputs),
+        )
         .route("/jobs/{id}", get(show))
         .route("/jobs/{id}/stop", post(stop))
         .route("/jobs/{id}/output", get(output))
+}
+
+async fn step_inputs(
+    State(state): State<AppState>,
+    Path((session, message)): Path<(String, String)>,
+) -> Result<Json<Data<Vec<String>>>, ApiError> {
+    state.runtime.state(&session).await?;
+    Ok(Json(Data {
+        data: state.runtime.step_input_origin(&session, &message)?,
+    }))
 }
 
 async fn input_state(

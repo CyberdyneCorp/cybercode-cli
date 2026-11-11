@@ -34,6 +34,18 @@
 - **THEN** its input provenance SHALL preserve the complete original input cohort and any new steering inputs through exact durable admission/notification/Job-origin evidence preceding that step
 - **AND** a source label, synthetic name, later notification or contradictory Job origin SHALL NOT grant inferred ancestry; unknown or excessive cohorts SHALL NOT become partial ownership
 
+#### Scenario: Background work outlives the initial answer
+- **WHEN** the initial answer ends while its input still owns running background work or an admitted handback with unfinished model/tool work
+- **THEN** the driver SHALL retain that input's pending slot and SHALL NOT emit its terminal result
+- **WHEN** the handback ends and the driver has consumed the durable revision observed by the bounded Job query
+- **THEN** the driver SHALL emit the correlated final handback answer and release that slot
+- **AND** completion of one driver's input SHALL NOT wait for another driver's active question or adopt its text
+
+#### Scenario: Replay and live notices share a driver connection
+- **WHEN** the driver opens a Session event stream with a durable cursor and `live=true`
+- **THEN** it SHALL receive contiguous durable replay plus live idle/delta notices for that Session on the same owned connection
+- **AND** live notices SHALL NOT advance the durable SSE cursor; omitting the option SHALL preserve the existing stream behavior
+
 #### Scenario: EOF with a pending approval
 - **WHEN** the driver's input closes while one of its requests awaits a reply
 - **THEN** that request follows the defined disconnected/non-interactive policy and the process does not wait forever or fabricate approval
@@ -49,3 +61,8 @@
 - **THEN** it SHALL release completed text, structured results and correlation records, retaining only bounded aggregate accounting
 - **AND** the limit SHALL apply before each HTTP admission to pending inputs, completion SHALL preserve the exact identities of other pending inputs, and `end.inputs` SHALL still count retired attempts
 - **AND** retiring a failed input SHALL NOT erase its aggregate failure; premature termination SHALL emit a terminal result for every remaining pending input
+
+#### Scenario: EOF during an owned handback question
+- **WHEN** EOF closes a driver while a handback question belongs to its retained original input
+- **THEN** it SHALL decline that exact request and drain its resulting answer under the original input identity without hanging
+- **AND** an input stopped without a recorded final answer SHALL fail unless a valid structured outcome already establishes its terminal result; a valid structured object containing null fields SHALL remain successful

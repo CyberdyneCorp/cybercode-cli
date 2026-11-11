@@ -981,6 +981,59 @@ async fn session_stream_replays_then_follows_without_gaps() {
 }
 
 #[tokio::test]
+async fn session_stream_live_opt_in_preserves_durable_cursor_and_delivers_idle_and_deltas() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("live answer")])],
+        ..Default::default()
+    });
+    let id = h.session().await;
+    let cursor = h.state(&id).await.last_seq;
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!(
+            "{base}/sessions/{id}/events?after={cursor}&live=true"
+        ))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut stream = response.bytes_stream();
+    Api::new(&h)
+        .post(&format!("/sessions/{id}/prompt"), prompt("hello"))
+        .await;
+    let content = read_sse_until(&mut stream, "session.idle").await;
+    assert!(content.contains("session.text.delta"), "{content}");
+    let mut seqs = Vec::new();
+    for frame in content.split("\n\n") {
+        for line in frame.lines().filter_map(|line| line.strip_prefix("data: ")) {
+            let event: Value = serde_json::from_str(line).unwrap();
+            if let Some(seq) = event["durable"]["seq"].as_i64() {
+                seqs.push(seq);
+            } else {
+                assert!(
+                    !frame.lines().any(|line| line.starts_with("id:")),
+                    "live event changed cursor: {frame}"
+                );
+            }
+        }
+    }
+    assert_eq!(seqs.first(), Some(&(cursor + 1)));
+    assert!(seqs.windows(2).all(|pair| pair[1] == pair[0] + 1));
+    assert_eq!(seqs.last(), Some(&h.state(&id).await.last_seq));
+    assert_eq!(
+        client
+            .get(format!("{base}/sessions/{id}/events?live=invalid"))
+            .basic_auth("cyber", Some("pw"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+}
+
+#[tokio::test]
 async fn location_stream_delivers_setup_output_and_filters_other_locations() {
     use base64::Engine as _;
     use cyber_core::worktrees::{Managed, SetupEvent, SetupSink, SetupStream};
@@ -1835,7 +1888,7 @@ async fn input_job_state_is_authenticated_bounded_and_read_only() {
     assert_eq!(
         result["data"],
         json!([{"message_id":"msg_driver","running":false,
-        "awaiting_handback":false,"oldest_unnotified_ms":null}])
+        "awaiting_handback":false,"oldest_unnotified_ms":null,"handback_pending":false,"session_seq":0,"handback_seq":null}])
     );
     for ids in [
         json!([]),
@@ -1862,6 +1915,51 @@ async fn input_job_state_is_authenticated_bounded_and_read_only() {
         StatusCode::NOT_FOUND
     );
     assert_eq!(h.runtime.state(&session).await.unwrap().last_seq, before);
+}
+
+#[tokio::test]
+async fn step_input_origin_reads_only_the_exact_recorded_step() {
+    use cyber_server::runtime::{Admission, Delivery};
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("answer")])],
+        ..Default::default()
+    });
+    let session = h.session().await;
+    let input = h
+        .runtime
+        .admit(&session, Admission::text("hello", Delivery::Queue))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&session).await;
+    let state = h.runtime.state(&session).await.unwrap();
+    let step = &state.steps[0].step_id;
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{session}/steps/{step}/input-origin");
+    assert_eq!(client.get(&path).send().await.unwrap().status(), 401);
+    let response: Value = client
+        .get(&path)
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["data"], json!([input.message_id]));
+    let api = Api::new(&h);
+    assert_eq!(
+        api.get(&format!(
+            "/sessions/{session}/steps/msg_unknown/input-origin"
+        ))
+        .await
+        .1["data"],
+        json!([])
+    );
+    assert_eq!(
+        h.runtime.state(&session).await.unwrap().last_seq,
+        state.last_seq
+    );
 }
 
 async fn stream_binding_fixture(

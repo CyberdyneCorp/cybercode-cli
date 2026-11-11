@@ -454,12 +454,26 @@ The model starts a background command with `bash` (or `powershell`) `{ "command"
 
 `POST /jobs/input-state` accepts `{session_id, input_message_ids}` with 1–32
 unique identities of at most 256 UTF-8 bytes each. It returns one small record per
-input: `message_id`, `running`, `awaiting_handback` and `oldest_unnotified_ms`.
+input: `message_id`, `session_seq`, `running`, `awaiting_handback`,
+`handback_pending`, `handback_seq` and `oldest_unnotified_ms`.
 Only Jobs with complete valid provenance contained in the supplied cohort count.
 The read-only query returns no Job logs/results and does not collect history pages.
 `awaiting_handback` means an ended Job has not admitted its notice; a false value
-does not prove that the parent has processed an already queued handback. Clients
-must establish that separately before retiring an input or publishing its result.
+does not prove that the parent has processed an already queued handback.
+`handback_pending` tracks unfinished model/tool work of an admitted notice.
+All callbacks of a tool-call step must settle. The answer boundary must follow
+`handback_seq`. Clients must also consume `session_seq` and establish
+their input's answer completion before retiring it.
+
+`GET /sessions/{id}/steps/{message_id}/input-origin` returns the exact stored
+step's bounded original input cohort, including proven Job handback ancestry. It
+returns an empty list when ownership is unknown and does not return prompt text.
+JSONL uses this evidence to correlate text and retains input slots through owned
+background work/handbacks. A completed driver can exit while another driver has
+an active question. Its Session event connection uses `?after=<seq>&live=true`
+for durable replay plus live idle/delta notices; live frames preserve the durable
+cursor, and the stream's default behavior is unchanged. Scoped interruption,
+presence, descendant asks and complete restart/lost-ack acceptance remain open.
 
 Job notice admission and notifier acceptance now commit together before inference
 wakes. Requests and new Jobs started by that handback preserve its original input
@@ -467,7 +481,7 @@ cohort, combined with later steering, using the earlier durable admission,
 notification and immutable Job origin. A source label or synthetic handback name
 alone does not establish ancestry. Unknown or excessive proof grants no partial
 ownership. Historical admitted notices without notifier acceptance still reconcile
-by exact retry. JSONL result retirement and scoped cancellation remain unfinished.
+by exact retry. JSONL descendant ownership, scoped cancellation and complete failure/restart acceptance remain unfinished.
 
 In the TUI, input starting with `&` (for example `& npm run dev`; the input bar reads `background shell`) starts the command as a background Job of the Session without the model: it runs sandboxed like a `!` command, records no message and starts no Turn, and its completion notice is queued like any Job's. API clients post `/sessions/{id}/shell` with `{ "command": "npm run dev", "background": true }`; the response carries the Job. Ctrl+B (binding `background_command`) while a Turn runs a foreground `bash` call moves that command to a background Job: the process keeps running, its log starts with the output captured so far, and the call returns the Job ID so the Turn continues. API clients post `/sessions/{id}/background`; it answers 409 when no foreground `bash` call is running. If the Job cannot start (for example at `background.max_jobs`), the command stays in the foreground.
 

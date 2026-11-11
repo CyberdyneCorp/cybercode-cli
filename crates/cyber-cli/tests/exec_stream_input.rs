@@ -453,6 +453,79 @@ fn two_prompts_give_two_results_in_order_then_end() {
     assert_eq!(admitted.len(), 2);
 }
 
+#[cfg(unix)]
+#[test]
+fn background_input_retires_only_after_the_handback_answer_is_consumed() {
+    let provider = Provider::start(&[
+        r#"bash {"command":"while [ ! -f release-job ]; do sleep 0.02; done; echo delivered","background":true}"#,
+        "text:initial answer",
+        "gate:text:handback answer",
+    ]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"background","text":"start a background job"}"#);
+    let input = run.until("input", &mut seen);
+    let request = run.until("permission_request", &mut seen);
+    run.send(
+        &json!({"type":"permission_reply","request_id":request["id"],"reply":"once"}).to_string(),
+    );
+    run.until("assistant_text", &mut seen);
+    // A result must not be emitted while the process remains gated.
+    let mut early = false;
+    while let Ok(line) = run.lines.recv_timeout(Duration::from_millis(300)) {
+        early |= line["type"] == "result";
+        seen.push(line);
+    }
+    std::fs::write(run._root.join("repo/release-job"), "").unwrap();
+    provider.wait_for_gate();
+    while let Ok(line) = run.lines.try_recv() {
+        early |= line["type"] == "result";
+        seen.push(line);
+    }
+    run.send(r#"{"type":"end"}"#);
+    provider.release();
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["message_id"], input["message_id"]);
+    assert_eq!(result["result"], "handback answer");
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.exit(), Some(0));
+    assert!(
+        !early,
+        "input retired before its background work and handback settled: {seen:#?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn eof_declines_a_handback_question_and_settles_the_original_input() {
+    let provider = Provider::start(&[
+        r#"bash {"command":"while [ ! -f release-job ]; do sleep 0.02; done","background":true}"#,
+        "text:initial answer",
+        r#"question {"questions":[{"question":"Choose","header":"Choice","options":[{"label":"yes"},{"label":"no"}]}]}"#,
+        "text:question declined",
+    ]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"background","text":"start a background job"}"#);
+    let input = run.until("input", &mut seen);
+    let permission = run.until("permission_request", &mut seen);
+    run.send(
+        &json!({"type":"permission_reply","request_id":permission["id"],"reply":"once"})
+            .to_string(),
+    );
+    run.until("assistant_text", &mut seen);
+    std::fs::write(run._root.join("repo/release-job"), "").unwrap();
+    let question = run.until("question", &mut seen);
+    assert_eq!(question["input_message_ids"], json!([input["message_id"]]));
+    run.close();
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["message_id"], input["message_id"]);
+    assert_eq!(result["result"], "question declined", "{seen:#?}");
+    assert_eq!(result["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0);
+    assert_eq!(run.exit(), Some(0));
+}
+
 #[test]
 fn a_permission_is_answered_over_stdin_and_others_are_refused() {
     let provider = Provider::start(&[r#"bash {"command":"echo driven"}"#, "text:ran it"]);
@@ -599,5 +672,27 @@ fn each_input_gets_its_structured_result() {
         (second["id"].as_str(), &second["result"]),
         (Some("b"), &json!({"summary":"second"}))
     );
+    assert_eq!(run.exit(), Some(0));
+}
+
+#[test]
+fn a_nullable_structured_object_is_a_terminal_answer() {
+    let provider = Provider::start(&[r#"structured_output {"answer":null}"#]);
+    let schema = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(
+        schema.path(),
+        r#"{"type":"object","properties":{"answer":{"type":"null"}},"required":["answer"]}"#,
+    )
+    .unwrap();
+    let path = schema.path().display().to_string();
+    let mut run = Driven::start(&provider, &["--output-schema", &path]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"null-answer","text":"return null"}"#);
+    run.send(r#"{"type":"end"}"#);
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["result"], json!({"answer":null}));
+    assert_eq!(result["error"], Value::Null, "{seen:#?}");
+    assert_eq!(result["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0);
     assert_eq!(run.exit(), Some(0));
 }

@@ -1,6 +1,6 @@
 # Active implementation goal and delivery rules
 
-## Current audit: 2026-11-10
+## Current audit: 2026-11-11
 
 The user has set the active objective to complete implementation, verification
 and accepted delivery of **#93**. #92 remains a separate unfinished workstream;
@@ -209,6 +209,43 @@ covers these ownership/transaction changes and fixtures. The native matrix now
 also runs the notifier rollback/recovery suite. CLI retirement, handback completion,
 event correlation, scoped interruption/presence and consolidated/native acceptance
 remain open; task 6.2 is not complete.
+
+The JSONL client now uses bounded input-owned Job observations and exact stored
+step provenance, removing its all-new-Session-Jobs capture and history scan.
+Answered inputs retain their pending slots through running Jobs, unadmitted
+notices, pending handback steps and an unread Store revision. The query returns
+`handback_pending`, authenticated `handback_seq` and a snapshot-consistent
+`session_seq`; the step-origin route
+returns only bounded IDs. The ready answer boundary must follow the latest
+actual notifier-accepted handback. A forged handback name cannot extend Job
+ownership. Text and durable failure handling use owned steps.
+Unproven completion reports an error with retained-work diagnostics. A completed
+driver can retire while another driver's question remains active.
+
+An owned Session connection now replays from the initial revision with opt-in
+`live=true` for idle/delta/error notices. Its live frames cannot advance the durable
+SSE cursor; the default feed keeps its existing behavior. The dispatcher separates
+source selection, ownership checking, text recording and retirement. The final
+Clippy complexity checks pass without suppressions after applying the
+cognitive-complexity skill's guidance with Clippy's Rust analyzer.
+
+Local verification passes 465 server library tests with one ignored subprocess
+fixture, all 84 HTTP tests including TCP authentication and live cursor retention,
+all 101 CLI binary unit tests and 15 real JSONL cases. The new real-binary case
+gates both the process and final handback inference and requires the final answer
+under the original input identity. Further cases cover EOF during an owned
+handback question and a valid terminal object with a null field. Unanswered halted inputs
+fail instead of publishing a partial success. Shared-Session controllers prove that unread
+answer revisions hold a slot and that retirement leaves another driver's question
+pending. OpenAPI/SDK consistency, SDK typecheck and 136 SDK cases pass with ten
+configured skips. Server/client/CLI all-target Clippy passes with warnings denied;
+strict OpenSpec passes 100 items and lint reports zero errors/25 warnings.
+Formatting, diff and workflow YAML checks pass. Native C/linker warnings were
+observed. Focused review covers the changed client/runtime/API/stream/generated
+artifacts and fixtures. Native filters include the shared stream/API dependencies.
+Scoped interruption/presence, descendant work/asks, broader event correlation,
+output backpressure, restart/lost-ack acceptance and consolidated/native review
+remain open; no parent task is accepted from this increment.
 
 Focused command-catalog, all-locale and eight doctor cases pass. The browser
 monitor fixture settles its owned in-flight Goal turn before independently

@@ -78,9 +78,27 @@ summary per supplied identity, aggregating only Jobs whose complete nonempty,
 bounded durable cohort belongs to the supplied set. Missing, malformed, duplicate,
 oversized or mixed-cohort Job provenance does not grant ownership. The query
 aggregates at the Store and returns no Job payloads or accumulated history pages.
-This is a read-only Job observation: admitted handbacks may still be queued or
-executing. Driver retirement must also establish completion of the original input
-and its owned handback Turns; the summary alone is not that completion proof.
+The observation now includes `handback_pending` while the latest step driven by
+an admitted notice has unfinished model/tool work, and `session_seq` from
+the same Store snapshot. This remains a read-only observation; it does not finish
+an input or cancel work. `GET /sessions/{id}/steps/{message_id}/input-origin`
+resolves the bounded original cohort of an exact stored step through the same
+durable handback evidence, without requiring a tool call or returning prompt text.
+
+The JSONL driver retains answered input slots while owned Jobs run, notices await
+admission, handback steps remain pending, or the query revision is ahead of the
+consumed durable stream. Its owned answer boundary must also follow the latest
+handback admission (`handback_seq`); an earlier ready answer cannot cover a later
+notice. Every callback of a tool-call step must settle before that handback's work
+is considered observed complete. Step ownership gates answer text/failure correlation.
+Ready slots retire independently of another driver's active Turn. Replace the
+all-new-Session-Jobs baseline with these exact bounded observations. The owned
+Session stream replays from the captured revision and opts into live idle/delta
+notices with `live=true`; live frames do not advance its durable SSE cursor. The
+default Session stream remains compatible. Missing/gapped ownership evidence
+reports retained work requiring reconciliation rather than fabricating a result.
+Scoped cancellation/presence, descendant asks and complete restart/lost-ack
+acceptance remain separate obligations.
 
 Emit schema_version 2, one result per admitted input with stable correlation, optional partial text/reasoning and hook events, and atomic `--output-last-message`. Session-level usage remains separate from per-input results and descendant usage. Redact errors and bound output buffering; define aggregate exits as 130 for explicit SIGINT, 2 for a fatal protocol error, otherwise the first nonzero input outcome in admission order (0 only when all outcomes succeed). A failing input does not discard already acknowledged later input; fatal protocol errors stop new admission and settle or explicitly cancel only owned work. Cover these precedence rules in protocol tests. Do not silently change text-mode output or the existing review/workflow/Goal command contracts; unsupported option combinations fail before creating work.
 

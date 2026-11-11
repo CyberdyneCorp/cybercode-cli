@@ -106,6 +106,18 @@ fn response(body: &Value) -> Value {
     {
         return json!({"content":"done"});
     }
+    if body["messages"]
+        .as_array()
+        .and_then(|messages| {
+            messages
+                .iter()
+                .rev()
+                .find(|message| message["role"] == "user")
+        })
+        .is_some_and(|message| message.to_string().contains("TEXT_CASE"))
+    {
+        return json!({"content":"owned answer"});
+    }
     let question = body.to_string().contains("QUESTION_CASE");
     let (name, arguments) = if question {
         (
@@ -152,7 +164,6 @@ async fn exercise(text: &str) {
         &args,
         &mut first_out,
         Run::new(&args, Instant::now()),
-        Owned::capture(&f.client, &f.session).await.unwrap(),
     );
     let mut second = Driver::new(
         &f.client,
@@ -160,7 +171,6 @@ async fn exercise(text: &str) {
         &args,
         &mut second_out,
         Run::new(&args, Instant::now()),
-        Owned::capture(&f.client, &f.session).await.unwrap(),
     );
     first.attach().await;
     second.attach().await;
@@ -222,4 +232,101 @@ async fn finish_second(f: &Fixture, first: &mut Driver<'_>, second: &mut Driver<
         .await
         .unwrap();
     assert!(f.app.runtime.pending_requests(Some(&f.session)).is_empty());
+}
+
+#[tokio::test]
+async fn completed_driver_retires_without_waiting_for_another_drivers_active_question() {
+    let f = Fixture::new().await;
+    let args = ExecArgs::default();
+    let session = json!({"id":f.session});
+    let mut first_out = Out::new(Format::Text, &args, &session);
+    let mut second_out = Out::new(Format::Text, &args, &session);
+    let mut first = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut first_out,
+        Run::new(&args, Instant::now()),
+    );
+    let mut second = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut second_out,
+        Run::new(&args, Instant::now()),
+    );
+    let cursor = f
+        .client
+        .get(&format!("/sessions/{}", f.session))
+        .await
+        .unwrap()["data"]["seq"]
+        .as_i64()
+        .unwrap();
+    first.seen_seq = Some(cursor);
+    first.attach().await;
+    second.attach().await;
+    first
+        .admit(
+            Some("first".into()),
+            vec![json!({"type":"text","text":"TEXT_CASE"})],
+            "queue",
+        )
+        .await;
+    tokio::time::timeout(Duration::from_secs(30), f.app.runtime.wait_idle(&f.session))
+        .await
+        .unwrap();
+    second
+        .admit(
+            Some("second".into()),
+            vec![json!({"type":"text","text":"QUESTION_CASE"})],
+            "queue",
+        )
+        .await;
+    let request = f.request().await;
+    let first_input = first.inputs.identities()[0].clone();
+    first.inputs.get_mut(&first_input).unwrap().answer_ready = true;
+    assert!(
+        !first.poll_background(false).await.unwrap(),
+        "retired ahead of unread durable answer events"
+    );
+    assert!(first.inputs.contains(&first_input));
+    let history = f
+        .client
+        .get(&format!(
+            "/sessions/{}/history?after={cursor}&limit=500",
+            f.session
+        ))
+        .await
+        .unwrap();
+    assert_eq!(history["hasMore"], false);
+    for stored in history["data"].as_array().unwrap() {
+        first
+            .event(Event {
+                kind: stored["type"].as_str().unwrap().into(),
+                data: stored["data"].clone(),
+                seq: stored["durable"]["seq"].as_i64(),
+                session_id: Some(f.session.clone()),
+            })
+            .await;
+    }
+    assert!(!first.idle, "the other driver is still executing");
+    assert!(first.poll_background(false).await.unwrap());
+    assert!(first.inputs.is_empty());
+    first.close().await;
+    assert!(
+        first.done().await,
+        "completed driver waited for unrelated work"
+    );
+    assert_eq!(
+        f.app.runtime.pending_requests(Some(&f.session))[0].id,
+        request.id
+    );
+    let (base, data) = event(&request);
+    second.asked(base, &data).await;
+    second.reply(&request.id, true, reply(true)).await;
+    tokio::time::timeout(Duration::from_secs(30), f.app.runtime.wait_idle(&f.session))
+        .await
+        .unwrap();
+    second.close().await;
+    f.app.runtime.shutdown().await;
 }

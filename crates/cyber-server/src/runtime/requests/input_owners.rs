@@ -83,6 +83,23 @@ pub(crate) fn recorded(
     message: &str,
     call: &str,
 ) -> Result<Vec<String>, StoreError> {
+    recorded_for(db, session, message, Some(call))
+}
+
+pub(crate) fn recorded_step(
+    db: &Connection,
+    session: &str,
+    message: &str,
+) -> Result<Vec<String>, StoreError> {
+    recorded_for(db, session, message, None)
+}
+
+fn recorded_for(
+    db: &Connection,
+    session: &str,
+    message: &str,
+    call: Option<&str>,
+) -> Result<Vec<String>, StoreError> {
     let raw: Option<(Option<String>, i64)> = db
         .query_row(
             "SELECT CASE WHEN json_type(s.data,'$.input_message_ids')='array'
@@ -91,9 +108,9 @@ pub(crate) fn recorded(
             THEN json_extract(s.data,'$.input_message_ids') ELSE NULL END, s.seq
         FROM event s WHERE s.aggregate_id=?1 AND s.type='session.step.started.1'
         AND json_extract(s.data,'$.message_id')=?2
-        AND EXISTS (SELECT 1 FROM event c WHERE c.aggregate_id=s.aggregate_id
+        AND (?3 IS NULL OR EXISTS (SELECT 1 FROM event c WHERE c.aggregate_id=s.aggregate_id
             AND c.type='session.tool.called.1' AND c.seq>s.seq
-            AND json_extract(c.data,'$.message_id')=?2 AND json_extract(c.data,'$.call_id')=?3)
+            AND json_extract(c.data,'$.message_id')=?2 AND json_extract(c.data,'$.call_id')=?3))
         ORDER BY s.seq DESC LIMIT 1",
             params![
                 session,

@@ -14,6 +14,9 @@ pub(super) struct Input {
     pub text: String,
     pub error: Option<String>,
     pub structured: Option<Value>,
+    pub answer_ready: bool,
+    pub ready_seq: i64,
+    pub unnotified_since: Option<std::time::Instant>,
 }
 
 impl Input {
@@ -25,6 +28,9 @@ impl Input {
             text: String::new(),
             error: None,
             structured: None,
+            answer_ready: false,
+            ready_seq: -1,
+            unnotified_since: None,
         }
     }
 
@@ -58,6 +64,26 @@ impl Inputs {
 
     pub fn contains(&self, message_id: &str) -> bool {
         self.pending.contains_key(message_id)
+    }
+
+    pub fn identities(&self) -> Vec<String> {
+        let mut inputs: Vec<_> = self.pending.values().collect();
+        inputs.sort_by_key(|input| input.ordinal);
+        inputs
+            .into_iter()
+            .map(|input| input.message_id.clone())
+            .collect()
+    }
+
+    pub fn has_ready(&self) -> bool {
+        self.pending.values().any(|input| input.answer_ready)
+    }
+
+    pub fn owns_cohort(&self, ids: &[String]) -> bool {
+        !ids.is_empty()
+            && ids.len() <= MAX_PENDING
+            && ids.iter().all(|id| self.contains(id))
+            && ids.iter().collect::<std::collections::HashSet<_>>().len() == ids.len()
     }
 
     /// Only a complete server-recorded cohort can authorize a driver reply.

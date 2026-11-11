@@ -2373,6 +2373,8 @@ export type InputJobQuery = {
  * admission is separate from the parent Turn processing that queued input.
  */
 export type InputJobState = {
+  /** Session revision observed in the same Store snapshot as the Job state. */
+  session_seq: number;
   message_id: string;
   running: boolean;
   /**
@@ -2380,6 +2382,13 @@ export type InputJobState = {
    * establish that the parent has processed an already admitted handback.
    */
   awaiting_handback: boolean;
+  /** An admitted completion notice still has unfinished parent model/tool work. */
+  handback_pending: boolean;
+  /**
+   * Latest admitted notice of these Jobs; the input's answer boundary must
+   * follow this revision before its result can retire.
+   */
+  handback_seq?: number | null;
   oldest_unnotified_ms?: number | null;
 };
 

@@ -7,7 +7,7 @@
 //! which correlates its `result` and makes a retry after a lost acknowledgement the same
 //! prompt. Permission and question requests go to the driver instead of being declined;
 //! after `end` or EOF nothing new is admitted, unanswered requests are declined, and the
-//! process exits once its inputs are answered and the Session is idle.
+//! process exits once its owned inputs and background work have settled.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
@@ -18,7 +18,6 @@ use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 
-use super::background::{Owned, Settle};
 use super::frames::{self, Frame, MAX_LINE};
 use super::inputs::{Input, Inputs};
 use super::report::{Out, Run};
@@ -38,6 +37,15 @@ enum Line {
     Eof,
 }
 
+/// The control loop selects a ready source before applying its side effects.
+enum Wake {
+    Input(Line),
+    Event(Option<Event>),
+    Poll,
+    Renew,
+    Interrupt,
+}
+
 /// A live permission/question request bound to this driver's exact admitted inputs.
 struct Ask {
     session_id: String,
@@ -50,7 +58,9 @@ struct Driver<'a> {
     args: &'a ExecArgs,
     out: &'a mut Out,
     run: Run,
-    owned: Owned,
+    step: Option<String>,
+    seen_seq: Option<i64>,
+    background_failed: bool,
     inputs: Inputs,
     /// Exact message identities of promoted inputs whose answer is in progress.
     answering: Vec<String>,
@@ -79,18 +89,16 @@ pub async fn execute(
     let baseline = client.get(&format!("/sessions/{id}")).await.map_err(api)?;
     run.begin_session(&baseline["data"])?;
     out.init_version(client, session, 2).await;
-    let filter = id.clone();
     let mut events = Box::pin(
         client
-            .events(true)
+            .session_live_event_stream(&id, baseline["data"]["seq"].as_i64().unwrap_or(-1))
             .await
-            .map_err(api)?
-            .filter(move |e| futures::future::ready(e.session_id.as_deref() == Some(&filter))),
+            .map_err(api)?,
     );
-    let owned = Owned::capture(client, &id).await?;
     let (sender, mut lines) = mpsc::channel(64);
     tokio::spawn(read_stdin(sender));
-    let mut driver = Driver::new(client, &id, args, &mut out, run, owned);
+    let mut driver = Driver::new(client, &id, args, &mut out, run);
+    driver.seen_seq = baseline["data"]["seq"].as_i64();
     driver.attach().await;
     driver.drive(&mut events, &mut lines).await;
     driver.release().await;
@@ -126,6 +134,14 @@ async fn read_stdin(sender: mpsc::Sender<Line>) {
     }
 }
 
+/// Durable kinds carry a numeric version; live kinds such as session.idle do not.
+fn event_base(kind: &str) -> &str {
+    match kind.rsplit_once('.') {
+        Some((base, version)) if version.bytes().all(|byte| byte.is_ascii_digit()) => base,
+        _ => kind,
+    }
+}
+
 impl<'a> Driver<'a> {
     fn new(
         client: &'a Client,
@@ -133,7 +149,6 @@ impl<'a> Driver<'a> {
         args: &'a ExecArgs,
         out: &'a mut Out,
         run: Run,
-        owned: Owned,
     ) -> Self {
         Self {
             client,
@@ -141,7 +156,9 @@ impl<'a> Driver<'a> {
             args,
             out,
             run,
-            owned,
+            step: None,
+            seen_seq: None,
+            background_failed: false,
             inputs: Inputs::default(),
             answering: Vec::new(),
             answer_done: false,
@@ -166,28 +183,45 @@ impl<'a> Driver<'a> {
         settle_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let interrupt = tokio::signal::ctrl_c();
         tokio::pin!(interrupt);
-        loop {
-            tokio::select! {
-                line = lines.recv(), if !self.closed => {
-                    self.line(line.unwrap_or(Line::Eof)).await;
-                }
-                event = events.next() => match event {
-                    Some(event) => self.event(event).await,
-                    None => {
-                        self.fatal.get_or_insert_with(|| "the server closed the event stream".into());
-                        return;
-                    }
-                },
-                _ = settle_poll.tick(), if self.closed && self.idle => {}
-                _ = renewal.tick(), if self.lease.is_some() => self.renew().await,
-                _ = &mut interrupt, if !self.interrupted => {
-                    self.interrupted = true;
-                    self.close().await;
-                    self.interrupt().await;
-                }
-            }
-            if self.done().await {
+        while !self.done().await {
+            let wake = tokio::select! {
+                line = lines.recv(), if !self.closed => Wake::Input(line.unwrap_or(Line::Eof)),
+                event = events.next() => Wake::Event(event),
+                _ = settle_poll.tick(), if self.inputs.has_ready() => Wake::Poll,
+                _ = renewal.tick(), if self.lease.is_some() => Wake::Renew,
+                _ = &mut interrupt, if !self.interrupted => Wake::Interrupt,
+            };
+            if self.dispatch(wake).await {
                 return;
+            }
+        }
+    }
+
+    async fn dispatch(&mut self, wake: Wake) -> bool {
+        match wake {
+            Wake::Input(line) => self.line(line).await,
+            Wake::Event(event) => return self.consume_event(event).await,
+            Wake::Poll => self.refresh_background().await,
+            Wake::Renew => self.renew().await,
+            Wake::Interrupt => {
+                self.interrupted = true;
+                self.close().await;
+                self.interrupt().await;
+            }
+        }
+        false
+    }
+
+    async fn consume_event(&mut self, event: Option<Event>) -> bool {
+        match event {
+            Some(event) => {
+                self.event(event).await;
+                false
+            }
+            None => {
+                self.fatal
+                    .get_or_insert_with(|| "the server closed the event stream".into());
+                true
             }
         }
     }
@@ -351,32 +385,21 @@ impl<'a> Driver<'a> {
     }
 
     async fn event(&mut self, event: Event) {
-        self.owned.observe(&event);
+        if !self.accept_sequence(&event).await {
+            return;
+        }
         let kind = event.kind.as_str();
-        // Durable kinds end with a version (`.1`); live ones such as `session.idle` do not.
-        let base = match kind.rsplit_once('.') {
-            Some((base, version)) if version.bytes().all(|b| b.is_ascii_digit()) => base,
-            _ => kind,
-        };
+        let base = event_base(kind);
         match base {
-            "session.idle" => {
-                self.idle = true;
-                self.flush_answers();
-            }
+            "session.idle" => self.became_idle().await,
             "session.prompt.promoted" => self.promoted(&event.data),
-            "session.step.started" => self.idle = false,
-            "session.step.ended" => {
+            "session.step.started" => self.begin_step(&event.data).await,
+            "session.step.ended" if self.owns_step(&event.data) => {
                 self.answer_done = event.data["finish"] != "tool_calls";
                 self.out.durable(&mut self.run, kind, &event.data);
             }
-            "session.text.ended" => {
-                self.out.durable(&mut self.run, kind, &event.data);
-                self.last_text = self.run.text.clone();
-                for message_id in &self.answering {
-                    if let Some(input) = self.inputs.get_mut(message_id) {
-                        input.text = self.run.text.clone();
-                    }
-                }
+            "session.text.ended" if self.owns_step(&event.data) => {
+                self.record_text(kind, &event.data)
             }
             "session.structured_output.settled" => self.structured(&event.data),
             "permission.asked" | "question.asked" => self.asked(base, &event.data).await,
@@ -385,19 +408,7 @@ impl<'a> Driver<'a> {
                     self.asks.remove(id);
                 }
             }
-            "session.text.delta" | "session.reasoning.delta"
-                if self.args.include_partial_messages =>
-            {
-                let line = if base == "session.text.delta" {
-                    "text_delta"
-                } else {
-                    "reasoning_delta"
-                };
-                self.out.stream_line(
-                    line,
-                    json!({ "message_id": event.data["message_id"], "text": event.data["text"] }),
-                );
-            }
+            "session.text.delta" | "session.reasoning.delta" => self.partial(base, &event.data),
             "session.error" if event.data["kind"] == "snapshot" => {
                 eprintln!(
                     "snapshot warning: {}",
@@ -406,9 +417,90 @@ impl<'a> Driver<'a> {
                         .unwrap_or("code rewind unavailable")
                 );
             }
-            "session.error" => self.failed(&event.data),
-            "session.retry" => self.out.retry(&event.data),
-            _ => self.out.durable(&mut self.run, kind, &event.data),
+            "session.retry" if self.owns_step(&event.data) => self.out.retry(&event.data),
+            "session.step.failed" if self.owns_step(&event.data) => {
+                self.failed(&event.data);
+                self.answer_done = true;
+            }
+            _ if self.allows_durable(&event.data) => {
+                self.out.durable(&mut self.run, kind, &event.data)
+            }
+            _ => {}
+        }
+    }
+
+    fn allows_durable(&self, data: &Value) -> bool {
+        self.step.is_some() && (data.get("message_id").is_none() || self.owns_step(data))
+    }
+
+    fn partial(&self, base: &str, data: &Value) {
+        if !self.args.include_partial_messages || !self.owns_step(data) {
+            return;
+        }
+        let line = if base == "session.text.delta" {
+            "text_delta"
+        } else {
+            "reasoning_delta"
+        };
+        self.out.stream_line(
+            line,
+            json!({"message_id":data["message_id"],"text":data["text"]}),
+        );
+    }
+
+    async fn accept_sequence(&mut self, event: &Event) -> bool {
+        if event.session_id.as_deref() != Some(self.id) {
+            return false;
+        }
+        let Some(seq) = event.seq else {
+            return true;
+        };
+        if self.seen_seq.is_some_and(|seen| seq <= seen) {
+            return false;
+        }
+        if self.seen_seq.is_some_and(|seen| seq != seen + 1) {
+            self.background_error(
+                "Session event history has a gap; retained inputs require reconciliation".into(),
+            )
+            .await;
+            return false;
+        }
+        self.seen_seq = Some(seq);
+        true
+    }
+
+    async fn became_idle(&mut self) {
+        self.idle = true;
+        if !self.answer_done && !self.answering.is_empty() {
+            for id in &self.answering {
+                if let Some(input) = self.inputs.get_mut(id)
+                    && input.structured.is_none()
+                {
+                    input.error.get_or_insert_with(|| {
+                        "Execution stopped before a recorded final answer; inspect the Session"
+                            .into()
+                    });
+                }
+            }
+        }
+        self.stage_answers();
+        self.step = None;
+        self.refresh_background().await;
+    }
+
+    async fn refresh_background(&mut self) {
+        if let Err(error) = self.poll_background(false).await {
+            self.background_error(error.message).await;
+        }
+    }
+
+    fn record_text(&mut self, kind: &str, data: &Value) {
+        self.out.durable(&mut self.run, kind, data);
+        self.last_text = self.run.text.clone();
+        for id in &self.answering {
+            if let Some(input) = self.inputs.get_mut(id) {
+                input.text = self.run.text.clone();
+            }
         }
     }
 
@@ -422,7 +514,7 @@ impl<'a> Driver<'a> {
             return;
         }
         if self.answer_done {
-            self.flush_answers();
+            self.stage_answers();
         }
         if !self.inputs.contains(message_id) || self.answering.iter().any(|id| id == message_id) {
             return;
@@ -491,10 +583,11 @@ impl<'a> Driver<'a> {
     }
 
     /// Emit the results of the inputs whose answer ended.
-    fn flush_answers(&mut self) {
+    fn stage_answers(&mut self) {
         for message_id in std::mem::take(&mut self.answering) {
-            if let Some(input) = self.inputs.complete(&message_id) {
-                self.emit_result(&input);
+            if let Some(input) = self.inputs.get_mut(&message_id) {
+                input.answer_ready = true;
+                input.ready_seq = self.seen_seq.unwrap_or(-1);
             }
         }
         self.run.retire_driver_answer();
@@ -524,28 +617,146 @@ impl<'a> Driver<'a> {
             .stream_line("error", json!({ "code": "protocol", "message": why }));
     }
 
-    /// The run is over once input is closed, the Session is idle, every input has its
-    /// answer and the background work the run started has settled.
+    /// Completion belongs to these inputs; another driver's Turn may remain active.
+    /// A stopping run still waits for its own running Jobs.
     async fn done(&mut self) -> bool {
-        if !(self.closed && self.idle) {
+        if self.background_failed || (self.closed && self.inputs.is_empty()) {
+            return true;
+        }
+        if !(self.closed && self.idle && (self.interrupted || self.fatal.is_some())) {
             return false;
         }
-        // An input admitted but not yet promoted keeps the run open.
-        if !self.inputs.is_empty() && self.fatal.is_none() && !self.interrupted {
-            return false;
-        }
-        match self
-            .owned
-            .settle(self.client, self.interrupted || self.fatal.is_some())
-            .await
-        {
-            Ok(Settle::Done) => true,
-            Ok(Settle::Wait) => false,
+        match self.poll_background(true).await {
+            Ok(settled) => settled,
             Err(error) => {
-                self.run.error = Some(error.message);
+                self.background_error(error.message).await;
                 true
             }
         }
+    }
+
+    fn owns_step(&self, data: &Value) -> bool {
+        self.step
+            .as_deref()
+            .is_some_and(|step| data["message_id"].as_str() == Some(step))
+    }
+
+    async fn begin_step(&mut self, data: &Value) {
+        self.idle = false;
+        if self.answer_done {
+            self.stage_answers();
+        }
+        self.step = None;
+        let Some(message) = data["message_id"].as_str().filter(|id| safe_id(id, "msg")) else {
+            return;
+        };
+        let response = self
+            .client
+            .get(&format!(
+                "/sessions/{}/steps/{message}/input-origin",
+                self.id
+            ))
+            .await;
+        let roots = response.map_err(api).and_then(|response| {
+            serde_json::from_value::<Vec<String>>(response["data"].clone())
+                .map_err(|_| CliError::runtime("Invalid step input provenance"))
+        });
+        let roots = match roots {
+            Ok(roots) => roots,
+            Err(error) => return self.background_error(error.message).await,
+        };
+        if !self.inputs.owns_cohort(&roots) {
+            return;
+        }
+        self.step = Some(message.to_owned());
+        self.answer_done = false;
+        self.run.text.clear();
+        for root in roots {
+            if let Some(input) = self.inputs.get_mut(&root) {
+                input.answer_ready = false;
+            }
+            if !self.answering.contains(&root) {
+                self.answering.push(root);
+            }
+        }
+    }
+
+    async fn poll_background(&mut self, stopping: bool) -> Result<bool, CliError> {
+        let ids = self.inputs.identities();
+        if ids.is_empty() {
+            return Ok(true);
+        }
+        let response = self
+            .client
+            .post(
+                "/jobs/input-state",
+                json!({"session_id":self.id,"input_message_ids":ids}),
+            )
+            .await
+            .map_err(api)?;
+        let states: Vec<cyber_server::runtime::InputJobState> =
+            serde_json::from_value(response["data"].clone())
+                .map_err(|_| CliError::runtime("Invalid input Job state"))?;
+        let mut returned: Vec<_> = states
+            .iter()
+            .map(|state| state.message_id.clone())
+            .collect();
+        returned.sort();
+        let mut expected = ids;
+        expected.sort();
+        if returned != expected {
+            return Err(CliError::runtime(
+                "Input Job lookup returned a different cohort",
+            ));
+        }
+        if states
+            .iter()
+            .any(|state| self.seen_seq.is_none_or(|seq| state.session_seq > seq))
+        {
+            return Ok(false);
+        }
+        let mut settled = true;
+        for state in states {
+            settled &= !state.running
+                && (stopping || !(state.awaiting_handback || state.handback_pending));
+            let Some(input) = self.inputs.get_mut(&state.message_id) else {
+                continue;
+            };
+            if !input.answer_ready {
+                continue;
+            }
+            if state.awaiting_handback {
+                let since = input.unnotified_since.get_or_insert_with(Instant::now);
+                if since.elapsed() < cyber_server::runtime::settlement::HANDBACK_GRACE {
+                    continue;
+                }
+                input.error.get_or_insert_with(|| {
+                    "Background handback was not admitted; inspect the Session Jobs".into()
+                });
+            } else {
+                input.unnotified_since = None;
+                if state.running
+                    || state.handback_pending
+                    || state.handback_seq.is_some_and(|seq| input.ready_seq < seq)
+                {
+                    continue;
+                }
+            }
+            if let Some(input) = self.inputs.complete(&state.message_id) {
+                self.emit_result(&input);
+            }
+        }
+        Ok(settled)
+    }
+
+    async fn background_error(&mut self, message: String) {
+        self.run.error = Some(format!(
+            "Background ownership could not be reconciled; inspect Session {}: {message}",
+            self.id
+        ));
+        self.background_failed = true;
+        self.closed = true;
+        self.release().await;
     }
 
     /// The aggregate exit: 130 for SIGINT, 2 for a fatal protocol error, else the first

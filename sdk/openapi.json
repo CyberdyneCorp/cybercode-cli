@@ -2693,6 +2693,11 @@
       "InputJobState": {
         "type": "object",
         "properties": {
+          "session_seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Session revision observed in the same Store snapshot as the Job state."
+          },
           "message_id": {
             "type": "string"
           },
@@ -2703,6 +2708,18 @@
             "type": "boolean",
             "description": "An ended Job has not yet admitted its completion notice. False does not\nestablish that the parent has processed an already admitted handback."
           },
+          "handback_pending": {
+            "type": "boolean",
+            "description": "An admitted completion notice still has unfinished parent model/tool work."
+          },
+          "handback_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Latest admitted notice of these Jobs; the input's answer boundary must\nfollow this revision before its result can retire."
+          },
           "oldest_unnotified_ms": {
             "type": [
               "integer",
@@ -2712,11 +2729,27 @@
           }
         },
         "required": [
+          "session_seq",
           "message_id",
           "running",
-          "awaiting_handback"
+          "awaiting_handback",
+          "handback_pending"
         ],
         "description": "One small Job record per supplied input; no logs/results/history. Handback\nadmission is separate from the parent Turn processing that queued input."
+      },
+      "Data_Array_of_string": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
       },
       "Data_Job": {
         "type": "object",
@@ -14519,20 +14552,6 @@
           "data"
         ]
       },
-      "Data_Array_of_string": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "data"
-        ]
-      },
       "Data_AccountView": {
         "type": "object",
         "properties": {
@@ -21612,6 +21631,55 @@
         }
       }
     },
+    "/api/v1/sessions/{id}/steps/{message_id}/input-origin": {
+      "get": {
+        "operationId": "v1.session.stepInputOrigin",
+        "summary": "Read the bounded original input cohort of an exact recorded step",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{id}": {
       "get": {
         "operationId": "v1.job.get",
@@ -27277,6 +27345,14 @@
           },
           {
             "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "live",
             "in": "query",
             "required": false,
             "schema": {

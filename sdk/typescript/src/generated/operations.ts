@@ -1271,6 +1271,7 @@ export interface Operations {
     path: { sessionID: string };
     query: {
       after?: QueryValue;
+      live?: QueryValue;
     };
     body: undefined;
     response: S.EventEnvelope;
@@ -1654,6 +1655,12 @@ export interface Operations {
     query: Record<string, never>;
     body: S.SubtaskBody;
     response: S.Delegation;
+  };
+  "v1.session.stepInputOrigin": {
+    path: { id: string; message_id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: string[];
   };
   "v1.session.stopDelegation": {
     path: { sessionID: string; requestID: string };
@@ -4200,7 +4207,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/events",
     pathParams: ["sessionID"],
-    query: ["after"],
+    query: ["after", "live"],
     body: "none",
     located: false,
     unwrap: false,
@@ -4910,6 +4917,18 @@ export const operations = {
     pathParams: ["sessionID", "requestID"],
     query: [],
     body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.stepInputOrigin": {
+    tag: "session",
+    name: "stepInputOrigin",
+    method: "GET",
+    path: "/api/v1/sessions/{id}/steps/{message_id}/input-origin",
+    pathParams: ["id", "message_id"],
+    query: [],
+    body: "none",
     located: false,
     unwrap: true,
     stream: false,
@@ -6340,6 +6359,9 @@ export function createGroups(caller: Caller) {
       /** Durably reserve a named user delegation request (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
       startDelegation: (sessionID: string, requestID: string, body: Operations["v1.session.startDelegation"]["body"], options?: RequestOptions): Promise<Operations["v1.session.startDelegation"]["response"]> =>
         caller.call("v1.session.startDelegation", { path: { sessionID, requestID }, body }, options),
+      /** Read the bounded original input cohort of an exact recorded step (`GET /api/v1/sessions/{id}/steps/{message_id}/input-origin`) */
+      stepInputOrigin: (id: string, message_id: string, options?: RequestOptions): Promise<Operations["v1.session.stepInputOrigin"]["response"]> =>
+        caller.call("v1.session.stepInputOrigin", { path: { id, message_id } }, options),
       /** Cancel one admission request or its recorded Job (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}/stop`) */
       stopDelegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.stopDelegation"]["response"]> =>
         caller.call("v1.session.stopDelegation", { path: { sessionID, requestID } }, options),

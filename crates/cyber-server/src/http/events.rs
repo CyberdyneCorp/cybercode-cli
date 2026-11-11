@@ -457,6 +457,16 @@ pub(crate) async fn session_events(
     Path(id): Path<String>,
     parts: Parts,
 ) -> Result<Response, ApiError> {
+    let include_live = match parts
+        .uri
+        .query()
+        .and_then(|query| query_value(query, "live"))
+        .as_deref()
+    {
+        None | Some("false") => false,
+        Some("true") => true,
+        _ => return Err(ApiError::invalid("live must be true or false")),
+    };
     let after = parts
         .uri
         .query()
@@ -487,7 +497,7 @@ pub(crate) async fn session_events(
         (!browser_stream(&parts)).then(|| runtime.attach_client(Watching::Session(id.clone())));
     spawn_stream(runtime.clone(), tx.clone(), async move {
         let _present = present;
-        follow(state, id, directory, after, live, tx).await;
+        follow(state, id, directory, after, live, tx, include_live).await;
     });
     Ok(stream_response(rx, runtime))
 }
@@ -499,6 +509,7 @@ async fn follow(
     mut last: i64,
     mut live: broadcast::Receiver<LiveEvent>,
     tx: mpsc::Sender<Event>,
+    include_live: bool,
 ) {
     let mut counter = 0;
     if !recover_session_stream(&state, &id, &mut directory, &mut last, &tx, &mut counter).await {
@@ -528,14 +539,7 @@ async fn follow(
                 }
             }
             Ok(LiveEvent::Deleted { session_id }) if session_id == id => return,
-            Ok(event @ LiveEvent::HookNotice { .. })
-            | Ok(event @ LiveEvent::RequestRouted { .. })
-            | Ok(event @ LiveEvent::WorktreeSetup { .. })
-            | Ok(event @ LiveEvent::ToolProgress { .. })
-            | Ok(event @ LiveEvent::JobOutput { .. })
-            | Ok(event @ LiveEvent::MessagingOutcome { .. })
-                if session_of(&event) == Some(id.as_str()) =>
-            {
+            Ok(event) if session_live_allowed(&event, &id, include_live) => {
                 counter += 1;
                 let mut e = envelope(&event, counter);
                 e.location = Some(directory.clone());
@@ -560,6 +564,22 @@ async fn follow(
             }
             Err(broadcast::error::RecvError::Closed) => return,
         }
+    }
+}
+
+fn session_live_allowed(event: &LiveEvent, id: &str, include_live: bool) -> bool {
+    if session_of(event) != Some(id) {
+        return false;
+    }
+    match event {
+        LiveEvent::Durable { .. } | LiveEvent::Deleted { .. } => false,
+        LiveEvent::HookNotice { .. }
+        | LiveEvent::RequestRouted { .. }
+        | LiveEvent::WorktreeSetup { .. }
+        | LiveEvent::ToolProgress { .. }
+        | LiveEvent::JobOutput { .. }
+        | LiveEvent::MessagingOutcome { .. } => true,
+        _ => include_live,
     }
 }
 

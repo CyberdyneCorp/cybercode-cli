@@ -415,6 +415,20 @@ impl Client {
         Ok(parse_events(self.open_stream(&path).await?))
     }
 
+    /// Replay one Session's durable events and include its live idle/delta/error
+    /// notices, under the same owned connection and durable cursor.
+    pub async fn session_live_event_stream(
+        &self,
+        session_id: &str,
+        after: i64,
+    ) -> Result<impl Stream<Item = Event> + use<>, ClientError> {
+        let path = format!(
+            "/sessions/{}/events?after={after}&live=true",
+            encode(session_id).replace('/', "%2F")
+        );
+        Ok(parse_events(self.open_stream(&path).await?))
+    }
+
     /// Live events of one team (`/teams/:id/events`): its `team.*` records and its
     /// members' permission and question events.
     pub async fn team_events(
