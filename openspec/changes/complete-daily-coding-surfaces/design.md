@@ -100,6 +100,26 @@ reports retained work requiring reconciliation rather than fabricating a result.
 Scoped cancellation/presence, descendant asks and complete restart/lost-ack
 acceptance remain separate obligations.
 
+Scoped interruption uses an exact Session, 1–32 unique original input IDs and a
+stable interruption request ID. The runtime retains the selected cohort and a
+receipt before signalling any actor. Retrying that request returns the original
+receipt; it never captures a later Drain. Reusing its ID for a different cohort
+refuses. A receipt left pending by a different runtime generation reports unknown
+and requires reconciliation instead of signalling replacement work.
+
+Capture queued refusals and the active Drain under the Session state lock. Cancel
+that Drain only when its complete recorded cohort, including authenticated Job
+handback ancestry, belongs to the selection. Mixed or unavailable ownership never
+authorizes cancellation of the active Drain. Wait on the captured Drain's retained
+owner disposal, independently of later Session execution. Runtime-owned cleanup
+survives requester disposal and retains the shutdown lease until receipt settlement.
+Cancel proven direct process Jobs in bounded pages after the Job-publication
+barrier; suppress their completion notices. Do not infer descendant or native
+activity ownership from Session membership. Unresolved work reports unknown and
+preserves its ordinary recovery fences. Resume remaining queued inputs without
+waiting for an unrelated replacement Drain. A control receipt acknowledges only
+its proven runtime scope, never native-effect acknowledgement or rollback.
+
 Emit schema_version 2, one result per admitted input with stable correlation, optional partial text/reasoning and hook events, and atomic `--output-last-message`. Session-level usage remains separate from per-input results and descendant usage. Redact errors and bound output buffering; define aggregate exits as 130 for explicit SIGINT, 2 for a fatal protocol error, otherwise the first nonzero input outcome in admission order (0 only when all outcomes succeed). A failing input does not discard already acknowledged later input; fatal protocol errors stop new admission and settle or explicitly cancel only owned work. Cover these precedence rules in protocol tests. Do not silently change text-mode output or the existing review/workflow/Goal command contracts; unsupported option combinations fail before creating work.
 
 ## Delivery and acceptance

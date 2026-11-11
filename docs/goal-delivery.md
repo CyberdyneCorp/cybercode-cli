@@ -257,6 +257,49 @@ skips. Strict OpenSpec passes 100 items; lint reports zero errors/25 warnings.
 Native compiler/linker warnings were observed. Current-head platform CI and
 consolidated review remain required.
 
+### Retained input interruption runtime continuation
+
+The runtime now accepts original root user-input cohorts and a stable interruption
+request identity. It commits intent and queued refusals before signalling an exact
+captured Drain. Its completion token fires after retained Drain owners dispose.
+Direct owned requests withdraw before waiting for that completion; reversing this
+order caused a real permission-wait timeout and retained uncertainty in the first
+regression run. Unrelated queued inputs resume independently of replacement work.
+
+Cleanup remains runtime-owned after response disposal and holds shutdown through
+settlement. Exact retries observe the original receipt, reject a different cohort,
+and cannot target replacement execution. Pending receipts with a changed runtime
+generation or missing cleanup owner report unknown reconciliation. Failed intent
+writes signal/refuse nothing; failed completion writes cannot imply acknowledgement.
+The receipt records runtime control only and grants no native acknowledgement.
+
+After the Job-publication barrier, cancellation visits at most 64 identities per
+page and stops only proven direct process Jobs. Detached Jobs survive. Mixed or
+child Job ownership reports unknown; descendant control remains required. Direct
+request withdrawal selects the complete recorded cohort without Session-wide
+cascades. Late authenticated Job notices commit as refused when their immutable
+origin matches the interruption, and promotion also fences existing notices.
+Native uncertainty, unowned activities and computer authority remain protected.
+
+Local verification passes 469 server library tests with one ignored subprocess
+fixture invoked by its Location-lock parent, nine actual runtime interruption
+cases, 14 Job cases, 22 request cases and all 84 HTTP cases, including API artifact
+consistency. Four new unit cases cover physical owner disposal, orphaned receipt
+lookup, bounded/mixed Job pages and immutable notifier provenance. The runtime
+cases cover shared ownership, exact retry, commit failures, restart lookup, direct
+Job selection, late handback refusal and requester disposal during shutdown.
+Server all-target Clippy passes with warnings denied and the configured complexity
+limit of 15. Strict OpenSpec passes 100 items; lint reports zero errors/25 warnings.
+
+This is the runtime control foundation. HTTP/SDK and JSONL driver integration,
+input-scoped presence, descendant ownership and complete restart/lost-reply/native
+platform acceptance remain open. The JSONL driver still uses its previous global
+interrupt endpoint until that integration is implemented and verified. CLI/TUI/SDK
+suites and current-source platform CI are not acceptance evidence for this increment.
+Task 6.2 and the whole issue remain open. A fresh GitHub fetch found no new main
+commits; the preceding `71fc43dd` CI observation had 31 successes, 12 queued and
+two running checks, with no observed failures. It does not accept this new source.
+
 ### Zero-byte ordinary restore continuation
 
 Ordinary cleanup now records payload completion for exact empty inventories and

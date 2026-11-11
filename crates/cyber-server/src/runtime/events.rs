@@ -636,6 +636,7 @@ pub fn registry() -> EventRegistry {
     super::file_observations::register(&mut registry);
     super::binary_effects::register(&mut registry);
     super::jobs::register(&mut registry);
+    super::input_interrupt::register(&mut registry);
     super::delegations::register(&mut registry);
     super::mcp::register(&mut registry);
     super::memory::register(&mut registry);

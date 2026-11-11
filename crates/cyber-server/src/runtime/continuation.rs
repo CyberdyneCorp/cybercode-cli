@@ -317,6 +317,7 @@ pub(super) fn launch_child(
     settlement: Option<Box<dyn ChildContinuation>>,
 ) {
     let cancel = CancellationToken::new();
+    let completed = CancellationToken::new();
     drains.insert(
         id.into(),
         DrainEntry {
@@ -326,6 +327,8 @@ pub(super) fn launch_child(
             cancel: cancel.clone(),
             follow_up: false,
             deleting: false,
+            completed: completed.clone(),
+            _completion: completed.drop_guard(),
         },
     );
     tokio::spawn(drain::run(Arc::clone(inner), id.into(), false, cancel));

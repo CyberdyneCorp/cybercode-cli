@@ -632,6 +632,7 @@ async fn promote(
     continue_tools: bool,
 ) -> Result<bool, RuntimeError> {
     let mut state = handle.state.lock().await;
+    super::input_interrupt::refuse_pending(inner, &mut state)?;
     let mut ids: Vec<String> = state
         .pending(Delivery::Steer)
         .map(|r| r.message_id.clone())

@@ -529,6 +529,46 @@ impl Inner {
         Ok(())
     }
 
+    /// Direct requests only, with complete recorded input ownership. Take one
+    /// waiter at a time instead of retaining every pending request payload.
+    pub(crate) async fn abandon_input_requests(
+        &self,
+        session: &str,
+        inputs: &[String],
+    ) -> Result<(), RuntimeError> {
+        loop {
+            let waiter = {
+                let mut waiters = self.waiters.lock().unwrap_or_else(PoisonError::into_inner);
+                let index = waiters.iter().position(|waiter| {
+                    let request = &waiter.request;
+                    request.session_id == session
+                        && !request.input_message_ids.is_empty()
+                        && request.input_message_ids.len() <= 32
+                        && request
+                            .input_message_ids
+                            .iter()
+                            .all(|id| inputs.contains(id))
+                });
+                index.map(|index| waiters.remove(index))
+            };
+            let Some(waiter) = waiter else {
+                return Ok(());
+            };
+            match waiter.reply {
+                Reply::Permission(sender) => {
+                    let reply = PermissionReply::Reject { message: None };
+                    self.record_withdrawal(&waiter.request, &reply).await?;
+                    let _ = sender.send(reply);
+                }
+                Reply::Question(sender) => {
+                    self.record_question_reply(&waiter.request, &QuestionReply::Dismissed)
+                        .await?;
+                    let _ = sender.send(QuestionReply::Dismissed);
+                }
+            }
+        }
+    }
+
     pub(crate) fn pending(&self, session_id: Option<&str>) -> Vec<PendingRequest> {
         self.waiters
             .lock()

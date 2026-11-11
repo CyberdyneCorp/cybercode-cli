@@ -21,6 +21,22 @@
 - **WHEN** an active JSONL driver sends an interrupt while its model request is streaming
 - **THEN** the reader processes it without waiting for model completion and interruption applies only to the driver's owned execution
 
+#### Scenario: Retained interruption cannot target a replacement Drain
+- **WHEN** an interruption selects 1–32 unique original input identities and a stable request identity
+- **THEN** its intent and queued refusals SHALL commit before signalling the exact captured Drain, whose complete input cohort must belong to the selection
+- **AND** mixed or unavailable provenance SHALL NOT authorize cancellation of that Drain or withdrawal of its requests
+- **WHEN** the requester disappears or retries after another Drain starts
+- **THEN** cleanup SHALL retain its runtime shutdown owner, wait for the captured owner's actual disposal, and return the original receipt without selecting replacement execution
+- **AND** a different cohort under the same request identity SHALL refuse; missing retained cleanup or a changed runtime generation SHALL report unknown reconciliation rather than inventing acknowledgement
+
+#### Scenario: An interrupted input has direct process Jobs
+- **WHEN** the captured Drain has released and pending Job publication has crossed its admission barrier
+- **THEN** cancellation SHALL select only proven direct process Jobs of the exact Session and complete selected cohort, in bounded identity pages
+- **AND** detached, mixed and descendant work SHALL NOT gain cancellation authority from Session membership; unresolved selected scope SHALL report unknown
+- **WHEN** a completion notifier races the interruption intent
+- **THEN** its exact authenticated handback SHALL remain refused and SHALL NOT restart the interrupted input, including after receipt settlement or restart
+- **AND** these control receipts SHALL NOT acknowledge native effects or erase ordinary recovery evidence
+
 #### Scenario: Bounded background ownership lookup
 - **WHEN** an authenticated client queries Job state for 1–32 unique input identities, each at most 256 UTF-8 bytes
 - **THEN** the server SHALL return one small record per supplied identity without returning Job payloads or collecting Session history pages

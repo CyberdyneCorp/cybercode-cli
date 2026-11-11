@@ -136,6 +136,24 @@ fn recorded_for(
     {
         return Ok(Vec::new());
     }
+    resolve(db, session, owners, before)
+}
+
+pub(crate) fn resolve(
+    db: &Connection,
+    session: &str,
+    owners: Vec<String>,
+    before: i64,
+) -> Result<Vec<String>, StoreError> {
+    if !bounded(&owners)
+        || owners
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != owners.len()
+    {
+        return Ok(Vec::new());
+    }
     let mut roots = Vec::new();
     for input in owners {
         let inherited = handback_inputs(db, session, &input, before)?;

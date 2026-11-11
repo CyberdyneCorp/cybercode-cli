@@ -79,6 +79,7 @@ mod handoff;
 mod import;
 pub use import::{ImportDocument, ImportedMessage, ImportedSession};
 mod host;
+mod input_interrupt;
 mod input_jobs;
 pub mod instructions;
 mod jobs;
@@ -98,6 +99,9 @@ mod subtask;
 mod subtree_reopen;
 mod subtree_stop;
 pub use delegations::{Delegation, DelegationPhase, DelegationStatus};
+pub use input_interrupt::{
+    InputInterrupt, InputInterruptProblem, InputInterruptReceipt, InputInterruptStatus,
+};
 pub use input_jobs::{InputJobQuery, InputJobState};
 pub use jobs::{Job, JobAdmission, JobAttempt, JobInputOrigin, JobStatus, JobUsage};
 pub use names::ChildExecution;
@@ -855,6 +859,9 @@ struct DrainEntry {
     follow_up: bool,
     /// A deletion fence, not a Drain: no Drain or child Job starts for the Session.
     deleting: bool,
+    completed: CancellationToken,
+    // Last: completion follows disposal of the actual Drain's retained owners.
+    _completion: tokio_util::sync::DropGuard,
 }
 
 pub(crate) struct Inner {
@@ -879,6 +886,8 @@ pub(crate) struct Inner {
     reservation_attempts: StdMutex<HashMap<String, std::sync::Weak<reservations::Attempt>>>,
     jobs: StdMutex<HashMap<String, Arc<jobs::Control>>>,
     job_admission: Arc<Mutex<()>>,
+    input_interrupt_generation: String,
+    input_interrupts: StdMutex<std::collections::HashSet<(String, String)>>,
     /// Foreground commands the user may move to the background, by Session.
     handoffs: StdMutex<HashMap<String, Vec<handoff::Entry>>>,
     /// Running PTYs and their attach tickets.
@@ -1012,6 +1021,8 @@ impl Runtime {
             reservation_attempts: StdMutex::default(),
             jobs: StdMutex::default(),
             job_admission: Arc::new(Mutex::new(())),
+            input_interrupt_generation: cyber_core::ids::new_id("op"),
+            input_interrupts: StdMutex::default(),
             handoffs: StdMutex::default(),
             ptys: pty::Registry::default(),
             delegations: StdMutex::default(),
@@ -1757,7 +1768,7 @@ impl Runtime {
         let observation_scope = self
             .capture_observation_input(&handle, prompt && admission.source == "user")
             .await;
-        let (receipt, observed_input) = {
+        let (receipt, observed_input, interrupted) = {
             let mut state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
             if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
@@ -1796,7 +1807,16 @@ impl Runtime {
             }
             events.push(event(ADMITTED, &payload));
             let admitted = events.len() - 1;
+            let interrupted = input_interrupt::notifier_refused(
+                &self.inner.store,
+                session_id,
+                &message_id,
+                &extra,
+            )?;
             events.extend(extra);
+            if interrupted {
+                events.push(input_interrupt::refused(&message_id));
+            }
             let stored = self.inner.commit_locked(&mut state, events)?;
             blobs.keep();
             let observed_input = (prompt && payload.source == "user")
@@ -1804,6 +1824,7 @@ impl Runtime {
             (
                 receipt_for(&state, &message_id, stored[admitted].seq),
                 observed_input,
+                interrupted,
             )
         };
         if let Some((info, event_id)) = observed_input {
@@ -1814,7 +1835,7 @@ impl Runtime {
                 .stop_continuations
                 .store(0, std::sync::atomic::Ordering::SeqCst);
         }
-        if admission.resume && admission.delivery != Delivery::Hold {
+        if admission.resume && admission.delivery != Delivery::Hold && !interrupted {
             self.inner.start_drain(session_id, false);
         }
         Ok(receipt)
@@ -2832,6 +2853,7 @@ impl Inner {
             return;
         }
         let cancel = CancellationToken::new();
+        let completed = CancellationToken::new();
         drains.insert(
             id.into(),
             DrainEntry {
@@ -2841,6 +2863,8 @@ impl Inner {
                 cancel: cancel.clone(),
                 follow_up: false,
                 deleting: false,
+                completed: completed.clone(),
+                _completion: completed.drop_guard(),
             },
         );
         tokio::spawn(drain::run(Arc::clone(self), id.to_string(), forced, cancel));
