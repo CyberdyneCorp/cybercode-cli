@@ -1,5 +1,11 @@
 //! The `cyber` binary.
 
+// On macOS ld64 reports that this binary's unwind tables exceed the 16 MiB
+// compact-unwind limit and that the overflow uses DWARF unwind info instead. That is
+// harmless (panics still unwind), and `-no_compact_unwind` would break unwinding on
+// arm64, so the message is not shown on every build.
+#![allow(linker_messages)]
+
 mod cli;
 mod cli_docs;
 mod commands;

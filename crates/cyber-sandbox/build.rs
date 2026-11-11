@@ -11,9 +11,7 @@ fn main() {
     build.flag("-Wall").flag("-Wextra").flag("-Werror");
     match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("macos") => {
-            build
-                .file("native/macos_plugin_exec.c")
-                .flag("-Wno-error=deprecated-declarations");
+            build.file("native/macos_plugin_exec.c");
         }
         Ok("linux") => {
             build.file("native/linux_plugin_exec.c");

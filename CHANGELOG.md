@@ -6,7 +6,9 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
-The first release is in preparation. It will contain:
+## [0.1.0-beta.1] - 2026-11-11
+
+The first public pre-release, for macOS and Linux. It contains:
 
 ### Added
 
