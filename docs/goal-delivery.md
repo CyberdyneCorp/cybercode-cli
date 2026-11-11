@@ -112,6 +112,17 @@ subprocess fixtures invoked by the process-kill parent tests. Workflow YAML,
 formatting and diff checks passed. The other checks and full-goal acceptance
 remain open.
 
+### Windows snapshot fixture lint
+
+The Windows binary proof on `2a628f12` passed core Clippy and all 25 selected
+binary tests without skips. The broader Windows workspace lint then failed on
+`Repo::shadow_directory` and `Repo::shadow_object` in the Git snapshot test
+fixture. Their corruption-test callers are Unix-only, so the helpers now use the
+same condition. Local snapshot all-target Clippy passed with warnings denied.
+All 22 Git snapshot integration tests passed; the ignored entry is the pathspec
+subprocess fixture invoked by its parent test. Formatting and diff checks passed.
+Current-head Windows lint must verify this separate correction.
+
 ### Zero-byte ordinary restore continuation
 
 Ordinary cleanup now records payload completion for exact empty inventories and

@@ -32,6 +32,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 impl Repo {
+    #[cfg(unix)]
     fn shadow_directory(&self) -> PathBuf {
         std::fs::read_dir(self.data.join("snapshot"))
             .unwrap()
@@ -40,6 +41,7 @@ impl Repo {
             .find(|path| path.join("HEAD").exists())
             .unwrap()
     }
+    #[cfg(unix)]
     fn shadow_object(&self, revision: &str) -> PathBuf {
         let shadow = self.shadow_directory();
         // v3 tags peel to a retention envelope. Corrupt the canonical graph
