@@ -202,11 +202,18 @@ fn answer(
         );
         return;
     }
-    let finish = if delta.get("tool_calls").is_some() {
-        "tool_calls"
-    } else {
-        "stop"
-    };
+    // A scripted `finish` replaces the finish reason, as in `content_filter`.
+    let scripted = delta
+        .as_object_mut()
+        .and_then(|d| d.remove("finish"))
+        .and_then(|f| f.as_str().map(str::to_owned));
+    let finish = scripted.unwrap_or_else(|| {
+        if delta.get("tool_calls").is_some() {
+            "tool_calls".into()
+        } else {
+            "stop".into()
+        }
+    });
     let chunk = json!({"choices":[{"index":0,"delta":delta,"finish_reason":finish}],
         "usage":{"prompt_tokens":100,"completion_tokens":10}});
     let reply = format!("data: {chunk}\n\ndata: [DONE]\n\n");

@@ -6,6 +6,10 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- OpenAI refusals were dropped, so a refused prompt looked like an empty answer. The refusal text is now shown, the TUI says when the provider's safety filter or the output limit stopped an answer, and `cyber exec` reports `stop_reason` `refusal` or `max_tokens`.
+
 ## [0.1.0-beta.1] - 2026-11-11
 
 The first public pre-release, for macOS and Linux. It contains:

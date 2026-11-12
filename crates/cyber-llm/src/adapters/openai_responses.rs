@@ -424,9 +424,12 @@ impl Decoder for ResponsesDecoder {
 impl ResponsesDecoder {
     fn dispatch(&mut self, kind: &str, data: &Value, out: &mut Vec<Result<LlmEvent, LlmError>>) {
         match kind {
-            "response.output_text.delta" => out.push(Ok(LlmEvent::TextDelta {
-                text: str_at(data, "/delta").into(),
-            })),
+            // A refusal is the model's answer, shown as text rather than dropped.
+            "response.output_text.delta" | "response.refusal.delta" => {
+                out.push(Ok(LlmEvent::TextDelta {
+                    text: str_at(data, "/delta").into(),
+                }))
+            }
             "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
                 out.push(Ok(LlmEvent::ReasoningDelta {
                     text: str_at(data, "/delta").into(),
@@ -603,6 +606,25 @@ mod tests {
             build_body(&request, Backend::Api)["input"][0]["content"][0],
             json!({ "type": "input_file", "filename": "spec.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" })
         );
+    }
+
+    /// A refusal streams as `response.refusal.delta`; it reaches the user as the
+    /// answer text instead of an empty reply.
+    #[test]
+    fn a_streamed_refusal_becomes_answer_text() {
+        let mut decoder = ResponsesDecoder::default();
+        let mut out = Vec::new();
+        for delta in ["I can't ", "help with that."] {
+            decoder.dispatch("response.refusal.delta", &json!({"delta": delta}), &mut out);
+        }
+        let text: String = out
+            .iter()
+            .filter_map(|e| match e {
+                Ok(LlmEvent::TextDelta { text }) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "I can't help with that.");
     }
 
     /// `provider-catalog` → Provider-specific error codes: the `response.incomplete`
