@@ -59,7 +59,9 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: 'v2.9.8'
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
+        with:
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@v2
       - name: Prepare namespace prerequisites
         shell: bash
