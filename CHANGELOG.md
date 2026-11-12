@@ -6,6 +6,10 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed
+
+- The permission prompt shows an edit's whole diff. When it does not fit, PgDn, PgUp and Home scroll it while the choices stay in view; before, only the first 12 lines were shown.
+
 ## [0.1.0-beta.1] - 2026-11-11
 
 The first public pre-release, for macOS and Linux. It contains:
