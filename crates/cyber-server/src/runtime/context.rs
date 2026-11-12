@@ -36,6 +36,8 @@ pub struct Observation {
     pub pending: std::collections::BTreeSet<String>,
     /// Recorded while reading, never parsed back out of rendered (untrusted) text.
     pub files: BTreeMap<String, Vec<String>>,
+    /// Per source, the stamp of each file taken from the handle it was read through.
+    pub stamps: BTreeMap<String, BTreeMap<String, super::context_sources::FileStamp>>,
 }
 
 pub fn observe(inputs: &ContextInputs) -> Observation {
@@ -45,9 +47,10 @@ pub fn observe(inputs: &ContextInputs) -> Observation {
         "core/environment".to_string(),
         Observed::Value(environment(inputs)),
     );
-    let (instructions, read) = instructions(inputs);
+    let (instructions, read, stamps) = instructions(inputs);
     sources.insert("core/instructions".to_string(), instructions);
     let files = BTreeMap::from([("core/instructions".to_string(), read)]);
+    let stamps = BTreeMap::from([("core/instructions".to_string(), stamps)]);
     let origins = BTreeMap::from([
         ("core/date".into(), "runtime".into()),
         ("core/environment".into(), "runtime".into()),
@@ -57,6 +60,7 @@ pub fn observe(inputs: &ContextInputs) -> Observation {
         sources,
         origins,
         files,
+        stamps,
         pending: Default::default(),
     }
 }
@@ -230,8 +234,14 @@ fn environment(inputs: &ContextInputs) -> String {
 }
 
 /// `core/instructions` (see [`super::instructions::load_baseline`]), plus the files read,
-/// in load order.
-fn instructions(inputs: &ContextInputs) -> (Observed, Vec<String>) {
+/// in load order, and their stamps.
+fn instructions(
+    inputs: &ContextInputs,
+) -> (
+    Observed,
+    Vec<String>,
+    BTreeMap<String, super::context_sources::FileStamp>,
+) {
     let loaded = inputs
         .instructions
         .as_ref()
@@ -244,15 +254,20 @@ fn instructions(inputs: &ContextInputs) -> (Observed, Vec<String>) {
             )
         });
     match loaded {
-        Err(reason) => (Observed::Unavailable(reason), Vec::new()),
+        Err(reason) => (Observed::Unavailable(reason), Vec::new(), BTreeMap::new()),
         Ok(loaded) => {
             let read = loaded
                 .files
                 .iter()
                 .map(|file| file.path.display().to_string())
                 .collect();
+            let stamps = loaded
+                .files
+                .iter()
+                .filter_map(|file| Some((file.path.display().to_string(), file.stamp?)))
+                .collect();
             let text = loaded.text().map_or(Observed::Absent, Observed::Value);
-            (text, read)
+            (text, read, stamps)
         }
     }
 }
@@ -307,7 +322,7 @@ mod tests {
         std::fs::create_dir(dir.path().join(".git")).unwrap();
         std::fs::write(dir.path().join("AGENTS.md"), "use pnpm").unwrap();
         std::fs::write(dir.path().join("CLAUDE.md"), "use npm").unwrap();
-        let (Observed::Value(text), _) = instructions(&inputs(dir.path())) else {
+        let (Observed::Value(text), _, _) = instructions(&inputs(dir.path())) else {
             panic!()
         };
         assert!(text.contains("use pnpm") && !text.contains("use npm"));

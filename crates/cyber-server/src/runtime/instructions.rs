@@ -214,6 +214,8 @@ pub struct InstructionFile {
     pub canonical: PathBuf,
     pub truncated: bool,
     pub(crate) rule_binding: Option<RuleBinding>,
+    /// Size and modification time when the delivered bytes were read.
+    pub stamp: Option<super::context_sources::FileStamp>,
 }
 impl InstructionFile {
     pub(crate) fn identity(&self) -> String {
@@ -666,6 +668,7 @@ impl<'a> Loader<'a> {
             canonical: path.into(),
             truncated: false,
             rule_binding: Some(binding),
+            stamp: None,
         };
         let label = format!("{INSTRUCTIONS_FROM}{}\n", path.display());
         let available = self
@@ -675,8 +678,14 @@ impl<'a> Loader<'a> {
             return self.omit(file);
         }
         let limit = self.settings.max_bytes.min(available - label.len());
-        let body = bounded_text(&definition.body, limit);
+        let mut body = bounded_text(&definition.body, limit);
         definition.verify()?;
+        // Taken after the definition's file identity was verified. An edit between the
+        // definition's read and this call makes the stamp newer than the delivered
+        // bytes; that edit still reaches the next request boundary, which re-reads rules.
+        body.stamp = std::fs::metadata(path)
+            .ok()
+            .map(|metadata| super::context_sources::FileStamp::of(&metadata));
         if let Some(body) = self.record_body(file, body) {
             self.expand_rule_imports(path, root, project, &body)?;
         }
@@ -741,6 +750,7 @@ impl<'a> Loader<'a> {
             canonical: key.clone(),
             rule_binding: None,
             truncated: false,
+            stamp: None,
         };
         let separator = if self.out.blocks.is_empty() { 0 } else { 2 };
         let label = format!("{INSTRUCTIONS_FROM}{}\n", path.display());
@@ -780,6 +790,7 @@ impl<'a> Loader<'a> {
         self.remaining -= rendered.text.len() + separator;
         let file = InstructionFile {
             truncated: rendered.body.omitted > 0,
+            stamp: rendered.body.stamp,
             ..file
         };
         if file.truncated {
@@ -921,6 +932,7 @@ struct Bounded {
     text: String,
     omitted: usize,
     limit: usize,
+    stamp: Option<super::context_sources::FileStamp>,
 }
 
 fn bounded_text(text: &str, limit: usize) -> Bounded {
@@ -932,6 +944,7 @@ fn bounded_text(text: &str, limit: usize) -> Bounded {
         text: text[..end].into(),
         omitted: text.len() - end,
         limit,
+        stamp: None,
     }
 }
 
@@ -991,6 +1004,7 @@ fn read_bounded(path: &Path, limit: usize) -> Result<Bounded, String> {
         text,
         omitted,
         limit,
+        stamp: Some(super::context_sources::FileStamp::of(&metadata)),
     })
 }
 

@@ -10150,6 +10150,12 @@
             "type": "integer",
             "format": "uint",
             "minimum": 0
+          },
+          "changed_sources": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Listed sources with `changed_on_disk` true."
           }
         },
         "required": [
@@ -10159,7 +10165,8 @@
           "epoch_pending",
           "queued_inputs",
           "held_inputs",
-          "delivered_rule_count"
+          "delivered_rule_count",
+          "changed_sources"
         ]
       },
       "PreparedContextEstimate": {
@@ -10271,6 +10278,20 @@
             "type": "integer",
             "format": "uint",
             "minimum": 0
+          },
+          "file_stamps": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FileStamp"
+            },
+            "description": "Stamps of the listed files taken while they were read. Historical records and\nsources that are not read from files have none."
+          },
+          "changed_on_disk": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a file this source was read from has changed size or modification time,\nor disappeared, since it was read. The change takes effect at the next request\nboundary. `null` when the source has no recorded stamps (it is not read from\nfiles, or was recorded by an older version), when some of its files have no\nstamp, or when the inspection's check budget is spent. Files added since the read\nare not detected."
           }
         },
         "required": [
@@ -10298,6 +10319,29 @@
             "description": "No observation metadata was recorded by the historical writer."
           }
         ]
+      },
+      "FileStamp": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "modified_ns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Nanoseconds since the Unix epoch; absent where the platform reports none."
+          }
+        },
+        "required": [
+          "bytes"
+        ],
+        "description": "Size and modification time of a file when it was read. Inspection compares them with\nthe file's current metadata to report an edit without reading the file again."
       },
       "Data_Array_of_FileDiff": {
         "type": "object",

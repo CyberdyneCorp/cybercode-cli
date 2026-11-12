@@ -20,6 +20,28 @@ pub enum SourceStatus {
     Unavailable,
 }
 
+/// Size and modification time of a file when it was read. Inspection compares them with
+/// the file's current metadata to report an edit without reading the file again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileStamp {
+    pub bytes: u64,
+    /// Nanoseconds since the Unix epoch; absent where the platform reports none.
+    pub modified_ns: Option<u64>,
+}
+
+impl FileStamp {
+    pub fn of(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            bytes: metadata.len(),
+            modified_ns: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .and_then(|since| u64::try_from(since.as_nanos()).ok()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceMetadata {
     pub origin: String,
@@ -29,6 +51,10 @@ pub struct SourceMetadata {
     pub estimated_tokens: Option<u64>,
     pub file_paths: Vec<String>,
     pub omitted_file_paths: usize,
+    /// Stamps of the listed files taken while they were read. Historical records and
+    /// sources that are not read from files have none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub file_stamps: BTreeMap<String, FileStamp>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -55,13 +81,31 @@ pub fn capture(
             }
             Observed::Unavailable(_) => SourceStatus::Unavailable,
         };
-        let (file_paths, omitted_file_paths) = if status == SourceStatus::RetainedUnavailable {
+        let (file_paths, omitted_file_paths, file_stamps) = if status
+            == SourceStatus::RetainedUnavailable
+        {
             previous.get(id).map_or_else(
-                || (Vec::new(), 0),
-                |record| (record.file_paths.clone(), record.omitted_file_paths),
+                || (Vec::new(), 0, BTreeMap::new()),
+                |record| {
+                    (
+                        record.file_paths.clone(),
+                        record.omitted_file_paths,
+                        record.file_stamps.clone(),
+                    )
+                },
             )
         } else {
-            bounded_paths(observed.files.get(id).map_or(&[], Vec::as_slice))
+            let (paths, omitted) = bounded_paths(observed.files.get(id).map_or(&[], Vec::as_slice));
+            let stamps = observed
+                .stamps
+                .get(id)
+                .map_or_else(BTreeMap::new, |stamps| {
+                    paths
+                        .iter()
+                        .filter_map(|path| Some((path.clone(), *stamps.get(path)?)))
+                        .collect()
+                });
+            (paths, omitted, stamps)
         };
         (
             id.clone(),
@@ -77,6 +121,7 @@ pub fn capture(
                 estimated_tokens: snapshot.get(id).map(|text| (text.len() / 4) as u64),
                 file_paths,
                 omitted_file_paths,
+                file_stamps,
             },
         )
     }));

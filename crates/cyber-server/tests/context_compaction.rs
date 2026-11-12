@@ -95,6 +95,64 @@ async fn inspection_preserves_source_provenance_when_a_later_observation_is_unav
     assert_eq!(h.models.requests("test/main").len(), 2);
 }
 
+/// `system-context` → Scope-aware rule inspection and loading: an edited or removed
+/// instruction file shows as changed on disk until the next request boundary reads it,
+/// and inspection neither opens it nor records anything.
+#[tokio::test]
+async fn inspection_reports_instruction_files_changed_since_they_were_read() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("first"), text("second")])],
+        ..Setup::default()
+    });
+    let file = h.repo.join("CYBER.md");
+    std::fs::write(&file, "Original instruction.").unwrap();
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("begin")).await.unwrap();
+    h.settle(&id).await;
+    let inspect = |runtime: &cyber_server::runtime::Runtime,
+                   state: &cyber_server::runtime::SessionState| {
+        let inspection = serde_json::to_value(runtime.inspect_context(state)).unwrap();
+        let source = inspection["effective_sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == "core/instructions")
+            .unwrap()
+            .clone();
+        (inspection, source)
+    };
+    let (inspection, source) = inspect(&h.runtime, &h.runtime.state(&id).await.unwrap());
+    assert_eq!(source["changed_on_disk"], false, "{inspection:#}");
+    assert_eq!(inspection["changed_sources"], 0);
+    let path = file.to_str().unwrap();
+    assert!(source["file_stamps"][path]["bytes"].as_u64().unwrap() > 0);
+
+    std::fs::write(&file, "Edited instruction, now longer than before.").unwrap();
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    let state = h.runtime.state(&id).await.unwrap();
+    let (inspection, source) = inspect(&h.runtime, &state);
+    assert_eq!(source["changed_on_disk"], true, "{inspection:#}");
+    assert_eq!(inspection["changed_sources"], 1);
+    assert!(!inspection.to_string().contains("Edited instruction"));
+    assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    let restarted = h.restart();
+    let (_, source) = inspect(&restarted, &restarted.state(&id).await.unwrap());
+    assert_eq!(source["changed_on_disk"], true);
+
+    restarted.admit(&id, admit("continue")).await.unwrap();
+    restarted.wait_idle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert!(format!("{:?}", requests[1]).contains("Edited instruction"));
+    let (inspection, source) = inspect(&restarted, &restarted.state(&id).await.unwrap());
+    assert_eq!(source["changed_on_disk"], false, "{inspection:#}");
+
+    std::fs::remove_file(&file).unwrap();
+    let (inspection, source) = inspect(&restarted, &restarted.state(&id).await.unwrap());
+    assert_eq!(source["changed_on_disk"], true, "{inspection:#}");
+    assert_eq!(inspection["changed_sources"], 1);
+}
+
 #[tokio::test]
 async fn historical_source_provenance_stays_unknown_during_read_only_inspection() {
     let h = Harness::new(Setup::default());

@@ -766,6 +766,8 @@ export type ContextInspection = {
   queued_inputs: number;
   held_inputs: number;
   delivered_rule_count: number;
+  /** Listed sources with `changed_on_disk` true. */
+  changed_sources: number;
 };
 
 export type ContextMeter = {
@@ -1301,6 +1303,22 @@ export type EffectiveContextSource = {
   estimated_tokens?: number | null;
   file_paths: string[];
   omitted_file_paths: number;
+  /**
+   * Stamps of the listed files taken while they were read. Historical records and
+   * sources that are not read from files have none.
+   */
+  file_stamps?: {
+    [key: string]: FileStamp;
+  };
+  /**
+   * Whether a file this source was read from has changed size or modification time,
+   * or disappeared, since it was read. The change takes effect at the next request
+   * boundary. `null` when the source has no recorded stamps (it is not read from
+   * files, or was recorded by an older version), when some of its files have no
+   * stamp, or when the inspection's check budget is spent. Files added since the read
+   * are not detected.
+   */
+  changed_on_disk?: boolean | null;
 };
 
 /** What happens to a derived effort the model does not list. */
@@ -1451,6 +1469,16 @@ export type FileListing = {
 
 export type FileSearch = {
   results: FileHit[];
+};
+
+/**
+ * Size and modification time of a file when it was read. Inspection compares them with
+ * the file's current metadata to report an edit without reading the file again.
+ */
+export type FileStamp = {
+  bytes: number;
+  /** Nanoseconds since the Unix epoch; absent where the platform reports none. */
+  modified_ns?: number | null;
 };
 
 export type FinishReason = "stop" | "tool_calls" | "length" | "content_filter" | {

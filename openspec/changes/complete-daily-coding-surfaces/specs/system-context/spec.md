@@ -11,6 +11,13 @@
 - **WHEN** an owner inspects context while project sources are withheld by trust policy
 - **THEN** inspection reports their withheld state without loading their content or treating their estimated bytes as active context
 
+#### Scenario: Instruction file changed since it was read
+- **GIVEN** a source whose files were read at the last request boundary, with each file's size and modification time recorded from the handle it was read through
+- **WHEN** one of those files is edited or removed and an owner inspects context
+- **THEN** inspection marks that source as changed on disk and counts it, comparing only file metadata, without opening the file, starting inference or appending events
+- **AND** a source without recorded stamps for all of its listed files, or beyond the inspection's bounded check budget, reports the answer as unknown rather than unchanged
+- **AND** after the next request boundary reads the file again, the source is no longer marked changed
+
 ## MODIFIED Requirements
 
 ### Requirement: Path-scoped rules and overrides

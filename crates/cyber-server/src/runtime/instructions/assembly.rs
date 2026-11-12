@@ -142,6 +142,7 @@ mod tests {
             text: "λ".repeat(800),
             omitted: 500,
             limit: 1600,
+            stamp: None,
         };
         for budget in 0..1024 {
             if let Some(rendered) = block(path, &body, 1600, budget) {
@@ -168,6 +169,7 @@ mod tests {
                 path,
                 truncated: false,
                 rule_binding: None,
+                stamp: None,
             });
         }
         let mut seen = BTreeSet::new();

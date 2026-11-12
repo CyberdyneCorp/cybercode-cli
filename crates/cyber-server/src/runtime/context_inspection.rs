@@ -4,7 +4,10 @@ use cyber_llm::Message;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::context_sources::{SourceMetadata, SourceStatus};
+use super::context_sources::{FileStamp, SourceMetadata, SourceStatus};
+
+/// Files whose current metadata one inspection compares with their recorded stamps.
+const STAMP_CHECKS: usize = 512;
 use super::{InputStatus, Runtime, SessionState, view};
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -12,6 +15,13 @@ pub struct EffectiveContextSource {
     pub id: String,
     #[serde(flatten)]
     pub metadata: SourceMetadata,
+    /// Whether a file this source was read from has changed size or modification time,
+    /// or disappeared, since it was read. The change takes effect at the next request
+    /// boundary. `null` when the source has no recorded stamps (it is not read from
+    /// files, or was recorded by an older version), when some of its files have no
+    /// stamp, or when the inspection's check budget is spent. Files added since the read
+    /// are not detected.
+    pub changed_on_disk: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -101,6 +111,8 @@ pub struct ContextInspection {
     pub queued_inputs: usize,
     pub held_inputs: usize,
     pub delivered_rule_count: usize,
+    /// Listed sources with `changed_on_disk` true.
+    pub changed_sources: usize,
 }
 
 impl Runtime {
@@ -132,6 +144,7 @@ impl Runtime {
                 .epoch
                 .as_ref()
                 .map_or(0, |epoch| epoch.reminded_rules.len()),
+            changed_sources: 0,
         };
         if let Some(epoch) = &state.epoch {
             let ids: std::collections::BTreeSet<_> =
@@ -155,10 +168,12 @@ impl Runtime {
                                     .map(|text| (text.len() / 4) as u64),
                                 file_paths: Vec::new(),
                                 omitted_file_paths: 0,
+                                file_stamps: Default::default(),
                             });
                     EffectiveContextSource {
                         id: id.clone(),
                         metadata,
+                        changed_on_disk: None,
                     }
                 })
                 .collect();
@@ -169,6 +184,15 @@ impl Runtime {
                     .then(a.id.cmp(&b.id))
             });
             inspection.effective_sources.truncate(256);
+            let mut budget = STAMP_CHECKS;
+            for source in &mut inspection.effective_sources {
+                source.changed_on_disk = changed_on_disk(&source.metadata, &mut budget);
+            }
+            inspection.changed_sources = inspection
+                .effective_sources
+                .iter()
+                .filter(|source| source.changed_on_disk == Some(true))
+                .count();
         }
         let (Some(epoch), Some(model)) = (&state.epoch, model) else {
             return inspection;
@@ -182,6 +206,29 @@ impl Runtime {
             window.map(|window| estimate as f64 / window as f64);
         inspection
     }
+}
+
+/// Compare a source's recorded file stamps with current metadata. Only metadata of
+/// files the source was already read from is consulted; no file is opened.
+fn changed_on_disk(metadata: &SourceMetadata, budget: &mut usize) -> Option<bool> {
+    let in_context = matches!(
+        metadata.status,
+        SourceStatus::Active | SourceStatus::RetainedUnavailable
+    );
+    let stamps = &metadata.file_stamps;
+    if !in_context || stamps.is_empty() || stamps.len() > *budget {
+        return None;
+    }
+    *budget -= stamps.len();
+    let changed = stamps.iter().any(|(path, stamp)| {
+        std::fs::metadata(path).map_or(true, |current| FileStamp::of(&current) != *stamp)
+    });
+    let complete = metadata.omitted_file_paths == 0
+        && metadata
+            .file_paths
+            .iter()
+            .all(|path| stamps.contains_key(path));
+    (changed || complete).then_some(changed)
 }
 
 fn count_inputs(state: &SessionState, status: InputStatus) -> usize {
@@ -239,5 +286,55 @@ fn source(id: &str, origin: &str, estimated_tokens: u64) -> ContextSourceEstimat
         id: id.into(),
         origin: origin.into(),
         estimated_tokens,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metadata(dir: &std::path::Path, files: &[&str], stamped: &[&str]) -> SourceMetadata {
+        let path = |name: &str| dir.join(name).display().to_string();
+        SourceMetadata {
+            origin: "instruction_files".into(),
+            status: SourceStatus::Active,
+            pending_update: false,
+            estimated_tokens: Some(1),
+            file_paths: files.iter().map(|name| path(name)).collect(),
+            omitted_file_paths: 0,
+            file_stamps: stamped
+                .iter()
+                .map(|name| {
+                    let stamp = FileStamp::of(&std::fs::metadata(path(name)).unwrap());
+                    (path(name), stamp)
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn an_unstamped_file_or_spent_budget_leaves_the_answer_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["a.md", "b.md"] {
+            std::fs::write(dir.path().join(name), name).unwrap();
+        }
+        let mut budget = STAMP_CHECKS;
+        let complete = metadata(dir.path(), &["a.md", "b.md"], &["a.md", "b.md"]);
+        assert_eq!(changed_on_disk(&complete, &mut budget), Some(false));
+        assert_eq!(budget, STAMP_CHECKS - 2);
+        // One listed file has no stamp: unchanged stamped files prove nothing about it.
+        let partial = metadata(dir.path(), &["a.md", "b.md"], &["a.md"]);
+        assert_eq!(changed_on_disk(&partial, &mut budget), None);
+        // A detected change is reported even when another file is unstamped.
+        std::fs::write(dir.path().join("a.md"), "edited a.md").unwrap();
+        assert_eq!(changed_on_disk(&partial, &mut budget), Some(true));
+        let mut spent = 1;
+        assert_eq!(changed_on_disk(&complete, &mut spent), None);
+        assert_eq!(spent, 1);
+        let absent = SourceMetadata {
+            status: SourceStatus::Absent,
+            ..complete
+        };
+        assert_eq!(changed_on_disk(&absent, &mut budget), None);
     }
 }

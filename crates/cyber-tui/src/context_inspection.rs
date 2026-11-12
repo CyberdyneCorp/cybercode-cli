@@ -43,6 +43,12 @@ pub(crate) fn format(data: &Value) -> String {
     if inspection["epoch_pending"].as_bool() == Some(true) {
         lines.push("The next turn will rebuild the Context Epoch.".into());
     }
+    let changed = inspection["changed_sources"].as_u64().unwrap_or(0);
+    if changed > 0 {
+        lines.push(format!(
+            "Sources changed on disk: {changed} · the next request reads them again"
+        ));
+    }
     lines.push("Estimate excludes tool schemas and turn-only instructions.".into());
     if let Some(sources) = inspection["sources"].as_array() {
         lines.push(String::new());
@@ -123,6 +129,9 @@ fn effective_sources(inspection: &Value) -> Vec<String> {
         if source["pending_update"].as_bool() == Some(true) {
             lines.push("  Update pending at the next safe boundary".into());
         }
+        if source["changed_on_disk"].as_bool() == Some(true) {
+            lines.push("  Changed on disk since it was read".into());
+        }
         for path in source["file_paths"].as_array().into_iter().flatten() {
             lines.push(format!(
                 "  {}",
@@ -157,9 +166,9 @@ mod tests {
                     "id": "core/instructions", "origin": "instruction_files",
                     "status": "retained_unavailable", "estimated_tokens": 42,
                     "pending_update": true, "file_paths": ["/repo/CYBER\n.md\u{001b}"],
-                    "omitted_file_paths": 2
+                    "omitted_file_paths": 2, "changed_on_disk": true
                 }],
-                "omitted_sources": 1
+                "omitted_sources": 1, "changed_sources": 1
             }
         }));
         assert!(text.contains("Estimated window use: unknown"));
@@ -170,6 +179,8 @@ mod tests {
         assert!(text.contains("tool_schemas · ~280 tokens"));
         assert!(text.contains("retained unavailable · ~42 tokens"));
         assert!(text.contains("Update pending at the next safe boundary"));
+        assert!(text.contains("Sources changed on disk: 1 · the next request reads them again"));
+        assert!(text.contains("  Changed on disk since it was read"));
         assert!(text.contains("/repo/CYBER .md"));
         assert!(text.contains("Additional paths omitted · 2"));
         assert!(text.contains("Additional sources omitted · 1"));
