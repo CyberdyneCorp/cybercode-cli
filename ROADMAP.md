@@ -217,7 +217,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `browser-verification` |  | 2 |  |  |  | 2 |
 | `builtin-tools` | 17 | 5 | 1 |  |  | 23 |
 | `channels` |  |  |  | 16 |  | 16 |
-| `cli-commands` | 18 | 3 | 2 | 3 |  | 26 |
+| `cli-commands` | 18 | 4 | 2 | 3 |  | 27 |
 | `client-sdk` | 14 | 1 | 2 | 1 |  | 18 |
 | `code-intelligence` |  | 34 |  |  | 1 | 35 |
 | `compaction` | 15 | 3 | 1 |  |  | 19 |
@@ -265,7 +265,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `workflows` |  |  | 36 | 2 | 1 | 39 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 12 | 4 |  |  | 16 |
-| **Total** | **346** | **371** | **143** | **180** | **15** | **1055** |
+| **Total** | **346** | **372** | **143** | **180** | **15** | **1056** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.
