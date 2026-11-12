@@ -228,6 +228,8 @@ pub struct Step {
     pub ended_ms: Option<i64>,
     /// The failure kind, such as `interrupted`.
     pub error_kind: Option<String>,
+    /// Why a finished step stopped, such as `length` or `content_filter`.
+    pub finish: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -291,6 +293,7 @@ impl Item {
                     started_ms: v["started_ms"].as_i64(),
                     ended_ms: v["ended_ms"].as_i64(),
                     error_kind: v["error_kind"].as_str().map(str::to_string),
+                    finish: v["finish"].as_str().map(str::to_string),
                 },
             }),
             _ => None,

@@ -10,7 +10,7 @@ pub(crate) mod hex;
 mod language;
 pub mod layout;
 mod login;
-mod messages;
+pub(crate) mod messages;
 mod messaging;
 mod output_styles;
 pub(crate) mod overlays;

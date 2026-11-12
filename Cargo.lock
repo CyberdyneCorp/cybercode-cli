@@ -1107,7 +1107,6 @@ dependencies = [
  "cyber-account",
  "cyber-core",
  "cyber-store",
- "futures",
  "getrandom 0.3.4",
  "hmac",
  "http-body-util",

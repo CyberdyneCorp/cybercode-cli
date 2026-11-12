@@ -8,7 +8,19 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 ## [0.1.0-beta.2] - 2026-11-12
 
-The second pre-release, for macOS and Linux. It exists mainly to test `cyber upgrade` from 0.1.0-beta.1.
+The second pre-release, for macOS and Linux. Besides testing `cyber upgrade` from 0.1.0-beta.1, it adds:
+
+### Added
+
+- `cyber doctor --network` checks whether each usable provider and the update channel can be reached, through the same proxy and client settings as model requests, without sending credentials.
+
+### Changed
+
+- The permission prompt shows an edit's whole diff. When it does not fit, PgDn, PgUp and Home scroll it while the choices stay in view; before, only the first 12 lines were shown.
+
+### Fixed
+
+- OpenAI refusals were dropped, so a refused prompt looked like an empty answer. The refusal text is now shown, the TUI says when the provider's safety filter or the output limit stopped an answer, and `cyber exec` reports `stop_reason` `refusal` or `max_tokens`.
 
 ## [0.1.0-beta.1] - 2026-11-11
 

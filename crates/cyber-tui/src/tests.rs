@@ -696,6 +696,38 @@ fn long_override_details_scroll_while_confirmation_controls_stay_visible() {
     assert_eq!(app.permission_scroll, 0);
 }
 
+/// A large edit's whole diff can be reviewed before approving: line 40 was cut before,
+/// and the choices stay in view while the diff scrolls.
+#[test]
+fn a_long_edit_diff_scrolls_in_the_approval_prompt_with_choices_in_view() {
+    let mut app = App::new(session(false), Vec::new(), "cyber");
+    let mut request = permission();
+    let diff: String = (1..=40).map(|n| format!("+added line {n}\n")).collect();
+    if let Request::Permission { metadata, .. } = &mut request {
+        *metadata = json!({ "diff": format!("--- a/notes.md\n+++ b/notes.md\n{diff}") });
+    }
+    app.requests = vec![request];
+    app.sync_overlay();
+    let first = screen(&app);
+    assert!(first.contains("+added line 1"), "{first}");
+    assert!(!first.contains("+added line 40"), "{first}");
+    assert!(
+        first.contains("Allow once (y)") && first.contains("PgUp/PgDn"),
+        "{first}"
+    );
+    for _ in 0..4 {
+        assert!(app.on_key(key(KeyCode::PageDown)).is_empty());
+    }
+    let scrolled = screen(&app);
+    assert!(scrolled.contains("+added line 40"), "{scrolled}");
+    assert!(scrolled.contains("Allow once (y)"), "{scrolled}");
+    assert!(scrolled.contains("Reject (n)"), "{scrolled}");
+    app.on_key(key(KeyCode::Home));
+    assert_eq!(app.permission_scroll, 0);
+    let actions = app.on_key(key(KeyCode::Char('y')));
+    assert!(matches!(&actions[..], [Action::Reply { body, .. }] if body["reply"] == "once"));
+}
+
 #[test]
 fn routed_child_approval_shows_its_name_and_replies_from_the_parent() {
     let mut app = App::new(session(true), Vec::new(), "cyber");

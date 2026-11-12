@@ -251,7 +251,7 @@ Queued messages SHALL be listed above the composer in FIFO order. Each SHALL be 
 - **THEN** tool output expands exactly as after Ctrl+O
 
 ### Requirement: Permission prompt
-(P0) The system SHALL show a blocking prompt for each pending permission request of the active Session tree. The prompt SHALL show the tool title, the resources, and a diff preview for edits. It SHALL offer:
+(P0) The system SHALL show a blocking prompt for each pending permission request of the active Session tree. The prompt SHALL show the tool title, the resources, and the whole diff for edits. (P1) When the details do not fit, they SHALL scroll with PgDn, PgUp and Home above the choices, which stay in view with a hint naming those keys. It SHALL offer:
 - **Allow once**
 - **Allow always**, followed by a confirmation step listing the exact save patterns and their scope (project or user)
 - **Reject**, with an optional feedback message sent back to the model
@@ -259,6 +259,10 @@ Queued messages SHALL be listed above the composer in FIFO order. Each SHALL be 
 Requests SHALL be shown one at a time in arrival order.
 
 (P1) With the mouse captured, a click on **Allow once**, **Allow always…** or **Reject** SHALL only select it. A second click on the same option, with no key pressed between and while the same request is pending, SHALL act as Enter on it. A single click SHALL never reply to a request, and a press that comes within 500 ms of a press made before the request was shown SHALL be absorbed as the rest of that multi-click: it SHALL neither select nor arm an option. The Allow always confirmation step, the rejection feedback and the blocked-call approval SHALL take no clicks.
+
+#### Scenario: Review a long edit before approving
+- **WHEN** an edit's diff is 40 lines and the prompt shows the first lines
+- **THEN** PgDn scrolls the diff to its last line while `Allow once`, `Allow always…` and `Reject` stay visible
 
 #### Scenario: Allow always confirmation
 - **WHEN** bash requests `npm run test -- --watch=false` and the user picks Allow always
@@ -1447,3 +1451,10 @@ Any key press, a change of the open panel, and a new pending request SHALL disar
 #### Scenario: Two secrets hidden
 - **WHEN** a settled `bash` call has `redactions.count: 2`
 - **THEN** its card shows `⊘ 2 secrets hidden from the model`
+
+### Requirement: Stopped answer notice
+(P1) Under an assistant message without an error whose `finish` is `content_filter`, the transcript SHALL show a warning that the provider's safety filter stopped the answer, that only this request is affected, and that rephrasing or narrowing it may help. For `length` it SHALL show that the answer was cut off at the model's output limit and can be continued. Both texts SHALL be translated.
+
+#### Scenario: Refused answer
+- **WHEN** the model refuses a prompt and the provider ends the answer with `content_filter`
+- **THEN** the transcript shows the refusal text followed by `⚠ Stopped by the provider's safety filter. Only this request is affected: rephrase or narrow it and send again.`

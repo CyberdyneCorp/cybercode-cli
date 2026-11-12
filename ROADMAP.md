@@ -217,7 +217,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `browser-verification` |  | 2 |  |  |  | 2 |
 | `builtin-tools` | 17 | 5 | 1 |  |  | 23 |
 | `channels` |  |  |  | 16 |  | 16 |
-| `cli-commands` | 18 | 3 | 2 | 3 |  | 26 |
+| `cli-commands` | 18 | 4 | 2 | 3 |  | 27 |
 | `client-sdk` | 14 | 1 | 2 | 1 |  | 18 |
 | `code-intelligence` |  | 34 |  |  | 1 | 35 |
 | `compaction` | 15 | 3 | 1 |  |  | 19 |
@@ -227,7 +227,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `cross-session-messaging` |  | 21 | 5 | 2 |  | 28 |
 | `cyber-account` |  |  |  | 18 |  | 18 |
 | `editor-integration` |  |  |  | 14 | 1 | 15 |
-| `exec-mode` | 11 | 7 | 2 | 1 |  | 21 |
+| `exec-mode` | 11 | 8 | 2 | 1 |  | 22 |
 | `goals` |  |  | 22 |  |  | 22 |
 | `harness-evaluation` | 7 |  | 1 |  |  | 8 |
 | `hooks` |  | 20 | 2 |  |  | 22 |
@@ -242,7 +242,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `permissions-modes` | 15 | 12 |  |  |  | 27 |
 | `plugins-marketplace` |  | 14 | 2 |  | 6 | 22 |
 | `project-collaboration` |  |  |  | 16 |  | 16 |
-| `provider-catalog` | 19 | 6 | 2 |  |  | 27 |
+| `provider-catalog` | 19 | 7 | 2 |  |  | 28 |
 | `provider-credentials` | 13 | 7 |  | 2 |  | 22 |
 | `remote-control` |  |  |  | 17 | 1 | 18 |
 | `routines` |  |  |  | 16 |  | 16 |
@@ -256,7 +256,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `storage-events` | 18 | 2 |  | 2 |  | 22 |
 | `system-context` | 14 | 7 | 1 |  |  | 22 |
 | `tool-registry` | 15 | 8 |  |  |  | 23 |
-| `tui` | 21 | 44 | 5 | 1 | 1 | 72 |
+| `tui` | 21 | 45 | 5 | 1 | 1 | 73 |
 | `untrusted-content` |  | 6 |  |  |  | 6 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
 | `verified-integrations` |  |  | 4 |  |  | 4 |
@@ -265,7 +265,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `workflows` |  |  | 36 | 2 | 1 | 39 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 12 | 4 |  |  | 16 |
-| **Total** | **346** | **371** | **143** | **180** | **15** | **1055** |
+| **Total** | **346** | **375** | **143** | **180** | **15** | **1059** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.
