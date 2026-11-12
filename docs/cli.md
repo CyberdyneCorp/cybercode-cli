@@ -2804,6 +2804,10 @@ Check configuration, skills, commands, credentials, catalog, database, sandbox, 
 cyber doctor [OPTIONS]
 ```
 
+**Options:**
+
+- `--network`: Only check network access: proxy settings, each usable provider and the update channel.
+
 ## `cyber stats`
 
 Usage statistics: activity, streaks, tokens, cost and per-model totals

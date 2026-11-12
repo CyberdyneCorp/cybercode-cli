@@ -90,6 +90,11 @@ export type AssistantEntry = {
   error?: string | null;
   /** The `session.step.failed.1` kind, such as `interrupted`. */
   error_kind?: string | null;
+  /**
+   * Why a finished step stopped: `stop`, `tool_calls`, `length` (the output limit) or
+   * `content_filter` (the provider's safety system); null while running or failed.
+   */
+  finish?: FinishReason | null;
   /** The agent pinned by `session.step.started.1`. */
   agent?: string | null;
   /** Time of `session.step.started.1`. */
@@ -1367,6 +1372,10 @@ export type FileListing = {
 
 export type FileSearch = {
   results: FileHit[];
+};
+
+export type FinishReason = "stop" | "tool_calls" | "length" | "content_filter" | {
+  other: string;
 };
 
 export type ForkBody = {

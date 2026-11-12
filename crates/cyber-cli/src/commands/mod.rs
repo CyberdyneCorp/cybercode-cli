@@ -144,7 +144,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Review(args) => review::run(*args, &ctx, &cli.global),
         Command::Git { cmd } => git::run(cmd, &ctx, &cli.global),
         Command::Pr(args) => pr::run(args, &ctx, &cli.global),
-        Command::Doctor => doctor::run(&ctx, &cli.global),
+        Command::Doctor(args) => doctor::run(&args, &ctx, &cli.global),
         Command::Stats(args) => stats::run(args, &ctx, &cli.global),
         Command::Telemetry { cmd } => telemetry::run(cmd, &ctx, &cli.global),
         Command::Eval { cmd } => eval::run(cmd, &ctx),
