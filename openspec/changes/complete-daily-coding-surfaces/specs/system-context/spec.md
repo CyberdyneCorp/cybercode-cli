@@ -18,6 +18,13 @@
 - **AND** a source without recorded stamps for all of its listed files, or beyond the inspection's bounded check budget, reports the answer as unknown rather than unchanged
 - **AND** after the next request boundary reads the file again, the source is no longer marked changed
 
+#### Scenario: Next-request estimate states its assumptions
+- **GIVEN** a Session with a prepared request
+- **WHEN** an owner inspects context
+- **THEN** inspection estimates the next request as the stored projection plus the last prepared request's tool schemas
+- **AND** it lists each assumption that can make the estimate differ: tool schemas taken from the last request, a changed model, a pending Epoch rebuild, sources changed on disk, and excluded turn-only instructions
+- **AND** before any request is prepared the next-request estimate is absent rather than omitting tool schemas silently
+
 ## MODIFIED Requirements
 
 ### Requirement: Path-scoped rules and overrides

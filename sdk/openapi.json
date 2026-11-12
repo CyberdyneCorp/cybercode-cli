@@ -10156,6 +10156,17 @@
             "format": "uint",
             "minimum": 0,
             "description": "Listed sources with `changed_on_disk` true."
+          },
+          "next_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextRequestEstimate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Expected input of the next ordinary request. Absent until a request has been\nprepared in this Session, because tool schemas are otherwise unknown."
           }
         },
         "required": [
@@ -10342,6 +10353,64 @@
           "bytes"
         ],
         "description": "Size and modification time of a file when it was read. Inspection compares them with\nthe file's current metadata to report an edit without reading the file again."
+      },
+      "NextRequestEstimate": {
+        "type": "object",
+        "properties": {
+          "estimated_input_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "estimated_input_utilization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EstimateAssumption"
+            }
+          }
+        },
+        "required": [
+          "estimated_input_tokens",
+          "assumptions"
+        ],
+        "description": "The stored projection plus the tool schemas of the last prepared request: what the\nnext ordinary request is expected to send, with every assumption listed."
+      },
+      "EstimateAssumption": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "tool_schemas_from_last_request",
+            "description": "Tool schemas are sized as in the last prepared request; tool visibility or\nconfiguration may have changed since."
+          },
+          {
+            "type": "string",
+            "const": "model_changed",
+            "description": "The last prepared request used another provider or model."
+          },
+          {
+            "type": "string",
+            "const": "epoch_rebuild_pending",
+            "description": "The next turn rebuilds the Context Epoch from fresh observations."
+          },
+          {
+            "type": "string",
+            "const": "sources_changed_on_disk",
+            "description": "Files behind a source changed on disk and are read again at the next request."
+          },
+          {
+            "type": "string",
+            "const": "excludes_turn_instructions",
+            "description": "Instructions added only while a turn is assembled (attachments, structured\noutput) are not included."
+          }
+        ],
+        "description": "Why a next-request estimate can differ from the request actually sent."
       },
       "Data_Array_of_FileDiff": {
         "type": "object",

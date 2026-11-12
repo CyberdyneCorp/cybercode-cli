@@ -107,6 +107,12 @@ async fn inspection_reports_instruction_files_changed_since_they_were_read() {
     let file = h.repo.join("CYBER.md");
     std::fs::write(&file, "Original instruction.").unwrap();
     let id = h.session().await;
+    let fresh = serde_json::to_value(
+        h.runtime
+            .inspect_context(&h.runtime.state(&id).await.unwrap()),
+    )
+    .unwrap();
+    assert!(fresh["next_request"].is_null(), "tool schemas are unknown");
     h.runtime.admit(&id, admit("begin")).await.unwrap();
     h.settle(&id).await;
     let inspect = |runtime: &cyber_server::runtime::Runtime,
@@ -124,6 +130,28 @@ async fn inspection_reports_instruction_files_changed_since_they_were_read() {
     let (inspection, source) = inspect(&h.runtime, &h.runtime.state(&id).await.unwrap());
     assert_eq!(source["changed_on_disk"], false, "{inspection:#}");
     assert_eq!(inspection["changed_sources"], 0);
+    // The next request adds the last request's tool schemas to the stored projection.
+    let tools = inspection["last_prepared_request"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["id"] == "tool_schemas")
+        .unwrap()["estimated_tokens"]
+        .as_u64()
+        .unwrap();
+    let next = &inspection["next_request"];
+    assert_eq!(
+        next["estimated_input_tokens"].as_u64().unwrap(),
+        inspection["estimated_input_tokens"].as_u64().unwrap() + tools,
+        "{inspection:#}"
+    );
+    assert_eq!(
+        next["assumptions"],
+        serde_json::json!([
+            "tool_schemas_from_last_request",
+            "excludes_turn_instructions"
+        ])
+    );
     let path = file.to_str().unwrap();
     assert!(source["file_stamps"][path]["bytes"].as_u64().unwrap() > 0);
 
@@ -133,6 +161,12 @@ async fn inspection_reports_instruction_files_changed_since_they_were_read() {
     let (inspection, source) = inspect(&h.runtime, &state);
     assert_eq!(source["changed_on_disk"], true, "{inspection:#}");
     assert_eq!(inspection["changed_sources"], 1);
+    assert!(
+        inspection["next_request"]["assumptions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("sources_changed_on_disk"))
+    );
     assert!(!inspection.to_string().contains("Edited instruction"));
     assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq);
     assert_eq!(h.models.requests("test/main").len(), 1);

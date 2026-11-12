@@ -89,6 +89,33 @@ impl PreparedContextEstimate {
     }
 }
 
+/// Why a next-request estimate can differ from the request actually sent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EstimateAssumption {
+    /// Tool schemas are sized as in the last prepared request; tool visibility or
+    /// configuration may have changed since.
+    ToolSchemasFromLastRequest,
+    /// The last prepared request used another provider or model.
+    ModelChanged,
+    /// The next turn rebuilds the Context Epoch from fresh observations.
+    EpochRebuildPending,
+    /// Files behind a source changed on disk and are read again at the next request.
+    SourcesChangedOnDisk,
+    /// Instructions added only while a turn is assembled (attachments, structured
+    /// output) are not included.
+    ExcludesTurnInstructions,
+}
+
+/// The stored projection plus the tool schemas of the last prepared request: what the
+/// next ordinary request is expected to send, with every assumption listed.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct NextRequestEstimate {
+    pub estimated_input_tokens: u64,
+    pub estimated_input_utilization: Option<f64>,
+    pub assumptions: Vec<EstimateAssumption>,
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ContextInspection {
     /// Final assembly of the most recently prepared request, including schemas
@@ -113,6 +140,9 @@ pub struct ContextInspection {
     pub delivered_rule_count: usize,
     /// Listed sources with `changed_on_disk` true.
     pub changed_sources: usize,
+    /// Expected input of the next ordinary request. Absent until a request has been
+    /// prepared in this Session, because tool schemas are otherwise unknown.
+    pub next_request: Option<NextRequestEstimate>,
 }
 
 impl Runtime {
@@ -145,6 +175,7 @@ impl Runtime {
                 .as_ref()
                 .map_or(0, |epoch| epoch.reminded_rules.len()),
             changed_sources: 0,
+            next_request: None,
         };
         if let Some(epoch) = &state.epoch {
             let ids: std::collections::BTreeSet<_> =
@@ -204,8 +235,41 @@ impl Runtime {
         inspection.estimated_input_tokens = Some(estimate);
         inspection.estimated_input_utilization =
             window.map(|window| estimate as f64 / window as f64);
+        inspection.next_request = next_request(&inspection, estimate, &model);
         inspection
     }
+}
+
+fn next_request(
+    inspection: &ContextInspection,
+    stored: u64,
+    model: &super::ResolvedModel,
+) -> Option<NextRequestEstimate> {
+    let prepared = inspection.last_prepared_request.as_ref()?;
+    let tools = prepared
+        .sources
+        .iter()
+        .find(|source| source.id == "tool_schemas")?
+        .estimated_tokens;
+    let mut assumptions = vec![EstimateAssumption::ToolSchemasFromLastRequest];
+    if prepared.provider != model.provider || prepared.model != model.model {
+        assumptions.push(EstimateAssumption::ModelChanged);
+    }
+    if inspection.epoch_pending {
+        assumptions.push(EstimateAssumption::EpochRebuildPending);
+    }
+    if inspection.changed_sources > 0 {
+        assumptions.push(EstimateAssumption::SourcesChangedOnDisk);
+    }
+    assumptions.push(EstimateAssumption::ExcludesTurnInstructions);
+    let estimated_input_tokens = stored.saturating_add(tools);
+    Some(NextRequestEstimate {
+        estimated_input_tokens,
+        estimated_input_utilization: inspection
+            .window
+            .map(|window| estimated_input_tokens as f64 / window as f64),
+        assumptions,
+    })
 }
 
 /// Compare a source's recorded file stamps with current metadata. Only metadata of

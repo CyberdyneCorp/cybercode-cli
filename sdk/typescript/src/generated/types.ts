@@ -768,6 +768,11 @@ export type ContextInspection = {
   delivered_rule_count: number;
   /** Listed sources with `changed_on_disk` true. */
   changed_sources: number;
+  /**
+   * Expected input of the next ordinary request. Absent until a request has been
+   * prepared in this Session, because tool schemas are otherwise unknown.
+   */
+  next_request?: NextRequestEstimate | null;
 };
 
 export type ContextMeter = {
@@ -1341,6 +1346,9 @@ export type ErrorBody = {
   service?: string | null;
   [key: string]: unknown;
 };
+
+/** Why a next-request estimate can differ from the request actually sent. */
+export type EstimateAssumption = "tool_schemas_from_last_request" | "model_changed" | "epoch_rebuild_pending" | "sources_changed_on_disk" | "excludes_turn_instructions";
 
 /** `session.goal.evaluated.1`. */
 export type Evaluated = {
@@ -3553,6 +3561,16 @@ export type NetworkCapability = {
 } | {
   kind: "hosts";
   hosts: string[];
+};
+
+/**
+ * The stored projection plus the tool schemas of the last prepared request: what the
+ * next ordinary request is expected to send, with every assumption listed.
+ */
+export type NextRequestEstimate = {
+  estimated_input_tokens: number;
+  estimated_input_utilization?: number | null;
+  assumptions: EstimateAssumption[];
 };
 
 /**

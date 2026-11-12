@@ -50,6 +50,7 @@ pub(crate) fn format(data: &Value) -> String {
         ));
     }
     lines.push("Estimate excludes tool schemas and turn-only instructions.".into());
+    lines.extend(next_request(&inspection["next_request"]));
     if let Some(sources) = inspection["sources"].as_array() {
         lines.push(String::new());
         for source in sources {
@@ -65,6 +66,31 @@ pub(crate) fn format(data: &Value) -> String {
     lines.extend(prepared_request(&inspection["last_prepared_request"]));
     lines.extend(effective_sources(inspection));
     lines.join("\n")
+}
+
+fn next_request(next: &Value) -> Vec<String> {
+    let Some(tokens) = next["estimated_input_tokens"].as_u64() else {
+        return Vec::new();
+    };
+    let share = next["estimated_input_utilization"].as_f64().map_or_else(
+        || "unknown".into(),
+        |fraction| format!("{:.1}%", fraction * 100.0),
+    );
+    let mut lines = vec![format!(
+        "Estimated next request: {tokens} tokens · window use {share}"
+    )];
+    for assumption in next["assumptions"].as_array().into_iter().flatten() {
+        let text = match assumption.as_str() {
+            Some("tool_schemas_from_last_request") => "tool schemas sized as in the last request",
+            Some("model_changed") => "the last request used another model",
+            Some("epoch_rebuild_pending") => "the Context Epoch will be rebuilt",
+            Some("sources_changed_on_disk") => "changed sources will be read again",
+            Some("excludes_turn_instructions") => "turn-only instructions not included",
+            _ => continue,
+        };
+        lines.push(format!("  Assumes {text}"));
+    }
+    lines
 }
 
 fn prepared_request(prepared: &Value) -> Vec<String> {
@@ -185,5 +211,22 @@ mod tests {
         assert!(text.contains("Additional paths omitted · 2"));
         assert!(text.contains("Additional sources omitted · 1"));
         assert!(!text.contains('\u{001b}'));
+    }
+
+    #[test]
+    fn next_request_estimate_lists_its_known_assumptions() {
+        let text = super::format(&serde_json::json!({
+            "epoch": 3,
+            "inspection": {
+                "next_request": {
+                    "estimated_input_tokens": 1500, "estimated_input_utilization": null,
+                    "assumptions": ["tool_schemas_from_last_request", "model_changed", "future"]
+                }
+            }
+        }));
+        assert!(text.contains("Estimated next request: 1500 tokens · window use unknown"));
+        assert!(text.contains("  Assumes tool schemas sized as in the last request"));
+        assert!(text.contains("  Assumes the last request used another model"));
+        assert!(!text.contains("future"));
     }
 }
