@@ -28,6 +28,8 @@ pub struct Run {
     pub denials: Vec<Value>,
     pub error: Option<String>,
     pub stop_reason: Option<String>,
+    /// Why the last finished step stopped (`session.step.ended.1` `finish`).
+    pub last_finish: Option<String>,
     pub stop_requested: Option<Instant>,
     pub usage: Option<Value>,
     pub unpriced: bool,
@@ -68,6 +70,7 @@ impl Run {
             denials: Vec::new(),
             error: None,
             stop_reason: None,
+            last_finish: None,
             stop_requested: None,
             usage: None,
             unpriced: false,
@@ -626,6 +629,13 @@ impl Out {
             "session.tool.called" => self.tool_use(run, data),
             "session.tool.settled" => self.tool_result(run, data),
             "session.step.ended" => {
+                run.last_finish = data["finish"].as_str().map(str::to_owned);
+                if let Some(notice) = stop_notice(run.last_finish.as_deref())
+                    && self.format == Format::Text
+                    && !self.quiet
+                {
+                    eprintln!("warning: {notice}");
+                }
                 if run.session_baseline.is_none() {
                     run.turns += 1;
                     run.input_tokens += data["usage"]["input"].as_u64().unwrap_or(0);
@@ -765,7 +775,7 @@ impl Out {
             "duration_ms": run.started.elapsed().as_millis() as u64,
             "num_turns": run.turns,
             "denials": run.denials,
-            "stop_reason": run.stop_reason.clone().unwrap_or_else(|| if run.error.is_some() { "error".into() } else { "end_turn".into() }),
+            "stop_reason": run.stop_reason.clone().unwrap_or_else(|| ended_reason(run)),
             "error": run.error,
             "exit_code": code,
         });
@@ -1054,6 +1064,32 @@ fn target_error(error: &ClientError) -> Option<TargetError> {
 }
 
 /// `cyber review` with a target rejected before any server contact; returns the exit code.
+/// The `stop_reason` of a run that ended on its own: `error`, `refusal` when the
+/// provider's safety system stopped the last answer, `max_tokens` when it reached the
+/// output limit, else `end_turn`.
+fn ended_reason(run: &Run) -> String {
+    if run.error.is_some() {
+        return "error".into();
+    }
+    match run.last_finish.as_deref() {
+        Some("content_filter") => "refusal",
+        Some("length") => "max_tokens",
+        _ => "end_turn",
+    }
+    .into()
+}
+
+/// Why a step stopped early, when the user should know.
+fn stop_notice(finish: Option<&str>) -> Option<&'static str> {
+    match finish? {
+        "content_filter" => Some(
+            "the provider's safety filter stopped this answer; only this request is affected, so rephrase or narrow it",
+        ),
+        "length" => Some("the answer was cut off at the model's output limit"),
+        _ => None,
+    }
+}
+
 pub fn target_rejected(format: Format, target: &str, error: &TargetError) -> u8 {
     let mut result = json!({ "result": "", "session_id": null, "error": null });
     let (code, _) = rejection(&mut result, target, None, error);

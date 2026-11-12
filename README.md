@@ -32,7 +32,7 @@ Examples below use the built binary. If you installed it on your PATH, use `cybe
 
 ## Install a release
 
-**No release has been published yet**, so the install script below does not work until the first one; build from source as in the [Quickstart](#quickstart) meanwhile. Tagged releases publish signed archives for macOS, Linux (glibc and musl) and Windows (preview) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary.
+**No release has been published yet**, so the install script below does not work until the first one; build from source as in the [Quickstart](#quickstart) meanwhile. Tagged releases publish signed archives for macOS and Linux (glibc and musl) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary. Windows builds are not released yet (the Windows sandbox is still partial); build from source on Windows.
 
 ```bash
 curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh | sh

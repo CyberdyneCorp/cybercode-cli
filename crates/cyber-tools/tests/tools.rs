@@ -1193,3 +1193,64 @@ async fn binary_model_reads_inspects_and_searches_exact_bytes_in_plan_without_te
     ));
     assert_eq!(std::fs::read(f.repo.join("bytes.bin")).unwrap(), bytes);
 }
+
+/// Regression: file tools checked the path as typed and then followed a symbolic link,
+/// so a committed `notes.md -> .git/config` was edited under accept-edits without the
+/// protected-path ask, a dangling link reached files outside the Location, and `read`
+/// went through a link to a secret. Each check now sees the link's target.
+#[cfg(unix)]
+#[tokio::test]
+async fn file_tools_check_the_target_of_a_symbolic_link() {
+    let f = Fixture::new();
+    f.write(".git/config", "[core]\n");
+    std::os::unix::fs::symlink(".git/config", f.repo.join("notes.md")).unwrap();
+    // As a model would: read the file, then edit it.
+    ok(f.call("accept-edits", "read", json!({"path": "notes.md"}))
+        .await);
+    let out = failed(
+        f.call(
+            "accept-edits",
+            "write",
+            json!({"path": "notes.md", "content": "[core]\n\tfsmonitor = evil\n"}),
+        )
+        .await,
+    );
+    assert!(out.contains("no interactive approver"), "{out}");
+    assert_eq!(f.read(".git/config"), "[core]\n");
+
+    // A dangling link to a file outside the Location needs external approval.
+    let outside = f.dir.path().join("home-zshenv");
+    std::os::unix::fs::symlink(&outside, f.repo.join("settings.txt")).unwrap();
+    let out = failed(
+        f.call(
+            "accept-edits",
+            "write",
+            json!({"path": "settings.txt", "content": "export EVIL=1\n"}),
+        )
+        .await,
+    );
+    assert!(out.contains("no interactive approver"), "{out}");
+    assert!(!outside.exists());
+
+    // `read` follows the same rules: a link to `.env` is read as `.env`.
+    f.write(".env", "TOKEN=secret\n");
+    std::os::unix::fs::symlink(".env", f.repo.join("readme.txt")).unwrap();
+    let out = failed(
+        f.call("default", "read", json!({"path": "readme.txt"}))
+            .await,
+    );
+    assert!(!out.contains("TOKEN=secret"), "{out}");
+
+    // An ordinary file and a link that stays inside the Location still work.
+    f.write("real.txt", "a\n");
+    std::os::unix::fs::symlink("real.txt", f.repo.join("alias.txt")).unwrap();
+    ok(f.call("accept-edits", "read", json!({"path": "alias.txt"}))
+        .await);
+    ok(f.call(
+        "accept-edits",
+        "write",
+        json!({"path": "alias.txt", "content": "b\n"}),
+    )
+    .await);
+    assert_eq!(f.read("real.txt"), "b\n");
+}

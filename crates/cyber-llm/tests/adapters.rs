@@ -1642,3 +1642,35 @@ async fn golden_anthropic_thinking_blocks() {
         })
     );
 }
+
+/// Regression: provider clients followed redirects, and reqwest keeps headers such as
+/// `x-api-key` on a cross-host redirect, so a redirecting endpoint could hand the key and
+/// the prompt to another host. A redirect is now an error and nothing is sent onward.
+#[tokio::test]
+async fn a_redirect_never_carries_the_key_to_another_host() {
+    let other = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&other)
+        .await;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(307)
+                .insert_header("location", format!("{}/v1/messages", other.uri())),
+        )
+        .mount(&server)
+        .await;
+    let a = adapter(
+        ApiKind::Anthropic,
+        Endpoint::new(format!("{}/v1", server.uri()), Some("sk-secret-key".into())),
+    );
+    let req = LlmRequest {
+        model: "claude".into(),
+        messages: vec![Message::user_text("hi")],
+        ..LlmRequest::default()
+    };
+    assert!(a.stream(req).await.is_err(), "a redirect is not followed");
+    assert!(other.received_requests().await.unwrap().is_empty());
+}

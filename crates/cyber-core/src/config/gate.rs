@@ -98,6 +98,14 @@ fn classify(path: &[String], value: &Value) -> Class {
         ["permissions"] | ["agents", _, "permissions"] => {
             sensitive_if(grants_permission(value) || value.get("auto_mode").is_some())
         }
+        // Skill folders named by a project can grant tools (`allowed-tools`). Remote
+        // `https://` sources have their own approval (`cyber skills trust`).
+        ["skills", "paths"] => Class::Sensitive,
+        ["skills"] if value.is_array() => sensitive_if(value.as_array().is_some_and(|sources| {
+            sources
+                .iter()
+                .any(|s| !s.as_str().is_some_and(|s| s.starts_with("https://")))
+        })),
         // An agent's sandbox profile is a boundary, as `sandbox` is.
         ["worktrees", "setup"] | ["agents", _, "request" | "sandbox"] => Class::Sensitive,
         ["messaging", rest @ ..] => messaging_class(rest, value),
@@ -284,6 +292,22 @@ mod tests {
             ]
         );
         assert_eq!(split.safe["messaging"]["inbound"], json!({}));
+    }
+
+    /// Regression: a project could point skill discovery at any folder through
+    /// `skills.paths` (or the array form of `skills`) without approval.
+    #[test]
+    fn project_skill_paths_need_approval() {
+        let split = split_sensitive(&json!({
+            "skills": { "paths": ["../elsewhere"], "listing_budget_tokens": 500 }
+        }));
+        assert_eq!(split.pointers, ["/skills/paths"]);
+        assert_eq!(split.safe["skills"]["listing_budget_tokens"], 500);
+        let array = split_sensitive(&json!({ "skills": ["https://a.test/s", "~/x"] }));
+        assert_eq!(array.pointers, ["/skills"]);
+        // Remote sources keep their own approval and stay visible as untrusted.
+        let remote = split_sensitive(&json!({ "skills": ["https://a.test/s"] }));
+        assert!(remote.pointers.is_empty());
     }
 
     #[test]

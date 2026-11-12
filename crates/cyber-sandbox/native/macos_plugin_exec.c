@@ -34,9 +34,14 @@ int cyber_plugin_exec(int argc, const char *const argv[]) {
         close(fd);
         if (strlen(profile) != size) { free(profile); return 2; }
         char *error = NULL;
+        /* Seatbelt's only C entry point is marked deprecated (macOS 10.8) but still
+         * ships and is what sandbox-exec uses; silence that one warning here only. */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         int result = sandbox_init(profile, 0, &error);
         free(profile);
         sandbox_free_error(error);
+#pragma clang diagnostic pop
         if (result != 0) return 2;
     }
     /* Kernel exec-time closure covers descriptors above a lowered soft limit.

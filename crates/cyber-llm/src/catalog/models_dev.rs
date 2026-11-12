@@ -9,6 +9,24 @@ use crate::adapters::ApiKind;
 use crate::json::str_at;
 use crate::types::Reasoning;
 
+/// First-party providers whose endpoint and key variable the downloaded catalog cannot
+/// change (`provider-catalog` → Catalog source integrity): a tampered catalog must not
+/// send their keys elsewhere. A user's own `providers` configuration still can.
+const PINNED: &[(&str, &str, &str)] = &[
+    ("openai", "https://api.openai.com/v1", "OPENAI_API_KEY"),
+    (
+        "anthropic",
+        "https://api.anthropic.com/v1",
+        "ANTHROPIC_API_KEY",
+    ),
+];
+
+/// A catalog endpoint is used only over HTTPS, or plain HTTP to a loopback server.
+fn safe_url(url: &str) -> bool {
+    url.starts_with("https://")
+        || (url.starts_with("http://") && super::credentials::is_loopback(url))
+}
+
 pub fn parse(data: &Value) -> BTreeMap<String, Provider> {
     data.as_object()
         .into_iter()
@@ -22,30 +40,47 @@ fn provider(id: &str, v: &Value) -> Provider {
         .get("npm")
         .and_then(Value::as_str)
         .and_then(ApiKind::from_npm);
-    let url = v
-        .get("api")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| kind.and_then(ApiKind::default_url).map(str::to_string));
+    let pinned = PINNED.iter().find(|(pinned, _, _)| *pinned == id);
+    let url = match pinned {
+        Some((_, url, _)) => Some((*url).to_string()),
+        None => v
+            .get("api")
+            .and_then(Value::as_str)
+            .filter(|url| safe_url(url))
+            .map(str::to_string)
+            .or_else(|| kind.and_then(ApiKind::default_url).map(str::to_string)),
+    };
+    // Another provider may not read a first-party provider's key variable.
+    let env = match pinned {
+        Some((_, _, variable)) => vec![(*variable).to_string()],
+        None => v
+            .get("env")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.as_str().map(str::to_string))
+            .filter(|e| !PINNED.iter().any(|(_, _, reserved)| reserved == e))
+            .collect(),
+    };
     let models = v
         .get("models")
         .and_then(Value::as_object)
         .into_iter()
         .flatten()
-        .map(|(mid, m)| (mid.clone(), model(id, mid, m, kind)))
+        .map(|(mid, m)| {
+            let mut model = model(id, mid, m, kind);
+            if pinned.is_some() || !model.api_url.as_deref().is_none_or(safe_url) {
+                model.api_url = None;
+            }
+            (mid.clone(), model)
+        })
         .collect();
     Provider {
         id: id.into(),
         name: v.get("name").and_then(Value::as_str).unwrap_or(id).into(),
         kind,
         url,
-        env: v
-            .get("env")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|e| e.as_str().map(str::to_string))
-            .collect(),
+        env,
         api_key: None,
         auth_none: false,
         request: RequestOverlay::default(),

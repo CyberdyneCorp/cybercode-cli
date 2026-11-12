@@ -278,9 +278,17 @@ fn body_lines(app: &App, item: &Item, out: &mut Out) {
             reasoning,
             tools,
             error,
-            ..
+            step,
         } => {
             assistant(app, id, text, reasoning, tools, error.as_deref(), out);
+            if error.is_none()
+                && let Some(notice) = stop_notice(step.finish.as_deref())
+            {
+                out.push(Line::from(Span::styled(
+                    format!("  ⚠ {}", app.tr(notice)),
+                    Style::default().fg(app.theme.warning),
+                )));
+            }
         }
     }
 }
@@ -387,6 +395,20 @@ fn assistant(
         )));
     }
 }
+
+/// Why a step stopped early, when the user should know: the provider's safety system
+/// ended it, or it reached the output limit.
+fn stop_notice(finish: Option<&str>) -> Option<&'static str> {
+    match finish? {
+        "content_filter" => Some(STOPPED_BY_FILTER),
+        "length" => Some(STOPPED_AT_LIMIT),
+        _ => None,
+    }
+}
+
+pub(crate) const STOPPED_BY_FILTER: &str = "Stopped by the provider's safety filter. Only this request is affected: rephrase or narrow it and send again.";
+pub(crate) const STOPPED_AT_LIMIT: &str =
+    "Cut off at the model's output limit. Ask it to continue.";
 
 fn status_style(t: &Tokens, status: &str) -> Style {
     let color = match status {

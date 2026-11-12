@@ -800,8 +800,48 @@ const CYBER_CONFIG_FILES: &[&str] = &[
     "plugins.lock",
 ];
 
-/// `permissions-modes` → Protected paths.
+/// Home files a write can turn into code execution or credential theft.
+const HOME_FILES: &[&str] = &[
+    ".bashrc",
+    ".bash_profile",
+    ".bash_login",
+    ".zshrc",
+    ".zshenv",
+    ".zprofile",
+    ".zlogin",
+    ".profile",
+    ".config/fish/config.fish",
+    ".gitconfig",
+    ".config/git/config",
+    ".netrc",
+    ".npmrc",
+    ".aws/credentials",
+];
+
+/// Home directories with keys, the install directory and Cyber Code's default
+/// configuration, state and data (trust approvals, the server password, saved approvals).
+const HOME_DIRS: &[&str] = &[
+    ".ssh",
+    ".gnupg",
+    ".cyber",
+    ".config/cyber",
+    ".local/state/cyber",
+    ".local/share/cyber",
+];
+
+/// `permissions-modes` → Protected paths. On macOS and Windows, whose filesystems ignore
+/// case, `.cyber/CYBER.jsonc` is `.cyber/cyber.jsonc`.
 pub fn is_protected(path: &Path, location: &Path, home: &Path) -> bool {
+    let fold = |p: &Path| -> PathBuf {
+        if cfg!(any(target_os = "macos", windows)) {
+            PathBuf::from(p.to_string_lossy().to_lowercase())
+        } else {
+            p.to_path_buf()
+        }
+    };
+    let original_home = home.to_path_buf();
+    let (path, location, home) = (fold(path), fold(location), fold(home));
+    let path = path.as_path();
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -818,20 +858,33 @@ pub fn is_protected(path: &Path, location: &Path, home: &Path) -> bool {
         .windows(2)
         .any(|w| w[0].as_os_str() == ".cyber" && w[1].as_os_str() == "plugins");
     let root_config = (name == "cyber.json" || name == "cyber.jsonc")
-        && path.starts_with(location.ancestors().last().unwrap_or(location));
-    let home_files = [
-        ".bashrc",
-        ".zshrc",
-        ".profile",
-        ".config/fish/config.fish",
-        ".aws/credentials",
-    ]
-    .iter()
-    .any(|f| path == home.join(f));
-    let home_dirs = [".ssh", ".gnupg", ".config/cyber"]
-        .iter()
-        .any(|d| path.starts_with(home.join(d)));
-    in_git_dir || cyber_doc || cyber_plugins || root_config || home_files || home_dirs
+        && path.starts_with(location.ancestors().last().unwrap_or(&location));
+    let home_files = HOME_FILES.iter().any(|f| path == home.join(f));
+    let mut own = cyber_dirs(&original_home);
+    own.extend(HOME_DIRS.iter().map(|d| original_home.join(d)));
+    let own_dirs = own.iter().any(|d| path.starts_with(fold(d)));
+    // Managed worktrees live under the data directory but are the user's code.
+    let worktree = path.starts_with(fold(&worktrees_dir(&original_home)));
+    in_git_dir || cyber_doc || cyber_plugins || root_config || home_files || (own_dirs && !worktree)
+}
+
+fn cyber_paths(home: &Path) -> cyber_core::paths::Paths {
+    cyber_core::paths::Paths::resolve(&cyber_core::env::ProcessEnv, home)
+}
+
+/// Cyber Code's configuration, state and data wherever `CYBER_HOME`, `CYBER_CONFIG_DIR`
+/// or the XDG variables put them, and `CYBER_HOME` itself.
+fn cyber_dirs(home: &Path) -> Vec<PathBuf> {
+    let paths = cyber_paths(home);
+    let root = std::env::var_os("CYBER_HOME").filter(|v| !v.is_empty());
+    [paths.config, paths.state, paths.data]
+        .into_iter()
+        .chain(root.map(PathBuf::from))
+        .collect()
+}
+
+fn worktrees_dir(home: &Path) -> PathBuf {
+    cyber_paths(home).data.join("worktrees")
 }
 
 pub fn slash(path: &Path) -> String {
@@ -842,6 +895,43 @@ pub fn slash(path: &Path) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Regression: shell startup files beyond `.bashrc`/`.zshrc`, Git's config, and Cyber
+    /// Code's own state (trust approvals, the server password) were not protected, and on
+    /// macOS `.cyber/CYBER.jsonc` passed the check while still loading as config.
+    #[test]
+    fn protected_paths_cover_startup_files_state_and_case() {
+        let (location, home) = (Path::new("/home/u/repo"), Path::new("/home/u"));
+        let protected = |p: &str| is_protected(Path::new(p), location, home);
+        for path in [
+            "/home/u/.zshenv",
+            "/home/u/.bash_profile",
+            "/home/u/.gitconfig",
+            "/home/u/.netrc",
+            "/home/u/.local/state/cyber/trust.json",
+            "/home/u/.local/share/cyber/cyber.db",
+            "/home/u/.cyber/config/cyber.jsonc",
+            "/home/u/repo/.cyber/cyber.jsonc",
+        ] {
+            assert!(protected(path), "{path}");
+        }
+        assert!(!protected("/home/u/repo/src/main.rs"));
+        assert!(!protected("/home/u/notes.txt"));
+        if cfg!(any(target_os = "macos", windows)) {
+            assert!(protected("/home/u/repo/.cyber/CYBER.jsonc"));
+            assert!(protected("/home/u/.ZSHENV"));
+        }
+        // Regression: managed worktrees live under the data directory, and every write
+        // in one was refused.
+        let data = cyber_paths(home).data;
+        let worktree = worktrees_dir(home).join("prj_1/run-1/src/main.rs");
+        assert!(!is_protected(
+            &worktree,
+            &worktrees_dir(home).join("prj_1/run-1"),
+            home
+        ));
+        assert!(protected(&data.join("cyber.db").to_string_lossy()));
+    }
 
     fn policy(rules: Vec<Rule>, mode: Mode) -> Policy {
         Policy {

@@ -168,6 +168,10 @@ pub struct AssistantEntry {
     /// The `session.step.failed.1` kind, such as `interrupted`.
     #[serde(default)]
     pub error_kind: Option<String>,
+    /// Why a finished step stopped: `stop`, `tool_calls`, `length` (the output limit) or
+    /// `content_filter` (the provider's safety system); null while running or failed.
+    #[serde(default)]
+    pub finish: Option<cyber_llm::FinishReason>,
     /// The agent pinned by `session.step.started.1`.
     #[serde(default)]
     pub agent: Option<String>,
@@ -1605,6 +1609,7 @@ impl SessionState {
         if let Some(a) = self.assistant(&s.message_id) {
             a.finished = true;
             a.ended_ms = Some(time_ms);
+            a.finish = Some(s.finish.clone());
             let (provider, model) = (a.provider.clone(), a.model.clone());
             self.last_step = Some(Box::new(LastStep {
                 provider,

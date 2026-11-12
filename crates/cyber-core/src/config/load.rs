@@ -671,6 +671,7 @@ fn assess_trust(req: &LoadRequest<'_>, project: &[Layer]) -> Result<TrustReport,
         let files = crate::teams::trust_subset(req.location)
             .into_iter()
             .chain(crate::output_styles::trust_subset(req.location))
+            .chain(crate::skills::trust_subset(req.location, req.home))
             .chain(rules.definitions);
         for (relative, path, text) in files {
             definitions.push(path.display().to_string());

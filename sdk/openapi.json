@@ -9343,6 +9343,31 @@
         ],
         "description": "One reasoning item of an answer: its text, the provider state to replay with it, and\nhow many of the answer's tool calls the provider produced before it."
       },
+      "FinishReason": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "stop",
+              "tool_calls",
+              "length",
+              "content_filter"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "other": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "other"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
       "AssistantEntry": {
         "type": "object",
         "properties": {
@@ -9390,6 +9415,18 @@
               "null"
             ],
             "description": "The `session.step.failed.1` kind, such as `interrupted`.",
+            "default": null
+          },
+          "finish": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinishReason"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why a finished step stopped: `stop`, `tool_calls`, `length` (the output limit) or\n`content_filter` (the provider's safety system); null while running or failed.",
             "default": null
           },
           "agent": {

@@ -85,6 +85,8 @@ Known error codes from HTTP bodies and in-stream errors map onto the usual reaso
 
 A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s", capped at 60 seconds, in place of the usual backoff. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
 
+A refusal is the model's answer: refusal text (Responses `response.refusal.delta`, Chat Completions `delta.refusal`) is shown as the answer's text. Each finished assistant message carries its `finish` reason in the messages API. When it is `content_filter`, the TUI shows `⚠ Stopped by the provider's safety filter…` under the answer, and `cyber exec` ends with `stop_reason: "refusal"` and prints a `warning:` line on stderr in text mode. When it is `length`, the TUI says the answer was cut off at the output limit, and exec reports `stop_reason: "max_tokens"`. Neither changes exec's exit code.
+
 ### Model fallback
 
 List backup models in `fallback_models`, and a Turn that fails on the Session's model is re-sent on the next one instead of failing:
@@ -326,7 +328,7 @@ sh install.sh [--version <v>] [--dir <path>] [--channel stable|beta|nightly] [--
 - Unless `--no-modify-path`, it appends `# cyber installer: PATH` and `export PATH="<dir>:$PATH"` (`fish_add_path` for fish) to the first existing rc file for `$SHELL`: `~/.zshrc`; `~/.bashrc`, `~/.bash_profile`, `~/.profile`; fish's `config.fish`; else `~/.profile`. A file that already has the marker is left alone, and `cyber uninstall` removes exactly those two lines.
 - `CYBER_INSTALL_BASE_URL` replaces the release base URL, for a mirror or an offline install. The checksums then come from that mirror too, so setting it means trusting it; the `cosign` identity does not change.
 
-Other channels: the release archives themselves, `cargo install --locked --git https://github.com/CyberdyneCorp/cybercode-cli --tag v<version> cyber-cli`, and the repository `Dockerfile` (below). Homebrew (`cyber-code/tap/cyber`), npm (`@cyber-code/cli` with per-platform packages, each holding its target's binaries from the release archive), Scoop, WinGet, the AUR, Nix and a published container image are partial: their templates live under `packaging/` and every release attaches them rendered (`cyber.rb`, `cyber.scoop.json`, `cyber.winget.yaml`, `PKGBUILD`, `cyber.nix`, `cyber-npm-<v>.tar.gz`), but nothing is published to those registries yet.
+Other channels: the release archives themselves, `cargo install --locked --git https://github.com/CyberdyneCorp/cybercode-cli --tag v<version> cyber-cli`, and the repository `Dockerfile` (below). Homebrew (`cyber-code/tap/cyber`), npm (`@cyber-code/cli` with per-platform packages, each holding its target's binaries from the release archive), Scoop, WinGet, the AUR, Nix and a published container image are partial: their templates live under `packaging/` and every release attaches them rendered (`cyber.rb`, `PKGBUILD`, `cyber.nix`, `cyber-npm-<v>.tar.gz`; `cyber.scoop.json` and `cyber.winget.yaml` only once Windows is released), but nothing is published to those registries yet. Releases cover macOS and Linux; Windows builds run in CI but are not published until the Windows sandbox is complete (`WINDOWS_RELEASED` in `scripts/release_assets.py`).
 
 ### Release packaging
 
@@ -551,6 +553,17 @@ Counters include allows, blocks, fallbacks and classifier/policy decisions. They
 After a classifier block, use `/approve` in the TUI to review the original tool call and reason, then confirm one replay. It uses the stored input without another coding-model turn, saves no permanent approval and preserves current denies, protected paths and parent manual approval. Rejected or unattended confirmation has no effects. A consumed replay remains spent even after restart or failure; unresolved effects require recovery. Configuration block rules cannot be overridden this way. API clients can POST `/api/v1/sessions/:id/approve` or call `client.session.approve(id)`. The returned receipt identifies the original decision and replay call; subscribe to Session events and answer the `auto_override` permission request to proceed.
 
 Children also retain every effective auto-mode ancestor's gate. Eligible requests use each parent's policy and task context, and all gates must allow before execution. Any configured block or deny fallback prevents effects; independent manual approvals still prompt. Review decisions and usage are recorded on the executing child with the reviewed ancestor's identity.
+
+## What a repository cannot do before you trust it
+
+A cloned repository is untrusted until you approve its checkout (`cyber trust`). Besides holding its providers, hooks, MCP servers and permission widening, Cyber Code also guards against these:
+
+- **Skill grants:** a project skill's `allowed-tools` count only in a trusted checkout. Until then the skill loads but grants nothing, and `cyber skills` says so. A skill that grants tools is part of the checkout's trust digest, so widening its grant later needs approval again. `skills.paths` in a project config waits for trust too.
+- **Symbolic links:** `read`, `write`, `edit`, `apply_patch`, `notebook_edit` and file delivery follow links before any check. A committed `notes.md -> .git/config` is checked as `.git/config` (a protected path), and a dangling link to a file outside the project needs `external_directory` approval. Deleting removes the link itself.
+- **Shell writes:** every output redirection counts as a write (`1>> .git/config`, `2> log`, `&> out`), so protected paths still ask. A command with an environment assignment, a wrapper (`sudo`, `env`, `xargs`) or a writing option (`git diff --output`, `rg --pre`) is never treated as read-only. Choosing "always" for an interpreter, a shell, `find`, `sed` or `awk` approves that exact command, not every use of the program.
+- **Protected paths:** besides `.git/` and Cyber Code's config files, writes to shell and Git startup files (`~/.zshenv`, `~/.bash_profile`, `~/.gitconfig` …), `~/.netrc`, `~/.npmrc`, and Cyber Code's own config, state and data directories (also when `CYBER_HOME` or `XDG_*` move them, but not the managed worktrees in the data directory) always ask. On macOS and Windows the check ignores case.
+
+Provider keys are guarded as well. The downloaded model catalog cannot change where OpenAI and Anthropic keys go, or let another provider read `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. Its endpoints are used only over HTTPS, or plain HTTP to a local server. Provider requests never follow redirects, so a key cannot travel to another host. Your own `providers` configuration still decides endpoints.
 
 ## Untrusted content
 

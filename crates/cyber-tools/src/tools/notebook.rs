@@ -63,7 +63,7 @@ impl Tool for NotebookEdit {
         Box::pin(async move {
             let input: Input = serde_json::from_value(ctx.inv.input.clone())
                 .map_err(|_| failed("Invalid notebook_edit parameters"))?;
-            let path = ctx.resolve(&input.path);
+            let path = ctx.resolve_target(&input.path);
             if !path
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("ipynb"))

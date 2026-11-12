@@ -164,9 +164,12 @@ impl Endpoint {
         }
     }
 
-    /// Default provider client identity/timeouts, extended by transport owners.
+    /// Default provider client identity/timeouts, extended by transport owners. Redirects
+    /// are not followed: a provider key travels in headers such as `x-api-key` or `api-key`
+    /// that a cross-host redirect would carry to another host with the prompt.
     pub fn client_builder() -> reqwest::ClientBuilder {
         reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(30))
             .user_agent(format!(
                 "cyber/{} ({}; {}; cli)",
