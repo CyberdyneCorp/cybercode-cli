@@ -17,7 +17,9 @@ jobs:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
+        with:
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-tests

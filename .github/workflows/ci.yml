@@ -54,8 +54,11 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Every workflow pins Rust 1.99.1. Cargo 1.100 builds test binaries under
+      # target/<profile>/build/, where tests no longer find the sandbox helper.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
         with:
+          toolchain: 1.99.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Sandbox prerequisites
@@ -85,8 +88,9 @@ jobs:
     runs-on: windows-2025
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
         with:
+          toolchain: 1.99.1
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -102,7 +106,9 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
+        with:
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-native
@@ -166,7 +172,9 @@ jobs:
         run: python3 ../../scripts/generate_sdk.py --check
       - run: npm ci
       - run: npm run typecheck
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
+        with:
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@v2
         with:
           key: sdk
@@ -252,8 +260,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
         with:
+          toolchain: 1.99.1
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
@@ -295,7 +304,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
+        with:
+          toolchain: 1.99.1
       - uses: Swatinem/rust-cache@v2
       - run: npm ci
         working-directory: web
