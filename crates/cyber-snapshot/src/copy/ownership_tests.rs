@@ -510,9 +510,14 @@ fn native_ownership_cut_worker() {
             .create_parents(&store, &dir, "new/deep/file", &|| Ok(()))
             .unwrap();
     }
-    for index in 0..cut.saturating_sub(1) {
+    for (index, change) in record
+        .changes
+        .iter()
+        .enumerate()
+        .take(cut.saturating_sub(1))
+    {
         store
-            .install(&dir, index, &record.changes[index], ownership, &|| Ok(()))
+            .install(&dir, index, change, ownership, &|| Ok(()))
             .unwrap();
     }
     // No progress record is written. Parent observes the actual namespace before
