@@ -14,7 +14,6 @@ cyber-store.workspace = true
 axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 crossbeam-channel.workspace = true
-futures = "0.3"
 getrandom = "0.3"
 hmac = "0.12"
 http-body-util = "0.1"

@@ -256,10 +256,7 @@ impl Watch {
         for key in ["status", "phase", "agents", "tokens", "cost_usd"] {
             run[key] = data.get(key).cloned().unwrap_or(Value::Null);
         }
-        if !query.admits(run) || run["status"] == "queued" {
-            return true;
-        }
-        false
+        !query.admits(run) || run["status"] == "queued"
     }
 
     fn show(&mut self) -> Result<(), CliError> {
