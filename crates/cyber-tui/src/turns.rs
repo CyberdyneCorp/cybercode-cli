@@ -158,6 +158,7 @@ mod tests {
                 started_ms: Some(started),
                 ended_ms: ended,
                 error_kind: error_kind.map(str::to_string),
+                finish: None,
             },
         }
     }

@@ -66,21 +66,19 @@ impl ExecutableSearch {
     }
 }
 fn executable_file(path: &Path) -> bool {
-    let Ok(metadata) = path.metadata() else {
-        return false;
-    };
-    if !metadata.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+    path.metadata()
+        .is_ok_and(|metadata| metadata.is_file() && executable_bits(&metadata))
+}
+
+#[cfg(unix)]
+fn executable_bits(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn executable_bits(_metadata: &std::fs::Metadata) -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize)]

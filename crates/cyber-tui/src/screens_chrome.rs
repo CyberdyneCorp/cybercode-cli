@@ -473,3 +473,30 @@ fn a_streaming_answer_is_not_a_finished_run() {
     }];
     assert!(crate::turns::markers(&items, false).is_empty());
 }
+
+/// A refused request shows the model's refusal as its answer and a notice that only this
+/// request is affected, instead of an empty reply.
+#[tokio::test]
+async fn a_safety_filtered_reply_shows_the_refusal_and_a_notice() {
+    let server = Server::start().await;
+    let id = server.session().await;
+    server.prompt(&id, "REFUSE this").await;
+    let page = settled(&server, &id, 1).await;
+    let step = page["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["kind"] == "assistant")
+        .unwrap();
+    assert_eq!(step["finish"], "content_filter", "{page:#}");
+    assert_eq!(step["text"], "I can't help with that.", "{page:#}");
+
+    let mut app = server.load(&id).await;
+    stabilize(&mut app);
+    let shown = render(&mut app, 120, 30, &Opts::default());
+    assert!(shown.contains("I can't help with that."), "{shown}");
+    assert!(
+        shown.contains("⚠ Stopped by the provider's safety filter. Only this request is"),
+        "{shown}"
+    );
+}

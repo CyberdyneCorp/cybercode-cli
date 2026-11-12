@@ -85,6 +85,8 @@ Known error codes from HTTP bodies and in-stream errors map onto the usual reaso
 
 A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s", capped at 60 seconds, in place of the usual backoff. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
 
+A refusal is the model's answer: refusal text (Responses `response.refusal.delta`, Chat Completions `delta.refusal`) is shown as the answer's text. Each finished assistant message carries its `finish` reason in the messages API. When it is `content_filter`, the TUI shows `⚠ Stopped by the provider's safety filter…` under the answer, and `cyber exec` ends with `stop_reason: "refusal"` and prints a `warning:` line on stderr in text mode. When it is `length`, the TUI says the answer was cut off at the output limit, and exec reports `stop_reason: "max_tokens"`. Neither changes exec's exit code.
+
 ### Network check
 
 `cyber doctor --network` runs only network checks, which is useful when requests fail and you cannot tell a bad key from a blocked host or a proxy problem:

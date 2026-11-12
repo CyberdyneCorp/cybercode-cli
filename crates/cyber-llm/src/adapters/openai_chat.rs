@@ -260,8 +260,10 @@ impl ChatDecoder {
             return;
         };
         let delta = &choice["delta"];
+        // A refusal is the model's answer, shown as text rather than dropped.
         for (pointer, reasoning) in [
             ("/content", false),
+            ("/refusal", false),
             ("/reasoning_content", true),
             ("/reasoning", true),
             ("/reasoning_text", true),
@@ -399,5 +401,30 @@ mod tests {
             build_body(&request)["messages"][0]["content"][1],
             json!({ "type": "file", "file": { "filename": "document.pdf", "file_data": "data:application/pdf;base64,JVBERi0=" } })
         );
+    }
+
+    /// A refused request streams `delta.refusal`; it reaches the user as the answer
+    /// text instead of an empty reply.
+    #[test]
+    fn a_streamed_refusal_becomes_answer_text() {
+        let mut decoder = ChatDecoder::default();
+        let mut out = Vec::new();
+        decoder.chunk(
+            &json!({"choices":[{"delta":{"refusal":"I can't help with that."}}]}),
+            &mut out,
+        );
+        decoder.chunk(
+            &json!({"choices":[{"delta":{},"finish_reason":"stop"}]}),
+            &mut out,
+        );
+        decoder.complete(&mut out);
+        let text: String = out
+            .iter()
+            .filter_map(|e| match e {
+                Ok(LlmEvent::TextDelta { text }) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "I can't help with that.");
     }
 }
