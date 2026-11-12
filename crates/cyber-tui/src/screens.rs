@@ -191,6 +191,8 @@ pub(crate) fn reply(body: &Value) -> Value {
         return read_tool(body);
     } else if text.contains("WRITE") {
         return write_tool(body);
+    } else if text.contains("REFUSE") {
+        return json!({ "refusal": "I can't help with that.", "finish": "content_filter" });
     } else if text.contains("FAIL") {
         // Before HOLD: a later prompt's history holds the earlier ones.
         return json!({ "fail": 400 });

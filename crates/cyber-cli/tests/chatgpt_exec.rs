@@ -52,24 +52,48 @@ fn completed() -> String {
     .collect()
 }
 
+/// A refusal the safety system stopped: refusal text, then an incomplete response.
+fn refused() -> String {
+    [
+        (
+            "response.refusal.delta",
+            json!({"delta": "I can't help with that."}),
+        ),
+        (
+            "response.incomplete",
+            json!({"response": {"incomplete_details": {"reason": "content_filter"},
+                "usage": {"input_tokens": 3, "output_tokens": 1}}}),
+        ),
+    ]
+    .iter()
+    .map(|(name, data)| format!("event: {name}\ndata: {data}\n\n"))
+    .collect()
+}
+
 impl Backend {
     /// The fake issuer and backend; `refresh_status` answers every token refresh.
     fn start(refresh_status: u16) -> Self {
-        Self::serve(refresh_status, 0)
+        Self::serve(refresh_status, 0, false)
     }
 
     /// A backend whose plan has reached its usage limit, resetting in 40 minutes.
     fn usage_limited() -> Self {
-        Self::serve(200, usize::MAX)
+        Self::serve(200, usize::MAX, false)
     }
 
     /// A backend whose first answer is a usage limit resetting in 40 minutes.
     fn usage_limited_once() -> Self {
-        Self::serve(200, 1)
+        Self::serve(200, 1, false)
     }
 
-    /// `limited`: how many `/responses` requests answer with the usage limit.
-    fn serve(refresh_status: u16, limited: usize) -> Self {
+    /// A backend whose safety system refuses every answer.
+    fn refusing() -> Self {
+        Self::serve(200, 0, true)
+    }
+
+    /// `limited`: how many `/responses` requests answer with the usage limit; `refuse`:
+    /// every answer is a refusal.
+    fn serve(refresh_status: u16, limited: usize, refuse: bool) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(1)
             .enable_all()
@@ -120,7 +144,12 @@ impl Backend {
                             "plan_type": "plus", "resets_at": now() + 40 * 60}});
                         return (StatusCode::TOO_MANY_REQUESTS, axum::Json(error)).into_response();
                     }
-                    ([("content-type", "text/event-stream")], completed()).into_response()
+                    let stream = if refuse && !body.contains("Write a short title") {
+                        refused()
+                    } else {
+                        completed()
+                    };
+                    ([("content-type", "text/event-stream")], stream).into_response()
                 }),
             );
         runtime.spawn(async move {
@@ -399,4 +428,30 @@ fn exec_timeout_before_the_reset_stops_without_waiting() {
         "{transcript}"
     );
     assert_eq!(backend.seen.lock().unwrap().main, 1);
+}
+
+/// A refused answer reaches the user as text, with `stop_reason` `refusal` and a stderr
+/// notice in text mode, instead of an empty reply that looks like a normal end.
+#[test]
+fn exec_reports_a_refusal_with_its_text_and_stop_reason() {
+    let (env, backend) = (Env::with_due_login(), Backend::refusing());
+    let output = env.exec(&backend.origin);
+    let transcript = describe(&output);
+    assert!(output.status.success(), "{transcript}");
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["result"], "I can't help with that.", "{transcript}");
+    assert_eq!(result["stop_reason"], "refusal", "{transcript}");
+
+    let output = env.exec_with(&backend.origin, &[], &[]);
+    let transcript = describe(&output);
+    assert!(output.status.success(), "{transcript}");
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("I can't help with that."),
+        "{transcript}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("warning: the provider's safety filter stopped this answer"),
+        "{transcript}"
+    );
 }
