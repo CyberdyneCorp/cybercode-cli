@@ -28,6 +28,10 @@ fn reply(body: &Value) -> Value {
         return json!({"content": "done"});
     }
     let text = last.to_string();
+    // A compaction summary request quotes the earlier prompts; answer it with text.
+    if text.contains("Conversation to summarize") {
+        return json!({"content": "Summary of the earlier conversation."});
+    }
     if text.contains("patch the app") {
         let mut patch =
             "*** Begin Patch\n*** Update File: web/a.txt\n@@\n-before-a\n+after-a\n".to_string();
@@ -251,6 +255,47 @@ async fn project_rules_require_review_then_separate_baseline_from_matching_reads
     }
     let replayed = cyber_server::runtime::SessionState::replay(&events).unwrap();
     assert_eq!(replayed.epoch.unwrap().reminded_rules, ids);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
+/// `system-context` → Scope-aware rule inspection and loading: once-per-Epoch delivery is
+/// scoped to the Epoch. After compaction starts a new Epoch the summary may have lost the
+/// rule, so the next matching read delivers it again, once.
+#[tokio::test]
+async fn a_scoped_rule_is_delivered_again_in_the_epoch_after_compaction() {
+    let f = Fixture::start_with(json!({"compaction": {"keep": {"turns": 1}}})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let epoch = |state: cyber_server::runtime::SessionState| state.epoch.unwrap();
+    let first = epoch(f.app.runtime.state(&session).await.unwrap());
+    assert_eq!(first.reminded_rules.len(), 1);
+
+    // The newest turn stays verbatim, so the rule's turn is the one summarized.
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    f.app.runtime.compact(&session, None).await.unwrap();
+    let compacted = f.app.runtime.state(&session).await.unwrap();
+    assert!(
+        compacted.compacted.is_some(),
+        "the first turn is summarized"
+    );
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let second = epoch(f.app.runtime.state(&session).await.unwrap());
+    assert!(
+        second.number > first.number,
+        "compaction starts a new Epoch"
+    );
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    assert_eq!(second.reminded_rules, first.reminded_rules);
+
     f.prompt(&session, &f.repo, "read the app again", 2).await;
     assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
     f.app.runtime.shutdown().await;
