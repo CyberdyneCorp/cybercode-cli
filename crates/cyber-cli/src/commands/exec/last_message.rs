@@ -12,8 +12,31 @@ pub(super) fn write(path: &Path, text: &str) -> io::Result<()> {
         .tempfile_in(parent)?;
     temporary.write_all(text.as_bytes())?;
     temporary.as_file().sync_all()?;
-    temporary.persist(path).map_err(|error| error.error)?;
-    Ok(())
+    publish(temporary, path)
+}
+
+/// Windows refuses a rename onto a destination another writer is replacing at the same
+/// moment ("Access is denied"); the competing rename finishes within milliseconds.
+const BUSY_RETRIES: u32 = 50;
+const BUSY_PAUSE: std::time::Duration = std::time::Duration::from_millis(10);
+
+fn publish(mut temporary: tempfile::NamedTempFile, path: &Path) -> io::Result<()> {
+    let mut retries = 0;
+    loop {
+        match temporary.persist(path) {
+            Ok(_) => return Ok(()),
+            Err(error) if retries < BUSY_RETRIES && destination_busy(&error.error) => {
+                temporary = error.file;
+                retries += 1;
+                std::thread::sleep(BUSY_PAUSE);
+            }
+            Err(error) => return Err(error.error),
+        }
+    }
+}
+
+fn destination_busy(error: &io::Error) -> bool {
+    cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied
 }
 
 #[cfg(test)]

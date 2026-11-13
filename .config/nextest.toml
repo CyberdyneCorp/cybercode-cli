@@ -249,3 +249,9 @@ test-group = "windows-native"
 [[profile.ci-windows.overrides]]
 filter = "binary_id(cyber-tools::isolated_subagents)"
 test-group = "isolated-subagents"
+
+# The reviewed-recovery end-to-end test kills and restarts the owner several times; on
+# main it already took 8–9.5 of its 10 minutes on the Windows runner.
+[[profile.ci-windows.overrides]]
+filter = "binary_id(cyber-cli::branches_cli) & test(reviewed_recovery_code_stages_survive_kill_restage_and_clear_without_adopting_owner_files)"
+slow-timeout = { period = "60s", terminate-after = 20 }
