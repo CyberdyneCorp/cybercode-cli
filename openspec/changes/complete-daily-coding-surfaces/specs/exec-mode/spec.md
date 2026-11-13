@@ -10,6 +10,12 @@
 - **WHEN** the step's exact tool call opens a permission or question request
 - **THEN** the pending request SHALL expose its captured `input_message_ids`, bounded to 32 identities of at most 256 UTF-8 bytes each
 
+#### Scenario: An admission acknowledgement is lost
+- **WHEN** a prompt submission and its single resubmission under the same message identity both lose their response
+- **THEN** the driver SHALL read the Session inbox for that message identity before reporting the input
+- **AND** a held row that is not refused SHALL report the input `admitted` and track it to its result; no row SHALL report it `refused`
+- **AND** when the inbox cannot be read the run SHALL end with a fatal error (exit 2) naming the message identity rather than report an input the server may run as refused
+
 #### Scenario: Two drivers have pending input in one Session
 - **GIVEN** the first driver owns a live direct request and the second driver has admitted a different input
 - **WHEN** the second driver sees that request, tries to reply, or closes while the first driver remains attached

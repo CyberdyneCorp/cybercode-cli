@@ -14,7 +14,7 @@ mod interruption;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use cyber_client::{Client, Event};
+use cyber_client::{Client, ClientError, Event};
 use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
@@ -272,7 +272,9 @@ impl<'a> Driver<'a> {
     }
 
     /// Admit a prompt under a message ID chosen here; a lost acknowledgement is retried
-    /// once with the same ID, which the server answers with the original receipt.
+    /// once with the same ID, which the server answers with the original receipt. When
+    /// that reply is lost too, the inbox decides: a held row is admitted, none is refused,
+    /// and a server that cannot be asked ends the run rather than guess.
     async fn admit(&mut self, id: Option<String>, parts: Vec<Value>, delivery: &str) {
         let message_id = cyber_core::ids::new_id("msg");
         let input = Input::new(id, message_id.clone());
@@ -287,13 +289,29 @@ impl<'a> Driver<'a> {
             body["format"] = json!({ "type": "json_schema", "schema": schema });
         }
         let path = format!("/sessions/{}/prompt", self.id);
-        let mut sent = self.client.post(&path, body.clone()).await;
-        if matches!(&sent, Err(cyber_client::ClientError::Transport(_))) {
-            sent = self.client.post(&path, body).await;
+        let mut sent = self.client.post(&path, body.clone()).await.map(drop);
+        if matches!(&sent, Err(ClientError::Transport(_))) {
+            sent = self.client.post(&path, body).await.map(drop);
+        }
+        if let Err(ClientError::Transport(lost)) = &sent {
+            match self.committed(&message_id).await {
+                Ok(true) => sent = Ok(()),
+                Ok(false) => {}
+                Err(error) => {
+                    let why = format!("cannot confirm admission of {message_id}: {lost}; {error}");
+                    self.out.error(&why);
+                    self.inputs
+                        .get_mut(&message_id)
+                        .expect("reserved input")
+                        .error = Some(why.clone());
+                    self.fatal = Some(why);
+                    return self.close().await;
+                }
+            }
         }
         let input = self.inputs.get_mut(&message_id).expect("reserved input");
         match sent {
-            Ok(_) => {
+            Ok(()) => {
                 self.idle = false;
                 self.out.stream_line(
                     "input",
@@ -310,6 +328,22 @@ impl<'a> Driver<'a> {
                 self.emit_result(&input);
             }
         }
+    }
+
+    /// Whether the server holds `message_id` as an admitted input, for an admission whose
+    /// every reply was lost: a committed prompt runs whether or not its receipt arrived.
+    async fn committed(&self, message_id: &str) -> Result<bool, String> {
+        let rows = self
+            .client
+            .get(&format!("/sessions/{}/inbox", self.id))
+            .await
+            .map_err(|error| error.to_string())?;
+        let row = rows["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|row| row["message_id"] == message_id);
+        Ok(row.is_some_and(|row| row["status"] != "refused"))
     }
 
     /// Answer a request bound to this driver's live inputs; any other ID is a

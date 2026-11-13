@@ -991,36 +991,44 @@ impl Drop for Server {
     }
 }
 
-/// Forwards each request on its own upstream connection, except that the first `lose`
-/// `POST …/prompt` requests reach the server but their responses are dropped: the
-/// admission is committed and its acknowledgement lost.
-fn lossy_proxy(upstream: u16, lose: usize, lost: Arc<Mutex<usize>>) -> String {
+/// What the lossy proxy drops.
+#[derive(Clone, Copy)]
+struct Loss {
+    /// The first this many `POST …/prompt` requests reach the server but their responses
+    /// are dropped: the admission is committed and its acknowledgement lost.
+    prompts: usize,
+    /// Every `GET …/inbox` connection is closed before it reaches the server.
+    inbox: bool,
+}
+
+/// Forwards each request on its own upstream connection, dropping what `loss` names.
+fn lossy_proxy(upstream: u16, loss: Loss, lost: Arc<Mutex<usize>>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     thread::spawn(move || {
         for client in listener.incoming().map_while(Result::ok) {
             let lost = lost.clone();
-            thread::spawn(move || relay(client, upstream, lose, &lost));
+            thread::spawn(move || relay(client, upstream, loss, &lost));
         }
     });
     url
 }
 
-fn relay(mut client: TcpStream, upstream: u16, lose: usize, lost: &Mutex<usize>) {
+fn relay(mut client: TcpStream, upstream: u16, loss: Loss, lost: &Mutex<usize>) {
     let Some((head, body)) = read_request(&mut client) else {
         return;
     };
-    let lose = head.starts_with("POST ")
-        && head
-            .lines()
-            .next()
-            .is_some_and(|line| line.contains("/prompt "))
-        && {
-            let mut lost = lost.lock().unwrap();
-            let again = *lost < lose;
-            *lost += usize::from(again);
-            again
-        };
+    let line = head.lines().next().unwrap_or_default();
+    if loss.inbox && line.starts_with("GET ") && line.contains("/inbox ") {
+        let _ = client.shutdown(std::net::Shutdown::Both);
+        return;
+    }
+    let lose = line.starts_with("POST ") && line.contains("/prompt ") && {
+        let mut lost = lost.lock().unwrap();
+        let again = *lost < loss.prompts;
+        *lost += usize::from(again);
+        again
+    };
     let mut server = TcpStream::connect(("127.0.0.1", upstream)).unwrap();
     let head: String = head
         .lines()
@@ -1081,7 +1089,11 @@ fn a_lost_admission_acknowledgement_is_retried_without_a_second_prompt() {
     // The client retries a mutation three times with one Idempotency-Key; losing all
     // four acknowledgements makes the driver resend the same message identity.
     let lost = Arc::new(Mutex::new(0));
-    let url = lossy_proxy(server.port, 4, lost.clone());
+    let loss = Loss {
+        prompts: 4,
+        inbox: false,
+    };
+    let url = lossy_proxy(server.port, loss, lost.clone());
     let mut run = Driven::start(
         &provider,
         &["--attach", &url, "--password", &server.password],
@@ -1116,4 +1128,72 @@ fn a_lost_admission_acknowledgement_is_retried_without_a_second_prompt() {
         .filter(|message| message["role"] == "user")
         .count();
     assert_eq!(users, 1, "{:#}", turns[0]);
+}
+
+/// Both admission attempts lose every acknowledgement (four client tries each); the
+/// committed prompt is found in the inbox and reported admitted, not refused.
+#[test]
+fn an_admission_whose_retry_is_also_lost_is_confirmed_from_the_inbox() {
+    let provider = Provider::start(&["text:answered once"]);
+    let server = Server::start(&provider);
+    let lost = Arc::new(Mutex::new(0));
+    let loss = Loss {
+        prompts: 8,
+        inbox: false,
+    };
+    let url = lossy_proxy(server.port, loss, lost.clone());
+    let mut run = Driven::start(
+        &provider,
+        &["--attach", &url, "--password", &server.password],
+    );
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"one","id":"first"}"#);
+    run.send(r#"{"type":"end"}"#);
+    let input = run.until("input", &mut seen);
+    assert_eq!(input["status"], "admitted", "{seen:#?}");
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["result"], "answered once", "{seen:#?}");
+    assert_eq!(result["message_id"], input["message_id"]);
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.exit(), Some(0));
+    assert_eq!(*lost.lock().unwrap(), 8, "acknowledgements lost");
+    assert_eq!(provider.turns().len(), 1);
+}
+
+/// When the inbox cannot be read either, the driver cannot tell whether the prompt runs:
+/// the run fails instead of reporting it refused.
+#[test]
+fn an_unconfirmable_admission_fails_the_run() {
+    let provider = Provider::start(&["text:unseen"]);
+    let server = Server::start(&provider);
+    let loss = Loss {
+        prompts: 8,
+        inbox: true,
+    };
+    let url = lossy_proxy(server.port, loss, Arc::new(Mutex::new(0)));
+    let mut run = Driven::start(
+        &provider,
+        &["--attach", &url, "--password", &server.password],
+    );
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"one","id":"first"}"#);
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["exit_code"], 2, "{seen:#?}");
+    let error = end["error"].as_str().unwrap_or_default();
+    assert!(error.contains("cannot confirm admission"), "{seen:#?}");
+    assert!(
+        seen.iter().all(|line| line["status"] != "refused"),
+        "{seen:#?}"
+    );
+    let result = seen.iter().find(|line| line["type"] == "result");
+    assert!(
+        result.is_some_and(|result| result["id"] == "first"
+            && result["exit_code"] != 0
+            && result["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("cannot confirm"))),
+        "{seen:#?}"
+    );
+    assert_eq!(run.exit(), Some(2));
 }
