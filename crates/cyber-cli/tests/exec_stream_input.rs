@@ -213,7 +213,7 @@ impl Driven {
             .current_dir(&root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(std::fs::File::create(root.join("exec.stderr")).unwrap())
             .spawn()
             .unwrap();
         let stdout = child.stdout.take().unwrap();
@@ -254,7 +254,10 @@ impl Driven {
             let line = self
                 .lines
                 .recv_timeout(Duration::from_secs(60))
-                .unwrap_or_else(|_| panic!("no {kind} line; saw {seen:#?}"));
+                .unwrap_or_else(|_| {
+                    let stderr = std::fs::read_to_string(self._root.join("exec.stderr"));
+                    panic!("no {kind} line; saw {seen:#?}\nstderr: {stderr:?}")
+                });
             seen.push(line.clone());
             if line["type"] == kind {
                 return line;
@@ -936,11 +939,6 @@ impl Server {
         let config = json!({"providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}});
         std::fs::write(root.join("cyber/config/cyber.jsonc"), config.to_string()).unwrap();
         std::fs::write(root.join("models.json"), "{}").unwrap();
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
         let cyber = |args: &[&str]| {
             let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
             command
@@ -958,20 +956,30 @@ impl Server {
                 .current_dir(&root);
             command
         };
-        let mut serve = cyber(&["serve", "--port", &port.to_string()]);
+        // Port 0 and the announced URL: a port probed free here could be taken by a
+        // parallel test's listener before the server binds it.
+        let mut serve = cyber(&["serve", "--port", "0"]);
         #[cfg(unix)]
         serve.arg("--socket").arg(root.join("cyber/state/s.sock"));
-        let child = serve
+        let mut child = serve
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(std::fs::File::create(root.join("serve.stderr")).unwrap())
             .spawn()
             .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while TcpStream::connect(("127.0.0.1", port)).is_err() {
-            assert!(Instant::now() < deadline, "server did not listen");
-            thread::sleep(Duration::from_millis(20));
-        }
+        let mut announced = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut announced)
+            .unwrap();
+        let port = announced
+            .trim()
+            .rsplit(':')
+            .next()
+            .and_then(|port| port.parse().ok())
+            .unwrap_or_else(|| {
+                let stderr = std::fs::read_to_string(root.join("serve.stderr"));
+                panic!("server did not listen: {announced:?} {stderr:?}")
+            });
         let output = cyber(&["service", "password"]).output().unwrap();
         let password = String::from_utf8(output.stdout).unwrap().trim().to_owned();
         assert!(!password.is_empty(), "no server password");
