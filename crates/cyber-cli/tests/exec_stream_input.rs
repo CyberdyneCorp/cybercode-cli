@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -198,14 +198,9 @@ impl Driven {
             PathBuf::from(env!("CARGO_BIN_EXE_cyber")).with_file_name("cyber-sandbox-exec");
         let mut child = Command::new(env!("CARGO_BIN_EXE_cyber"))
             .args(["--cwd", root.join("repo").to_str().unwrap()])
-            .args([
-                "exec",
-                "--embedded",
-                "--model",
-                "corp/main",
-                "--format",
-                "stream-json",
-            ])
+            .arg("exec")
+            .args((!flags.contains(&"--attach")).then_some("--embedded"))
+            .args(["--model", "corp/main", "--format", "stream-json"])
             .args(["--input-format", "stream-json"])
             .args(flags)
             .env_clear()
@@ -923,4 +918,201 @@ fn a_stalled_stdout_reader_delays_but_never_loses_or_reorders_results() {
         assert_eq!(result["result"].as_str(), Some(answers[index].as_str()));
     }
     assert_eq!(run.exit(), Some(0));
+}
+
+/// `cyber serve` on its own Cyber home, configured with the scripted provider.
+struct Server {
+    _dir: tempfile::TempDir,
+    child: Child,
+    port: u16,
+    password: String,
+}
+
+impl Server {
+    fn start(provider: &Provider) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("cyber/config")).unwrap();
+        let config = json!({"providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}});
+        std::fs::write(root.join("cyber/config/cyber.jsonc"), config.to_string()).unwrap();
+        std::fs::write(root.join("models.json"), "{}").unwrap();
+        let port = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let cyber = |args: &[&str]| {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
+            command
+                .args(args)
+                .env_clear()
+                .env("HOME", root.join("home"))
+                .env("CYBER_HOME", root.join("cyber"))
+                .env("CYBER_DB", "test.db")
+                .env("CYBER_MODELS_PATH", root.join("models.json"))
+                .env(
+                    "CYBER_SANDBOX_HELPER",
+                    PathBuf::from(env!("CARGO_BIN_EXE_cyber")).with_file_name("cyber-sandbox-exec"),
+                )
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .current_dir(&root);
+            command
+        };
+        let mut serve = cyber(&["serve", "--port", &port.to_string()]);
+        #[cfg(unix)]
+        serve.arg("--socket").arg(root.join("cyber/state/s.sock"));
+        let child = serve
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "server did not listen");
+            thread::sleep(Duration::from_millis(20));
+        }
+        let output = cyber(&["service", "password"]).output().unwrap();
+        let password = String::from_utf8(output.stdout).unwrap().trim().to_owned();
+        assert!(!password.is_empty(), "no server password");
+        Self {
+            _dir: dir,
+            child,
+            port,
+            password,
+        }
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Forwards each request on its own upstream connection, except that the first `lose`
+/// `POST …/prompt` requests reach the server but their responses are dropped: the
+/// admission is committed and its acknowledgement lost.
+fn lossy_proxy(upstream: u16, lose: usize, lost: Arc<AtomicUsize>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    thread::spawn(move || {
+        for client in listener.incoming().map_while(Result::ok) {
+            let lost = lost.clone();
+            thread::spawn(move || relay(client, upstream, lose, &lost));
+        }
+    });
+    url
+}
+
+fn relay(mut client: TcpStream, upstream: u16, lose: usize, lost: &AtomicUsize) {
+    let Some((head, body)) = read_request(&mut client) else {
+        return;
+    };
+    let lose = head.starts_with("POST ")
+        && head
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains("/prompt "))
+        && lost
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                (n < lose).then_some(n + 1)
+            })
+            .is_ok();
+    let mut server = TcpStream::connect(("127.0.0.1", upstream)).unwrap();
+    let head: String = head
+        .lines()
+        .filter(|line| !line.to_ascii_lowercase().starts_with("connection:"))
+        .map(|line| format!("{line}\r\n"))
+        .collect();
+    server
+        .write_all(format!("{head}connection: close\r\n\r\n").as_bytes())
+        .unwrap();
+    server.write_all(&body).unwrap();
+    let mut response = Vec::new();
+    if lose {
+        let _ = server.read_to_end(&mut response);
+        let _ = client.shutdown(std::net::Shutdown::Both);
+        return;
+    }
+    let _ = std::io::copy(&mut server, &mut client);
+}
+
+/// One request's head (without the blank line) and its `Content-Length` body.
+fn read_request(stream: &mut TcpStream) -> Option<(String, Vec<u8>)> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0; 4096];
+    loop {
+        if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+            let head = String::from_utf8_lossy(&bytes[..end]).into_owned();
+            let length = head
+                .lines()
+                .find_map(|line| {
+                    let lower = line.to_ascii_lowercase();
+                    lower
+                        .strip_prefix("content-length:")
+                        .map(|value| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            let mut body = bytes[end + 4..].to_vec();
+            while body.len() < length {
+                let n = stream.read(&mut buffer).ok()?;
+                if n == 0 {
+                    return None;
+                }
+                body.extend_from_slice(&buffer[..n]);
+            }
+            return Some((head, body));
+        }
+        let n = stream.read(&mut buffer).ok()?;
+        if n == 0 {
+            return None;
+        }
+        bytes.extend_from_slice(&buffer[..n]);
+    }
+}
+
+#[test]
+fn a_lost_admission_acknowledgement_is_retried_without_a_second_prompt() {
+    let provider = Provider::start(&["text:answered once", "text:second answer"]);
+    let server = Server::start(&provider);
+    // The client retries a mutation three times with one Idempotency-Key; losing all
+    // four acknowledgements makes the driver resend the same message identity.
+    let lost = Arc::new(AtomicUsize::new(0));
+    let url = lossy_proxy(server.port, 4, lost.clone());
+    let mut run = Driven::start(
+        &provider,
+        &["--attach", &url, "--password", &server.password],
+    );
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"one","id":"first"}"#);
+    let input = run.until("input", &mut seen);
+    assert_eq!(input["status"], "admitted", "{seen:#?}");
+    let result = run.until("result", &mut seen);
+    assert_eq!(
+        (result["id"].as_str(), result["result"].as_str()),
+        (Some("first"), Some("answered once"))
+    );
+    assert_eq!(result["message_id"], input["message_id"]);
+    run.send(r#"{"type":"user","text":"two","id":"second"}"#);
+    run.send(r#"{"type":"end"}"#);
+    assert_eq!(run.until("result", &mut seen)["result"], "second answer");
+    let end = run.until("end", &mut seen);
+    assert_eq!(
+        (end["exit_code"].as_i64(), end["inputs"].as_i64()),
+        (Some(0), Some(2))
+    );
+    assert_eq!(run.exit(), Some(0));
+    assert_eq!(lost.load(Ordering::SeqCst), 4, "acknowledgements lost");
+    // The retried admission did not run the prompt twice.
+    let turns = provider.turns();
+    assert_eq!(turns.len(), 2, "{turns:#?}");
+    let users = turns[0]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .count();
+    assert_eq!(users, 1, "{:#}", turns[0]);
 }
