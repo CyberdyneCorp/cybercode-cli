@@ -369,9 +369,10 @@ struct Worker {
     checkouts: Option<Box<dyn super::SnapshotLocationGuard>>,
     proof: Box<dyn SnapshotLifetime>,
     intent_digest: Option<String>,
-    _lifecycle: tokio::sync::OwnedRwLockReadGuard<()>,
     _admission: Admission,
     _completion: Completion,
+    // Shutdown's admission barrier must cover the complete worker disposal.
+    _lifecycle: tokio::sync::OwnedRwLockReadGuard<()>,
 }
 impl Worker {
     fn resources_digest(&self) -> Result<Option<String>, RuntimeError> {

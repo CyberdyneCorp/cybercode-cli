@@ -17,9 +17,10 @@ pub struct SnapshotAcknowledgementWorker {
     _location: Option<Box<dyn Send>>,
     checkouts: Option<RestoreResources>,
     recovery: Option<RecoveryResources>,
-    _lifecycle: OwnedRwLockReadGuard<()>,
     _admission: Admission,
     _completion: Completion,
+    // Shutdown's admission barrier must cover the complete worker disposal.
+    _lifecycle: OwnedRwLockReadGuard<()>,
 }
 struct RecoveryResources {
     claims: super::snapshot_recovery_checkout::RecoveryClaims,
