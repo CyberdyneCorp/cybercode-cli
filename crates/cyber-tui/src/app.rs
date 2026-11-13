@@ -2115,6 +2115,9 @@ impl App {
         if action == "auto_override" {
             return self.auto_override_key(key, &id);
         }
+        if self.scroll_permission(key.code) {
+            return Vec::new();
+        }
         let Overlay::Permission(step) = &mut self.overlay else {
             return Vec::new();
         };
@@ -2162,21 +2165,20 @@ impl App {
         Vec::new()
     }
 
+    /// PgDn, PgUp and Home scroll a permission prompt's details; true when `code` was one.
+    fn scroll_permission(&mut self, code: KeyCode) -> bool {
+        self.permission_scroll = match code {
+            KeyCode::PageDown => self.permission_scroll.saturating_add(8),
+            KeyCode::PageUp => self.permission_scroll.saturating_sub(8),
+            KeyCode::Home => 0,
+            _ => return false,
+        };
+        true
+    }
+
     fn auto_override_key(&mut self, key: KeyEvent, id: &str) -> Vec<Action> {
-        match key.code {
-            KeyCode::PageDown => {
-                self.permission_scroll = self.permission_scroll.saturating_add(8);
-                return Vec::new();
-            }
-            KeyCode::PageUp => {
-                self.permission_scroll = self.permission_scroll.saturating_sub(8);
-                return Vec::new();
-            }
-            KeyCode::Home => {
-                self.permission_scroll = 0;
-                return Vec::new();
-            }
-            _ => {}
+        if self.scroll_permission(key.code) {
+            return Vec::new();
         }
         let Overlay::Permission(PermStep::Choose(selected)) = &mut self.overlay else {
             return Vec::new();
