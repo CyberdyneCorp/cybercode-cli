@@ -87,6 +87,20 @@ A retry waits the delay the server advises, taken from `retry-after-ms`, then `R
 
 A refusal is the model's answer: refusal text (Responses `response.refusal.delta`, Chat Completions `delta.refusal`) is shown as the answer's text. Each finished assistant message carries its `finish` reason in the messages API. When it is `content_filter`, the TUI shows `⚠ Stopped by the provider's safety filter…` under the answer, and `cyber exec` ends with `stop_reason: "refusal"` and prints a `warning:` line on stderr in text mode. When it is `length`, the TUI says the answer was cut off at the output limit, and exec reports `stop_reason: "max_tokens"`. Neither changes exec's exit code.
 
+### Network check
+
+`cyber doctor --network` runs only network checks, which is useful when requests fail and you cannot tell a bad key from a blocked host or a proxy problem:
+
+```text
+proxy: pass none set
+network chatgpt: pass chatgpt.com reachable: HTTP 404 in 357 ms
+network ollama: warn 127.0.0.1:11434 unreachable: cannot connect (Connection refused (os error 61))
+network openai: pass api.openai.com reachable: HTTP 404 in 333 ms
+network updates: pass github.com reachable: HTTP 404 in 266 ms
+```
+
+It probes every enabled provider with a key or a subscription login, every endpoint under `providers` that needs no credential, and the update channel. Each probe goes through the client model requests use (proxy variables, user agent, no redirects), sends no credentials and times out after 10 seconds. Any HTTP answer, even a 404, means the host is reachable. An unreachable keyed provider fails the run (exit 1); a local server that is not running and an unreachable update channel only warn. The `proxy` line shows the proxy variables in effect, with credentials in proxy URLs replaced by `***`. `--format json` prints the same checks as `{ ok, checks: [{ check, status, detail }] }`.
+
 ### Model fallback
 
 List backup models in `fallback_models`, and a Turn that fails on the Session's model is re-sent on the next one instead of failing:
