@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-account"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -981,7 +981,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-app"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-cli"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-client"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "axum",
  "chrono",
@@ -1098,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-collab"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -1134,7 +1134,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-computer"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "cc",
  "schemars",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-core"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "aho-corasick",
  "cap-fs-ext",
@@ -1182,7 +1182,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-install"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "base64 0.22.1",
  "cyber-core",
@@ -1204,7 +1204,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-llm"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1225,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-sandbox"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "base64 0.22.1",
  "cap-fs-ext",
@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-server"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1295,7 +1295,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-snapshot"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "blake3",
  "cap-fs-ext",
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-store"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "crossbeam-channel",
  "cyber-core",
@@ -1332,7 +1332,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-telemetry"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "chrono",
  "cyber-core",
@@ -1351,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-tools"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1403,7 +1403,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-tui"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "aws-lc-rs",
  "axum",
@@ -1438,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "cyber-workflow"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "futures",
  "jsonschema",

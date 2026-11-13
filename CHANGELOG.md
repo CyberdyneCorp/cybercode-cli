@@ -6,6 +6,10 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.1.0-beta.2] - 2026-11-12
+
+The second pre-release, for macOS and Linux. Besides testing `cyber upgrade` from 0.1.0-beta.1, it adds:
+
 ### Added
 
 - `cyber doctor --network` checks whether each usable provider and the update channel can be reached, through the same proxy and client settings as model requests, without sending credentials.
