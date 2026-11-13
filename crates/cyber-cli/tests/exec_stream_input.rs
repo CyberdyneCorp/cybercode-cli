@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -994,7 +994,7 @@ impl Drop for Server {
 /// Forwards each request on its own upstream connection, except that the first `lose`
 /// `POST …/prompt` requests reach the server but their responses are dropped: the
 /// admission is committed and its acknowledgement lost.
-fn lossy_proxy(upstream: u16, lose: usize, lost: Arc<AtomicUsize>) -> String {
+fn lossy_proxy(upstream: u16, lose: usize, lost: Arc<Mutex<usize>>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     thread::spawn(move || {
@@ -1006,7 +1006,7 @@ fn lossy_proxy(upstream: u16, lose: usize, lost: Arc<AtomicUsize>) -> String {
     url
 }
 
-fn relay(mut client: TcpStream, upstream: u16, lose: usize, lost: &AtomicUsize) {
+fn relay(mut client: TcpStream, upstream: u16, lose: usize, lost: &Mutex<usize>) {
     let Some((head, body)) = read_request(&mut client) else {
         return;
     };
@@ -1015,11 +1015,12 @@ fn relay(mut client: TcpStream, upstream: u16, lose: usize, lost: &AtomicUsize) 
             .lines()
             .next()
             .is_some_and(|line| line.contains("/prompt "))
-        && lost
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
-                (n < lose).then_some(n + 1)
-            })
-            .is_ok();
+        && {
+            let mut lost = lost.lock().unwrap();
+            let again = *lost < lose;
+            *lost += usize::from(again);
+            again
+        };
     let mut server = TcpStream::connect(("127.0.0.1", upstream)).unwrap();
     let head: String = head
         .lines()
@@ -1079,7 +1080,7 @@ fn a_lost_admission_acknowledgement_is_retried_without_a_second_prompt() {
     let server = Server::start(&provider);
     // The client retries a mutation three times with one Idempotency-Key; losing all
     // four acknowledgements makes the driver resend the same message identity.
-    let lost = Arc::new(AtomicUsize::new(0));
+    let lost = Arc::new(Mutex::new(0));
     let url = lossy_proxy(server.port, 4, lost.clone());
     let mut run = Driven::start(
         &provider,
@@ -1104,7 +1105,7 @@ fn a_lost_admission_acknowledgement_is_retried_without_a_second_prompt() {
         (Some(0), Some(2))
     );
     assert_eq!(run.exit(), Some(0));
-    assert_eq!(lost.load(Ordering::SeqCst), 4, "acknowledgements lost");
+    assert_eq!(*lost.lock().unwrap(), 4, "acknowledgements lost");
     // The retried admission did not run the prompt twice.
     let turns = provider.turns();
     assert_eq!(turns.len(), 2, "{turns:#?}");
