@@ -2167,7 +2167,7 @@ cyber service password [OPTIONS] [VALUE]
 
 **Arguments:**
 
-- `[VALUE]`
+- `[VALUE]`: A generated password is base64url and may start with `-`.
 
 ## `cyber api`
 

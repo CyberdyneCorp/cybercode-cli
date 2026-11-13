@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -926,6 +926,7 @@ fn a_stalled_stdout_reader_delays_but_never_loses_or_reorders_results() {
 /// `cyber serve` on its own Cyber home, configured with the scripted provider.
 struct Server {
     _dir: tempfile::TempDir,
+    root: PathBuf,
     child: Child,
     port: u16,
     password: String,
@@ -939,26 +940,39 @@ impl Server {
         let config = json!({"providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}});
         std::fs::write(root.join("cyber/config/cyber.jsonc"), config.to_string()).unwrap();
         std::fs::write(root.join("models.json"), "{}").unwrap();
-        let cyber = |args: &[&str]| {
-            let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
-            command
-                .args(args)
-                .env_clear()
-                .env("HOME", root.join("home"))
-                .env("CYBER_HOME", root.join("cyber"))
-                .env("CYBER_DB", "test.db")
-                .env("CYBER_MODELS_PATH", root.join("models.json"))
-                .env(
-                    "CYBER_SANDBOX_HELPER",
-                    PathBuf::from(env!("CARGO_BIN_EXE_cyber")).with_file_name("cyber-sandbox-exec"),
-                )
-                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-                .current_dir(&root);
-            command
-        };
-        // Port 0 and the announced URL: a port probed free here could be taken by a
-        // parallel test's listener before the server binds it.
-        let mut serve = cyber(&["serve", "--port", "0"]);
+        let (child, port) = Self::serve(&root);
+        let password = Self::password(&root);
+        Self {
+            _dir: dir,
+            root,
+            child,
+            port,
+            password,
+        }
+    }
+
+    fn cyber(root: &std::path::Path, args: &[&str]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
+        command
+            .args(args)
+            .env_clear()
+            .env("HOME", root.join("home"))
+            .env("CYBER_HOME", root.join("cyber"))
+            .env("CYBER_DB", "test.db")
+            .env("CYBER_MODELS_PATH", root.join("models.json"))
+            .env(
+                "CYBER_SANDBOX_HELPER",
+                PathBuf::from(env!("CARGO_BIN_EXE_cyber")).with_file_name("cyber-sandbox-exec"),
+            )
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .current_dir(root);
+        command
+    }
+
+    /// Port 0 and the announced URL: a port probed free here could be taken by a
+    /// parallel test's listener before the server binds it.
+    fn serve(root: &std::path::Path) -> (Child, u16) {
+        let mut serve = Self::cyber(root, &["serve", "--port", "0"]);
         #[cfg(unix)]
         serve.arg("--socket").arg(root.join("cyber/state/s.sock"));
         let mut child = serve
@@ -967,10 +981,11 @@ impl Server {
             .stderr(std::fs::File::create(root.join("serve.stderr")).unwrap())
             .spawn()
             .unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let mut announced = String::new();
-        BufReader::new(child.stdout.take().unwrap())
-            .read_line(&mut announced)
-            .unwrap();
+        stdout.read_line(&mut announced).unwrap();
+        // Keep draining, so a later line never meets a closed pipe.
+        thread::spawn(move || std::io::copy(&mut stdout, &mut std::io::sink()));
         let port = announced
             .trim()
             .rsplit(':')
@@ -980,15 +995,43 @@ impl Server {
                 let stderr = std::fs::read_to_string(root.join("serve.stderr"));
                 panic!("server did not listen: {announced:?} {stderr:?}")
             });
-        let output = cyber(&["service", "password"]).output().unwrap();
+        (child, port)
+    }
+
+    fn password(root: &std::path::Path) -> String {
+        let output = Self::cyber(root, &["service", "password"])
+            .output()
+            .unwrap();
         let password = String::from_utf8(output.stdout).unwrap().trim().to_owned();
         assert!(!password.is_empty(), "no server password");
-        Self {
-            _dir: dir,
-            child,
-            port,
-            password,
-        }
+        password
+    }
+
+    /// Kill the server without a graceful stop.
+    fn crash(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    /// Start the server again on the same home and database, on a new port.
+    fn restart(&mut self) {
+        self.crash();
+        (self.child, self.port) = Self::serve(&self.root);
+        self.password = Self::password(&self.root);
+    }
+
+    /// `GET /api/v1{path}` on the server, directly.
+    fn get(&self, path: &str) -> Value {
+        let client = cyber_client::Client::http(
+            &format!("http://127.0.0.1:{}", self.port),
+            Some(self.password.clone()),
+        );
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(client.get(path))
+            .unwrap()
     }
 }
 
@@ -1010,12 +1053,13 @@ struct Loss {
 }
 
 /// Forwards each request on its own upstream connection, dropping what `loss` names.
-fn lossy_proxy(upstream: u16, loss: Loss, lost: Arc<Mutex<usize>>) -> String {
+fn lossy_proxy(upstream: Arc<AtomicU16>, loss: Loss, lost: Arc<Mutex<usize>>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     thread::spawn(move || {
         for client in listener.incoming().map_while(Result::ok) {
             let lost = lost.clone();
+            let upstream = upstream.load(Ordering::SeqCst);
             thread::spawn(move || relay(client, upstream, loss, &lost));
         }
     });
@@ -1037,7 +1081,9 @@ fn relay(mut client: TcpStream, upstream: u16, loss: Loss, lost: &Mutex<usize>) 
         *lost += usize::from(again);
         again
     };
-    let mut server = TcpStream::connect(("127.0.0.1", upstream)).unwrap();
+    let Ok(mut server) = TcpStream::connect(("127.0.0.1", upstream)) else {
+        return;
+    };
     let head: String = head
         .lines()
         .filter(|line| !line.to_ascii_lowercase().starts_with("connection:"))
@@ -1101,7 +1147,7 @@ fn a_lost_admission_acknowledgement_is_retried_without_a_second_prompt() {
         prompts: 4,
         inbox: false,
     };
-    let url = lossy_proxy(server.port, loss, lost.clone());
+    let url = lossy_proxy(Arc::new(AtomicU16::new(server.port)), loss, lost.clone());
     let mut run = Driven::start(
         &provider,
         &["--attach", &url, "--password", &server.password],
@@ -1149,7 +1195,7 @@ fn an_admission_whose_retry_is_also_lost_is_confirmed_from_the_inbox() {
         prompts: 8,
         inbox: false,
     };
-    let url = lossy_proxy(server.port, loss, lost.clone());
+    let url = lossy_proxy(Arc::new(AtomicU16::new(server.port)), loss, lost.clone());
     let mut run = Driven::start(
         &provider,
         &["--attach", &url, "--password", &server.password],
@@ -1179,7 +1225,11 @@ fn an_unconfirmable_admission_fails_the_run() {
         prompts: 8,
         inbox: true,
     };
-    let url = lossy_proxy(server.port, loss, Arc::new(Mutex::new(0)));
+    let url = lossy_proxy(
+        Arc::new(AtomicU16::new(server.port)),
+        loss,
+        Arc::new(Mutex::new(0)),
+    );
     let mut run = Driven::start(
         &provider,
         &["--attach", &url, "--password", &server.password],
@@ -1204,4 +1254,55 @@ fn an_unconfirmable_admission_fails_the_run() {
         "{seen:#?}"
     );
     assert_eq!(run.exit(), Some(2));
+}
+
+/// A server that dies under an attached driver ends the run explicitly instead of
+/// hanging; the admitted input stays in the Session for the restarted server.
+#[test]
+fn a_server_crash_ends_the_run_explicitly_and_the_restarted_server_keeps_the_input() {
+    let provider = Provider::start(&["gate:text:never delivered", "gate:text:after restart"]);
+    let mut server = Server::start(&provider);
+    let upstream = Arc::new(AtomicU16::new(server.port));
+    let loss = Loss {
+        prompts: 0,
+        inbox: false,
+    };
+    let url = lossy_proxy(upstream.clone(), loss, Arc::new(Mutex::new(0)));
+    let mut run = Driven::start(
+        &provider,
+        &["--attach", &url, "--password", &server.password],
+    );
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"one","id":"first"}"#);
+    let input = run.until("input", &mut seen);
+    assert_eq!(input["status"], "admitted", "{seen:#?}");
+    provider.wait_for_gate();
+    server.crash();
+
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["exit_code"], 2, "{seen:#?}");
+    assert_eq!(
+        end["error"], "the server closed the event stream",
+        "{seen:#?}"
+    );
+    let result = seen.iter().find(|line| line["type"] == "result");
+    assert!(
+        result.is_some_and(|result| result["message_id"] == input["message_id"]
+            && result["error"] == "not answered before the run ended"
+            && result["exit_code"] != 0),
+        "{seen:#?}"
+    );
+    assert_eq!(run.exit(), Some(2));
+
+    server.restart();
+    upstream.store(server.port, Ordering::SeqCst);
+    let session = input["session_id"].as_str().unwrap();
+    let inbox = server.get(&format!("/sessions/{session}/inbox"));
+    let row = inbox["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["message_id"] == input["message_id"]);
+    assert!(row.is_some(), "{inbox:#}");
+    provider.release();
 }

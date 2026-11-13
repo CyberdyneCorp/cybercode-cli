@@ -393,3 +393,33 @@ mod worktree_tests {
         assert!(crate::commands::exec::setup::validate(args, &cli.global).is_err());
     }
 }
+
+#[cfg(test)]
+mod password_tests {
+    use super::*;
+
+    /// A generated password is base64url, so about one in 64 starts with `-`.
+    #[test]
+    fn a_password_may_start_with_a_hyphen() {
+        const PASSWORD: &str = "-Yx3_kP9qLmN2vB8";
+        let attach = ["--attach", "http://127.0.0.1:1", "--password", PASSWORD];
+        let exec = Cli::try_parse_from(["cyber", "exec"].iter().chain(&attach)).unwrap();
+        let Some(Command::Exec(args)) = &exec.command else {
+            panic!("expected exec")
+        };
+        assert_eq!(args.password.as_deref(), Some(PASSWORD));
+        let review = Cli::try_parse_from(["cyber", "review"].iter().chain(&attach)).unwrap();
+        let Some(Command::Review(args)) = &review.command else {
+            panic!("expected review")
+        };
+        assert_eq!(args.password.as_deref(), Some(PASSWORD));
+        let service = Cli::try_parse_from(["cyber", "service", "password", PASSWORD]).unwrap();
+        let Some(Command::Service {
+            cmd: ServiceCmd::Password { value },
+        }) = &service.command
+        else {
+            panic!("expected service password")
+        };
+        assert_eq!(value.as_deref(), Some(PASSWORD));
+    }
+}

@@ -54,7 +54,11 @@ pub enum ServiceCmd {
     /// Show the registered server and whether it is healthy.
     Status,
     /// Print the local server password, or replace it (restarting the server).
-    Password { value: Option<String> },
+    Password {
+        /// A generated password is base64url and may start with `-`.
+        #[arg(allow_hyphen_values = true)]
+        value: Option<String>,
+    },
 }
 
 pub fn runtime() -> Result<tokio::runtime::Runtime, CliError> {
