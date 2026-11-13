@@ -181,6 +181,12 @@ struct Driven {
 
 impl Driven {
     fn start(provider: &Provider, flags: &[&str]) -> Self {
+        Self::start_reading(provider, flags, Arc::new(AtomicBool::new(true)))
+    }
+
+    /// Like `start`, but stdout is not read until `reading` becomes true, so the driver's
+    /// writes block once the pipe fills.
+    fn start_reading(provider: &Provider, flags: &[&str], reading: Arc<AtomicBool>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("repo/.git")).unwrap();
@@ -218,6 +224,9 @@ impl Driven {
         let stdout = child.stdout.take().unwrap();
         let (send, lines) = mpsc::channel();
         thread::spawn(move || {
+            while !reading.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(5));
+            }
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Ok(value) = serde_json::from_str::<Value>(&line) {
                     let _ = send.send(value);
@@ -800,4 +809,118 @@ fn sigint_stops_owned_background_process_before_exit_130() {
         2,
         "cancelled Job dispatched a handback"
     );
+}
+
+#[test]
+fn input_beyond_the_pending_capacity_is_a_protocol_error_that_settles_admitted_inputs() {
+    const CAPACITY: usize = 32;
+    let provider = Provider::start(&["gate:text:held answer"]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    let mut admitted = Vec::new();
+    for index in 0..CAPACITY {
+        let id = format!("input-{index}");
+        run.send(&json!({"type":"user","text":"next","id":id}).to_string());
+        let input = run.until("input", &mut seen);
+        assert_eq!(
+            (&input["id"], &input["status"]),
+            (&json!(id), &json!("admitted"))
+        );
+        admitted.push(input["message_id"].as_str().unwrap().to_owned());
+        if index == 0 {
+            provider.wait_for_gate();
+        }
+    }
+    run.send(r#"{"type":"user","text":"one too many","id":"overflow"}"#);
+    let error = run.until("error", &mut seen);
+    assert_eq!(error["code"], "protocol", "{seen:#?}");
+    assert!(
+        error["message"].as_str().unwrap().contains("32 inputs"),
+        "{error}"
+    );
+    provider.release();
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["exit_code"], 2, "{seen:#?}");
+    assert_eq!(run.exit(), Some(2));
+    // The refused input was never admitted or sent; every admitted one is settled.
+    assert!(
+        !seen
+            .iter()
+            .any(|line| line["id"] == "overflow" && line["type"] == "input")
+    );
+    let settled: std::collections::BTreeSet<&str> = seen
+        .iter()
+        .filter(|line| line["type"] == "result")
+        .filter_map(|line| line["message_id"].as_str())
+        .collect();
+    for message in &admitted {
+        assert!(
+            settled.contains(message.as_str()),
+            "{message} unsettled: {seen:#?}"
+        );
+    }
+    assert!(
+        provider
+            .turns()
+            .iter()
+            .all(|turn| !turn.to_string().contains("one too many"))
+    );
+}
+
+#[test]
+fn an_oversized_line_is_a_protocol_error_exit_2() {
+    let provider = Provider::start(&[]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    let text = "x".repeat(1024 * 1024);
+    run.send(&json!({"type":"user","text":text}).to_string());
+    let error = run.until("error", &mut seen);
+    assert_eq!(error["code"], "protocol");
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 2);
+    assert_eq!(run.exit(), Some(2));
+    assert!(provider.turns().is_empty(), "nothing was sent to the model");
+}
+
+#[test]
+fn a_stalled_stdout_reader_delays_but_never_loses_or_reorders_results() {
+    // Each answer is larger than a pipe buffer, so the driver blocks writing it.
+    let answers: Vec<String> = (0..3)
+        .map(|i| format!("answer {i} ").repeat(30_000))
+        .collect();
+    let script: Vec<String> = answers.iter().map(|a| format!("text:{a}")).collect();
+    let script: Vec<&str> = script.iter().map(String::as_str).collect();
+    let provider = Provider::start(&script);
+    let reading = Arc::new(AtomicBool::new(false));
+    let mut run = Driven::start_reading(&provider, &[], reading.clone());
+    for index in 0..answers.len() {
+        run.send(&json!({"type":"user","text":"next","id":format!("input-{index}")}).to_string());
+    }
+    run.send(r#"{"type":"end"}"#);
+    // Let the driver fill the pipe and block before anyone reads it.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while provider.turns().is_empty() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    thread::sleep(Duration::from_millis(500));
+    assert!(
+        run.child.try_wait().unwrap().is_none(),
+        "exited while stdout was full"
+    );
+    reading.store(true, Ordering::SeqCst);
+    let mut seen = Vec::new();
+    let end = run.until("end", &mut seen);
+    assert_eq!(
+        (end["exit_code"].as_i64(), end["inputs"].as_i64()),
+        (Some(0), Some(3))
+    );
+    let results: Vec<_> = seen
+        .iter()
+        .filter(|line| line["type"] == "result")
+        .collect();
+    assert_eq!(results.len(), answers.len());
+    for (index, result) in results.iter().enumerate() {
+        assert_eq!(result["id"], format!("input-{index}"));
+        assert_eq!(result["result"].as_str(), Some(answers[index].as_str()));
+    }
+    assert_eq!(run.exit(), Some(0));
 }
