@@ -1476,3 +1476,101 @@ fn exec_project_post_tool_hook_cannot_write_home() {
     assert_eq!(receipt["outcome"], "error", "{receipt:#}\n{detail}");
     assert_eq!(receipt["scope"], "project", "{receipt:#}");
 }
+
+/// A driven run (`--input-format stream-json`) fed `stdin`, killed after 60 s.
+fn exec_driven(root: &Path, flags: &[&str], stdin: &str) -> std::process::Output {
+    let mut child = cyber(root, &[])
+        .arg("exec")
+        .args([
+            "--embedded",
+            "--model",
+            "corp/main",
+            "--format",
+            "stream-json",
+        ])
+        .args(["--input-format", "stream-json"])
+        .args(flags)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    let id = child.id();
+    let (exited, deadline) = mpsc::channel::<()>();
+    let killer = thread::spawn(move || {
+        if deadline.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
+            let _ = Command::new("kill").args(["-9", &id.to_string()]).status();
+        }
+    });
+    let output = child.wait_with_output().unwrap();
+    let _ = exited.send(());
+    killer.join().unwrap();
+    output
+}
+
+/// The stdout JSON lines of `type`.
+fn lines_of(output: &std::process::Output, kind: &str) -> Vec<Value> {
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["type"] == kind)
+        .collect()
+}
+
+#[test]
+fn include_hook_events_reports_owned_tool_hook_outcomes() {
+    let provider = Provider::start(read_then_answer);
+    let deny = json!({"decision":"deny","reason":"REASON TEXT"});
+    let (_dir, root) = root_with(
+        &provider,
+        json!({
+            "UserPromptSubmit":[{"hooks":[context("prompt","PROMPT CONTEXT MARKER")]}],
+            "PreToolUse":[{"matcher":"read","hooks":[{"type":"command","id":"guard","command":format!(
+                "cat >/dev/null; printf '%s' '{deny}'"
+            )}]}]
+        }),
+    );
+    let stdin = "{\"type\":\"user\",\"text\":\"read it\",\"id\":\"a\"}\n{\"type\":\"end\"}\n";
+    let output = exec_driven(&root, &["--include-hook-events"], stdin);
+    let requests = conversation(&provider);
+    let detail = explain(&output, &requests);
+    assert_eq!(output.status.code(), Some(0), "{detail}");
+    let events = lines_of(&output, "hook_event");
+    assert_eq!(events.len(), 1, "only the tool call's hook\n{detail}");
+    let event = &events[0];
+    assert_eq!(event["hook_id"], "guard", "{detail}");
+    assert_eq!(event["event"], "PreToolUse", "{detail}");
+    assert_eq!(event["call_id"], "call_read", "{detail}");
+    assert_eq!(event["tool_name"], "read", "{detail}");
+    assert_eq!(event["decision"], "deny", "{detail}");
+    assert!(event["outcome"].is_string(), "{detail}");
+    assert!(event["receipt_id"].as_str().unwrap().starts_with("hke"));
+    let result = &lines_of(&output, "result")[0];
+    assert_eq!(
+        event["inputs"],
+        json!([{"id":"a","message_id":result["message_id"]}])
+    );
+    assert!(!event.to_string().contains("REASON TEXT"), "{detail}");
+    // The Session-scoped UserPromptSubmit receipt exists but has no call to attribute.
+    let stored = receipts(&root);
+    assert!(
+        stored
+            .iter()
+            .any(|receipt| receipt["event"] == "UserPromptSubmit"),
+        "{stored:?}"
+    );
+
+    // Without the flag, nothing is reported.
+    let provider = Provider::start(read_then_answer);
+    let (_dir, root) = root_with(
+        &provider,
+        json!({"PreToolUse":[{"matcher":"read","hooks":[{"type":"command","id":"guard","command":"cat >/dev/null"}]}]}),
+    );
+    let output = exec_driven(&root, &[], stdin);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(lines_of(&output, "hook_event").is_empty(), "{output:?}");
+}

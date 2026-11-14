@@ -105,6 +105,10 @@ impl Inputs {
                 .all(|input| input.as_str().is_some_and(|id| self.contains(id)))
     }
 
+    pub fn get(&self, message_id: &str) -> Option<&Input> {
+        self.pending.get(message_id)
+    }
+
     pub fn get_mut(&mut self, message_id: &str) -> Option<&mut Input> {
         self.pending.get_mut(message_id)
     }

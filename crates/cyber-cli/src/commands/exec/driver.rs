@@ -21,6 +21,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 
 use super::frames::{self, Frame, MAX_LINE};
+use super::hook_events::{self, HookEvents};
 use super::inputs::{Input, Inputs};
 use super::report::{Out, Run};
 use super::{EXIT_ERROR, EXIT_INTERRUPTED, ExecArgs, NO_APPROVER, api, safe_id};
@@ -82,6 +83,8 @@ struct Driver<'a> {
     /// The interactive lease that lets this Session ask the driver (`server-api` →
     /// Interactive clients); released when input closes.
     lease: Option<String>,
+    /// `--include-hook-events`: owned tool calls and reported receipts.
+    hooks: Option<HookEvents>,
 }
 
 pub async fn execute(
@@ -107,6 +110,7 @@ pub async fn execute(
     driver.seen_seq = baseline["data"]["seq"].as_i64();
     driver.attach().await;
     driver.drive(&mut events, &mut lines).await;
+    driver.report_hooks().await;
     driver.release().await;
     Ok(driver.finish())
 }
@@ -176,6 +180,9 @@ impl<'a> Driver<'a> {
             interrupted: false,
             last_text: String::new(),
             lease: None,
+            hooks: args
+                .include_hook_events
+                .then(|| HookEvents::new(super::report::now_ms())),
         }
     }
 
@@ -430,6 +437,14 @@ impl<'a> Driver<'a> {
         if !self.accept_sequence(&event).await {
             return;
         }
+        let hook_poll = self.track_call(event_base(&event.kind), &event.data);
+        self.apply(&event).await;
+        if hook_poll {
+            self.report_hooks().await;
+        }
+    }
+
+    async fn apply(&mut self, event: &Event) {
         let kind = event.kind.as_str();
         let base = event_base(kind);
         match base {
@@ -468,6 +483,61 @@ impl<'a> Driver<'a> {
                 self.out.durable(&mut self.run, kind, &event.data)
             }
             _ => {}
+        }
+    }
+
+    /// With `--include-hook-events`: remember the calls of owned steps; true when an owned
+    /// call settled, so its hook receipts are read.
+    fn track_call(&mut self, base: &str, data: &Value) -> bool {
+        let Some(call_id) = data["call_id"].as_str() else {
+            return false;
+        };
+        match base {
+            "session.tool.called" if self.hooks.is_some() && self.owns_step(data) => {
+                let inputs: Vec<Value> = self
+                    .answering
+                    .iter()
+                    .filter_map(|id| self.inputs.get(id))
+                    .map(|input| json!({ "id": input.id, "message_id": input.message_id }))
+                    .collect();
+                if let Some(hooks) = self.hooks.as_mut() {
+                    hooks.own(call_id, Value::Array(inputs));
+                }
+                false
+            }
+            "session.tool.settled" => self.hooks.as_ref().is_some_and(|hooks| hooks.owns(call_id)),
+            _ => false,
+        }
+    }
+
+    /// Emit `hook_event` lines for owned receipts settled since the last read; a failed
+    /// read is reported and retried at the next settled call or idle.
+    async fn report_hooks(&mut self) {
+        let Some(hooks) = self.hooks.as_mut() else {
+            return;
+        };
+        let client = self.client;
+        let base = format!(
+            "/sessions/{}/hook-executions?limit={}",
+            self.id,
+            hook_events::PAGE
+        );
+        let read = hooks
+            .poll(|cursor| {
+                let path = match cursor {
+                    Some(cursor) => format!("{base}&cursor={cursor}"),
+                    None => base.clone(),
+                };
+                async move { client.get(&path).await.map_err(|error| error.to_string()) }
+            })
+            .await;
+        match read {
+            Ok(lines) => {
+                for line in lines {
+                    self.out.stream_line("hook_event", line);
+                }
+            }
+            Err(error) => self.out.error(&format!("hook events: {error}")),
         }
     }
 
@@ -513,6 +583,7 @@ impl<'a> Driver<'a> {
 
     async fn became_idle(&mut self) {
         self.idle = true;
+        self.report_hooks().await;
         if !self.answer_done && !self.answering.is_empty() {
             for id in &self.answering {
                 if let Some(input) = self.inputs.get_mut(id)

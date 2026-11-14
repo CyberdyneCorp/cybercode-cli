@@ -5,6 +5,7 @@ mod delegation;
 mod driver;
 mod frames;
 pub(crate) mod goals;
+mod hook_events;
 mod inputs;
 mod last_message;
 pub(crate) mod report;
@@ -108,6 +109,10 @@ pub struct ExecArgs {
     /// With --input-format stream-json: add `text_delta` and `reasoning_delta` lines.
     #[arg(long)]
     pub include_partial_messages: bool,
+    /// With --input-format stream-json: add a `hook_event` line (hook id, event, outcome,
+    /// decision) for each settled hook run on a tool call of this run's prompts.
+    #[arg(long)]
+    pub include_hook_events: bool,
     /// With --input-format stream-json: write the last answer's text to this file,
     /// atomically, when the run ends.
     #[arg(long, value_name = "FILE")]
@@ -214,9 +219,12 @@ pub fn run(mut args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(),
         check_driven(&args, global)?;
         return launch(args, ctx, global, String::new(), None);
     }
-    if args.include_partial_messages || args.output_last_message.is_some() {
+    if args.include_partial_messages
+        || args.include_hook_events
+        || args.output_last_message.is_some()
+    {
         return Err(CliError::usage(
-            "--include-partial-messages and --output-last-message need --input-format stream-json",
+            "--include-partial-messages, --include-hook-events and --output-last-message need --input-format stream-json",
         ));
     }
     let prompt = if args.goals.is_empty() {

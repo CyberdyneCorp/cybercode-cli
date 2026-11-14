@@ -1975,6 +1975,7 @@ cyber exec [OPTIONS] [PROMPT]...
 - `--output-schema <FILE>`: A JSON Schema file the final answer must satisfy: the model ends with a validated object, which becomes `result` (printed as JSON in text mode). Three invalid submissions exit 1 with `StructuredOutputError`.
 - `--input-format <INPUT_FORMAT>`: `stream-json` reads JSON lines from stdin for the life of the process: prompts, `interrupt`, permission and question replies, and `end` (needs --format stream-json; each prompt gets its own `result` line) Values: `text`, `stream-json`. Default: `text`.
 - `--include-partial-messages`: With --input-format stream-json: add `text_delta` and `reasoning_delta` lines.
+- `--include-hook-events`: With --input-format stream-json: add a `hook_event` line (hook id, event, outcome, decision) for each settled hook run on a tool call of this run's prompts.
 - `--output-last-message <FILE>`: With --input-format stream-json: write the last answer's text to this file, atomically, when the run ends.
 - `--workflow <NAME|PATH>`: Run a Workflow (a saved name or a `.js` module path) instead of a prompt; its return value is the result.
 - `--args <JSON>`: The Workflow's `args` as a JSON object.
