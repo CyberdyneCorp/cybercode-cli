@@ -1376,6 +1376,31 @@ behavior, wire/SDK contract, default Git admission or parent completion changes.
 Full workspace/SDK runtime and fresh-source cross-platform proof were not performed
 locally; the native matrix must execute this source before accepting M8.
 
+Paired and preparation metadata process-death continuation (2026-11-14): the parked
+retirement child now takes a scenario (ordinary restore, paired keep, paired
+rollback or prepared cancellation). For the new scenarios a separate inert child
+builds the managed App fixture (1,280 staged files and a link) and confirms the
+restore; its parent SIGKILLs it after observing a partial source exchange (paired)
+or after prepared identities are published while real SQLite writer contention
+fences source admission (prepared). A second child reopens the App, settles the
+owner only through the real recovery or preparation review/confirm routes, ages
+and reclaims its payloads and parks at the selected checkout unlink before the
+parent SIGKILLs it. `paired_managed_metadata_process_death_resumes_both_owner_bindings`
+runs keep at the first acknowledgement unlink and rollback at the first claim
+unlink; `prepared_cancellation_metadata_process_death_resumes_frozen_plan` runs
+both cuts. After each kill a physically reopened Store shows the incomplete
+version-2 plan with exactly one missing acknowledgement, or every acknowledgement
+and exactly one claim missing, and every owner's retained intent. The frozen
+checkout bindings equal those recorded by the owners' source phases (two for the
+paired receipt, one for cancellation). Periodic maintenance completes the same
+plan, removes every owner journal and returns zero on repeat. Protected Git
+index/config/creation bytes, the Session event sequence and a later owner symlink
+stay unchanged, and a fresh App returns the same receipt through lookup and
+explicit acknowledgement. No defect was found and no production code changed.
+Constructor/zero-payload paired/preparation and removed-Location metadata cuts,
+current-source platform runs and the remaining M8 matrix stay open; M6/M8 remain
+unchecked.
+
 Ordinary zero-payload continuation: remove the positive displaced-byte eligibility
 requirement and let an exact empty native inventory run through payload planning,
 the serialized native verification callback and durable completion. Empty displaced

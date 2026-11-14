@@ -3,6 +3,8 @@
     any(target_os = "linux", target_os = "macos")
 ))]
 //! The real App/Store/worker path in an explicitly non-default acceptance build.
+#[path = "support/managed_recovery_cut.rs"]
+mod managed_recovery_cut;
 #[path = "support/managed_retirement_cut.rs"]
 mod managed_retirement_cut;
 #[path = "support/scripted_model.rs"]

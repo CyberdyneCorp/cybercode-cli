@@ -3968,7 +3968,7 @@ macOS arm64; no Linux, macOS Intel or Windows result is claimed.
 | Filesystem completion (completed intent, before writer commit) | real service: `copy_kept_creation_after_completed_source_kill_retires_zero_payload` (writer held off by a SQLite write lock) | **gap**: covered for a zero-payload creation only, not for displaced payload images |
 | Writer commit (committed Session writer, unacknowledged journal) | real service: `ordinary_restore_killed_after_writer_commit_before_journal_ack_reconciles_without_replay` (new; debug-only `ordinary-restore-writer-commit` fixture point) | **gap**: the paired keep/rollback recovery commit is only simulated by resetting acknowledgement metadata (`managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay`) |
 | Journal acknowledgement | storage: `process_death_during_spare_write_preserves_active_intent_and_reopens_without_replay` (the intent-slot write the acknowledgement uses); managed checkout claim: `killed_acknowledgement_resumes_without_rewriting_claim_or_deleting_partial_stage`, `killed_construction_keeps_locked_complete_stage_and_never_creates_or_replays_stable_claim` | **gap**: no real-service SIGKILL after the ordinary journal acknowledgement and before the HTTP reply; only service stop/restart lookups |
-| Reclaim | real service fixture + separate maintenance process: `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan` (new; after the durable plan and the first unlink, inside the deletion transaction); App: `actual_process_death_preserves_plan_and_resumes_without_source_replay` (before deletion and after all deletions); collection: `process_death_after_last_manifest_unlink_resumes_from_durable_policy_provenance` | **gap**: paired keep/rollback cleanup and metadata retirement are interrupted in-process only (`managed_native_recovery_after_partial_kill`, `native_retirement_resumes_before_and_after_deletion_without_rewriting_acknowledgement`) |
+| Reclaim | real service fixture + separate maintenance process: `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan` (new; after the durable plan and the first unlink, inside the deletion transaction); App: `actual_process_death_preserves_plan_and_resumes_without_source_replay` (before deletion and after all deletions); collection: `process_death_after_last_manifest_unlink_resumes_from_durable_policy_provenance` | **gap**: paired keep/rollback payload cleanup is interrupted in-process only (`managed_native_recovery_after_partial_kill`, `native_retirement_resumes_before_and_after_deletion_without_rewriting_acknowledgement`); managed Git paired/prepared metadata retirement now has App SIGKILL cuts (see the section below), paired/prepared payload reclaim still does not |
 
 New in this increment (`crates/cyber-cli/tests/support/ordinary_cuts.rs`, part of
 the `branches_cli` test binary):
@@ -4003,3 +4003,49 @@ No defect was found at either cut. Both tests passed three consecutive runs unde
 nextest `ci` (`-p cyber-cli --test branches_cli`), and the full 26-case
 `branches_cli` binary passed. The rows marked as gaps keep M8 open together with
 the platform matrix, shared Git/binary regressions and the review it requires.
+
+## Managed paired/prepared metadata process death (2026-11-14, local)
+
+`crates/cyber-app/tests/support/managed_retirement_cut.rs` now parks its inert
+retirement child for one of four scenarios: ordinary restore, paired keep, paired
+rollback or prepared cancellation. The new
+`crates/cyber-app/tests/support/managed_recovery_cut.rs` (part of the
+`snapshot_git_runtime` binary, native filter updated) creates the paired and
+prepared receipts with real process death instead of metadata resets:
+
+- An inert child builds the managed App fixture in default application data,
+  stages 1,280 files and a link, takes two snapshots and confirms the code
+  restore. For paired cases the parent SIGKILLs it once `bulk_0000` holds its
+  restored bytes while `bulk_1279` still holds the later bytes. For the prepared
+  case the parent waits for the unadmitted origin, holds `BEGIN IMMEDIATE` on the
+  real database (writer contention only, no row edits), waits for prepared
+  identities with no applied entries, SIGKILLs and then confirms the latest record
+  is still unadmitted.
+- A second child reopens the App on that retained root, settles the owner only
+  through the real recovery (`keep`/`rollback`) or preparation review/confirm
+  routes, ages the settled owner, reclaims every payload and starts metadata
+  retirement. Its configuration callback observes the first acknowledgement (or
+  claim) unlink across all receipt bindings and parks before the next native
+  deletion; the parent SIGKILLs it (signal 9).
+
+`paired_managed_metadata_process_death_resumes_both_owner_bindings` runs keep at
+the acknowledgement cut and rollback at the claim cut;
+`prepared_cancellation_metadata_process_death_resumes_frozen_plan` runs both cuts.
+After each kill a physically reopened Store shows a completed payload plan and an
+unretired version-2 metadata plan whose checkout bindings equal those in the
+owners' source phases (two for the paired receipt, one for cancellation), exactly
+one missing acknowledgement (or all acknowledgements plus exactly one claim) and
+every owner's retained intent. A later owner replaces `tracked` with a link to an
+unreadable file. Periodic maintenance completes the identical frozen plan, removes
+every owner journal and all checkout leaves, and a repeat retirement returns zero.
+Protected Git index/config/creation bytes and the Session event sequence stay
+unchanged, the later link is untouched, and a fresh App returns the same typed
+receipt through lookup and explicit acknowledgement. Successful runs now remove
+the retained fixture root; failures keep the control directory and child logs.
+
+No defect was found; no production code changed. Local macOS arm64 only: the full
+seven-entry Git App binary passed three consecutive nextest `ci` runs
+(`--test-threads 4`), and default and `native-git-acceptance` App all-target
+Clippy pass with warnings denied. Paired/prepared payload-reclaim process death,
+constructor/zero-payload paired or prepared metadata cuts, removed-Location
+maintenance and current-source platform runs remain open; M6/M8 stay unchecked.
