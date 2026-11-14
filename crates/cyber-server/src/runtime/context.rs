@@ -38,6 +38,8 @@ pub struct Observation {
     pub files: BTreeMap<String, Vec<String>>,
     /// Per source, the stamp of each file taken from the handle it was read through.
     pub stamps: BTreeMap<String, BTreeMap<String, super::context_sources::FileStamp>>,
+    /// Per source, definitions that applied but were left out, without their content.
+    pub withheld: BTreeMap<String, super::context_sources::Withheld>,
 }
 
 pub fn observe(inputs: &ContextInputs) -> Observation {
@@ -47,10 +49,11 @@ pub fn observe(inputs: &ContextInputs) -> Observation {
         "core/environment".to_string(),
         Observed::Value(environment(inputs)),
     );
-    let (instructions, read, stamps) = instructions(inputs);
+    let (instructions, read, stamps, withheld) = instructions(inputs);
     sources.insert("core/instructions".to_string(), instructions);
     let files = BTreeMap::from([("core/instructions".to_string(), read)]);
     let stamps = BTreeMap::from([("core/instructions".to_string(), stamps)]);
+    let withheld = BTreeMap::from([("core/instructions".to_string(), withheld)]);
     let origins = BTreeMap::from([
         ("core/date".into(), "runtime".into()),
         ("core/environment".into(), "runtime".into()),
@@ -61,6 +64,7 @@ pub fn observe(inputs: &ContextInputs) -> Observation {
         origins,
         files,
         stamps,
+        withheld,
         pending: Default::default(),
     }
 }
@@ -241,6 +245,7 @@ fn instructions(
     Observed,
     Vec<String>,
     BTreeMap<String, super::context_sources::FileStamp>,
+    super::context_sources::Withheld,
 ) {
     let loaded = inputs
         .instructions
@@ -254,7 +259,12 @@ fn instructions(
             )
         });
     match loaded {
-        Err(reason) => (Observed::Unavailable(reason), Vec::new(), BTreeMap::new()),
+        Err(reason) => (
+            Observed::Unavailable(reason),
+            Vec::new(),
+            BTreeMap::new(),
+            Default::default(),
+        ),
         Ok(loaded) => {
             let read = loaded
                 .files
@@ -267,7 +277,7 @@ fn instructions(
                 .filter_map(|file| Some((file.path.display().to_string(), file.stamp?)))
                 .collect();
             let text = loaded.text().map_or(Observed::Absent, Observed::Value);
-            (text, read, stamps)
+            (text, read, stamps, loaded.withheld)
         }
     }
 }
@@ -322,7 +332,7 @@ mod tests {
         std::fs::create_dir(dir.path().join(".git")).unwrap();
         std::fs::write(dir.path().join("AGENTS.md"), "use pnpm").unwrap();
         std::fs::write(dir.path().join("CLAUDE.md"), "use npm").unwrap();
-        let (Observed::Value(text), _, _) = instructions(&inputs(dir.path())) else {
+        let (Observed::Value(text), _, _, _) = instructions(&inputs(dir.path())) else {
             panic!()
         };
         assert!(text.contains("use pnpm") && !text.contains("use npm"));

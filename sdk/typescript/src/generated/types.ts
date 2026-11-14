@@ -781,6 +781,15 @@ export type ContextInspection = {
   /** Listed sources with `changed_on_disk` true. */
   changed_sources: number;
   /**
+   * Up to 64 definitions that applied but were withheld (held by trust, refused by
+   * read policy, invalid, disabled compatibility, or past a discovery bound), as
+   * recorded at the last request boundary. Inspection does not open them, and their
+   * sizes count toward no estimate.
+   */
+  withheld_sources: WithheldContextSource[];
+  /** Withheld definitions beyond the listing bound. */
+  omitted_withheld_sources: number;
+  /**
    * Expected input of the next ordinary request. Absent until a request has been
    * prepared in this Session, because tool schemas are otherwise unknown.
    */
@@ -1338,6 +1347,13 @@ export type EffectiveContextSource = {
   file_stamps?: {
     [key: string]: FileStamp;
   };
+  /**
+   * Definitions that applied but were left out at the request boundary, recorded
+   * without opening them further. Inspection reports them as `withheld_sources`.
+   */
+  withheld?: WithheldSource[];
+  /** Withheld definitions beyond the recorded bound. */
+  omitted_withheld?: number;
   /**
    * Whether a file this source was read from has changed size or modification time,
    * or disappeared, since it was read. The change takes effect at the next request
@@ -5825,6 +5841,26 @@ export type WatchStatus = "active" | "fired" | "expired";
  * (rate limits, a 5-hour plan window) are `daily`, longer ones `weekly`.
  */
 export type WindowPeriod = "daily" | "weekly";
+
+/**
+ * A definition withheld from a source at the last request boundary, without its
+ * content or size.
+ */
+export type WithheldContextSource = {
+  /** The context source it would have contributed to. */
+  source: string;
+  path: string;
+  reason: WithheldReason;
+};
+
+/** Why a definition that applies to the Location was left out of context. */
+export type WithheldReason = "trust_held" | "read_denied" | "invalid_frontmatter" | "compat_disabled" | "bound_exceeded";
+
+/** A definition left out of context, without its content or size. */
+export type WithheldSource = {
+  path: string;
+  reason: WithheldReason;
+};
 
 /** One `agent()` call (`workflow.agent.started.1`, then `workflow.agent.settled.1`). */
 export type WorkflowAgent = {

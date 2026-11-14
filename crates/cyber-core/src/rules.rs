@@ -320,16 +320,44 @@ pub struct Definition {
     snapshot: SourceSnapshot,
 }
 
+/// Why a rule definition could not be used: its file could not be read safely, or its
+/// bytes are not a valid definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefinitionError {
+    Unreadable(String),
+    Invalid(String),
+}
+
+impl DefinitionError {
+    pub fn reason(&self) -> &str {
+        match self {
+            Self::Unreadable(reason) | Self::Invalid(reason) => reason,
+        }
+    }
+}
+
+impl std::fmt::Display for DefinitionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.reason())
+    }
+}
+
 impl Definition {
-    pub fn read(path: &Path) -> Result<Self, String> {
-        let snapshot = SourceSnapshot::read_command(path).map_err(|e| e.reason.to_owned())?;
-        let (frontmatter, body) = parse(snapshot.text().map_err(|e| e.reason.to_owned())?)?;
-        let matchers = frontmatter.paths.as_ref().map_or(Ok(Vec::new()), |paths| {
-            paths
-                .iter()
-                .map(|pattern| glob(pattern))
-                .collect::<Result<Vec<_>, _>>()
-        })?;
+    pub fn read(path: &Path) -> Result<Self, DefinitionError> {
+        let unreadable = |reason: &str| DefinitionError::Unreadable(reason.to_owned());
+        let snapshot = SourceSnapshot::read_command(path).map_err(|e| unreadable(e.reason))?;
+        let text = snapshot.text().map_err(|e| unreadable(e.reason))?;
+        let (frontmatter, body) = parse(text).map_err(DefinitionError::Invalid)?;
+        let matchers = frontmatter
+            .paths
+            .as_ref()
+            .map_or(Ok(Vec::new()), |paths| {
+                paths
+                    .iter()
+                    .map(|pattern| glob(pattern))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .map_err(DefinitionError::Invalid)?;
         let definition = Self {
             path: path.into(),
             digest: digest(snapshot.bytes()),
@@ -338,7 +366,7 @@ impl Definition {
             matchers,
             snapshot,
         };
-        definition.verify()?;
+        definition.verify().map_err(DefinitionError::Unreadable)?;
         Ok(definition)
     }
 
@@ -455,6 +483,15 @@ fn glob(pattern: &str) -> Result<GlobMatcher, String> {
 }
 
 /// Direct Markdown children only; no linked directory chain or unbounded enumeration.
+const ENTRY_BOUND: &str = "rule directory entry bound exceeded";
+const FILE_BOUND: &str = "rule file bound exceeded";
+
+/// Whether a [`candidates`] refusal is a discovery bound rather than an unreadable or
+/// linked directory.
+pub fn is_bound_refusal(reason: &str) -> bool {
+    reason == ENTRY_BOUND || reason == FILE_BOUND
+}
+
 pub fn candidates(directory: &Path) -> Result<Vec<PathBuf>, String> {
     match std::fs::symlink_metadata(directory) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -466,7 +503,7 @@ pub fn candidates(directory: &Path) -> Result<Vec<PathBuf>, String> {
     let mut paths = Vec::new();
     for (index, entry) in entries.enumerate() {
         if index >= MAX_ENTRIES {
-            return Err("rule directory entry bound exceeded".into());
+            return Err(ENTRY_BOUND.into());
         }
         let entry = entry.map_err(|e| e.to_string())?;
         let path = directory.join(entry.file_name());
@@ -477,7 +514,7 @@ pub fn candidates(directory: &Path) -> Result<Vec<PathBuf>, String> {
             paths.push(path);
         }
         if paths.len() > MAX_FILES {
-            return Err("rule file bound exceeded".into());
+            return Err(FILE_BOUND.into());
         }
     }
     paths.sort();

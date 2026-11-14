@@ -65,6 +65,7 @@ pub(crate) fn format(data: &Value) -> String {
     }
     lines.extend(prepared_request(&inspection["last_prepared_request"]));
     lines.extend(delivered_rules(inspection));
+    lines.extend(withheld_sources(inspection));
     lines.extend(effective_sources(inspection));
     lines.join("\n")
 }
@@ -162,6 +163,32 @@ fn delivered_rules(inspection: &Value) -> Vec<String> {
     }
     if omitted > 0 {
         lines.push(format!("Additional delivered rules omitted · {omitted}"));
+    }
+    lines
+}
+
+fn withheld_sources(inspection: &Value) -> Vec<String> {
+    let withheld = inspection["withheld_sources"].as_array();
+    let omitted = inspection["omitted_withheld_sources"].as_u64().unwrap_or(0);
+    if withheld.is_none_or(Vec::is_empty) && omitted == 0 {
+        return Vec::new();
+    }
+    let mut lines = vec![
+        String::new(),
+        "Withheld definitions (not loaded, not counted)".into(),
+    ];
+    for entry in withheld.into_iter().flatten() {
+        let field = |name| crate::messaging::clean_line(entry[name].as_str().unwrap_or("unknown"));
+        lines.push(format!(
+            "{} · {}",
+            field("path"),
+            field("reason").replace('_', " ")
+        ));
+    }
+    if omitted > 0 {
+        lines.push(format!(
+            "Additional withheld definitions omitted · {omitted}"
+        ));
     }
     lines
 }
@@ -273,6 +300,29 @@ mod tests {
         assert!(text.contains("Additional delivered rules omitted · 1"));
         assert!(text.contains("  Assumes changed or revoked rules are not delivered again"));
         assert!(!text.contains('\u{001b}'));
+    }
+
+    #[test]
+    fn inspection_shows_withheld_definitions_without_sizes() {
+        let text = super::format(&serde_json::json!({
+            "epoch": 1,
+            "inspection": {
+                "withheld_sources": [
+                    {"source": "core/instructions", "path": "/repo/.cyber/rules/held.md",
+                     "reason": "trust_held"},
+                    {"source": "core/instructions", "path": "/repo/.claude/rules/x\u{001b}.md",
+                     "reason": "compat_disabled"}
+                ],
+                "omitted_withheld_sources": 3
+            }
+        }));
+        assert!(text.contains("Withheld definitions (not loaded, not counted)"));
+        assert!(text.contains("/repo/.cyber/rules/held.md · trust held"));
+        assert!(text.contains("compat disabled"));
+        assert!(text.contains("Additional withheld definitions omitted · 3"));
+        assert!(!text.contains('\u{001b}'));
+        let empty = super::format(&serde_json::json!({"epoch": 1, "inspection": {}}));
+        assert!(!empty.contains("Withheld definitions"));
     }
 
     #[test]

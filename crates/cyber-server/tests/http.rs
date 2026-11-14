@@ -4253,6 +4253,15 @@ async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_defa
     assert!(data["summary"].is_null());
     // Delivered rules are listed by path and approval only, never with their body.
     assert!(data["inspection"]["delivered_rules"].is_array());
+    // The held definition is reported as withheld by path and reason only.
+    let withheld = data["inspection"]["withheld_sources"].as_array().unwrap();
+    assert!(!withheld.is_empty(), "{result:#}");
+    for entry in withheld {
+        let mut keys: Vec<_> = entry.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, ["path", "reason", "source"]);
+        assert!(entry["path"].as_str().unwrap().contains(".cyber/rules"));
+    }
     assert!(!result.to_string().contains("PRIVATE_RULE_BODY_SENTINEL"));
     let estimate = &data["inspection"];
     let effective = estimate["effective_sources"].as_array().unwrap();

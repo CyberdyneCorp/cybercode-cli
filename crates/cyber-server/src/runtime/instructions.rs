@@ -16,6 +16,8 @@ use std::sync::Arc;
 
 use cyber_core::env::EnvSource;
 
+use super::context_sources::{Withheld, WithheldReason};
+
 mod assembly;
 pub(crate) use assembly::Reminder as InstructionReminder;
 
@@ -261,6 +263,9 @@ pub struct Instructions {
     /// Files that apply but were left out because the total budget was spent.
     pub omitted: Vec<InstructionFile>,
     pub warnings: Vec<String>,
+    /// Rule definitions that apply but were withheld, typed for inspection. Each also
+    /// has a warning.
+    pub withheld: Withheld,
     max_file_bytes: usize,
     max_total_bytes: usize,
 }
@@ -549,6 +554,36 @@ fn fill_baseline(loader: &mut Loader<'_>, global_dir: &Path, location: &Path) ->
     first
 }
 
+/// Why a rule definition was not delivered, with the warning that reports it.
+struct Refusal {
+    reason: WithheldReason,
+    message: String,
+}
+
+impl Refusal {
+    fn new(reason: WithheldReason, message: impl Into<String>) -> Self {
+        Self {
+            reason,
+            message: message.into(),
+        }
+    }
+
+    fn unreadable(message: String) -> Self {
+        Self::new(WithheldReason::ReadDenied, message)
+    }
+}
+
+impl From<cyber_core::rules::DefinitionError> for Refusal {
+    fn from(error: cyber_core::rules::DefinitionError) -> Self {
+        match error {
+            cyber_core::rules::DefinitionError::Unreadable(message) => Self::unreadable(message),
+            cyber_core::rules::DefinitionError::Invalid(message) => {
+                Self::new(WithheldReason::InvalidFrontmatter, message)
+            }
+        }
+    }
+}
+
 /// Reads each file once by canonical path, expanding `@path` imports depth first.
 struct Loader<'a> {
     settings: &'a InstructionSettings,
@@ -603,6 +638,13 @@ impl<'a> Loader<'a> {
                 self.out
                     .warnings
                     .push(format!("{}: {error}", directory.display()));
+                // The directory's definitions are withheld as a whole.
+                let reason = if cyber_core::rules::is_bound_refusal(&error) {
+                    WithheldReason::BoundExceeded
+                } else {
+                    WithheldReason::ReadDenied
+                };
+                self.withhold(directory, reason);
                 return;
             }
         };
@@ -614,14 +656,66 @@ impl<'a> Loader<'a> {
                     "{}: rule discovery bound exceeded",
                     directory.display()
                 ));
+                self.withhold(&path, WithheldReason::BoundExceeded);
                 break;
             }
-            if let Err(error) = self.rule(&path, root, target, project) {
+            if let Err(refusal) = self.rule(&path, root, target, project) {
                 self.out
                     .warnings
-                    .push(format!("{}: {error}", path.display()));
+                    .push(format!("{}: {}", path.display(), refusal.message));
+                self.withhold(&path, refusal.reason);
             }
         }
+    }
+
+    fn withhold(&mut self, path: &Path, reason: WithheldReason) {
+        self.out.withheld.record(path.display().to_string(), reason);
+    }
+
+    /// Approval and read policy of a project definition, decided before its bytes are
+    /// opened.
+    fn project_authorization(
+        &self,
+        path: &Path,
+        root: &Path,
+    ) -> Result<RuleAuthorization, Refusal> {
+        if !self.settings.claude_md
+            && path
+                .parent()
+                .and_then(Path::parent)
+                .and_then(Path::file_name)
+                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(".claude"))
+        {
+            return Err(Refusal::new(
+                WithheldReason::CompatDisabled,
+                "Claude rule compatibility is disabled",
+            ));
+        }
+        if !path.starts_with(root) || !self.settings.read_allowed(path, &canonical(path)) {
+            return Err(Refusal::new(
+                WithheldReason::ReadDenied,
+                "rule definition is not allowed by read policy",
+            ));
+        }
+        let held = |message: String| Refusal::new(WithheldReason::TrustHeld, message);
+        let authorization = self
+            .settings
+            .rule_gate
+            .as_ref()
+            .map(|gate| gate.authorize(path, &self.rule_scope))
+            .transpose()
+            .map_err(held)?
+            .flatten()
+            .ok_or_else(|| {
+                held(
+                    "project rule is held until its definition is trusted (cyber trust inspect)"
+                        .into(),
+                )
+            })?;
+        if authorization.root != root {
+            return Err(held("rule approval belongs to another project root".into()));
+        }
+        Ok(authorization)
     }
 
     fn rule(
@@ -630,56 +724,39 @@ impl<'a> Loader<'a> {
         root: &Path,
         target: Option<&Path>,
         project: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), Refusal> {
         if !self.rule_seen.insert(path.into()) {
             return Ok(());
         }
         self.rule_files += 1;
         if self.rule_files > 2 * cyber_core::rules::MAX_FILES {
-            return Err("rule file bound exceeded".into());
-        }
-        if project
-            && !self.settings.claude_md
-            && path
-                .parent()
-                .and_then(Path::parent)
-                .and_then(Path::file_name)
-                .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(".claude"))
-        {
-            return Err("Claude rule compatibility is disabled".into());
+            return Err(Refusal::new(
+                WithheldReason::BoundExceeded,
+                "rule file bound exceeded",
+            ));
         }
         // Approval and read policy precede opening project definition bytes.
         let authorization = if project {
-            if !path.starts_with(root) || !self.settings.read_allowed(path, &canonical(path)) {
-                return Err("rule definition is not allowed by read policy".into());
-            }
-            let authorization = self
-                .settings
-                .rule_gate
-                .as_ref()
-                .map(|gate| gate.authorize(path, &self.rule_scope))
-                .transpose()?
-                .flatten()
-                .ok_or(
-                    "project rule is held until its definition is trusted (cyber trust inspect)",
-                )?;
-            if authorization.root != root {
-                return Err("rule approval belongs to another project root".into());
-            }
-            Some(authorization)
+            Some(self.project_authorization(path, root)?)
         } else {
             None
         };
         let definition = cyber_core::rules::Definition::read(path)?;
         self.rule_bytes = self.rule_bytes.saturating_add(definition.byte_len());
         if self.rule_bytes > cyber_core::rules::MAX_TOTAL_BYTES {
-            return Err("rule definition byte bound exceeded".into());
+            return Err(Refusal::new(
+                WithheldReason::BoundExceeded,
+                "rule definition byte bound exceeded",
+            ));
         }
         if authorization
             .as_ref()
             .is_some_and(|auth| auth.digest != definition.digest)
         {
-            return Err("rule definition differs from its approved digest".into());
+            return Err(Refusal::new(
+                WithheldReason::TrustHeld,
+                "rule definition differs from its approved digest",
+            ));
         }
         if (definition.paths.is_some() && !self.settings.scoped_rules)
             || !definition.applies(root, target)
@@ -689,9 +766,16 @@ impl<'a> Loader<'a> {
         let generation = authorization
             .as_ref()
             .map_or(OWNER_GLOBAL, |auth| auth.generation.as_str());
+        let invalid = |message: &str| Refusal::new(WithheldReason::InvalidFrontmatter, message);
         let binding = RuleBinding {
-            root: root.to_str().ok_or("rule root must be UTF-8")?.into(),
-            path: path.to_str().ok_or("rule path must be UTF-8")?.into(),
+            root: root
+                .to_str()
+                .ok_or_else(|| invalid("rule root must be UTF-8"))?
+                .into(),
+            path: path
+                .to_str()
+                .ok_or_else(|| invalid("rule path must be UTF-8"))?
+                .into(),
             digest: definition.digest.clone(),
             generation: generation.into(),
             native_root: self.settings.native_root.clone(),
@@ -708,8 +792,9 @@ impl<'a> Loader<'a> {
             let limit = self.settings.max_bytes.min(self.discovery_remaining);
             let body = bounded_text(&definition.body, limit);
             self.discovery_remaining -= body.text.len();
-            definition.verify()?;
-            return self.expand_rule_imports(path, root, project, &body);
+            definition.verify().map_err(Refusal::unreadable)?;
+            self.expand_rule_imports(path, root, project, &body);
+            return Ok(());
         }
         let file = InstructionFile {
             path: path.into(),
@@ -724,11 +809,12 @@ impl<'a> Loader<'a> {
             .remaining
             .saturating_sub(if self.out.blocks.is_empty() { 0 } else { 2 });
         if available < label.len() {
-            return self.omit(file);
+            let _ = self.omit(file);
+            return Ok(());
         }
         let limit = self.settings.max_bytes.min(available - label.len());
         let mut body = bounded_text(&definition.body, limit);
-        definition.verify()?;
+        definition.verify().map_err(Refusal::unreadable)?;
         // Taken after the definition's file identity was verified. An edit between the
         // definition's read and this call makes the stamp newer than the delivered
         // bytes; that edit still reaches the next request boundary, which re-reads rules.
@@ -736,24 +822,17 @@ impl<'a> Loader<'a> {
             .ok()
             .map(|metadata| super::context_sources::FileStamp::of(&metadata));
         if let Some(body) = self.record_body(file, body) {
-            self.expand_rule_imports(path, root, project, &body)?;
+            self.expand_rule_imports(path, root, project, &body);
         }
         Ok(())
     }
 
-    fn expand_rule_imports(
-        &mut self,
-        path: &Path,
-        root: &Path,
-        project: bool,
-        body: &Bounded,
-    ) -> Result<(), String> {
+    fn expand_rule_imports(&mut self, path: &Path, root: &Path, project: bool, body: &Bounded) {
         self.stack.push(path.into());
         for reference in imports(body.complete_lines()) {
             self.import(path, &reference, project.then_some(root));
         }
         self.stack.pop();
-        Ok(())
     }
 
     /// Load a candidate file. A missing file is skipped; a file that resolves outside
@@ -928,16 +1007,19 @@ impl<'a> Loader<'a> {
                 "is not allowed by the read permission rules and was not imported",
             );
         }
-        let result = if self.is_rule(&key) {
-            let root = self.rule_root.clone();
-            let target_file = self.rule_target.clone();
-            let global = key.parent() == Some(self.global_rules.as_path());
-            self.rule(&key, &root, target_file.as_deref(), !global)
-        } else {
-            self.include(&target, key, confine)
-        };
-        if let Err(e) = result {
-            self.warn(from, reference, &format!("could not be read: {e}"));
+        if !self.is_rule(&key) {
+            if let Err(e) = self.include(&target, key, confine) {
+                self.warn(from, reference, &format!("could not be read: {e}"));
+            }
+            return;
+        }
+        let root = self.rule_root.clone();
+        let target_file = self.rule_target.clone();
+        let global = key.parent() == Some(self.global_rules.as_path());
+        if let Err(refusal) = self.rule(&key, &root, target_file.as_deref(), !global) {
+            let problem = format!("could not be read: {}", refusal.message);
+            self.warn(from, reference, &problem);
+            self.withhold(&key, refusal.reason);
         }
     }
 
@@ -1605,6 +1687,80 @@ mod tests {
         let text = nested.reminder().unwrap();
         assert!(text.contains("GLOBAL_SCOPED_RULE"));
         assert!(!text.contains("PROJECT_RULE"));
+    }
+
+    /// Withheld definitions are typed for inspection, once per path, and keep their
+    /// warnings; their bytes are never part of the instruction text.
+    #[test]
+    fn withheld_rule_definitions_are_recorded_with_their_reason() {
+        let repo = Repo::new();
+        std::fs::create_dir(repo.global.join("rules")).unwrap();
+        std::fs::write(
+            repo.global.join("rules/broken.md"),
+            "---\npaths: 7\n---\nBROKEN",
+        )
+        .unwrap();
+        repo.write(".cyber/rules/held.md", "HELD_RULE");
+        repo.write(".claude/rules/compat.md", "COMPAT_RULE");
+        repo.write("CYBER.md", "@.claude/rules/compat.md");
+        let mut settings = settings();
+        settings.claude_md = false;
+        let loaded = repo.baseline("", &settings);
+        assert!(loaded.text().is_none_or(|text| !text.contains("_RULE")));
+        let reasons: Vec<_> = loaded
+            .withheld
+            .entries
+            .iter()
+            .map(|entry| {
+                let name = Path::new(&entry.path).file_name().unwrap();
+                (name.to_string_lossy().into_owned(), entry.reason)
+            })
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                ("broken.md".to_owned(), WithheldReason::InvalidFrontmatter),
+                ("compat.md".to_owned(), WithheldReason::CompatDisabled),
+                ("held.md".to_owned(), WithheldReason::TrustHeld),
+            ],
+            "{:?}",
+            loaded.warnings
+        );
+        assert_eq!(loaded.withheld.omitted, 0);
+        assert!(loaded.warnings.iter().any(|w| w.contains("held until")));
+    }
+
+    /// A rule directory refused as a whole (here reached through a symlink) is reported
+    /// as one withheld entry instead of only a warning.
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_rule_directory_is_withheld_as_a_whole() {
+        let repo = Repo::new();
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::write(elsewhere.path().join("linked.md"), "LINKED_RULE").unwrap();
+        std::fs::create_dir(repo.root.join(".cyber")).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path(), repo.root.join(".cyber/rules")).unwrap();
+        let loaded = repo.baseline("", &settings());
+        assert!(
+            loaded
+                .text()
+                .is_none_or(|text| !text.contains("LINKED_RULE"))
+        );
+        assert_eq!(loaded.withheld.entries.len(), 1, "{:?}", loaded.warnings);
+        let entry = &loaded.withheld.entries[0];
+        assert!(entry.path.ends_with(".cyber/rules"), "{entry:?}");
+        assert_eq!(entry.reason, WithheldReason::ReadDenied);
+    }
+
+    #[test]
+    fn withheld_listing_is_bounded_and_counts_the_rest() {
+        let mut withheld = Withheld::default();
+        for index in 0..70 {
+            withheld.record(format!("/r/{index}.md"), WithheldReason::TrustHeld);
+        }
+        withheld.record("/r/0.md".into(), WithheldReason::ReadDenied);
+        assert_eq!(withheld.entries.len(), 64);
+        assert_eq!(withheld.omitted, 6);
     }
 
     /// A binding records the approval generation it was discovered under. Revoking or

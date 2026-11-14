@@ -935,6 +935,115 @@ async fn nested_instructions_resolve_settings_after_the_successful_operation() {
     assert_eq!(state.epoch.unwrap().reminded_instructions.len(), 1);
 }
 
+/// Inspection of an untrusted source: definitions withheld at the request boundary are
+/// listed with their reason, without opening them again, returning their bodies,
+/// counting their bytes or appending events.
+#[tokio::test]
+async fn inspection_reports_held_rule_definitions_without_reading_or_counting_them() {
+    async fn inspect_with_held_body(body: &str) -> (serde_json::Value, Harness, String) {
+        let h = Harness::new(Setup {
+            scripts: vec![("test/main", vec![text("first")])],
+            ..Setup::default()
+        });
+        let rules = h.repo.join(".cyber/rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(rules.join("held.md"), body).unwrap();
+        let global = h.dir.path().join("global/rules");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join("broken.md"),
+            "---\npaths: 7\n---\nINVALID_RULE_BODY",
+        )
+        .unwrap();
+        // A canonical Location: rule directories reached through a symlinked path are
+        // refused as a whole (`read_denied`) before any definition is considered.
+        let request = cyber_server::runtime::CreateSession {
+            directory: h.repo.canonicalize().unwrap().display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        };
+        let id = h.runtime.create_session(request).await.unwrap().id;
+        h.runtime.admit(&id, admit("begin")).await.unwrap();
+        h.settle(&id).await;
+        // Unreadable now: inspection must use what the request boundary recorded.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                rules.join("held.md"),
+                std::fs::Permissions::from_mode(0o000),
+            )
+            .unwrap();
+        }
+        let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+        let state = h.runtime.state(&id).await.unwrap();
+        let inspection = serde_json::to_value(h.runtime.inspect_context(&state)).unwrap();
+        assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                rules.join("held.md"),
+                std::fs::Permissions::from_mode(0o644),
+            )
+            .unwrap();
+        }
+        (inspection, h, id)
+    }
+
+    let held_body = format!("PRIVATE_HELD_RULE {}", "y".repeat(64 * 1024));
+    let (inspection, h, _) = inspect_with_held_body(&held_body).await;
+    let canonical = |path: std::path::PathBuf| path.canonicalize().unwrap().display().to_string();
+    let held = canonical(h.repo.join(".cyber/rules/held.md"));
+    let broken = canonical(h.dir.path().join("global/rules/broken.md"));
+    let withheld = inspection["withheld_sources"].as_array().unwrap();
+    let entries: Vec<_> = withheld
+        .iter()
+        .map(|entry| {
+            (
+                entry["path"].as_str().unwrap().to_owned(),
+                entry["reason"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert!(
+        entries.contains(&(held.clone(), "trust_held".into())),
+        "{inspection:#}"
+    );
+    assert!(
+        entries.contains(&(broken, "invalid_frontmatter".into())),
+        "{inspection:#}"
+    );
+    assert!(
+        withheld
+            .iter()
+            .all(|entry| entry["source"] == "core/instructions")
+    );
+    assert_eq!(inspection["omitted_withheld_sources"], 0);
+    let text = inspection.to_string();
+    assert!(!text.contains("PRIVATE_HELD_RULE"));
+    assert!(!text.contains("INVALID_RULE_BODY"));
+    // Withheld entries move to the inspection list; effective sources do not repeat them.
+    assert!(
+        inspection["effective_sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|source| source.get("withheld").is_none())
+    );
+    let request = h.models.requests("test/main");
+    assert_eq!(request.len(), 1);
+    assert!(!format!("{:?}", request[0]).contains("PRIVATE_HELD_RULE"));
+
+    // The held definition's size contributes nothing to the estimate.
+    let (small, _small_h, _) = inspect_with_held_body("PRIVATE_HELD_RULE").await;
+    assert_eq!(
+        small["estimated_input_tokens"], inspection["estimated_input_tokens"],
+        "{small:#}\n{inspection:#}"
+    );
+    assert!(inspection["estimated_input_tokens"].as_u64().unwrap() < 16 * 1024);
+}
+
 /// Same-path replacement must not load the new checkout's instruction files for
 /// an operation captured against the old physical Location.
 #[tokio::test]

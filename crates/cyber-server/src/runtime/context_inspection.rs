@@ -4,7 +4,9 @@ use cyber_llm::Message;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::context_sources::{FileStamp, SourceMetadata, SourceStatus};
+use super::context_sources::{
+    FileStamp, SourceMetadata, SourceStatus, WITHHELD_LISTED, WithheldReason,
+};
 
 use super::instructions::RuleBinding;
 use super::{InputStatus, Runtime, SessionState, view};
@@ -39,6 +41,16 @@ pub struct DeliveredRule {
     /// The checkout approval generation that admitted it, or `owner-global`.
     pub generation: String,
     pub approval: RuleApproval,
+}
+
+/// A definition withheld from a source at the last request boundary, without its
+/// content or size.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct WithheldContextSource {
+    /// The context source it would have contributed to.
+    pub source: String,
+    pub path: String,
+    pub reason: WithheldReason,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -182,6 +194,13 @@ pub struct ContextInspection {
     pub changed_delivered_rules: usize,
     /// Listed sources with `changed_on_disk` true.
     pub changed_sources: usize,
+    /// Up to 64 definitions that applied but were withheld (held by trust, refused by
+    /// read policy, invalid, disabled compatibility, or past a discovery bound), as
+    /// recorded at the last request boundary. Inspection does not open them, and their
+    /// sizes count toward no estimate.
+    pub withheld_sources: Vec<WithheldContextSource>,
+    /// Withheld definitions beyond the listing bound.
+    pub omitted_withheld_sources: usize,
     /// Expected input of the next ordinary request. Absent until a request has been
     /// prepared in this Session, because tool schemas are otherwise unknown.
     pub next_request: Option<NextRequestEstimate>,
@@ -220,6 +239,8 @@ impl Runtime {
             omitted_delivered_rules: 0,
             changed_delivered_rules: 0,
             changed_sources: 0,
+            withheld_sources: Vec::new(),
+            omitted_withheld_sources: 0,
             next_request: None,
         };
         if let Some(epoch) = &state.epoch {
@@ -245,6 +266,8 @@ impl Runtime {
                                 file_paths: Vec::new(),
                                 omitted_file_paths: 0,
                                 file_stamps: Default::default(),
+                                withheld: Vec::new(),
+                                omitted_withheld: 0,
                             });
                     EffectiveContextSource {
                         id: id.clone(),
@@ -270,6 +293,7 @@ impl Runtime {
                 .filter(|source| source.changed_on_disk == Some(true))
                 .count();
             self.list_delivered_rules(&epoch.delivered_rules, &mut inspection);
+            list_withheld(&mut inspection);
         }
         let (Some(epoch), Some(model)) = (&state.epoch, model) else {
             return inspection;
@@ -309,6 +333,28 @@ impl Runtime {
             .filter(|rule| matches!(rule.approval, RuleApproval::Changed | RuleApproval::Revoked))
             .count();
     }
+}
+
+/// Move each listed source's withheld definitions into the inspection's bounded list.
+/// Only the recorded paths and reasons are used; nothing is opened.
+fn list_withheld(inspection: &mut ContextInspection) {
+    let mut omitted = inspection.omitted_withheld_sources;
+    for source in &mut inspection.effective_sources {
+        let metadata = &mut source.metadata;
+        omitted += std::mem::take(&mut metadata.omitted_withheld);
+        for entry in std::mem::take(&mut metadata.withheld) {
+            if inspection.withheld_sources.len() < WITHHELD_LISTED {
+                inspection.withheld_sources.push(WithheldContextSource {
+                    source: source.id.clone(),
+                    path: entry.path,
+                    reason: entry.reason,
+                });
+            } else {
+                omitted += 1;
+            }
+        }
+    }
+    inspection.omitted_withheld_sources = omitted;
 }
 
 fn digest_prefix(digest: &str) -> String {
@@ -471,6 +517,8 @@ mod tests {
                     (path(name), stamp)
                 })
                 .collect(),
+            withheld: Vec::new(),
+            omitted_withheld: 0,
         }
     }
 

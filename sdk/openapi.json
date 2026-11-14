@@ -10176,6 +10176,19 @@
             "minimum": 0,
             "description": "Listed sources with `changed_on_disk` true."
           },
+          "withheld_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WithheldContextSource"
+            },
+            "description": "Up to 64 definitions that applied but were withheld (held by trust, refused by\nread policy, invalid, disabled compatibility, or past a discovery bound), as\nrecorded at the last request boundary. Inspection does not open them, and their\nsizes count toward no estimate."
+          },
+          "omitted_withheld_sources": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Withheld definitions beyond the listing bound."
+          },
           "next_request": {
             "anyOf": [
               {
@@ -10199,7 +10212,9 @@
           "delivered_rules",
           "omitted_delivered_rules",
           "changed_delivered_rules",
-          "changed_sources"
+          "changed_sources",
+          "withheld_sources",
+          "omitted_withheld_sources"
         ]
       },
       "PreparedContextEstimate": {
@@ -10319,6 +10334,19 @@
             },
             "description": "Stamps of the listed files taken while they were read. Historical records and\nsources that are not read from files have none."
           },
+          "withheld": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WithheldSource"
+            },
+            "description": "Definitions that applied but were left out at the request boundary, recorded\nwithout opening them further. Inspection reports them as `withheld_sources`."
+          },
+          "omitted_withheld": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Withheld definitions beyond the recorded bound."
+          },
           "changed_on_disk": {
             "type": [
               "boolean",
@@ -10376,6 +10404,52 @@
         ],
         "description": "Size and modification time of a file when it was read. Inspection compares them with\nthe file's current metadata to report an edit without reading the file again."
       },
+      "WithheldSource": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/WithheldReason"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "description": "A definition left out of context, without its content or size."
+      },
+      "WithheldReason": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "trust_held",
+            "description": "A project definition is not approved, or differs from its approval."
+          },
+          {
+            "type": "string",
+            "const": "read_denied",
+            "description": "Read permission rules refuse it, or its file could not be read safely."
+          },
+          {
+            "type": "string",
+            "const": "invalid_frontmatter",
+            "description": "Its frontmatter or path globs are not valid."
+          },
+          {
+            "type": "string",
+            "const": "compat_disabled",
+            "description": "It is a Claude-compatible definition and that compatibility is disabled."
+          },
+          {
+            "type": "string",
+            "const": "bound_exceeded",
+            "description": "Rule discovery reached its file or byte bound before it."
+          }
+        ],
+        "description": "Why a definition that applies to the Location was left out of context."
+      },
       "DeliveredRule": {
         "type": "object",
         "properties": {
@@ -10430,6 +10504,27 @@
           }
         ],
         "description": "Whether a delivered rule is still the definition its current approval admits."
+      },
+      "WithheldContextSource": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "The context source it would have contributed to."
+          },
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/WithheldReason"
+          }
+        },
+        "required": [
+          "source",
+          "path",
+          "reason"
+        ],
+        "description": "A definition withheld from a source at the last request boundary, without its\ncontent or size."
       },
       "NextRequestEstimate": {
         "type": "object",

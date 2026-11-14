@@ -42,6 +42,52 @@ impl FileStamp {
     }
 }
 
+/// Withheld definitions one source records at a request boundary.
+pub const WITHHELD_LISTED: usize = 64;
+
+/// Why a definition that applies to the Location was left out of context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WithheldReason {
+    /// A project definition is not approved, or differs from its approval.
+    TrustHeld,
+    /// Read permission rules refuse it, or its file could not be read safely.
+    ReadDenied,
+    /// Its frontmatter or path globs are not valid.
+    InvalidFrontmatter,
+    /// It is a Claude-compatible definition and that compatibility is disabled.
+    CompatDisabled,
+    /// Rule discovery reached its file or byte bound before it.
+    BoundExceeded,
+}
+
+/// A definition left out of context, without its content or size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WithheldSource {
+    pub path: String,
+    pub reason: WithheldReason,
+}
+
+/// Bounded withheld definitions, one entry per path, with a count of the rest.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Withheld {
+    pub entries: Vec<WithheldSource>,
+    pub omitted: usize,
+}
+
+impl Withheld {
+    pub fn record(&mut self, path: String, reason: WithheldReason) {
+        if self.entries.iter().any(|entry| entry.path == path) {
+            return;
+        }
+        if self.entries.len() < WITHHELD_LISTED {
+            self.entries.push(WithheldSource { path, reason });
+        } else {
+            self.omitted += 1;
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceMetadata {
     pub origin: String,
@@ -55,6 +101,17 @@ pub struct SourceMetadata {
     /// sources that are not read from files have none.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub file_stamps: BTreeMap<String, FileStamp>,
+    /// Definitions that applied but were left out at the request boundary, recorded
+    /// without opening them further. Inspection reports them as `withheld_sources`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub withheld: Vec<WithheldSource>,
+    /// Withheld definitions beyond the recorded bound.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub omitted_withheld: usize,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,51 +138,56 @@ pub fn capture(
             }
             Observed::Unavailable(_) => SourceStatus::Unavailable,
         };
-        let (file_paths, omitted_file_paths, file_stamps) = if status
-            == SourceStatus::RetainedUnavailable
-        {
-            previous.get(id).map_or_else(
-                || (Vec::new(), 0, BTreeMap::new()),
-                |record| {
-                    (
-                        record.file_paths.clone(),
-                        record.omitted_file_paths,
-                        record.file_stamps.clone(),
-                    )
-                },
-            )
-        } else {
-            let (paths, omitted) = bounded_paths(observed.files.get(id).map_or(&[], Vec::as_slice));
-            let stamps = observed
-                .stamps
-                .get(id)
-                .map_or_else(BTreeMap::new, |stamps| {
-                    paths
-                        .iter()
-                        .filter_map(|path| Some((path.clone(), *stamps.get(path)?)))
-                        .collect()
-                });
-            (paths, omitted, stamps)
-        };
-        (
-            id.clone(),
-            SourceMetadata {
-                origin: if status == SourceStatus::RetainedUnavailable {
-                    previous.get(id).map(|record| record.origin.clone())
-                } else {
-                    observed.origins.get(id).cloned()
-                }
-                .unwrap_or_else(|| "unknown".into()),
+        let retained = (status == SourceStatus::RetainedUnavailable)
+            .then(|| previous.get(id))
+            .flatten();
+        let mut record = match retained {
+            Some(record) => SourceMetadata {
                 status,
-                pending_update: observed.pending.contains(id),
-                estimated_tokens: snapshot.get(id).map(|text| (text.len() / 4) as u64),
-                file_paths,
-                omitted_file_paths,
-                file_stamps,
+                ..record.clone()
             },
-        )
+            // Nothing recorded for the retained text: no provenance can be claimed.
+            None if status == SourceStatus::RetainedUnavailable => {
+                provenance(status, &Observation::default(), id)
+            }
+            None => provenance(status, observed, id),
+        };
+        record.pending_update = observed.pending.contains(id);
+        record.estimated_tokens = snapshot.get(id).map(|text| (text.len() / 4) as u64);
+        (id.clone(), record)
     }));
     records
+}
+
+/// What the observation recorded about one source while reading it.
+fn provenance(status: SourceStatus, observed: &Observation, id: &str) -> SourceMetadata {
+    let (file_paths, omitted_file_paths) =
+        bounded_paths(observed.files.get(id).map_or(&[], Vec::as_slice));
+    let file_stamps = observed
+        .stamps
+        .get(id)
+        .map_or_else(BTreeMap::new, |stamps| {
+            file_paths
+                .iter()
+                .filter_map(|path| Some((path.clone(), *stamps.get(path)?)))
+                .collect()
+        });
+    let withheld = observed.withheld.get(id).cloned().unwrap_or_default();
+    SourceMetadata {
+        origin: observed
+            .origins
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| "unknown".into()),
+        status,
+        pending_update: false,
+        estimated_tokens: None,
+        file_paths,
+        omitted_file_paths,
+        file_stamps,
+        withheld: withheld.entries,
+        omitted_withheld: withheld.omitted,
+    }
 }
 
 fn bounded_paths(paths: &[String]) -> (Vec<String>, usize) {

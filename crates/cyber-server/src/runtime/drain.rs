@@ -947,6 +947,7 @@ impl Inner {
         for (key, value) in self.options.tools.context_observations_owned(&turn).await {
             observed.files.remove(&key);
             observed.stamps.remove(&key);
+            observed.withheld.remove(&key);
             observed.origins.insert(key.clone(), "tool_host".into());
             observed.sources.insert(key, value);
         }
