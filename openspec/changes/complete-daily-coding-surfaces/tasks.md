@@ -23,6 +23,18 @@ Task 2.4 evidence now includes real service kill/reload/restage/clear, disabled 
 - [ ] 3.3 Integrate 200 MiB cap, visible unavailable/overflow state, reference-aware retention and staged/branch/recovery protections.
 - [ ] 3.4 Test real non-git editing/restoration, limits, deletes/renames, unsupported files, concurrent Session/editor changes, crashes and native filesystem privacy.
 
+3.4 progress (2026-11-14, local macOS arm64 only): `file_copy.rs` now covers a
+non-Git rename restored as delete plus create (the new name is removed only when its
+bytes match the capture, the old name returns with its mode, an owner edit to the new
+name refuses the whole restore, an unrelated owner edit is kept), FIFO and Unix-socket
+entries disclosed as `unsupported` and never opened, recreated or deleted, and an
+editor write between two actual replacements that refuses the rest with a retained
+journal and keeps the edit. `branches_cli.rs` runs a real-binary non-Git `both`
+rewind over a rename and delete and undoes it with `sessions checkout --code`.
+Device nodes are not exercised (they need privilege). 3.4 stays open: Linux and
+macOS Intel results, the remaining crash cuts and native filesystem privacy
+acceptance are not evidenced here.
+
 ### Managed recovery implementation and acceptance map
 
 These steps expand 3.2–3.4 and the remaining native cuts in 2.4. They do not

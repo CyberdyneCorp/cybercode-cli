@@ -1129,3 +1129,216 @@ fn restore_old_orphans(retained: &[(PathBuf, Vec<u8>)]) -> Vec<(PathBuf, Vec<u8>
         })
         .collect()
 }
+
+fn mode(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777
+}
+
+#[tokio::test]
+async fn rename_is_restored_as_delete_plus_create_and_preserves_unrelated_owner_edits() {
+    for edited in [false, true] {
+        renamed_restore(edited).await;
+    }
+}
+
+/// A non-Git rename has no move record: undo removes the new name only when its
+/// bytes still match the captured agent result and recreates the old name.
+async fn renamed_restore(edited: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let p = Project::new();
+    p.write("a.txt", "renamed bytes\n");
+    p.write("c.txt", "owner base\n");
+    std::fs::set_permissions(p.root.join("a.txt"), PermissionsExt::from_mode(0o640)).unwrap();
+    let before = p.track().await;
+    std::fs::rename(p.root.join("a.txt"), p.root.join("b.txt")).unwrap();
+    let after = p.track().await;
+    p.write("c.txt", "owner edit\n");
+    if edited {
+        p.write("b.txt", "owner edit after rename\n");
+    }
+    let current = p.track().await;
+    let result = p
+        .snapshots
+        .restore_reviewed(
+            &p.dir(),
+            &before.tree,
+            &after.tree,
+            &current.tree,
+            Arc::new(|| Ok(())),
+        )
+        .await;
+    assert_eq!(
+        std::fs::read(p.root.join("c.txt")).unwrap(),
+        b"owner edit\n"
+    );
+    if edited {
+        return assert_edited_rename_refused(&p, result).await;
+    }
+    assert_eq!(result.unwrap(), ["a.txt", "b.txt"]);
+    assert!(!p.root.join("b.txt").exists());
+    assert_eq!(
+        std::fs::read(p.root.join("a.txt")).unwrap(),
+        b"renamed bytes\n"
+    );
+    assert_eq!(mode(&p.root.join("a.txt")), 0o640);
+}
+
+/// An owner edit to the new name is not the captured agent result: the whole
+/// restore refuses, so neither name changes and no journal is left.
+async fn assert_edited_rename_refused(p: &Project, result: Result<Vec<String>, RestoreError>) {
+    assert!(matches!(result, Err(RestoreError::Conflict(paths)) if paths == ["b.txt"]));
+    assert!(!p.root.join("a.txt").exists());
+    assert_eq!(
+        std::fs::read(p.root.join("b.txt")).unwrap(),
+        b"owner edit after rename\n"
+    );
+    assert!(p.snapshots.recovery(&p.dir()).await.unwrap().is_empty());
+}
+
+fn mkfifo(path: &std::path::Path) {
+    let status = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+fn inode(path: &std::path::Path) -> (u64, std::fs::FileType) {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    (metadata.ino(), metadata.file_type())
+}
+
+/// FIFOs and sockets stand in for every non-regular entry (device nodes take the same
+/// `!is_file()` branch but cannot be created without privilege). An open on a FIFO
+/// without a writer blocks, so a bounded restore also shows it is never opened.
+#[tokio::test]
+async fn fifo_socket_and_device_entries_are_disclosed_unsupported_and_never_restored_or_deleted() {
+    use std::os::unix::fs::FileTypeExt;
+    let p = Project::new();
+    p.write("a.txt", "before\n");
+    mkfifo(&p.root.join("old-pipe"));
+    let before = p.track().await;
+    assert!(before.skipped.iter().any(|s| s == "unsupported: old-pipe"));
+    std::fs::remove_file(p.root.join("old-pipe")).unwrap();
+    p.write("a.txt", "after\n");
+    mkfifo(&p.root.join("new-pipe"));
+    let _socket = std::os::unix::net::UnixListener::bind(p.root.join("sock")).unwrap();
+    let after = p.track().await;
+    for name in ["new-pipe", "sock"] {
+        let label = format!("unsupported: {name}");
+        assert!(after.skipped.contains(&label), "{:?}", after.skipped);
+    }
+    let disclosed = p
+        .snapshots
+        .exclusions(&p.dir(), vec![before.tree.clone(), after.tree.clone()])
+        .await
+        .unwrap();
+    for name in ["old-pipe", "new-pipe", "sock"] {
+        let label = format!("unsupported: {name}");
+        assert!(
+            disclosed.iter().any(|d| d.ends_with(&label)),
+            "{disclosed:?}"
+        );
+    }
+    let preview = p
+        .snapshots
+        .preview_restore(&p.dir(), &before.tree, &after.tree, &after.tree)
+        .await
+        .unwrap();
+    assert_eq!(
+        preview.iter().map(|f| f.file.as_str()).collect::<Vec<_>>(),
+        ["a.txt"]
+    );
+    let (pipe, sock) = (inode(&p.root.join("new-pipe")), inode(&p.root.join("sock")));
+    let restored = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        p.snapshots.restore_reviewed(
+            &p.dir(),
+            &before.tree,
+            &after.tree,
+            &after.tree,
+            Arc::new(|| Ok(())),
+        ),
+    )
+    .await
+    .expect("restore must never open a FIFO")
+    .unwrap();
+    assert_eq!(restored, ["a.txt"]);
+    assert_eq!(std::fs::read(p.root.join("a.txt")).unwrap(), b"before\n");
+    assert!(std::fs::symlink_metadata(p.root.join("old-pipe")).is_err());
+    assert_eq!(inode(&p.root.join("new-pipe")), pipe);
+    assert_eq!(inode(&p.root.join("sock")), sock);
+    assert!(pipe.1.is_fifo() && sock.1.is_socket());
+}
+
+/// Parks the in-process restore after its first actual replacement, lets an editor
+/// write a path the plan has not reached, then resumes the same restore.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_concurrent_editor_write_between_replacements_refuses_the_rest_and_keeps_the_edit() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    let p = Project::new();
+    p.write("a.txt", "before a");
+    p.write("b.txt", "before b");
+    let before = p.track().await;
+    p.write("a.txt", "after a");
+    p.write("b.txt", "after b");
+    let after = p.track().await;
+    let (parked_tx, parked_rx) = mpsc::channel::<()>();
+    let (resume_tx, resume_rx) = mpsc::channel::<()>();
+    let (parked_tx, resume_rx) = (Mutex::new(parked_tx), Mutex::new(resume_rx));
+    let first = p.root.join("a.txt");
+    let parked = AtomicBool::new(false);
+    let park: Arc<dyn Fn() -> Result<(), String> + Send + Sync> = Arc::new(move || {
+        if std::fs::read(&first).ok().as_deref() == Some(b"before a")
+            && !parked.swap(true, Ordering::SeqCst)
+        {
+            parked_tx.lock().unwrap().send(()).unwrap();
+            resume_rx.lock().unwrap().recv().unwrap();
+        }
+        Ok(())
+    });
+    let (snapshots, dir) = (p.snapshots.clone(), p.dir());
+    let (target, recorded) = (before.tree.clone(), after.tree.clone());
+    let restore = tokio::spawn(async move {
+        snapshots
+            .restore_reviewed(&dir, &target, &recorded, &recorded, park)
+            .await
+    });
+    tokio::task::spawn_blocking(move || {
+        parked_rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("restore did not reach the between-file cut")
+    })
+    .await
+    .unwrap();
+    p.write("b.txt", "editor b");
+    resume_tx.send(()).unwrap();
+    let result = restore.await.unwrap();
+    assert!(
+        matches!(&result, Err(RestoreError::Failed(message)) if message.contains("conflicts: b.txt")),
+        "{result:?}"
+    );
+    assert_eq!(std::fs::read(p.root.join("a.txt")).unwrap(), b"before a");
+    assert_eq!(std::fs::read(p.root.join("b.txt")).unwrap(), b"editor b");
+    let recovery = p.snapshots.recovery(&p.dir()).await.unwrap();
+    assert_eq!(recovery.len(), 1);
+    assert!(!recovery[0].filesystem_complete);
+    assert_eq!(recovery[0].applied, ["a.txt"]);
+    let journal = namespace(&p).join("journals").join(&recovery[0].id);
+    assert_eq!(std::fs::read(journal.join("stage_0")).unwrap(), b"after a");
+    assert!(
+        p.snapshots
+            .track(&p.dir())
+            .await
+            .unwrap_err()
+            .contains("requires recovery")
+    );
+    assert_eq!(std::fs::read(p.root.join("b.txt")).unwrap(), b"editor b");
+}

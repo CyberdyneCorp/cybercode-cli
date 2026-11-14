@@ -3783,6 +3783,42 @@ acceptance remain open. No full workspace, CLI/TUI acceptance rerun, SDK executi
 source-bound CI, other-platform execution, push/PR/merge or parent/issue acceptance
 is claimed by this increment.
 
+## Non-Git rename, unsupported entry and concurrent editor tests (2026-11-14, local)
+
+Test-only additions for task 3.4; no product code changed and no defect was found.
+
+- `crates/cyber-snapshot/tests/file_copy.rs`
+  - `rename_is_restored_as_delete_plus_create_and_preserves_unrelated_owner_edits`:
+    a captured `a.txt` (mode 0640) renamed to `b.txt` is restored by deleting
+    `b.txt` and recreating `a.txt` with its mode; when the owner edited `b.txt`
+    after the rename the whole restore refuses with `Conflict(["b.txt"])`,
+    neither name changes and no journal remains. An unrelated owner edit survives
+    both cases.
+  - `fifo_socket_and_device_entries_are_disclosed_unsupported_and_never_restored_or_deleted`:
+    FIFOs and a bound Unix socket are reported as `unsupported: <path>` in the
+    capture and in `exclusions`, are absent from the preview, and a bounded
+    restore neither opens a FIFO, recreates a removed FIFO nor deletes or replaces
+    (same inode and type) the current FIFO and socket. Device nodes take the same
+    non-regular branch but are not created here (they need privilege).
+  - `a_concurrent_editor_write_between_replacements_refuses_the_rest_and_keeps_the_edit`:
+    the admission callback parks the restore after the first actual replacement;
+    the test writes the not-yet-replaced `b.txt`, resumes, and gets
+    `Restore native ownership conflicts: b.txt`. The journal is retained
+    incomplete with `applied == ["a.txt"]` and the displaced `a.txt` preimage,
+    later capture reports `requires recovery`, and the editor bytes survive.
+- `crates/cyber-cli/tests/branches_cli.rs`
+  `non_git_rewind_with_rename_and_delete_round_trips_through_cli`: through the
+  real binary in a Location without `.git`, the agent renames `a.txt` and deletes
+  `b.txt` with a shell `apply_patch` heredoc; a reviewed `sessions rewind --target
+  both` recreates both and removes `renamed.txt`, and `sessions checkout <message>
+  --code` undoes it without inference while an unrelated owner file is kept.
+
+Verification on local macOS arm64: `cargo nextest run --profile ci -p cyber-snapshot
+--test file_copy` (34 passed) and `-p cyber-cli --test branches_cli` (23 passed);
+each new test passed three consecutive runs. Platform acceptance (Linux x64/ARM,
+macOS Intel, Windows limits), remaining crash cuts and native filesystem privacy
+remain open, so 3.4 and the M2–M8 parent obligations are not accepted.
+
 ## Rule approval fencing at settlement (2026-11-14, local)
 
 Nested rule discovery resolves the rule gate after the successful effect, but the

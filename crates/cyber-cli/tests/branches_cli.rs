@@ -34,6 +34,7 @@ fn reply(body: &Value) -> Value {
     let (file, content) = match () {
         _ if last.contains("WRITE-A") => ("a.txt", "alpha\n"),
         _ if last.contains("WRITE-B") => ("b.txt", "beta\n"),
+        _ if last.contains("RENAME-DELETE") => return rename_and_delete(),
         _ if last.contains("GATE") => {
             return json!({ "gate": "busy", "then": { "content": "Done." } });
         }
@@ -42,6 +43,16 @@ fn reply(body: &Value) -> Value {
     let arguments = json!({ "path": file, "content": content }).to_string();
     json!({ "tool_calls": [{ "index": 0, "id": format!("call_{file}"), "type": "function",
         "function": { "name": "write", "arguments": arguments } }] })
+}
+
+/// One shell `apply_patch` heredoc that renames `a.txt` and deletes `b.txt`; with no
+/// `apply_patch` program on the PATH it runs as the patch tool.
+fn rename_and_delete() -> Value {
+    let command = "apply_patch <<'EOF'\n*** Begin Patch\n*** Update File: a.txt\n\
+        *** Move to: renamed.txt\n*** Delete File: b.txt\n*** End Patch\nEOF";
+    let arguments = json!({ "command": command }).to_string();
+    json!({ "tool_calls": [{ "index": 0, "id": "call_patch", "type": "function",
+        "function": { "name": "bash", "arguments": arguments } }] })
 }
 
 struct Env {
@@ -500,6 +511,49 @@ fn conversation_rewind_works_without_git_and_stale_context_never_applies() {
         &confirm_rewind(&env, &id, &first, "conversation", &fresh),
         2,
     );
+}
+
+/// A non-Git Location has no rename record: the reviewed `both` rewind recreates the
+/// old name and deletes the new one, and checking the inactive branch out with code
+/// undoes it, never touching an unrelated owner file.
+#[test]
+fn non_git_rewind_with_rename_and_delete_round_trips_through_cli() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let id = env.exec(None, "WRITE-A");
+    env.exec(Some(&id), "WRITE-B");
+    env.exec(Some(&id), "RENAME-DELETE");
+    assert_eq!(env.file("renamed.txt").as_deref(), Some("alpha\n"));
+    assert_eq!((env.file("a.txt"), env.file("b.txt")), (None, None));
+    std::fs::write(env.directory.join("owner.txt"), "owner\n").unwrap();
+    let users = env.user_ids(&id);
+    let preview = rewind_preview(&env, &id, &users[2], "both");
+    let mut files: Vec<&str> = preview["code"]["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["file"].as_str().unwrap())
+        .collect();
+    files.sort_unstable();
+    assert_eq!(files, ["a.txt", "b.txt", "renamed.txt"]);
+    json(&confirm_rewind(&env, &id, &users[2], "both", &preview));
+    assert_eq!(env.file("a.txt").as_deref(), Some("alpha\n"));
+    assert_eq!(env.file("b.txt").as_deref(), Some("beta\n"));
+    assert_eq!(env.file("renamed.txt"), None);
+    assert_eq!(env.user_ids(&id), users[..2]);
+    std::fs::write(env.directory.join("owner.txt"), "owner later\n").unwrap();
+    let requests = model.requests().len();
+    let undone = exits(
+        &env.cyber(&["sessions", "checkout", &id, &users[2], "--code"]),
+        0,
+    );
+    assert!(undone.contains("restored 3 files"), "{undone}");
+    assert_eq!(env.file("renamed.txt").as_deref(), Some("alpha\n"));
+    assert_eq!((env.file("a.txt"), env.file("b.txt")), (None, None));
+    assert_eq!(env.file("owner.txt").as_deref(), Some("owner later\n"));
+    assert_eq!(env.user_ids(&id), users);
+    assert_eq!(model.requests().len(), requests, "undo starts no inference");
 }
 
 /// Use the same authenticated reviewed actions as the TUI, through the actual CLI.
