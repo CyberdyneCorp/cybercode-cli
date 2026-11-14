@@ -71,7 +71,7 @@ The desktop name (`XDG_CURRENT_DESKTOP`) is reported for diagnostics and matched
 ## 3. Milestones
 
 - **Milestone A (this change's implementation scope): capture only.** It uses the ScreenCast portal only, not RemoteDesktop, so the portal dialog asks to share a screen or window and not to control the desktop. All `computer` input actions on Linux return `target_assurance_unavailable` before any intent is journaled and with zero OS side effects.
-- **Milestone B (specified, disabled): negotiated input.** This covers the RemoteDesktop + EIS transport in §7. It can be built and tested against mock EIS, but it is enabled on a real desktop only after the owner approves a compositor-specific assurance provider (§5.3, decision D1), together with its own acceptance evidence. A capture-only milestone is not completion of #43's input scope.
+- **Milestone B (not part of this change): negotiated input.** This is the RemoteDesktop + EIS transport sketched in §7. Under D1 an input path arrives only together with an approved compositor-specific assurance provider, so milestone B is a separate follow-up change (working name `add-linux-computer-input`) that carries its own transport requirements, tasks, provider review and acceptance evidence. This change adds no transport requirement, so it can be completed and archived after milestone A without putting unimplemented SHALLs into the main spec. A capture-only milestone is not completion of #43's input scope.
 
 ## 4. Architecture mapped onto existing seams
 
@@ -121,7 +121,9 @@ refusals: [code]                      // specific, stable snake_case codes (§6.
 ```
 
 - On Linux, `accessibility` stays `false` and `minimum_version` names the Linux prerequisite, e.g. "Wayland session with xdg-desktop-portal ScreenCast v4+".
-- The runtime's input admission fact becomes `health.screen_capture && (capture || health.input_control)`, replacing `health.accessibility`. Revocation-on-loss tracks `input_control` the same way it tracks `accessibility` today.
+- **Meaning of `screen_capture` on Linux.** The runtime treats `screen_capture` as "capture is authorized now" and stops every grant when it turns false (`runtime/computer/mod.rs`). Linux has no OS permission for this, so the Linux backend sets `screen_capture` equal to `capture`: true only when the capture probe passes (§6.1) and, while a scope is armed, that scope is live. It is never a fictional permission flag.
+- **Admission formula.** The runtime's admission fact becomes `health.screen_capture && (action_is_screenshot || health.input_control)`, where `action_is_screenshot` is the per-action flag that the current code names `capture`. It replaces `health.accessibility`. Revocation-on-loss tracks `input_control` the same way it tracks `accessibility` today.
+- **Probe cost and caching.** A full Linux probe takes several D-Bus round trips with 2–3 s timeouts, so admission never runs it. While a scope is armed, `health(false)` answers from in-memory state only: the cached probe result plus scope liveness (portal session open, bus connection up, stream connected), which the helper already tracks through signals. Without an armed scope, the probe result is cached for 5 s. A probe failure that happens while a scope is live does not by itself flip `screen_capture`; only the scope's own revocation events (§9) end a live grant. This keeps one transient D-Bus timeout from stopping every grant and keeps action latency independent of the bus.
 - Generated OpenAPI, the TypeScript SDK and CLI/TUI/dashboard rendering are updated. Older clients ignore the new fields.
 
 ### 4.4 Runtime flow on Linux (milestone A)
@@ -136,24 +138,42 @@ refusals: [code]                      // specific, stable snake_case codes (§6.
    - Capture **one review frame** into private storage. It is visible to the owner only, through the existing authenticated frame route, and never projected to the model.
 
    The wait for the portal dialog is bounded (default 120 s, decision D9) and cancellable by Stop: Stop advances `preview_generation`, and the backend calls `Request.Close`/`Session.Close`. The existing 30 s review deadline starts after the portal response, not before the dialog.
-3. **Owner confirmation.** The preview shows the source kind, logical size, and position for outputs, together with the review frame. For outputs it also shows the exposure warning: everything visible on that output, including other applications and notifications, will reach the model. The owner confirms the **actual selected source**. `allow` re-resolves the live scope and must find the same identity and geometry, as today.
+3. **Owner confirmation.** The preview shows the source kind, logical size, and position for outputs, together with the review frame. For outputs it also shows the exposure warning: everything visible on that output, including other applications and notifications, will reach the model. The owner confirms the **actual selected source**, always by the `preview_id` of the review that produced it (§4.4.1). `allow` re-resolves the live scope and must find the same identity and geometry, as today.
 4. **`allow`.** This acquires the host lease and arms the controller with the existing TTL and limits. The pending portal scope is adopted by the grant. A review that is not adopted before its deadline, or that is superseded, gets `end_scope`.
 5. **`screenshot`.** This follows the existing journal → permit → `capture` → `Capture::validate` → `controller.frame` path. Linux `capture` waits (bounded, 5 s) for the next complete buffer *after* the request, validates it (§8.2), converts it, downscales it to ≤ 1920 px on the longest edge, and PNG-encodes it to ≤ 8 MiB.
 6. **Input.** Refused at admission (`input_control=false`). No journal intent is written because nothing is admitted, so there is nothing to reconcile.
 7. **Stop / expiry / revocation.** The controller generation is fenced first, then `end_scope` closes the portal session, PipeWire stream and FDs.
 
+#### 4.4.1 Tying confirmation to the reviewed portal session
+
+On macOS, `cyber computer allow --yes` re-runs preview and arms the result immediately (`crates/cyber-cli/src/commands/computer.rs`). That is safe there because resolving `--app`/`--display` is deterministic. With a pick selector it is not: a second preview opens a second portal dialog, and arming its result would arm a source whose review frame the owner never saw, while the first portal session is abandoned. Pick reviews therefore use these rules:
+
+- **Confirmation names a preview.** A pick-scope grant is armed only by `allow` with the `preview_id` of a review whose frame was shown, within that review's 30 s deadline. `allow` never starts a review. A pick review that is not confirmed by its deadline gets `end_scope`.
+- **Interactive CLI.** `cyber computer allow <session> --pick window|output` requires a terminal on stdin and stdout and refuses otherwise with `interactive_review_required`, before any portal dialog opens. After the owner picks, the CLI prints the source kind, logical size, position for outputs, the exposure warning, the `preview_id`, the deadline, and where to see the review frame. It then asks for confirmation on the same terminal and, on yes, calls `allow` with that `preview_id`. A no, an EOF or the deadline ends the review.
+- **Seeing the frame from a terminal.** The CLI does not render images and does not copy the frame out of private storage. The frame is shown by the owner's TUI and dashboard review card for that `preview_id`, through the existing authenticated frame route. The CLI prints the dashboard route for the review (never a credential) and the TUI shows the card for an attached Session. The owner can confirm either at the CLI prompt or on the card. Both name the same `preview_id`, and whichever confirms first wins.
+- **`--yes` with `--pick` is refused** (`interactive_review_required`), because it could only arm a source nobody reviewed. For scripted or two-terminal use, `cyber computer allow <session> --preview <id> --yes` confirms an existing pending pick review by ID without opening a new dialog. It fails if the review expired, was superseded or belongs to another Session.
+- macOS `--app`/`--display` behavior is unchanged.
 ### 4.5 Native worker topology (decision D3)
 
 All portal, PipeWire and EIS objects and FDs live in one **same-binary helper process** (`cyber` re-executed with a hidden internal subcommand) per grant scope. The helper is not downloaded and needs no compiler. It applies these protections:
 
 - **`PR_SET_DUMPABLE=0`.** Same-UID processes cannot `ptrace` it or open `/proc/<pid>/fd/*`. This includes sandboxed tool children and, best effort, unsandboxed ones **(inference from Linux ptrace access-mode rules; must be tested)**.
-- **`PR_SET_PDEATHSIG=SIGKILL`.** If the server dies, the helper dies. Its D-Bus connection drops, which the portal treats as session close.
+- **`PR_SET_PDEATHSIG=SIGKILL`.** If the server dies, the helper dies. Its D-Bus connection drops, which the portal treats as session close. Linux sends this signal when the *thread* that forked the child exits, not when the process exits, so the server spawns each helper from a dedicated long-lived supervisor thread that also performs the `waitpid`, never from a tokio blocking-pool thread that can be reaped while idle. The parent passes its PID to the helper. The helper sets the signal first thing at startup (it survives `execve` for a non-setuid binary), then checks `getppid()` against that PID and exits if they differ, which closes the race where the parent died before `prctl` ran.
 - **Close-on-exec.** Every FD, including those received over D-Bus via `SCM_RIGHTS`, is set `FD_CLOEXEC` immediately on receipt regardless of library defaults. The helper never spawns children.
 - **Narrow IPC.** A socketpair to the server carries only typed requests (`review`, `capture`, `end_scope`) and bounded responses. The helper never receives model text except, in milestone B, the admitted action for dispatch.
 - **Hard Stop.** Stop can `SIGKILL` the helper. The host lease is released only after `waitpid` confirms the helper has exited, so no live worker can dispatch after its lease is transferred. This makes the existing guarantee ("cancellation cannot release the host lease while a native worker can still dispatch") hold even if the helper hangs in a native call.
 
 The alternative is an in-process worker thread with the same CLOEXEC discipline. It is simpler, but it cannot be force-stopped without stopping the server, and its FDs share the server's `/proc` exposure.
 
+### 4.6 Session-bus trust
+
+The D-Bus session bus is shared by every process of the user. Same-UID processes (adversary C) can send signals on it, own names that are not yet owned, and start their own portal dialogs. Today's Linux tool sandbox (`crates/cyber-sandbox/src/linux.rs`) binds `/` read-only and unshares the network namespace. That hides abstract-socket buses, but a path socket such as `$XDG_RUNTIME_DIR/bus` stays connectable, because a read-only mount does not block `connect()` on a socket inode **(inference from Linux socket permission rules; must be tested)**. Sandboxed tool children (P) are therefore treated as able to reach the session bus unless the masking below is in place.
+
+- **Pinned peer.** At review start the helper resolves the unique bus name that owns `org.freedesktop.portal.Desktop` (`GetNameOwner`) and pins it for the scope. Method calls are addressed to that unique name, not to the well-known name.
+- **Signal filtering.** `Request.Response` is accepted only when the bus-stamped sender equals the pinned unique name and the object path equals the exact request handle Cyber computed from its own unique name and its unguessable `handle_token`, and the reply came after Cyber subscribed. `Session.Closed` is accepted only from the pinned name on the exact session handle. Messages from any other sender or path are dropped and counted, never acted on. The bus daemon sets the sender field, so a peer cannot forge it.
+- **Name takeover.** A `NameOwnerChanged` for `org.freedesktop.portal.Desktop` revokes the live scope (`session_bus_lost`), and the new owner is never trusted for that scope. A later review pins whatever owner exists then. If that owner is an impostor, it can only supply a PipeWire FD of its choosing: the helper requires that FD to be an `AF_UNIX` stream socket, treats every frame as untrusted pixels validated under §8.2, and the owner still confirms the actual review frame. The impostor gains no capture of the real desktop through Cyber.
+- **Masking the bus from tool sandboxes (decision D11).** When native computer use is enabled in global configuration, Linux sandboxed tool and plugin children get no session bus: `DBUS_SESSION_BUS_ADDRESS` is removed from their environment and the bus socket path is masked inside the sandbox. Full-access shells keep the bus and are covered by the C residual (§11.4).
+- **Dialog confusion.** C can open its own ScreenCast or RemoteDesktop dialog timed to appear with Cyber's. Cyber cannot label the portal dialog beyond its app identity (D10). The review card therefore states that exactly one dialog should appear, and that if the card does not show a frame of the source just picked, the dialog was not Cyber's and sharing should be stopped from the desktop indicator. Cyber's own review is still bound to its pinned session, so a pick made in another program's dialog cannot arm a Cyber grant. It can only time out Cyber's review.
 ## 5. Target assurance
 
 ### 5.1 Required observations (from the existing contract)
@@ -207,11 +227,15 @@ Before every input event, the macOS backend establishes:
 
 ### 6.2 Refusal and revocation codes (stable, platform-neutral naming)
 
-`unsupported_build`, `no_graphical_session`, `x11_session_unsupported`, `no_session_bus`, `portal_unavailable`, `screencast_unavailable`, `screencast_too_old`, `pipewire_library_missing`, `pipewire_connect_failed`, `capture_buffer_unsupported`, `remote_desktop_unavailable`, `eis_unavailable`, `target_assurance_unavailable`, `xwayland_target_unsupported`, `selector_unsupported_on_platform`, `portal_selection_cancelled`, `portal_selection_mismatch`, `portal_session_closed`, `session_bus_lost`, `stream_removed`, `source_changed`, `session_locked`, `eis_disconnected`, `eis_device_paused`, `eis_device_removed`.
+`unsupported_build`, `no_graphical_session`, `x11_session_unsupported`, `no_session_bus`, `portal_unavailable`, `screencast_unavailable`, `screencast_too_old`, `pipewire_library_missing`, `pipewire_connect_failed`, `capture_buffer_unsupported`, `remote_desktop_unavailable`, `eis_unavailable`, `target_assurance_unavailable`, `xwayland_target_unsupported`, `selector_unsupported_on_platform`, `interactive_review_required`, `portal_selection_cancelled`, `portal_selection_mismatch`, `output_geometry_unavailable`, `portal_session_closed`, `session_bus_lost`, `stream_removed`, `source_changed`, `session_watch_unavailable`, `session_locked`, `session_inactive`.
+
+The follow-up input change (milestone B) is expected to add EIS codes such as `eis_disconnected`, `eis_device_paused` and `eis_device_removed`.
 
 Each code maps to an actionable message, such as "log into a Wayland session" or "install your desktop's portal backend through your distribution". Cyber never edits portal configuration such as `*-portals.conf` and never installs packages.
 
-## 7. Input transport (milestone B, specified but disabled)
+## 7. Input transport sketch (milestone B, follow-up change)
+
+This section is non-normative background for the follow-up change. This change adds no transport requirement and no transport code.
 
 - **Portal session.** Use RemoteDesktop v2: `SelectDevices` (POINTER and KEYBOARD only, no touchscreen, no `persist_mode`, no `restore_token`), the combined ScreenCast `SelectSources` on the same session, and `Start`. The response `devices` must contain what was requested, else refuse. Then call `ConnectToEIS` exactly once. After EIS connects, Cyber never calls `Notify*`. If `ConnectToEIS` fails, Cyber refuses (`eis_unavailable`) and does not downgrade to `Notify*`. A `Notify*` transport would need its own design review (decision D7).
 - **Negotiation.** Bind the seat for `POINTER_ABSOLUTE`, `BUTTON`, `SCROLL`, `KEYBOARD` and, if offered, `TEXT`. Send only after `DEVICE_RESUMED`.
@@ -241,6 +265,7 @@ Each code maps to an actionable message, such as "log into a Wayland session" or
 ### 8.3 Geometry
 
 - **Output scope.** `bounds` = the stream's `position` and `size` in compositor logical coordinates. Image size = the encoded image size. `Geometry::desktop` already maps linearly, so fractional scales (for example 1.25) and negative origins work unchanged.
+- **Missing output geometry.** The ScreenCast documentation marks `position` and `size` as optional. A monitor stream that lacks either at review is closed and refused with `output_geometry_unavailable`, so a review card never shows an output without its logical origin and no grant carries a mapping that cannot be checked. A later loss of either property advances `scope_generation` as below.
 - **Window scope.** The portal provides no `position` for window streams. A window frame therefore has **no desktop mapping**: it is valid for observation, and any input on it is refused (`source_changed`). Under milestone A this only adds a second reason for an existing refusal.
 - **Rotation.** Monitor streams are expected to deliver display-oriented content whose logical `size` already reflects rotation **(inference)**, so `rotation=0` is recorded. A buffer whose dimensions disagree in orientation with logical `size`, or a transform meta, is refused until rotated-output evidence exists.
 - **Hotplug and renegotiation.** A PipeWire format, size or param change, a missing `size` property, a monitor unplug or a scale change advances `scope_generation`. That revokes the grant (`source_changed`), and the next action requires fresh owner review. Frames from before the change fail the existing geometry/target comparison.
@@ -257,13 +282,17 @@ Each code maps to an actionable message, such as "log into a Wayland session" or
 | D-Bus connection lost, portal frontend restarted (`NameOwnerChanged`) | Revoke with `session_bus_lost`. Never re-create silently. |
 | PipeWire stream state error/unconnected, node removed | Revoke with `stream_removed` |
 | Source renegotiated (size, format, scale) | Revoke with `source_changed` |
-| logind `LockedHint=true` or `Lock` signal on the Cyber server's own session | Revoke with `session_locked`. Unlock never restores the grant. |
+| The watched graphical session's `LockedHint` becomes true or it emits `Lock` | Revoke with `session_locked`. Unlock never restores the grant. |
+| The watched graphical session's `Active` becomes false (VT switch, user switch, fast user switching) | Revoke with `session_inactive`. Reactivation never restores the grant. |
+| The logind watch is lost (logind restart, signal subscription dropped, session object removed) | Revoke with `session_watch_unavailable` |
 | EIS disconnect, device pause or removal (milestone B) | Revoke. In-flight action settles `unknown`. |
 | Compositor crash or restart | Observed as bus/stream/EIS loss and revoked |
 | Server restart | The helper dies (PDEATHSIG), and the portal closes its sessions on D-Bus vanish. Existing rule: no grant survives restart. |
 | Late portal reply after Stop or review supersession | Generation-fenced. The reply's session is closed immediately and never adopted. |
 
 Restore tokens are never requested (`persist_mode` is omitted, so it defaults to 0) and never consumed. Every grant starts with a fresh portal dialog and a fresh Cyber review.
+
+**Identifying the watched session.** The server may run outside the graphical session, for example as a systemd user service, and then has no logind session for its own PID. Lock and activity are therefore watched on the user's graphical session, chosen in this order: the session named by `XDG_SESSION_ID` when it belongs to the server's UID and has type `wayland`; otherwise the logind user object's `Display` session when it has type `wayland`. The chosen session must be `Active` and not `LockedHint` when a review starts and again at `allow`. If no such session can be identified, or the helper cannot subscribe to its property changes and `Lock` signal over the system bus, review and arming are refused with `session_watch_unavailable`. A grant is never armed without a working watch. `LockedHint` is a hint set by the desktop (§5.2), so the watch can only revoke; it never proves that the screen is unlocked.
 
 ## 10. Dependency and version matrix
 
@@ -317,7 +346,8 @@ Platform interfaces:
 - **M, the model,** and any provider steering it.
 - **S, screen content:** web pages, documents and chat messages displayed in the captured source and read by the model.
 - **P, project content:** repository configuration, hooks, plugins and sandboxed tool children running as the same UID.
-- **C, other local same-UID processes** without owner credentials.
+- **C, other local same-UID processes** without owner credentials. They share the user's D-Bus session bus.
+- **P** can reach the session bus too unless the D11 masking is in place (§4.6).
 - **D, a malicious or buggy desktop application** that misreports accessibility roles or mimics dialogs.
 - **R, remote collaborators:** hub members, peers and child agents.
 
@@ -333,17 +363,21 @@ Platform interfaces:
 | T6 | Node-ID reuse after hotplug makes Cyber capture a different source | Serial targeting (v6). Otherwise node binding within a generation, plus terminal revocation on removal. |
 | T7 | Input lands in a terminal, a password field, a polkit dialog or Cyber's own TUI | Milestone A refuses all input. Milestone B requires A1–A5 `Proven` by an approved provider. Absence of proof is refusal. |
 | T8 | Stop is ineffective while a native call blocks (portal dialog, PipeWire wait, EIS) | Generation fence first. Helper SIGKILL. Lease released only after `waitpid`. Bounded waits everywhere. |
-| T9 | Lock screen or session switch while armed | Revoke on logind lock or the session becoming inactive. Unlock never restores. Lock-screen behavior is to be verified on real desktops (residual until then). |
+| T9 | Lock screen or session switch while armed | Revoke on lock (`session_locked`) or the watched graphical session becoming inactive (`session_inactive`). If the graphical session cannot be identified or watched, refuse to arm and revoke on watch loss (`session_watch_unavailable`, §9). Unlock never restores. Lock-screen behavior is to be verified on real desktops (residual until then). |
 | T10 | Malformed PipeWire buffers (size/stride overflow) cause memory corruption | Strict size checks before reading, shared-memory-only buffers, allow-listed formats, bounded dimensions, and fuzz tests on the converter. |
 | T11 | Screenshot leakage through logs, exports, hooks, collaboration or child environments | Existing private artifact root, hidden paths and redaction. Linux adds no new storage path. The review frame uses the same private store. |
 | T12 | D spoofs accessibility roles to look safe | AT-SPI is never a positive proof (§5.3). |
 | T13 | R gains control through inherited authority | Existing non-inheritance rules. Linux adds no route. |
 | T14 | Portal dialog spoofing: an application draws a fake chooser | The owner starts review from Cyber's own authenticated surface. The resulting review frame, not the dialog, is what the owner confirms. |
+| T15 | C or P forges portal signals on the session bus: a fake `Request.Response` or `Session.Closed`, a race on the request path, or a takeover of the portal name after `NameOwnerChanged` | Pinned portal unique name and exact request/session object paths; other senders are dropped (§4.6). Name-owner change revokes, and the new owner is never trusted for that scope. An impostor portal can supply only pixels, which are validated and reviewed. D11 masks the bus from sandboxed children. Tests use a second bus client that sends spoofed signals. |
+| T16 | Dialog confusion: C opens its own portal dialog timed to Cyber's review, and the owner approves the wrong one | A pick in another program's dialog cannot arm Cyber, whose review is bound to its pinned session. The review card warns that exactly one dialog should appear and that a card without the just-picked frame means the dialog was not Cyber's. The capture C obtains through its own dialog is residual. |
+| T17 | A blind CLI confirmation arms a source the owner never saw | Pick grants are armed only by the `preview_id` of a shown review. `--pick --yes` is refused, and the CLI requires a terminal (§4.4.1). |
 
 ### 11.4 Residual risk
 
 - Authorized captures send all visible content of the chosen source to the selected model provider. Output scope can include notifications and other applications that appear during the grant.
 - A same-UID process with an unrestricted PipeWire connection, or with ptrace rights over Cyber (root or `CAP_SYS_PTRACE`), is outside this boundary.
+- Unsandboxed same-UID processes keep session-bus access. They can open their own portal dialogs and attempt dialog confusion (T16), and they can disrupt Cyber's reviews (a denial of service, never an armed grant).
 - Portal indicator, lock-screen and compositor behaviors differ between desktops and are known only from real-desktop runs.
 - When milestone B lands, observation-to-dispatch races remain, as on macOS. The provider's stated race window bounds them, but they do not disappear.
 
@@ -358,7 +392,7 @@ Platform interfaces:
 Each decision lists the recommended option first.
 
 - **D1 — Linux input assurance strategy.**
-  - **Recommended:** ship milestone A capture-only and keep input refused. Accept a compositor-specific `AssuranceProvider` only through a separate reviewed change with real evidence.
+  - **Recommended:** ship milestone A capture-only and keep input refused. Accept a compositor-specific `AssuranceProvider`, together with the input transport, only through a separate reviewed change with real evidence. This change therefore contains no transport requirement or tasks.
   - Alternatives:
     - (b) Use GNOME Shell Introspect or KWin scripting now. This needs unsafe mode or compositor-private access, so it is rejected.
     - (c) Use AT-SPI as positive proof. Rejected, because the data is self-reported.
@@ -392,3 +426,6 @@ Each decision lists the recommended option first.
 - **D10 — Host portal app identity.**
   - **Recommended:** call `Registry.Register` only when a packaged `.desktop` file for Cyber exists. Never write `.desktop` files automatically, and document that dialogs may show a generic application name otherwise.
   - Alternative: ship and install a `.desktop` file with the Linux packages.
+- **D11 — Session bus in tool sandboxes.**
+  - **Recommended:** when native computer use is enabled in global configuration, remove `DBUS_SESSION_BUS_ADDRESS` from Linux sandboxed tool and plugin children and mask the bus socket path inside the sandbox. Tools that need the desktop bus (notifications, `gio`) then fail inside the sandbox while the feature is enabled.
+  - Alternatives: always mask the bus in sandboxes (wider behavior change for every Linux user), or never mask it and rely only on sender pinning (leaves sandboxed children able to open dialogs for confusion).

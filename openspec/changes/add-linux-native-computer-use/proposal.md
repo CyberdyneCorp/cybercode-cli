@@ -12,16 +12,17 @@ This change states which Linux guarantees can be met, which cannot, and what Cyb
 ## What changes
 
 - **Capture-only Linux backend (milestone A).** On a Wayland session with a suitable portal backend, an owner can grant a Session observation of one window or one output that the owner picks in the portal's own dialog. Capture uses the ScreenCast portal and a portal-restricted PipeWire connection. Existing controls still apply: owner-only grants, finite TTL, presence, Stop, private screenshots and frame binding.
-- **Input stays refused on Linux.** Every input action is refused with `target_assurance_unavailable` until an owner-approved assurance provider can prove focused-window, pointer-hit, secure-field, protected-dialog and self-approval checks on a specific compositor. The design specifies the input transport for a later milestone B: RemoteDesktop v2, `ConnectToEIS`/libei, `mapping_id` region matching and keymap/text negotiation. That transport is not enabled by this change.
+- **Input stays refused on Linux.** Every input action is refused with `target_assurance_unavailable` until an owner-approved assurance provider can prove focused-window, pointer-hit, secure-field, protected-dialog and self-approval checks on a specific compositor. The design sketches the input transport for a later milestone B (RemoteDesktop v2, `ConnectToEIS`/libei, `mapping_id` region matching and keymap/text negotiation). That transport, its requirements and its tasks belong to a separate follow-up change, so this change adds no transport requirement.
 - **Platform-neutral contract additions** (coordinated with the Windows effort, issue #44):
   - an owner-picker target selector (`pick: window | output`) instead of reinterpreting macOS bundle IDs;
   - additive health fields: backend, session type, interface versions, capture/input availability and specific refusal codes;
   - an additive platform-neutral target description.
 
   Existing macOS fields and behavior are unchanged.
-- **Lifecycle and revocation.** Portal `Closed`, bus loss, stream removal, source renegotiation, session lock, server restart and portal restart revoke the grant and require fresh review. Restore tokens and persistent portal permissions are never requested or used.
+- **Lifecycle and revocation.** Portal `Closed`, bus loss, stream removal, source renegotiation, lock or deactivation of the user's watched graphical session, loss of that watch, server restart and portal restart revoke the grant and require fresh review. A grant is never armed when the graphical session cannot be identified and watched. Restore tokens and persistent portal permissions are never requested or used.
+- **Session-bus trust.** Portal signals are accepted only from the pinned portal bus name on Cyber's exact request and session paths. When the feature is enabled, Linux sandboxed tool children lose session-bus access (decision D11).
 - **Explicit unsupported results.** X11/Xorg sessions, XWayland-only targets, wlroots input, SSH/headless sessions, musl static builds, and a missing portal, PipeWire or EIS each get a specific refusal code with no OS side effects and no fallback.
-- **CLI.** `cyber computer allow <session> --pick window|output` starts owner review through the portal dialog. `status` never shows a chooser.
+- **CLI.** `cyber computer allow <session> --pick window|output` starts owner review through the portal dialog in an interactive terminal and arms only the reviewed source, by its review ID, after a confirmation prompt. `--pick --yes` is refused. `--preview <id> --yes` confirms a review already seen on the dashboard or TUI. `status` never shows a chooser.
 
 ## Impact
 
@@ -34,7 +35,7 @@ This change states which Linux guarantees can be met, which cannot, and what Cyb
 
 ## Non-goals
 
-- Linux input in this change, or any claim of cross-desktop parity with macOS.
+- Linux input in this change, including the input transport requirements, or any claim of cross-desktop parity with macOS.
 - X11/Xorg backends, xdotool/XTest, `/dev/uinput`, root or group-permission instructions, compositor-private input injection, browser-only substitutes, clipboard bridging, headless arbitrary desktop control, unattended or restored grants, and installing or configuring portal backends.
 - The D-Bus `Notify*` input transport, and automatic downgrade from EIS.
 - Windows computer use (issue #44). This design only coordinates the shared schema with it.
