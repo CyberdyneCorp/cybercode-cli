@@ -171,6 +171,7 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 ## 7. Review and delivery
 
 - [ ] 7.1 Update guides, roadmap/feature evidence, original task lists and generated API/SDK/CLI artifacts for actual delivered behavior.
+  - 2026-11-14: guides and feature evidence reconciled with the §4 and §6 increments on this branch (`docs/features.md`, `docs/local-core-guide.md`; see implementation.md "Documentation and evidence reconciliation"); `docs/cli.md`, `sdk/openapi.json` and the generated SDK were verified current. Stays open: later increments, the blocked product decisions and native platform acceptance listed there.
 - [ ] 7.2 Run affected Rust tests, format/Clippy, SDK typecheck/tests, TUI/real-binary acceptance, strict OpenSpec/lint and relevant native/platform CI. Record skips and unperformed external checks explicitly.
 - [ ] 7.3 Use the code-review skill for substantive review, address findings and deliver reviewable PRs. Merge only when authorized; archive after accepted merge and overlap reconciliation.
 - [ ] 7.4 Verify all approved first- and second-workstream outcomes against evidence before marking the combined goal complete.

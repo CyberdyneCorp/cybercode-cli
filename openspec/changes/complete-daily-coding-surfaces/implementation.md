@@ -3821,3 +3821,54 @@ sent by one token; the test pins that composition. No product change was needed.
 Evidence: `cyber-app --test instructions` (29) and `cyber-server --test
 context_compaction` (27) under nextest `ci`, Clippy with warnings denied. Platform
 acceptance remains open.
+
+## Documentation and evidence reconciliation (2026-11-14, local)
+
+This round's increments on `feat/managed-recovery-owner` are recorded in the task
+notes for 4.1–4.4 and 6.2–6.4; this entry only reconciles them with the guides.
+
+Delivered locally (no task checked off; every one still needs native platform
+acceptance):
+
+- 4.2: rule delivery fenced to the current approval generation at settlement
+  (entry above); restart/replay coverage over a file database with a second App
+  (three `*_restart` tests in `crates/cyber-app/tests/instructions.rs`). This
+  supersedes the "revocation/restart acceptance" item left open above.
+- 4.3: inspection lists delivered rules with their current approval
+  (`current`/`changed`/`revoked`/`unknown`) and withheld rule definitions by
+  reason, without opening either; `cyber doctor` counts scoped rules and lists
+  withheld ones. OpenAPI/SDK were regenerated in those commits.
+- 4.4: leakage, precedence, truncation and estimate-consistency tests (entry above).
+- 6.2/6.4: descendant requests stamped with the root input cohort; the JSONL
+  driver owns background-subagent and `PreToolUse` hook asks; scoped interruption
+  stops an owned background subagent subtree; stale, wrong-kind and cross-driver
+  replies are refused.
+- 6.3: secret-redacted JSONL `error`/`result`/`end` fields and
+  `--include-hook-events` from durable hook receipts.
+
+Guides updated to match: `docs/features.md` (Project instructions, Driven exec)
+and `docs/local-core-guide.md` (settlement fencing and restart behaviour replace
+the stale "remain in progress" list; per-source sizes in `/context` are no longer
+listed as missing; descendant hook receipts are listed as not reported; the
+background-descendant paragraphs no longer call delivered work open). Generated
+artifacts were checked, not changed: `cyber help-markdown` equals `docs/cli.md`,
+`openapi_document_is_current` passes and `scripts/generate_sdk.py --check` is clean.
+
+Still open in code: withdrawal of a rule already delivered in the current Epoch
+after revocation or change; withheld non-rule instruction files as typed entries;
+foreground-subagent ownership; acknowledged interruption of a subagent with an
+in-flight tool call; Session-scoped and descendant hook receipts; user-configured
+redaction patterns on JSONL lines and the raw provider message in
+`session.step.failed`.
+
+Externally blocked:
+
+- Product decision: how a revoked or changed delivered rule leaves the active
+  context (elide on replay, or force an Epoch rebuild/compaction).
+- Product decision: whether an attached JSONL driver continues across a server
+  restart.
+- Product/security decision: the removed-Location maintenance and
+  construction-evidence cleanup protocol revision (not covered by the 3.0 approval).
+- Product decision: enabling default managed Git source admission.
+- Native platform CI (macOS Intel/ARM, Linux x64/ARM, Windows host) on the final
+  pushed source for 4.1–4.4, 5.4, 6.2–6.4 and the managed-recovery tasks.
