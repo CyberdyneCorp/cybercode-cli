@@ -64,6 +64,7 @@ pub(crate) fn format(data: &Value) -> String {
         }
     }
     lines.extend(prepared_request(&inspection["last_prepared_request"]));
+    lines.extend(delivered_rules(inspection));
     lines.extend(effective_sources(inspection));
     lines.join("\n")
 }
@@ -86,6 +87,7 @@ fn next_request(next: &Value) -> Vec<String> {
             Some("epoch_rebuild_pending") => "the Context Epoch will be rebuilt",
             Some("sources_changed_on_disk") => "changed sources will be read again",
             Some("excludes_turn_instructions") => "turn-only instructions not included",
+            Some("delivered_rules_changed") => "changed or revoked rules are not delivered again",
             _ => continue,
         };
         lines.push(format!("  Assumes {text}"));
@@ -131,6 +133,35 @@ fn prepared_request(prepared: &Value) -> Vec<String> {
         let id = crate::messaging::clean_line(source["id"].as_str().unwrap_or("unknown"));
         let tokens = source["estimated_tokens"].as_u64().unwrap_or(0);
         lines.push(format!("{id} · ~{tokens} tokens"));
+    }
+    lines
+}
+
+fn delivered_rules(inspection: &Value) -> Vec<String> {
+    let rules = inspection["delivered_rules"].as_array();
+    let omitted = inspection["omitted_delivered_rules"].as_u64().unwrap_or(0);
+    if rules.is_none_or(Vec::is_empty) && omitted == 0 {
+        return Vec::new();
+    }
+    let mut lines = vec![String::new(), "Delivered rules".into()];
+    let changed = inspection["changed_delivered_rules"].as_u64().unwrap_or(0);
+    if changed > 0 {
+        lines.push(format!(
+            "Rules changed or revoked: {changed} · the next Context Epoch differs"
+        ));
+    }
+    for rule in rules.into_iter().flatten() {
+        let field = |name| crate::messaging::clean_line(rule[name].as_str().unwrap_or("unknown"));
+        lines.push(format!(
+            "{} · {} · digest {} · approval {}",
+            field("path"),
+            field("generation"),
+            field("digest_prefix"),
+            field("approval")
+        ));
+    }
+    if omitted > 0 {
+        lines.push(format!("Additional delivered rules omitted · {omitted}"));
     }
     lines
 }
@@ -210,6 +241,37 @@ mod tests {
         assert!(text.contains("/repo/CYBER .md"));
         assert!(text.contains("Additional paths omitted · 2"));
         assert!(text.contains("Additional sources omitted · 1"));
+        assert!(!text.contains('\u{001b}'));
+    }
+
+    #[test]
+    fn inspection_shows_revoked_delivered_rules() {
+        let text = super::format(&serde_json::json!({
+            "epoch": 2,
+            "inspection": {
+                "delivered_rule_count": 3,
+                "delivered_rules": [
+                    {"path": "/repo/.cyber/rules/web.md", "root": "/repo",
+                     "digest_prefix": "abcdef012345", "generation": "sha256:gen",
+                     "approval": "revoked"},
+                    {"path": "/repo/.cyber/rules/db\u{001b}.md", "root": "/repo",
+                     "digest_prefix": "0123456789ab", "generation": "owner-global",
+                     "approval": "current"}
+                ],
+                "omitted_delivered_rules": 1, "changed_delivered_rules": 1,
+                "next_request": {
+                    "estimated_input_tokens": 10,
+                    "assumptions": ["delivered_rules_changed"]
+                }
+            }
+        }));
+        assert!(text.contains("Rules changed or revoked: 1 · the next Context Epoch differs"));
+        assert!(text.contains(
+            "/repo/.cyber/rules/web.md · sha256:gen · digest abcdef012345 · approval revoked"
+        ));
+        assert!(text.contains("approval current"));
+        assert!(text.contains("Additional delivered rules omitted · 1"));
+        assert!(text.contains("  Assumes changed or revoked rules are not delivered again"));
         assert!(!text.contains('\u{001b}'));
     }
 

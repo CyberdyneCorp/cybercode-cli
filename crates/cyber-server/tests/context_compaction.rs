@@ -999,3 +999,115 @@ async fn a_replaced_location_cannot_supply_instructions_for_an_inflight_read() {
     );
     assert_eq!(state.epoch.unwrap().reminded_instructions.len(), 1);
 }
+
+/// `system-context` → Scope-aware rule inspection and loading: inspection lists the rules
+/// delivered in the current Epoch with their current approval, from the trust inventory
+/// and file metadata only, and flags that the next Epoch will differ.
+#[tokio::test]
+async fn inspection_lists_delivered_rules_and_marks_revoked_approval_without_reading_them() {
+    use cyber_server::runtime::RuleApproval;
+    use cyber_server::runtime::instructions::RuleBinding;
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("first")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("begin")).await.unwrap();
+    h.settle(&id).await;
+    let rules = h.repo.join(".cyber/rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    let rule = |name: &str, generation: &str| {
+        let path = rules.join(name);
+        std::fs::write(&path, format!("PRIVATE_RULE_BODY_{name}")).unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        RuleBinding {
+            root: h.repo.display().to_string(),
+            path: path.display().to_string(),
+            digest: format!("sha256:{}", "ab".repeat(32)),
+            generation: generation.into(),
+            native_root: None,
+            operation_path: None,
+            stamp: Some(cyber_server::runtime::FileStamp::of(&metadata)),
+        }
+    };
+    let bindings = [
+        rule("kept.md", "sha256:approved"),
+        rule("revoked.md", "sha256:withdrawn"),
+        rule("edited.md", "owner-global"),
+        RuleBinding {
+            stamp: None,
+            ..rule("legacy.md", "sha256:approved")
+        },
+    ];
+    std::fs::write(
+        rules.join("edited.md"),
+        "PRIVATE_RULE_BODY_edited, now longer",
+    )
+    .unwrap();
+    h.tools
+        .rule_approvals
+        .lock()
+        .unwrap()
+        .insert("sha256:approved".into(), RuleApproval::Current);
+    h.tools
+        .rule_approvals
+        .lock()
+        .unwrap()
+        .insert("sha256:withdrawn".into(), RuleApproval::Revoked);
+    let mut state = h.runtime.state(&id).await.unwrap();
+    let epoch = state.epoch.as_mut().unwrap();
+    for binding in &bindings {
+        epoch.reminded_rules.insert(binding.identity());
+        epoch.delivered_rules.push(binding.clone());
+    }
+    // An unreadable definition still reports its approval: only metadata is consulted.
+    #[cfg(unix)]
+    for name in ["kept.md", "revoked.md"] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(rules.join(name), std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    let inspection = serde_json::to_value(h.runtime.inspect_context(&state)).unwrap();
+    assert_eq!(inspection["delivered_rule_count"], 4);
+    assert_eq!(inspection["omitted_delivered_rules"], 0);
+    let listed = inspection["delivered_rules"].as_array().unwrap();
+    let approvals: Vec<_> = listed
+        .iter()
+        .map(|rule| {
+            let path = rule["path"].as_str().unwrap();
+            (
+                path.rsplit('/').next().unwrap().to_owned(),
+                rule["approval"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        approvals,
+        [
+            ("kept.md".into(), serde_json::json!("current")),
+            ("revoked.md".into(), serde_json::json!("revoked")),
+            ("edited.md".into(), serde_json::json!("changed")),
+            ("legacy.md".into(), serde_json::json!("unknown")),
+        ],
+        "{inspection:#}"
+    );
+    assert_eq!(listed[0]["digest_prefix"], "abababababab");
+    assert_eq!(listed[0]["generation"], "sha256:approved");
+    assert_eq!(listed[0]["root"], h.repo.display().to_string());
+    assert_eq!(inspection["changed_delivered_rules"], 2);
+    assert!(
+        inspection["next_request"]["assumptions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("delivered_rules_changed")),
+        "{inspection:#}"
+    );
+    assert!(!inspection.to_string().contains("PRIVATE_RULE_BODY"));
+    assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    #[cfg(unix)]
+    for name in ["kept.md", "revoked.md"] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(rules.join(name), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+}

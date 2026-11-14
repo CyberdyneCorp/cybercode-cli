@@ -360,6 +360,44 @@ async fn a_rule_revoked_while_its_read_settles_is_neither_delivered_nor_consumed
     f.app.runtime.shutdown().await;
 }
 
+/// A delivered rule is listed by inspection with its live approval: current while the
+/// checkout approval stands, revoked once it is withdrawn, and never with its body.
+#[tokio::test]
+async fn inspection_reports_a_delivered_rule_as_revoked_after_its_approval_is_withdrawn() {
+    let f = Fixture::start().await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let inspect = || async {
+        let state = f.app.runtime.state(&session).await.unwrap();
+        serde_json::to_value(f.app.runtime.inspect_context(&state)).unwrap()
+    };
+    let inspection = inspect().await;
+    let rule = &inspection["delivered_rules"][0];
+    assert!(
+        rule["path"].as_str().unwrap().ends_with("web.md"),
+        "{inspection:#}"
+    );
+    assert_eq!(rule["approval"], "current", "{inspection:#}");
+    assert_eq!(inspection["changed_delivered_rules"], 0);
+    assert!(
+        cyber_core::trust::TrustStore::new(f.app.paths.trust_file())
+            .revoke(&f.repo)
+            .unwrap()
+    );
+    let inspection = inspect().await;
+    assert_eq!(inspection["delivered_rules"][0]["approval"], "revoked");
+    assert_eq!(inspection["changed_delivered_rules"], 1);
+    assert!(!inspection.to_string().contains("WEB_RULE_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn changed_rule_bytes_stay_held_until_the_new_definition_is_reviewed() {
     let f = Fixture::start().await;

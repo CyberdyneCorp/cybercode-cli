@@ -90,8 +90,17 @@ pub struct RuleBinding {
     /// Physical operation target for this delivery. It is excluded from once-per-Epoch identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation_path: Option<PathBuf>,
+    /// Definition file size and modification time when its delivered bytes were read.
+    /// Inspection compares it with current metadata; it is excluded from identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stamp: Option<super::context_sources::FileStamp>,
 }
 impl RuleBinding {
+    /// Whether a checkout approval admitted this definition; owner-global ones need none.
+    pub fn is_project(&self) -> bool {
+        self.generation != OWNER_GLOBAL
+    }
+
     pub fn identity(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut hash = Sha256::new();
@@ -689,6 +698,7 @@ impl<'a> Loader<'a> {
             operation_path: target
                 .filter(|_| self.settings.native_root.is_some())
                 .map(Path::to_path_buf),
+            stamp: None,
         };
         let identity = binding.identity();
         if !self.seen.insert(identity.clone()) {
@@ -1625,6 +1635,7 @@ mod tests {
             generation: "first".into(),
             native_root: None,
             operation_path: None,
+            stamp: None,
         };
         assert!(gate.still_authorizes(&binding, &repo.root));
         let changed_digest = RuleBinding {

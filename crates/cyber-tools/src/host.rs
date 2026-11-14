@@ -1190,6 +1190,19 @@ impl ToolHost for BuiltinHost {
         }))
     }
 
+    fn rule_approval(&self, root: &Path, generation: &str) -> cyber_server::runtime::RuleApproval {
+        use cyber_server::runtime::RuleApproval;
+        let Some(config) = self.hook_config.get() else {
+            return RuleApproval::Unknown;
+        };
+        match config.trust.approval(root) {
+            Ok(None) => RuleApproval::Revoked,
+            Ok(Some(approval)) if approval.digest == generation => RuleApproval::Current,
+            Ok(Some(_)) => RuleApproval::Changed,
+            Err(_) => RuleApproval::Unknown,
+        }
+    }
+
     fn finalize_skill_output(
         &self,
         directory: &str,

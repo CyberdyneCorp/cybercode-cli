@@ -221,6 +221,9 @@ pub struct Tools {
     pub goal_settings: Mutex<cyber_core::goals::GoalSettings>,
     /// The `usage_limit` settings of every Location.
     pub usage_limit: Mutex<cyber_core::usage_limit::UsageLimitSettings>,
+    /// Trust-inventory answer for each delivered rule's approval generation; unknown
+    /// when absent.
+    pub rule_approvals: Mutex<HashMap<String, cyber_server::runtime::RuleApproval>>,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -275,6 +278,7 @@ impl Tools {
             goal_check_exits: Mutex::default(),
             goal_settings: Mutex::default(),
             usage_limit: Mutex::default(),
+            rule_approvals: Mutex::default(),
         })
     }
 
@@ -301,6 +305,19 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn rule_approval(
+        &self,
+        _root: &std::path::Path,
+        generation: &str,
+    ) -> cyber_server::runtime::RuleApproval {
+        self.rule_approvals
+            .lock()
+            .unwrap()
+            .get(generation)
+            .copied()
+            .unwrap_or(cyber_server::runtime::RuleApproval::Unknown)
+    }
+
     fn instruction_limits(
         &self,
         _directory: &str,

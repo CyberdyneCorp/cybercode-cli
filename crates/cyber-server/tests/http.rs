@@ -4223,6 +4223,12 @@ async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_defa
         ..Setup::default()
     });
     let api = Api::new(&h);
+    std::fs::create_dir_all(h.repo.join(".cyber/rules")).unwrap();
+    std::fs::write(
+        h.repo.join(".cyber/rules/web.md"),
+        "---\npaths: ['**']\n---\nPRIVATE_RULE_BODY_SENTINEL",
+    )
+    .unwrap();
     let id = h.session().await;
     let base = tcp(&h, "pw").await;
     let url = format!("{base}/sessions/{id}/context");
@@ -4245,6 +4251,9 @@ async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_defa
     let data = &result["data"];
     assert!(data["baseline"].is_null());
     assert!(data["summary"].is_null());
+    // Delivered rules are listed by path and approval only, never with their body.
+    assert!(data["inspection"]["delivered_rules"].is_array());
+    assert!(!result.to_string().contains("PRIVATE_RULE_BODY_SENTINEL"));
     let estimate = &data["inspection"];
     let effective = estimate["effective_sources"].as_array().unwrap();
     let date = effective

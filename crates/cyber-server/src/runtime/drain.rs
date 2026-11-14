@@ -2712,7 +2712,11 @@ pub(super) fn settlement_with_reminders(
         delivery
             .files
             .iter()
-            .filter_map(|file| file.rule_binding.clone())
+            .filter_map(|file| {
+                let mut binding = file.rule_binding.clone()?;
+                binding.stamp = file.stamp;
+                Some(binding)
+            })
             .collect()
     });
     seen.instructions.extend(

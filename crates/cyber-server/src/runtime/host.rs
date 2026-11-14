@@ -937,6 +937,17 @@ pub trait ToolHost: Send + Sync {
         None
     }
 
+    /// The current trust-inventory state of the checkout approval `generation` that
+    /// admitted a delivered project rule under `root`. Only the approval record is
+    /// consulted, never definition bytes. Hosts without a trust inventory report unknown.
+    fn rule_approval(
+        &self,
+        _root: &std::path::Path,
+        _generation: &str,
+    ) -> super::context_inspection::RuleApproval {
+        super::context_inspection::RuleApproval::Unknown
+    }
+
     /// Finalize the complete reminder and tool text before recording delivered skill names.
     fn finalize_skill_output(
         &self,

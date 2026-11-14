@@ -766,6 +766,18 @@ export type ContextInspection = {
   queued_inputs: number;
   held_inputs: number;
   delivered_rule_count: number;
+  /**
+   * Rules delivered in this Context Epoch, in delivery order, with their current
+   * approval. Definition bodies are never included or read.
+   */
+  delivered_rules: DeliveredRule[];
+  /**
+   * Delivered rules beyond the listing bound, or recorded without a binding by an
+   * older version.
+   */
+  omitted_delivered_rules: number;
+  /** Listed delivered rules whose approval is `changed` or `revoked`. */
+  changed_delivered_rules: number;
   /** Listed sources with `changed_on_disk` true. */
   changed_sources: number;
   /**
@@ -1260,6 +1272,17 @@ export type DelegationPhase = "reserved" | "launching";
 
 export type DelegationStatus = "pending" | "cancelling" | "admitted" | "cancelled" | "failed" | "unknown";
 
+/** A rule definition delivered in the current Context Epoch, without its body. */
+export type DeliveredRule = {
+  path: string;
+  root: string;
+  /** The first 12 hex digits of the delivered definition's digest. */
+  digest_prefix: string;
+  /** The checkout approval generation that admitted it, or `owner-global`. */
+  generation: string;
+  approval: RuleApproval;
+};
+
 export type Delivery = "steer" | "queue" | "hold";
 
 /** One Workflow failure: a kind, a message and, for script errors, where it happened. */
@@ -1348,7 +1371,7 @@ export type ErrorBody = {
 };
 
 /** Why a next-request estimate can differ from the request actually sent. */
-export type EstimateAssumption = "tool_schemas_from_last_request" | "model_changed" | "epoch_rebuild_pending" | "sources_changed_on_disk" | "excludes_turn_instructions";
+export type EstimateAssumption = "tool_schemas_from_last_request" | "model_changed" | "epoch_rebuild_pending" | "sources_changed_on_disk" | "excludes_turn_instructions" | "delivered_rules_changed";
 
 /** `session.goal.evaluated.1`. */
 export type Evaluated = {
@@ -4307,6 +4330,9 @@ export type RewindSelection = {
 };
 
 export type Role = "lead" | "teammate";
+
+/** Whether a delivered rule is still the definition its current approval admits. */
+export type RuleApproval = "current" | "changed" | "revoked" | "unknown";
 
 /** Usage of one Workflow agent: its child Session with descendants. */
 export type RunAgentUsage = {

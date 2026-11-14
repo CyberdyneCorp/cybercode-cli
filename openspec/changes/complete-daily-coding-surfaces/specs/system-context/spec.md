@@ -25,6 +25,13 @@
 - **AND** it lists each assumption that can make the estimate differ: tool schemas taken from the last request, a changed model, a pending Epoch rebuild, sources changed on disk, and excluded turn-only instructions
 - **AND** before any request is prepared the next-request estimate is absent rather than omitting tool schemas silently
 
+#### Scenario: Delivered rules with changed or revoked approval
+- **GIVEN** scoped rules delivered in the current Context Epoch
+- **WHEN** one rule's checkout approval is withdrawn and an owner inspects context
+- **THEN** inspection lists up to 128 delivered rules with definition path, root, digest prefix, approval generation and an approval state of current, changed, revoked or unknown, with a count of omitted rules
+- **AND** the state comes from the trust approval record and definition file metadata only, without reading definition bytes or returning rule bodies
+- **AND** a changed or revoked rule is counted and the next-request estimate states that the next Context Epoch will differ
+
 ## MODIFIED Requirements
 
 ### Requirement: Path-scoped rules and overrides

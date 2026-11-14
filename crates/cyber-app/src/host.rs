@@ -113,6 +113,14 @@ impl ToolHost for AppHost {
         self.builtin.instruction_rule_gate(directory)
     }
 
+    fn rule_approval(
+        &self,
+        root: &std::path::Path,
+        generation: &str,
+    ) -> cyber_server::runtime::RuleApproval {
+        self.builtin.rule_approval(root, generation)
+    }
+
     fn finalize_skill_output(
         &self,
         directory: &str,

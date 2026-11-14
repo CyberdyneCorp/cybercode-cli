@@ -6,9 +6,40 @@ use serde::{Deserialize, Serialize};
 
 use super::context_sources::{FileStamp, SourceMetadata, SourceStatus};
 
+use super::instructions::RuleBinding;
+use super::{InputStatus, Runtime, SessionState, view};
+
 /// Files whose current metadata one inspection compares with their recorded stamps.
 const STAMP_CHECKS: usize = 512;
-use super::{InputStatus, Runtime, SessionState, view};
+/// Delivered rules one inspection lists and checks.
+const LISTED_RULES: usize = 128;
+
+/// Whether a delivered rule is still the definition its current approval admits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleApproval {
+    /// The approval that admitted it is still current and the file is unchanged.
+    Current,
+    /// The definition file was edited or removed, or its checkout was re-approved under
+    /// another generation, since it was delivered.
+    Changed,
+    /// The checkout approval that admitted it has been withdrawn.
+    Revoked,
+    /// No trust inventory or file stamp is available to decide.
+    Unknown,
+}
+
+/// A rule definition delivered in the current Context Epoch, without its body.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DeliveredRule {
+    pub path: String,
+    pub root: String,
+    /// The first 12 hex digits of the delivered definition's digest.
+    pub digest_prefix: String,
+    /// The checkout approval generation that admitted it, or `owner-global`.
+    pub generation: String,
+    pub approval: RuleApproval,
+}
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct EffectiveContextSource {
@@ -105,6 +136,9 @@ pub enum EstimateAssumption {
     /// Instructions added only while a turn is assembled (attachments, structured
     /// output) are not included.
     ExcludesTurnInstructions,
+    /// A rule delivered in this Context Epoch was changed or its approval revoked; the
+    /// next Context Epoch will not deliver that definition again.
+    DeliveredRulesChanged,
 }
 
 /// The stored projection plus the tool schemas of the last prepared request: what the
@@ -138,6 +172,14 @@ pub struct ContextInspection {
     pub queued_inputs: usize,
     pub held_inputs: usize,
     pub delivered_rule_count: usize,
+    /// Rules delivered in this Context Epoch, in delivery order, with their current
+    /// approval. Definition bodies are never included or read.
+    pub delivered_rules: Vec<DeliveredRule>,
+    /// Delivered rules beyond the listing bound, or recorded without a binding by an
+    /// older version.
+    pub omitted_delivered_rules: usize,
+    /// Listed delivered rules whose approval is `changed` or `revoked`.
+    pub changed_delivered_rules: usize,
     /// Listed sources with `changed_on_disk` true.
     pub changed_sources: usize,
     /// Expected input of the next ordinary request. Absent until a request has been
@@ -174,6 +216,9 @@ impl Runtime {
                 .epoch
                 .as_ref()
                 .map_or(0, |epoch| epoch.reminded_rules.len()),
+            delivered_rules: Vec::new(),
+            omitted_delivered_rules: 0,
+            changed_delivered_rules: 0,
             changed_sources: 0,
             next_request: None,
         };
@@ -224,6 +269,7 @@ impl Runtime {
                 .iter()
                 .filter(|source| source.changed_on_disk == Some(true))
                 .count();
+            self.list_delivered_rules(&epoch.delivered_rules, &mut inspection);
         }
         let (Some(epoch), Some(model)) = (&state.epoch, model) else {
             return inspection;
@@ -237,6 +283,55 @@ impl Runtime {
             window.map(|window| estimate as f64 / window as f64);
         inspection.next_request = next_request(&inspection, estimate, &model);
         inspection
+    }
+}
+
+impl Runtime {
+    fn list_delivered_rules(&self, delivered: &[RuleBinding], inspection: &mut ContextInspection) {
+        let tools = self.inner.tools.as_ref();
+        inspection.delivered_rules = delivered
+            .iter()
+            .take(LISTED_RULES)
+            .map(|binding| DeliveredRule {
+                path: binding.path.clone(),
+                root: binding.root.clone(),
+                digest_prefix: digest_prefix(&binding.digest),
+                generation: binding.generation.clone(),
+                approval: rule_approval(binding, tools),
+            })
+            .collect();
+        inspection.omitted_delivered_rules = inspection
+            .delivered_rule_count
+            .saturating_sub(inspection.delivered_rules.len());
+        inspection.changed_delivered_rules = inspection
+            .delivered_rules
+            .iter()
+            .filter(|rule| matches!(rule.approval, RuleApproval::Changed | RuleApproval::Revoked))
+            .count();
+    }
+}
+
+fn digest_prefix(digest: &str) -> String {
+    let hex = digest.rsplit(':').next().unwrap_or(digest);
+    hex.chars().take(12).collect()
+}
+
+/// A project rule's approval comes from the host's trust inventory; any rule's file is
+/// then compared by metadata with the stamp taken when it was delivered. Nothing is opened.
+fn rule_approval(binding: &RuleBinding, tools: &dyn super::ToolHost) -> RuleApproval {
+    if binding.is_project() {
+        let approval =
+            tools.rule_approval(std::path::Path::new(&binding.root), &binding.generation);
+        if approval != RuleApproval::Current {
+            return approval;
+        }
+    }
+    let Some(stamp) = binding.stamp else {
+        return RuleApproval::Unknown;
+    };
+    match std::fs::metadata(&binding.path) {
+        Ok(current) if FileStamp::of(&current) == stamp => RuleApproval::Current,
+        _ => RuleApproval::Changed,
     }
 }
 
@@ -260,6 +355,9 @@ fn next_request(
     }
     if inspection.changed_sources > 0 {
         assumptions.push(EstimateAssumption::SourcesChangedOnDisk);
+    }
+    if inspection.changed_delivered_rules > 0 {
+        assumptions.push(EstimateAssumption::DeliveredRulesChanged);
     }
     assumptions.push(EstimateAssumption::ExcludesTurnInstructions);
     let estimated_input_tokens = stored.saturating_add(tools);

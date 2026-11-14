@@ -339,6 +339,11 @@ pub struct Epoch {
     /// Opaque identities of rule definitions delivered this Epoch.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub reminded_rules: std::collections::BTreeSet<String>,
+    /// The bindings behind `reminded_rules`, in delivery order, for inspection. Bindings
+    /// delivered by an older version have no stamp.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(skip)]
+    pub delivered_rules: Vec<super::instructions::RuleBinding>,
     pub number: u32,
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
@@ -1449,6 +1454,7 @@ impl SessionState {
         self.epoch = Some(Epoch {
             reminded_skills: Default::default(),
             reminded_rules: Default::default(),
+            delivered_rules: Default::default(),
             reminded_instructions: Default::default(),
             number: e.epoch,
             baseline: e.baseline,
@@ -1569,21 +1575,20 @@ impl SessionState {
             if matches!(s.status, CallStatus::Ok | CallStatus::Error)
                 && let Some(epoch) = &mut self.epoch
             {
-                epoch.reminded_rules.extend(
-                    s.rule_reminders
-                        .iter()
-                        .filter(|binding| {
-                            rule_operation_matches(
-                                &s,
-                                binding,
-                                epoch.number,
-                                &self.info,
-                                call,
-                                self.epoch_stale,
-                            )
-                        })
-                        .map(super::instructions::RuleBinding::identity),
-                );
+                for binding in s.rule_reminders.iter().filter(|binding| {
+                    rule_operation_matches(
+                        &s,
+                        binding,
+                        epoch.number,
+                        &self.info,
+                        call,
+                        self.epoch_stale,
+                    )
+                }) {
+                    if epoch.reminded_rules.insert(binding.identity()) {
+                        epoch.delivered_rules.push(binding.clone());
+                    }
+                }
                 epoch.reminded_skills.extend(s.skill_reminders);
                 epoch.reminded_instructions.extend(s.instruction_reminders);
             }

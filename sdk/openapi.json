@@ -10151,6 +10151,25 @@
             "format": "uint",
             "minimum": 0
           },
+          "delivered_rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeliveredRule"
+            },
+            "description": "Rules delivered in this Context Epoch, in delivery order, with their current\napproval. Definition bodies are never included or read."
+          },
+          "omitted_delivered_rules": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Delivered rules beyond the listing bound, or recorded without a binding by an\nolder version."
+          },
+          "changed_delivered_rules": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Listed delivered rules whose approval is `changed` or `revoked`."
+          },
           "changed_sources": {
             "type": "integer",
             "format": "uint",
@@ -10177,6 +10196,9 @@
           "queued_inputs",
           "held_inputs",
           "delivered_rule_count",
+          "delivered_rules",
+          "omitted_delivered_rules",
+          "changed_delivered_rules",
           "changed_sources"
         ]
       },
@@ -10354,6 +10376,61 @@
         ],
         "description": "Size and modification time of a file when it was read. Inspection compares them with\nthe file's current metadata to report an edit without reading the file again."
       },
+      "DeliveredRule": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "digest_prefix": {
+            "type": "string",
+            "description": "The first 12 hex digits of the delivered definition's digest."
+          },
+          "generation": {
+            "type": "string",
+            "description": "The checkout approval generation that admitted it, or `owner-global`."
+          },
+          "approval": {
+            "$ref": "#/components/schemas/RuleApproval"
+          }
+        },
+        "required": [
+          "path",
+          "root",
+          "digest_prefix",
+          "generation",
+          "approval"
+        ],
+        "description": "A rule definition delivered in the current Context Epoch, without its body."
+      },
+      "RuleApproval": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "current",
+            "description": "The approval that admitted it is still current and the file is unchanged."
+          },
+          {
+            "type": "string",
+            "const": "changed",
+            "description": "The definition file was edited or removed, or its checkout was re-approved under\nanother generation, since it was delivered."
+          },
+          {
+            "type": "string",
+            "const": "revoked",
+            "description": "The checkout approval that admitted it has been withdrawn."
+          },
+          {
+            "type": "string",
+            "const": "unknown",
+            "description": "No trust inventory or file stamp is available to decide."
+          }
+        ],
+        "description": "Whether a delivered rule is still the definition its current approval admits."
+      },
       "NextRequestEstimate": {
         "type": "object",
         "properties": {
@@ -10408,6 +10485,11 @@
             "type": "string",
             "const": "excludes_turn_instructions",
             "description": "Instructions added only while a turn is assembled (attachments, structured\noutput) are not included."
+          },
+          {
+            "type": "string",
+            "const": "delivered_rules_changed",
+            "description": "A rule delivered in this Context Epoch was changed or its approval revoked; the\nnext Context Epoch will not deliver that definition again."
           }
         ],
         "description": "Why a next-request estimate can differ from the request actually sent."
