@@ -6,6 +6,10 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- `cyber exec --format stream-json --include-hook-events` adds a `hook_event` line for each hook that ran for the run's Session (hook ID, event, scope, outcome, decision, duration, and the tool call it guarded), before the line of what it gated. Hook input, output, reasons and environment are never included. The instance event stream carries the underlying `session.hook.receipt` summaries when asked with `include=hook_receipts`.
+
 ## [0.1.0-beta.2] - 2026-11-12
 
 The second pre-release, for macOS and Linux. Besides testing `cyber upgrade` from 0.1.0-beta.1, it adds:
