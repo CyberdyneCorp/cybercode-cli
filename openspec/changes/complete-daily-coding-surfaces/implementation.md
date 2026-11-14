@@ -3819,6 +3819,45 @@ each new test passed three consecutive runs. Platform acceptance (Linux x64/ARM,
 macOS Intel, Windows limits), remaining crash cuts and native filesystem privacy
 remain open, so 3.4 and the M2–M8 parent obligations are not accepted.
 
+## Cap visibility and staged/branch retention through real clients (2026-11-14, local)
+
+Test-only additions for task 3.3; no product code changed and no defect was found.
+
+- `crates/cyber-app/tests/support/snapshot_cap_retention.rs` (in the
+  `snapshot_reclamation` binary)
+  - `lowered_cap_disables_code_rewind_visibly_and_keeps_conversation_rewind`:
+    with `snapshots.fallback_max_bytes = 1` in the App configuration, `code`,
+    `both` and a repeated `code` preview all fail with
+    `Non-Git snapshot storage cap reached; conversation rewind remains available`
+    (the repeat comes from the recorded unavailable reason). A conversation-only
+    preview has no `code` section and its confirmation removes the active
+    messages; source bytes and inference count are unchanged.
+  - `cap_pressure_retirement_frees_only_acknowledged_payloads_then_capture_succeeds`:
+    two settled restores share one Location. With neither past retention, cap
+    pressure refuses capture and retires nothing. After only the first is aged and
+    its payload reclaimed, cap-pressure capture succeeds by retiring that
+    metadata; the second restore's journal files are byte-identical and it has no
+    reclamation record.
+  - `collection_preserves_staged_undo_and_inactive_branch_roots_past_retention`:
+    all events, manifests and objects are aged past 7 days. The roots added by an
+    inactive branch's second turn and by a staged code undo (an unrelated owner
+    file makes its baseline unique) keep their manifests, as does every other
+    referenced root. An untracked capture's manifest survives the first pass,
+    while one journal remains, and is removed on the second pass once none
+    remain. Each periodic pass settles one journal per Location. The staged undo
+    then clears, restoring the staged file and keeping the owner file.
+- `crates/cyber-tui/src/view/rewind.rs`
+  `a_cap_refused_code_preview_shows_the_reason_and_the_conversation_only_hint`:
+  a code preview refused with the cap error renders
+  `Code unavailable/conflicting: <cap reason>` and the conversation-only hint in
+  the choose phase.
+
+Verification on local macOS arm64: `-p cyber-app --test snapshot_reclamation`
+(48 passed), `-p cyber-snapshot --test file_copy` (34 passed), cyber-snapshot
+`collection` (20 passed) and cyber-tui `rewind` (12 passed); each new test passed
+three consecutive runs. Crash cuts at the writer/journal/reclaim boundaries and
+platform results remain open, so 3.3 and M6 are not accepted.
+
 ## Rule approval fencing at settlement (2026-11-14, local)
 
 Nested rule discovery resolves the rule gate after the successful effect, but the

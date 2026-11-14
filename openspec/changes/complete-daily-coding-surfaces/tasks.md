@@ -23,6 +23,19 @@ Task 2.4 evidence now includes real service kill/reload/restage/clear, disabled 
 - [ ] 3.3 Integrate 200 MiB cap, visible unavailable/overflow state, reference-aware retention and staged/branch/recovery protections.
 - [ ] 3.4 Test real non-git editing/restoration, limits, deletes/renames, unsupported files, concurrent Session/editor changes, crashes and native filesystem privacy.
 
+3.3 progress (2026-11-14, local macOS arm64 only): a real App with a lowered
+`fallback_max_bytes` refuses `code` and `both` rewind previews over HTTP with the
+cap reason (also on the repeated refusal) and still commits a conversation-only
+rewind without touching files or starting inference; the TUI rewind view shows
+the cap line and the conversation-only hint. Cap-pressure capture retires only an
+aged, payload-complete restore; a within-retention restore keeps its journal
+bytes and gets no reclamation record, and capture is refused when nothing is
+eligible. Past retention, collection keeps the staged-undo baseline and
+inactive-branch roots, removes an unreferenced manifest only once no journal
+remains, and the staged undo still clears afterwards. 3.3 stays open: crash cuts
+at the writer/journal/reclaim boundaries (M6) and platform results are not
+evidenced here.
+
 3.4 progress (2026-11-14, local macOS arm64 only): `file_copy.rs` now covers a
 non-Git rename restored as delete plus create (the new name is removed only when its
 bytes match the capture, the old name returns with its mode, an owner edit to the new

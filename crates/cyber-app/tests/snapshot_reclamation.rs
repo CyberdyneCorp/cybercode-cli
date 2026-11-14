@@ -1,5 +1,7 @@
 #![cfg(any(target_os = "macos", target_os = "linux"))]
 //! Real App restores/receipts and native private payloads; no source writes by cleanup.
+#[path = "support/snapshot_cap_retention.rs"]
+mod cap_retention;
 #[path = "support/location_retirement.rs"]
 mod location_retirement;
 #[path = "support/snapshot_native_retirement.rs"]
