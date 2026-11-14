@@ -93,6 +93,12 @@
 - **THEN** its exact authenticated handback SHALL remain refused and SHALL NOT restart the interrupted input, including after receipt settlement or restart
 - **AND** these control receipts SHALL NOT acknowledge native effects or erase ordinary recovery evidence
 
+#### Scenario: An interrupted input owns a background subagent
+- **WHEN** a running subagent Job of the exact Session has a complete durable input cohort within the selection, its child is a direct child of that Session, and no Job from outside the child's bounded subtree targets any Session in it
+- **THEN** the interruption SHALL suppress that Job's handback and stop the child subtree through the subtree stop path, counting the Job only when that stop is acknowledged
+- **AND** a mixed, detached, oversized or otherwise unproven descendant SHALL remain running and the receipt SHALL report `descendant_job` with status unknown
+- **AND** a subtree stop that leaves unknown execution, such as a tool call cancelled mid-flight, SHALL report unknown and keep the child's admission closed for recovery
+
 #### Scenario: Bounded background ownership lookup
 - **WHEN** an authenticated client queries Job state for 1–32 unique input identities, each at most 256 UTF-8 bytes
 - **THEN** the server SHALL return one small record per supplied identity without returning Job payloads or collecting Session history pages

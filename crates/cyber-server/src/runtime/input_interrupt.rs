@@ -401,7 +401,8 @@ impl Runtime {
                     continue;
                 }
                 if !child.is_empty() {
-                    receipt.problem(InputInterruptProblem::DescendantJob);
+                    self.stop_input_subagent(session, &id, &child, receipt)
+                        .await?;
                     continue;
                 }
                 let known = self
@@ -423,6 +424,86 @@ impl Runtime {
         }
         Ok(())
     }
+    /// Stop a subagent Job's child subtree only when that subtree is wholly owned
+    /// by the Job: a direct child of this Session that no other outside Job
+    /// targets. Mixed, detached or unresolved descendant work reports unknown.
+    async fn stop_input_subagent(
+        &self,
+        session: &str,
+        job: &str,
+        child: &str,
+        receipt: &mut InputInterruptReceipt,
+    ) -> Result<(), RuntimeError> {
+        let (id, job_id, child_id) = (session.to_owned(), job.to_owned(), child.to_owned());
+        let owned = self
+            .inner
+            .store
+            .read(move |db| subagent_owned(db, &id, &job_id, &child_id))?;
+        if !owned {
+            receipt.problem(InputInterruptProblem::DescendantJob);
+            return Ok(());
+        }
+        let control = self
+            .inner
+            .jobs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(job)
+            .cloned();
+        let Some(control) = control else {
+            receipt.problem(InputInterruptProblem::MissingJobControl);
+            return Ok(());
+        };
+        // An interrupted input must not be resumed by the subagent's handback.
+        control
+            .notify
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        match tokio::time::timeout(CONTROL_TIMEOUT, self.stop_subtree_leased(child)).await {
+            Ok(Ok(report)) if report.status == super::SubtreeStopStatus::Acknowledged => {
+                receipt.jobs_cancelled += 1;
+            }
+            Ok(_) => receipt.problem(InputInterruptProblem::DescendantJob),
+            Err(_) => receipt.problem(InputInterruptProblem::JobTimeout),
+        }
+        Ok(())
+    }
+}
+/// Bounded descendant sessions; a larger or deeper subtree is not proven owned.
+const SUBTREE_LIMIT: i64 = 256;
+fn subagent_owned(
+    db: &Connection,
+    session: &str,
+    job: &str,
+    child: &str,
+) -> Result<bool, StoreError> {
+    let parent: Option<Option<String>> = db
+        .query_row(
+            "SELECT parent_id FROM session WHERE id=?1",
+            [child],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if parent.flatten().as_deref() != Some(session) {
+        return Ok(false);
+    }
+    let (count, tree): (i64, String) = db.query_row(
+        "WITH RECURSIVE tree(id,depth) AS (SELECT ?1,0 UNION
+            SELECT s.id,t.depth+1 FROM session s JOIN tree t ON s.parent_id=t.id WHERE t.depth<?2)
+        SELECT count(*),json_group_array(id) FROM (SELECT DISTINCT id FROM tree LIMIT ?2+1)",
+        params![child, SUBTREE_LIMIT],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    if count > SUBTREE_LIMIT {
+        return Ok(false);
+    }
+    let foreign: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM job j WHERE j.status='running' AND j.id<>?2
+            AND j.child_id IN (SELECT value FROM json_each(?1))
+            AND j.session_id NOT IN (SELECT value FROM json_each(?1)))",
+        params![tree, job],
+        |row| row.get(0),
+    )?;
+    Ok(!foreign)
 }
 fn select_drain(
     entry: Option<&super::DrainEntry>,

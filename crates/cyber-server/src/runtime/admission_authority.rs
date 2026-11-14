@@ -296,6 +296,18 @@ impl Runtime {
     /// The scope remains closed until acknowledged settlement or reviewed recovery is implemented.
     pub async fn close_subtree_admissions(&self, id: &str) -> Result<String, RuntimeError> {
         let _open = self.inner.open().await?;
+        self.close_subtree_admissions_leased(id).await
+    }
+
+    /// As [`Self::close_subtree_admissions`] for a caller that already retains a
+    /// lifecycle lease; re-entering the lifecycle lock could stall behind shutdown.
+    pub(super) async fn close_subtree_admissions_leased(
+        &self,
+        id: &str,
+    ) -> Result<String, RuntimeError> {
+        if self.inner.closed.is_cancelled() {
+            return Err(RuntimeError::ShuttingDown);
+        }
         let handle = self.inner.handle(id).await?;
         let mut state = handle.state.lock().await;
         self.inner.ensure_admission_open(id)?;

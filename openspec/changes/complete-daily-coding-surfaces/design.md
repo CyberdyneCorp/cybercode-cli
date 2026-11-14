@@ -114,8 +114,15 @@ authorizes cancellation of the active Drain. Wait on the captured Drain's retain
 owner disposal, independently of later Session execution. Runtime-owned cleanup
 survives requester disposal and retains the shutdown lease until receipt settlement.
 Cancel proven direct process Jobs in bounded pages after the Job-publication
-barrier; suppress their completion notices. Do not infer descendant or native
-activity ownership from Session membership. Unresolved work reports unknown and
+barrier; suppress their completion notices. A subagent Job with a complete
+selected cohort is stopped only when its child is a direct child of the Session
+and no Job from outside the child's bounded (256-Session) subtree targets it: its
+handback is suppressed and the subtree stop path closes that subtree's admission
+and stops its actors, reusing the caller's lifecycle lease. The Job counts as
+cancelled only when that stop acknowledges; mixed, detached or unresolved
+descendants report `descendant_job` unknown and stay running or fenced for
+recovery. Do not infer descendant or native activity ownership from Session
+membership. Unresolved work reports unknown and
 preserves its ordinary recovery fences. Resume remaining queued inputs without
 waiting for an unrelated replacement Drain. A control receipt acknowledges only
 its proven runtime scope, never native-effect acknowledgement or rollback.

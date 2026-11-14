@@ -1772,3 +1772,48 @@ fn a_second_driver_neither_sees_nor_answers_the_first_drivers_subagent_request()
         child[1]
     );
 }
+
+#[test]
+fn interrupt_stops_an_owned_subagent_and_keeps_stdin_live() {
+    // The child is held in inference, so it has no tool call whose outcome the
+    // stop could leave unknown.
+    let provider = Provider::start_split(
+        &[
+            DELEGATE[0].strip_prefix("gate:").unwrap(),
+            DELEGATE[1],
+            "text:later answer",
+        ],
+        &["gate:text:child done"],
+    );
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
+    let input = run.until("input", &mut seen);
+    approve_delegation(&mut run, &input, &mut seen);
+    provider.wait_for_gate();
+    run.send(r#"{"type":"interrupt"}"#);
+    let stopped = run.until("result", &mut seen);
+    assert_eq!(stopped["id"], "delegate", "{seen:#?}");
+    assert_eq!(stopped["exit_code"], 1, "{seen:#?}");
+    assert_eq!(stopped["error"], "Input interrupted", "{seen:#?}");
+    provider.release();
+    run.send(r#"{"type":"user","id":"later","text":"continue"}"#);
+    let later = run.until("input", &mut seen);
+    assert_eq!(later["status"], "admitted", "{seen:#?}");
+    let completed = run.until("result", &mut seen);
+    assert_eq!(completed["id"], "later", "{seen:#?}");
+    assert_eq!(completed["result"], "later answer", "{seen:#?}");
+    assert_eq!(completed["exit_code"], 0, "{seen:#?}");
+    run.send(r#"{"type":"end"}"#);
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 1, "{seen:#?}");
+    assert_eq!(run.exit(), Some(1));
+    let child = child_turns(&provider);
+    assert_eq!(child.len(), 1, "the stopped subagent went on: {child:#?}");
+    assert!(
+        !provider
+            .turns()
+            .iter()
+            .any(|turn| turn.to_string().contains("child done")),
+        "the stopped subagent handed back"
+    );
+}

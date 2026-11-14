@@ -583,3 +583,173 @@ async fn requester_disposal_retains_cleanup_through_shutdown_without_recursive_a
         "{settled:?}"
     );
 }
+
+fn child_permission() -> cyber_server::runtime::PermissionAsk {
+    cyber_server::runtime::PermissionAsk {
+        action: "bash".into(),
+        resources: vec!["child resource".into()],
+        always_patterns: vec!["child *".into()],
+        metadata: serde_json::json!({}),
+    }
+}
+async fn child_session(h: &Harness, parent: &str) -> String {
+    h.runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.into()),
+            title: Some("Background child".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id
+}
+/// A running background Job from `parent` to a new child Session; with `call`
+/// it carries that call's complete input cohort, otherwise no input origin.
+async fn child_job(
+    h: &Harness,
+    parent: &str,
+    name: &str,
+    child: Option<&str>,
+    call: Option<&cyber_server::runtime::Invocation>,
+) -> (String, String) {
+    let reservation = match call {
+        Some(call) => h.runtime.reserve_child_job_for_call(parent, call).await,
+        None => h.runtime.reserve_child_job(parent).await,
+    }
+    .unwrap();
+    let child = match child {
+        Some(child) => child.to_owned(),
+        None => child_session(h, parent).await,
+    };
+    let job = h
+        .runtime
+        .start_child_job(
+            parent,
+            &child,
+            name.into(),
+            "Inspect sources".into(),
+            Some(reservation),
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(job.input_origin.is_some(), call.is_some());
+    (job.id, child)
+}
+async fn child_ask(
+    h: &Harness,
+    child: &str,
+) -> tokio::task::JoinHandle<cyber_server::runtime::PermissionReply> {
+    let asker = h.runtime.operation_asker(child).await.unwrap();
+    let asked = tokio::spawn(async move { asker.permission(child_permission()).await });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !h
+            .runtime
+            .pending_requests(Some(child))
+            .iter()
+            .any(|request| request.session_id == child)
+        {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the descendant request did not appear");
+    asked
+}
+fn job_status(h: &Harness, id: &str) -> cyber_server::runtime::JobStatus {
+    h.runtime.job(id).unwrap().status
+}
+
+#[tokio::test]
+async fn interrupt_stops_an_owned_subagent_subtree() {
+    let h = setup();
+    let root = h.session().await;
+    let input = h
+        .runtime
+        .admit(&root, Admission::text("delegate", Delivery::Queue))
+        .await
+        .unwrap();
+    pending(&h, &root, "c1").await;
+    let call = h.tools.executed.lock().unwrap()[0].clone();
+    let (job, child) = child_job(&h, &root, "scan", None, Some(&call)).await;
+    // Nested work started by the subagent itself belongs to the same subtree.
+    let (nested, grandchild) = child_job(&h, &child, "nested", None, None).await;
+    let asked = child_ask(&h, &grandchild).await;
+    h.runtime
+        .interrupt_inputs(&root, request("stop-delegate", &[&input.message_id]))
+        .await
+        .unwrap();
+    let settled = receipt(&h.runtime, &root, "stop-delegate").await;
+    assert_eq!(
+        settled.status,
+        InputInterruptStatus::Acknowledged,
+        "{settled:?}"
+    );
+    assert!(settled.drain_selected);
+    assert_eq!(settled.jobs_cancelled, 1);
+    for id in [&job, &nested] {
+        assert_ne!(
+            job_status(&h, id),
+            cyber_server::runtime::JobStatus::Running,
+            "{id} survived"
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(5), asked)
+        .await
+        .expect("the descendant request was not withdrawn")
+        .unwrap();
+    assert!(h.runtime.pending_requests(Some(&root)).is_empty());
+    h.settle(&root).await;
+    assert!(
+        h.state(&root)
+            .await
+            .input(&format!("msg_handback_{job}"))
+            .is_none_or(|row| row.status == InputStatus::Refused),
+        "the stopped subagent resumed the interrupted input"
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn interrupt_leaves_a_mixed_cohort_subagent_running_and_reports_unknown() {
+    let h = setup();
+    let root = h.session().await;
+    let input = h
+        .runtime
+        .admit(&root, Admission::text("delegate", Delivery::Queue))
+        .await
+        .unwrap();
+    pending(&h, &root, "c1").await;
+    let call = h.tools.executed.lock().unwrap()[0].clone();
+    let (owned, child) = child_job(&h, &root, "scan", None, Some(&call)).await;
+    // A second Job without provenance targets the same child: not ours to stop.
+    let (detached, _) = child_job(&h, &root, "again", Some(&child), None).await;
+    let asked = child_ask(&h, &child).await;
+    h.runtime
+        .interrupt_inputs(&root, request("stop-mixed", &[&input.message_id]))
+        .await
+        .unwrap();
+    let settled = receipt(&h.runtime, &root, "stop-mixed").await;
+    assert_eq!(settled.status, InputInterruptStatus::Unknown, "{settled:?}");
+    assert!(
+        settled
+            .problems
+            .contains(&InputInterruptProblem::DescendantJob),
+        "{settled:?}"
+    );
+    assert_eq!(settled.jobs_cancelled, 0);
+    for id in [&owned, &detached] {
+        assert_eq!(
+            job_status(&h, id),
+            cyber_server::runtime::JobStatus::Running
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!asked.is_finished(), "the mixed subagent was stopped");
+    h.runtime.cancel_job_quietly(&owned).await.unwrap();
+    h.runtime.cancel_job_quietly(&detached).await.unwrap();
+    h.runtime.shutdown().await;
+    drop(asked);
+}
