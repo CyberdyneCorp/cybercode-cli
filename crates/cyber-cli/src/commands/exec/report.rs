@@ -1,11 +1,13 @@
 //! Output for `cyber exec`: text, json and stream-json (`exec-mode` → Output formats,
 //! Stream JSON event schema, Exit codes).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
 use std::time::Instant;
 
 use cyber_client::{Client, ClientError};
+use cyber_core::redact::Redactor;
 use cyber_core::review::{Counts, ErrorCode, Findings, Target, TargetError};
 use cyber_core::untrusted::UntrustedRecord;
 use serde_json::{Value, json};
@@ -544,6 +546,7 @@ impl Out {
         if self.format != Format::StreamJson {
             return;
         }
+        secret_safe(&mut payload);
         payload["type"] = json!(kind);
         payload["ts"] = json!(now_ms());
         payload["session_id"] = json!(self.session_id);
@@ -1115,6 +1118,19 @@ fn summary(input: &Value) -> String {
     String::new()
 }
 
+/// The diagnostic fields of a stream line (`error`, `message`) with every built-in
+/// secret shape replaced by its marker: they carry provider, server and stdin text,
+/// which is not otherwise filtered before it reaches the JSONL consumer.
+fn secret_safe(payload: &mut Value) {
+    for field in ["error", "message"] {
+        if let Some(text) = payload.get(field).and_then(Value::as_str)
+            && let Cow::Owned(redacted) = Redactor::builtin().redact(text).text
+        {
+            payload[field] = json!(redacted);
+        }
+    }
+}
+
 /// The `tool_result` stream line of a settlement, with its `redactions` when any.
 fn tool_result_line(id: &str, data: &Value) -> Value {
     let output = data["output"].as_str().unwrap_or_default();
@@ -1142,6 +1158,32 @@ fn redaction_note(tool: &str, data: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn error_result_and_end_fields_never_carry_a_secret_literally() {
+        let raw = "HTTP 401: {\"detail\":\"bad api_key=sk-test-0123456789abcdef\"} via AKIAZZZZEXAMPLE7QXYZ";
+        for mut line in [
+            json!({"code": "protocol", "message": raw}),
+            json!({"id": "one", "result": "kept AKIAZZZZEXAMPLE7QXYZ", "error": raw}),
+            json!({"exit_code": 1, "error": format!("Background ownership could not be reconciled; inspect Session ses_1: {raw}")}),
+        ] {
+            secret_safe(&mut line);
+            let text = line.to_string();
+            assert!(!text.contains("sk-test-0123456789abcdef"), "{text}");
+            assert!(text.contains("[REDACTED:"), "{text}");
+            let field = line.get("message").unwrap_or(&line["error"]);
+            assert!(!field.as_str().unwrap().contains("AKIAZZZZEXAMPLE7QXYZ"));
+        }
+        let mut answer = json!({"result": "AKIAZZZZEXAMPLE7QXYZ", "error": null});
+        secret_safe(&mut answer);
+        assert_eq!(
+            answer["result"], "AKIAZZZZEXAMPLE7QXYZ",
+            "the answer is not an error"
+        );
+        let mut plain = json!({"message": "unknown type \"shell\""});
+        secret_safe(&mut plain);
+        assert_eq!(plain["message"], "unknown type \"shell\"");
+    }
 
     #[test]
     fn settlements_with_redactions_report_them() {

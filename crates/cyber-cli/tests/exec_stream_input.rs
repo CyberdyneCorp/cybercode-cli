@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-/// Answers each Turn request with the next scripted reply: `text:<answer>` or a tool
-/// call `<tool> <json arguments>`. Title requests (no tools) get a title.
+/// Answers each Turn request with the next scripted reply: `text:<answer>`, a tool
+/// call `<tool> <json arguments>` or `fail:<body>`, an HTTP 400 with that body. Title requests (no tools) get a title.
 struct Provider {
     url: String,
     turns: Arc<Mutex<Vec<Value>>>,
@@ -127,6 +127,14 @@ fn answer(
             }
             None => next.as_str(),
         };
+        if let Some(body) = next.strip_prefix("fail:") {
+            let _ = write!(
+                stream,
+                "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            return;
+        }
         match next.strip_prefix("text:") {
             Some(text) => {
                 json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":"stop"}]})
@@ -434,6 +442,51 @@ fn last_message_publication_failure_fails_the_run_without_losing_the_answer() {
     );
     assert_eq!(run.exit(), Some(1));
     assert_eq!(std::fs::read_dir(destination.path()).unwrap().count(), 0);
+}
+
+/// A secret-shaped value in a provider error body or in a refused stdin line never
+/// reaches the `error`, `result` or `end` lines literally.
+#[test]
+fn jsonl_errors_do_not_echo_secrets() {
+    const SECRET: &str = "wJalrXUtnFEMI0K7MDENGbPxRfiCYzzEXAMPLEKEY";
+    const AWS: &str = "AKIAZZZZEXAMPLE7QXYZ";
+    let body = json!({"error":{"message":format!("rejected request: TOKEN={SECRET} key {AWS}"),"type":"invalid_request_error"}});
+    let script = format!("fail:{body}");
+    let provider = Provider::start(&[&script]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"one","text":"go"}"#);
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["id"], "one");
+    assert_ne!(result["exit_code"], 0, "{seen:#?}");
+    let error = result["error"].as_str().unwrap_or_default();
+    assert!(error.contains("[REDACTED:"), "{seen:#?}");
+    run.send(&format!(r#"{{"type":"api_key={SECRET}"}}"#));
+    let refused = run.until("error", &mut seen);
+    let refused = seen
+        .iter()
+        .find(|line| line["code"] == "protocol")
+        .unwrap_or(&refused)
+        .clone();
+    assert!(
+        refused["message"].as_str().unwrap().contains("[REDACTED:"),
+        "{refused}"
+    );
+    let end = run.until("end", &mut seen);
+    assert!(
+        end["error"].as_str().unwrap().contains("[REDACTED:"),
+        "{end}"
+    );
+    assert_eq!(run.exit(), Some(2));
+    let errors: Vec<&Value> = seen
+        .iter()
+        .filter(|line| ["error", "result", "end"].contains(&line["type"].as_str().unwrap_or("")))
+        .collect();
+    assert!(errors.len() >= 3, "{seen:#?}");
+    for line in errors {
+        let text = line.to_string();
+        assert!(!text.contains(SECRET) && !text.contains(AWS), "{text}");
+    }
 }
 
 #[test]
