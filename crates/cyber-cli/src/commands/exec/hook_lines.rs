@@ -62,13 +62,15 @@ impl HookLines {
         if creates_session(args) {
             lines.reconcile(client, out).await;
         } else {
-            lines.floor = match page(client, session, 1, None).await {
-                Ok((rows, _)) => rows.first().map(position),
+            // Without the fence, earlier runs' receipts would pass as this run's: report
+            // the failure and print no hook lines rather than wrong ones.
+            match page(client, session, 1, None).await {
+                Ok((rows, _)) => lines.floor = rows.first().map(position),
                 Err(error) => {
-                    out.error(&format!("hook events: {error}"));
-                    None
+                    out.error(&format!("hook events disabled: {error}"));
+                    return Self::disabled();
                 }
-            };
+            }
         }
         lines
     }

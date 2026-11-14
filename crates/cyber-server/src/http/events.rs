@@ -241,7 +241,8 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
         | LiveEvent::MemoryUpdated { .. }
         | LiveEvent::WorkflowProgress { .. }
         | LiveEvent::Worktree { .. }
-        // Internal to the telemetry exporter: no client stream carries it.
+        // No Session stream carries it; only the instance stream, on request
+        // (`include=hook_receipts`), forwards it.
         | LiveEvent::HookReceipt { .. } => None,
         LiveEvent::Durable { session_id, .. }
         | LiveEvent::HookNotice { session_id, .. }

@@ -122,15 +122,15 @@ fn read_body(stream: &mut TcpStream) -> Option<Value> {
     }
 }
 
-/// A command hook `id` that leaks [`SECRET`] (from its environment) to stderr and into
-/// its decision reason, then prints `decision`, or exits 2 to block when it is `None`.
+/// A command hook `id` that leaks [`SECRET`] (from `HOOK_PAYLOAD`, a name the sandbox
+/// does not mask) to stderr and into its decision reason, then prints `decision`, or exits 2 to block when it is `None`.
 fn leaky(id: &str, decision: Option<Value>) -> Value {
     let end = match decision {
         Some(decision) => format!("printf '%s' '{decision}'"),
         None => "echo 'bash is not allowed here' >&2; exit 2".into(),
     };
     json!({"type":"command","id":id,"command":format!(
-        "cat >/dev/null; echo \"$HOOK_SECRET\" >&2; {end}"
+        "cat >/dev/null; echo \"$HOOK_PAYLOAD\" >&2; {end}"
     )})
 }
 
@@ -185,7 +185,7 @@ fn base(root: &Path) -> Command {
         .env("CYBER_DB", "test.db")
         .env("CYBER_MODELS_PATH", root.join("models.json"))
         .env("CYBER_SANDBOX_HELPER", helper)
-        .env("HOOK_SECRET", SECRET)
+        .env("HOOK_PAYLOAD", SECRET)
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .current_dir(root)
         .stdout(Stdio::piped())
@@ -278,6 +278,17 @@ fn assert_receipt_lines(lines: &[Value], count: usize, detail: &str) {
     }
 }
 
+/// No `hook_event` line carries [`SECRET`]. A blocking hook's stderr still reaches the
+/// blocked call's `tool_result` as its block reason: that is the hook's message to the
+/// model, unchanged by this flag, so only hook lines are checked.
+fn assert_no_secret_in_hook_lines(lines: &[Value], detail: &str) {
+    let leaked: Vec<&Value> = lines
+        .iter()
+        .filter(|l| l["type"] == "hook_event" && l.to_string().contains(SECRET))
+        .collect();
+    assert!(leaked.is_empty(), "hook IO leaked: {leaked:#?}\n{detail}");
+}
+
 #[test]
 fn stream_json_reports_allowing_and_blocking_hooks_before_what_they_gate() {
     let provider = Provider::start(TOOLS);
@@ -303,8 +314,7 @@ fn stream_json_reports_allowing_and_blocking_hooks_before_what_they_gate() {
     let end = find(&lines, |l| l["type"] == "result", &detail);
     assert!(start < end && blocked < end, "{detail}");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.contains(SECRET), "hook IO leaked\n{detail}");
+    assert_no_secret_in_hook_lines(&lines, &detail);
 }
 
 /// Stops the background server a test started.
@@ -340,6 +350,29 @@ fn a_reused_session_reports_only_this_runs_hooks() {
         .collect();
     let session = lines(&first)[0]["session_id"].as_str().unwrap().to_owned();
     assert_eq!(earlier.len(), 3, "{}", detail(&first));
+    // Positive control: the stored receipts do hold the secret (the hook's stderr), so
+    // its absence from hook lines is the line projection at work.
+    let history = base(&root)
+        .args([
+            "hooks",
+            "history",
+            "--session",
+            &session,
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let stored: Value = serde_json::from_slice(&history.stdout)
+        .unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&history.stderr)));
+    let start_io = stored["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["hook_id"] == "start")
+        .map(|r| r["io"].to_string())
+        .unwrap_or_default();
+    assert!(start_io.contains(SECRET), "stderr not recorded: {stored:#}");
     let mut command = shared(&root);
     command.args(["--format", "stream-json", "--include-hook-events"]);
     command.args(["--session", &session, "again"]);
@@ -374,7 +407,7 @@ fn without_the_flag_no_hook_lines_appear() {
     assert!(lines.iter().all(|l| l["type"] != "hook_event"), "{detail}");
     // The hooks did run: the blocked call's result says so.
     find(&lines, |l| l["type"] == "tool_result", &detail);
-    assert!(!String::from_utf8_lossy(&output.stdout).contains(SECRET));
+    assert_no_secret_in_hook_lines(&lines, &detail);
 }
 
 #[test]
@@ -426,5 +459,5 @@ fn driven_runs_report_hook_lines_before_each_result() {
         2,
         "{detail}"
     );
-    assert!(!String::from_utf8_lossy(&output.stdout).contains(SECRET));
+    assert_no_secret_in_hook_lines(&lines, &detail);
 }

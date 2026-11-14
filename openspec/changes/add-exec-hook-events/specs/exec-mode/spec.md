@@ -18,7 +18,7 @@
 
 Lines SHALL follow the live receipt summaries (`hooks` → Hook receipt summaries for clients), so the line of a synchronous hook precedes the line of the action it gated (a `PreToolUse` line before that call's `tool_result`, a `Stop` line before `result`). Before each `result` line, before `end`, and when it subscribes to a Session it created, exec SHALL reconcile with the durable receipt listing and add the settled receipts that have no line yet, oldest first, so a receipt the live stream missed is still reported exactly once. For a reused Session (`--session`, `--continue` without `--fork`) only receipts admitted after the run attached SHALL be reported. Receipts of other Sessions (subagents, delegated `@agent` prompts, Workflow agents) and receipts still running when the run ends SHALL get no line.
 
-Without the flag the output SHALL be unchanged. With any other `--format`, or with `--workflow`, exec SHALL exit 2 before any Session exists. The line is an opt-in addition and SHALL NOT change the `init` line's `schema_version`.
+Without the flag the output SHALL be unchanged. With any other `--format`, or with `--workflow`, exec SHALL exit 2 before any Session exists. The line is an opt-in addition and SHALL NOT change the `init` line's `schema_version`; `hook_event` is therefore exempt from the rule that added types are declared by `schema_version` 2, because a reader only receives it after asking for it.
 
 #### Scenario: A blocking guard in CI
 - **WHEN** `cyber exec --format stream-json --include-hook-events "run the tests"` calls `bash` and a `PreToolUse` command hook `guard` exits 2 for it
