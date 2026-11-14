@@ -10758,6 +10758,20 @@
             },
             "description": "Complete input cohort driving this exact recorded step/call. Empty means\nunknown; clients must not infer ownership from current Session state."
           },
+          "root_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Root Session of a descendant (subagent) request whose every ancestor link is a\nbackground subagent Job with one complete, bounded input cohort."
+          },
+          "root_input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "That root link's immutable input cohort; scoped attendance uses it instead of\nthe asker's own inputs. Empty means not a proven descendant."
+          },
           "origin": {
             "anyOf": [
               {

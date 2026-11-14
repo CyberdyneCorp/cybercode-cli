@@ -4,6 +4,7 @@
 //! A tool asks through its [`Asker`]; the request is recorded durably and waits until an
 //! attached client replies. Without an interactive client the reply is `Unattended` at once,
 //! so non-interactive Sessions never block.
+pub(super) mod descendant_inputs;
 pub(super) mod input_owners;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -103,6 +104,14 @@ pub struct PendingRequest {
     /// unknown; clients must not infer ownership from current Session state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_message_ids: Vec<String>,
+    /// Root Session of a descendant (subagent) request whose every ancestor link is a
+    /// background subagent Job with one complete, bounded input cohort.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_session_id: Option<String>,
+    /// That root link's immutable input cohort; scoped attendance uses it instead of
+    /// the asker's own inputs. Empty means not a proven descendant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub root_input_message_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<RequestOrigin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -334,6 +343,8 @@ impl Inner {
             call_id: asker.call_id.clone(),
             message_id: asker.message_id.clone(),
             input_message_ids: Vec::new(),
+            root_session_id: None,
+            root_input_message_ids: Vec::new(),
             origin: None,
             routed_to: Vec::new(),
             kind,
@@ -372,24 +383,13 @@ impl Inner {
             QUESTION_ASKED
         };
         let mut state = handle.state.lock().await;
-        let (session, message, call) = (
-            asker.session_id.clone(),
-            asker.message_id.clone(),
-            asker.call_id.clone(),
-        );
-        let owners = self
-            .store
-            .read(move |db| input_owners::recorded(db, &session, &message, &call));
-        match owners {
-            Ok(owners) => request.input_message_ids = owners,
-            Err(error) => {
-                self.bus.publish(super::LiveEvent::Error {
-                    session_id: asker.session_id.clone(),
-                    kind: "storage".into(),
-                    message: format!("could not establish request input provenance: {error}"),
-                });
-                return false;
-            }
+        if let Err(error) = self.stamp_provenance(&mut request, asker, info.parent_id.is_some()) {
+            self.bus.publish(super::LiveEvent::Error {
+                session_id: asker.session_id.clone(),
+                kind: "storage".into(),
+                message: format!("could not establish request input provenance: {error}"),
+            });
+            return false;
         }
         let mut asked = event(kind_name, &request);
         if kind_name == PERMISSION_ASKED
@@ -401,11 +401,7 @@ impl Inner {
             asked.data["admission_bindings"] =
                 serde_json::to_value(&authority.bindings).expect("authority serializes");
         }
-        let authority = match super::input_clients::attendance(
-            &self.store,
-            &request.session_id,
-            &request.input_message_ids,
-        ) {
+        let authority = match super::input_clients::request_attendance(&self.store, &request) {
             Ok(authority) => authority,
             Err(_) => return false,
         };
@@ -452,6 +448,36 @@ impl Inner {
         true
     }
 
+    /// The exact step/call input cohort and, for a child Session, the root cohort its
+    /// proven subagent lineage inherits. Unknown provenance stays empty.
+    fn stamp_provenance(
+        &self,
+        request: &mut PendingRequest,
+        asker: &Asker,
+        descendant: bool,
+    ) -> Result<(), cyber_store::StoreError> {
+        let (session, message, call) = (
+            asker.session_id.clone(),
+            asker.message_id.clone(),
+            asker.call_id.clone(),
+        );
+        request.input_message_ids = self
+            .store
+            .read(move |db| input_owners::recorded(db, &session, &message, &call))?;
+        if !descendant {
+            return Ok(());
+        }
+        let session = asker.session_id.clone();
+        if let Some(root) = self
+            .store
+            .read(move |db| descendant_inputs::recorded(db, &session))?
+        {
+            request.root_session_id = Some(root.session_id);
+            request.root_input_message_ids = root.input_message_ids;
+        }
+        Ok(())
+    }
+
     /// The Sessions a request is routed to: the asking Session's ancestors and, for a
     /// teammate (or one of its subagents), the team lead with the teammate's name
     /// (`agent-teams` → Labelled teammate requests). `None` when nobody can answer it: an
@@ -495,11 +521,7 @@ impl Inner {
             let handle = self.handle(&request.session_id).await?;
             let directory = handle.state.lock().await.info.directory.clone();
             let scopes = interactive_scopes(&request, &directory);
-            let authority = super::input_clients::attendance(
-                &self.store,
-                &request.session_id,
-                &request.input_message_ids,
-            )?;
+            let authority = super::input_clients::request_attendance(&self.store, &request)?;
             let waiter = self.presence.with_request_attendance(
                 &scopes,
                 self.options.interactive,
@@ -642,11 +664,7 @@ impl Inner {
         if matches!(&request.kind, PendingKind::Question { .. }) != question {
             return Err(RuntimeError::Invalid("Request type mismatch".into()));
         }
-        let authority = super::input_clients::attendance(
-            &self.store,
-            &request.session_id,
-            &request.input_message_ids,
-        )?;
+        let authority = super::input_clients::request_attendance(&self.store, &request)?;
         let waiter = if matches!(&authority, super::input_clients::Attendance::Legacy) {
             self.take_waiter(id)
         } else {
@@ -709,12 +727,7 @@ impl Inner {
         request: &PendingRequest,
         authority: &super::input_clients::Attendance,
     ) -> bool {
-        super::input_clients::attendance(
-            &self.store,
-            &request.session_id,
-            &request.input_message_ids,
-        )
-        .is_ok_and(|target| {
+        super::input_clients::request_attendance(&self.store, request).is_ok_and(|target| {
             &target == authority && !matches!(target, super::input_clients::Attendance::Unknown)
         })
     }

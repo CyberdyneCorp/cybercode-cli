@@ -727,6 +727,17 @@ Session or native computer presence. A completed admission cannot switch clients
 on retry. Event observers can use `presence=false` with the Session replay/live
 stream; JSONL uses this setting while retaining its separate input lease.
 
+A request from a background subagent's child Session (at any depth) also carries
+`root_session_id` and `root_input_message_ids` when every link up to the root is
+a subagent Job with one complete, bounded input origin. If that root cohort is
+bound to an input client, only that live client at the root's Location keeps the
+request waiting and can answer it; its release or expiry settles the request
+unattended even while a browser or another client stays attached. Foreground or
+detached children, and mixed, malformed or oversized origins, carry no root
+cohort and keep their previous attendance. After a restart the root cohort is
+still derived from durable Job provenance, but the old client's live attendance
+is not recreated. The JSONL driver does not yet claim these descendant requests.
+
 ## Budgets and deferred input
 
 New Sessions accept a `budget` object through POST `/sessions`: `{ "max_turns": 20, "max_tokens": 100000, "max_cost_usd": 2, "max_wall_seconds": 600, "enforcement": "soft" }`. Omit fields to leave those dimensions unlimited; a zero cap blocks dispatch. Trusted `budgets.session` configuration supplies creation defaults. Caps persist across restart and new prompts, count the Session and descendants, and apply to visible Turns, title, evaluator, compaction and web-page summary calls. Wall time starts at the first gated dispatch and continues while idle. Soft limits publish durable 80% warnings and exhaustion events, let in-flight calls settle and block new calls at the recorded limit; concurrent calls can overshoot. Independent forks copy the cap with fresh spending and activation. Project budget overrides require workspace trust. Reserved enforcement is currently refused; reservations, daily caps, budget-triggered subtree cancellation and complete client budget displays remain open. The runtime has bounded local subtree-stop reporting; exec/TUI adoption remains open.

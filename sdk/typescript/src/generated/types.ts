@@ -3862,6 +3862,16 @@ export type PendingRequest = {
    * unknown; clients must not infer ownership from current Session state.
    */
   input_message_ids?: string[];
+  /**
+   * Root Session of a descendant (subagent) request whose every ancestor link is a
+   * background subagent Job with one complete, bounded input cohort.
+   */
+  root_session_id?: string | null;
+  /**
+   * That root link's immutable input cohort; scoped attendance uses it instead of
+   * the asker's own inputs. Empty means not a proven descendant.
+   */
+  root_input_message_ids?: string[];
   origin?: RequestOrigin | null;
   routed_to?: RequestRoute[];
 } & ((PermissionAsk & {

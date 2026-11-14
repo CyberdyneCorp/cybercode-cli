@@ -32,6 +32,15 @@
 - **THEN** its requests SHALL settle unattended without borrowing other attendance, and the other client's requests SHALL remain independent
 - **AND** scoped input leases SHALL grant neither Session-wide attendance nor native computer authority; malformed, missing scoped evidence and mixed bindings SHALL NOT fall back to legacy attendance
 
+#### Scenario: A descendant request carries its root input cohort
+- **WHEN** a child Session asks for permission or a question and every link from it up to its root Session is a background subagent Job whose immutable input origin is complete, bounded (1–32 unique identities of at most 256 UTF-8 bytes) and identical across that link's Jobs
+- **THEN** the durable and routed request SHALL expose `root_session_id` and that root link's `root_input_message_ids`
+- **AND** when the root cohort is bound to an input client, only that live client at the bound Session and Location SHALL keep the request waiting and have its reply accepted; its release or expiry SHALL settle the request unattended without borrowing browser, stream or other client attendance
+- **WHEN** a link is missing (a foreground or detached child), mixed, malformed, oversized, cyclic or deeper than 32 links
+- **THEN** the request SHALL carry no root cohort and SHALL keep its existing attendance; it SHALL grant no inferred input ownership
+- **WHEN** the server restarts
+- **THEN** the root cohort SHALL remain derivable from durable Job provenance and recorded requests, but SHALL NOT recreate the bound client's live attendance
+
 #### Scenario: Input presence survives as provenance rather than live authority
 - **WHEN** an already admitted input is retried after expiry or restart
 - **THEN** the original admission receipt SHALL remain retrievable without renewing its lease, and a different client under that input identity SHALL conflict

@@ -198,6 +198,39 @@ fn bound_input(db: &Connection, session: &str, id: &str) -> Result<Attendance, S
         client: binding.client.client_id,
     })
 }
+/// Scoped attendance of an open request: a proven descendant is held by its root
+/// input cohort's client; anything else by its own recorded inputs.
+pub(super) fn request_attendance(
+    store: &Store,
+    request: &super::PendingRequest,
+) -> Result<Attendance, StoreError> {
+    match &request.root_session_id {
+        Some(_) if request.root_input_message_ids.is_empty() => Ok(Attendance::Unknown),
+        Some(root) => attendance(store, root, &request.root_input_message_ids),
+        None => attendance(store, &request.session_id, &request.input_message_ids),
+    }
+}
+/// The asker's authority before a request exists: a descendant's root cohort when
+/// every subagent link proves it, otherwise the asker's own recorded inputs.
+fn asker_authority(
+    inner: &super::Inner,
+    session: &str,
+    message: &str,
+    call: &str,
+) -> Result<Attendance, StoreError> {
+    let owner = session.to_owned();
+    let root = inner
+        .store
+        .read(move |db| super::requests::descendant_inputs::recorded(db, &owner))?;
+    if let Some(root) = root {
+        return attendance(&inner.store, &root.session_id, &root.input_message_ids);
+    }
+    let (owner, step, tool) = (session.to_owned(), message.to_owned(), call.to_owned());
+    let roots = inner
+        .store
+        .read(move |db| super::requests::input_owners::recorded(db, &owner, &step, &tool))?;
+    attendance(&inner.store, session, &roots)
+}
 /// Preliminary tool-adapter check. Opening the request rechecks its actual Location.
 pub(super) fn asker_attended(
     inner: &super::Inner,
@@ -205,55 +238,44 @@ pub(super) fn asker_attended(
     message: &str,
     call: &str,
 ) -> bool {
-    let (owner, step, tool) = (session.to_owned(), message.to_owned(), call.to_owned());
-    let roots = inner
-        .store
-        .read(move |db| super::requests::input_owners::recorded(db, &owner, &step, &tool));
-    let authority = roots.and_then(|ids| attendance(&inner.store, session, &ids));
-    match authority {
+    match asker_authority(inner, session, message, call) {
         Ok(Attendance::Legacy) => inner
             .presence
             .session_attended(session, inner.options.interactive),
-        Ok(authority @ Attendance::Bound { .. }) => {
-            let Attendance::Bound {
-                session, directory, ..
-            } = &authority
-            else {
-                unreachable!()
-            };
-            inner.presence.with_request_attendance(
-                &[InteractiveScope {
-                    session_id: session.clone(),
-                    directory: directory.clone(),
-                }],
-                inner.options.interactive,
-                &authority,
-                |live| live,
-            )
-        }
+        Ok(authority @ Attendance::Bound { .. }) => bound_live(inner, &authority),
         _ => false,
     }
 }
+/// Whether the exact live client of a bound authority holds its Session and Location.
+fn bound_live(inner: &super::Inner, authority: &Attendance) -> bool {
+    let Attendance::Bound {
+        session, directory, ..
+    } = authority
+    else {
+        return false;
+    };
+    inner.presence.with_request_attendance(
+        &[InteractiveScope {
+            session_id: session.clone(),
+            directory: directory.clone(),
+        }],
+        inner.options.interactive,
+        authority,
+        |live| live,
+    )
+}
 
+/// Last time the request's own authority was seen: legacy watchers, or only the
+/// bound input client of its (possibly root) Session and Location.
 pub(super) fn last_seen(
     inner: &super::Inner,
     authority: &Attendance,
     legacy: &[super::presence::Watching],
-    session: &str,
-    directory: &str,
 ) -> Option<std::time::Instant> {
     if matches!(authority, Attendance::Legacy) {
         return inner.presence.last_seen(legacy);
     }
-    inner.presence.with_request_attendance(
-        &[InteractiveScope {
-            session_id: session.into(),
-            directory: canonical(directory),
-        }],
-        inner.options.interactive,
-        authority,
-        |live| live.then(std::time::Instant::now),
-    )
+    bound_live(inner, authority).then(std::time::Instant::now)
 }
 
 #[cfg(test)]

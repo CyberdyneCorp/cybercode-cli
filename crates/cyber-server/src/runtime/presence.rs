@@ -303,9 +303,11 @@ impl Presence {
                 directory,
                 client,
             } => client.as_deref().is_some_and(|id| {
-                scopes.first().is_some_and(|scope| {
-                    &scope.session_id == session && &scope.directory == directory
-                }) && input_live(&counts, session, directory, id)
+                // A descendant request's bound root is one of its routes, not its asker.
+                scopes
+                    .iter()
+                    .any(|scope| &scope.session_id == session && &scope.directory == directory)
+                    && input_live(&counts, session, directory, id)
             }),
         };
         apply(live)
