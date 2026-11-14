@@ -20,11 +20,11 @@
 
 ## 3. Windows adapter: portable policy (safe Rust, unit-tested on every OS)
 
-- [ ] 3.1 Integrity/elevation/uiAccess/session classification functions. Tests: elevated, uiAccess, AppContainer, Session 0, unknown IL → refuse.
-- [ ] 3.2 Target-binding comparison (session, desktop, PID, creation time, HWND, class, image hash). Tests: PID reuse, HWND reuse across processes, same title/new process, class change.
-- [ ] 3.3 UIA control-type/ancestry allowlist and password/dialog classifier over recorded property tuples (no live UIA). Tests: password at any ancestor depth, dialog, unknown type, mixed PIDs, cycle, depth > 32, timeout.
+- [ ] 3.1 Integrity/elevation/uiAccess/session/user classification functions. Tests: elevated, uiAccess, AppContainer, low IL, Session 0, unknown IL → refuse; target token user differs from the owner or is unreadable → `target_other_user`.
+- [ ] 3.2 Target-binding comparison (session, desktop, user SID, PID, creation time, HWND, class, unowned, image-path hash). Tests: PID reuse, HWND reuse across processes, same title/new process, class change, different user SID, target gaining an owner.
+- [ ] 3.3 UIA control-type/ancestry allowlist and password/dialog classifier over recorded property tuples (no live UIA). Tests: password at any ancestor depth, dialog, unknown type, mixed PIDs, cycle, depth > 32, timeout; an element hosted in a popup window owned by the target (same or other process) is refused.
 - [ ] 3.4 Chord policy (Win/Alt/clipboard refusal, Control editing allowlist) and UTF-16 chunking with surrogate pairs. Tests: supplementary characters never split across chunks; refused chords produce zero events.
-- [ ] 3.5 Physical-pixel normalization for absolute virtual-desktop input, and topology epoch. Tests: negative origins, multi-monitor extents, rounding bounds, epoch change makes frames stale.
+- [ ] 3.5 Physical-pixel normalization for absolute virtual-desktop input, and topology epoch. Tests: negative origins, multi-monitor extents, rounding bounds, epoch change makes frames stale without revoking the grant.
 
 ## 4. Windows adapter: native (cfg(windows), behind the existing Backend trait)
 
@@ -34,7 +34,7 @@
 - [ ] 4.4 WGC capture: single frame, `ContentSize` crop, row pitch, BGRA→RGBA, downscale, bounded PNG; refusal table (affinity, minimized, cloaked, HDR, device loss, resize, item closed); release on the owning thread; late-callback safety. Tests: synthetic texture padding never appears in output; late `FrameArrived` after cancel is dropped.
 - [ ] 4.5 Per-event assurance sequence (design §5.3) and `SendInput` dispatch with count checks, cursor verification, text chunk focus rechecks, release tracker and drop guard.
 - [ ] 4.6 Session latch: WTS notifications, desktop-switch WinEvent hook, remote metrics, watcher-loss handling; latch stops all grants and never resurrects.
-- [ ] 4.7 Cross-process lease: `Local\` named mutex with an owner-only DACL on a dedicated lease thread; abandoned-mutex recovery. Tests: two processes with different homes; crash while held; squatted name → Busy.
+- [ ] 4.7 Cross-process lease: `Local\` named mutex with an owner-only DACL on a dedicated lease thread; abandoned-mutex handling (record `previous_holder_abandoned`, owner-visible cleanup-uncertain warning, no access to another home's journal). Tests: two processes with different homes; crash of home A while held, then home B arms (warning shown, A's journal untouched) and A restarts (its intents settle unknown); squatted name → Busy; health does not acquire or wait on the mutex.
 - [ ] 4.8 Sandbox regression: a Windows AppContainer child cannot read the capture root; the capability set never includes capture capabilities.
 
 ## 5. Runtime, surfaces and docs
@@ -54,7 +54,7 @@
 ## Acceptance plan: evidence each requirement needs
 
 What CI can and cannot prove:
-- Hosted `windows-2025` runners run as a service-launched session with no owner at the console. *(inference: there is no interactive unlocked desktop that represents a user session, and runner images may differ from Windows 11 client builds.)*
+- Hosted `windows-2025` runners do provide an auto-logon interactive desktop, and UI-automation suites run on them. They still do not count as acceptance: the runner account's token is an elevated administrator, so the controller check (design §5.2) refuses it as `controller_elevated`, and the image is Windows Server 2025, not a supported Windows 11 client build.
 - CI therefore proves compilation, policy logic, fault injection, schema and sandbox regressions, and the absence of side effects on refusal paths.
 - CI does **not** prove capture, input delivery, UIPI behavior, DPI mapping, UIA behavior on real apps, session latching or Stop on a desktop.
 - No hosted-CI result is cited as desktop acceptance.
@@ -63,12 +63,12 @@ What CI can and cannot prove:
 |---|---|---|
 | Native computer capability and consent | Unsupported-platform/arch/build results with no side effects (all OSes) | Health on the accepted build shows owner-review authority and opens no OS UI |
 | Platform-neutral computer health | Schema snapshot; reason-code unit tests; instrumented `health(false)` | Locked session, elevated-server and remote-session health readings |
-| Pointer-safe native target identity | Serialization and rejection tests | Candidate listing excludes Cyber/elevated windows; expired candidate refused |
-| Windows target binding | Binding comparison unit tests | Lock/unlock, logoff, fast-user-switch, disconnect, target restart with the same title, window destroy/recreate |
+| Pointer-safe native target identity | Serialization and rejection tests; candidate expiry at preview and allow | Candidate listing excludes Cyber/elevated/other-user windows; expired candidate refused |
+| Windows target binding | Binding comparison unit tests | `runas` window of another account refused; display topology change makes frames stale without revoking; lock/unlock, logoff, fast-user-switch, disconnect, target restart with the same title, window destroy/recreate |
 | Windows window capture | Readback/crop/encode tests on synthetic textures; late-callback test | Fixture capture at 100/125/150/200 %; capture-excluded fixture window refused; minimized/cloaked refused; HDR monitor refused (if available, else recorded pending); device reset if reproducible, else pending |
-| Windows target assurance before every event | Classifier/allowlist unit tests; fault-injected UIA timeouts | Same-process and other-process topmost and transparent overlays; password field; fixture modal dialog; manually prepared elevated fixture (UAC never automated); focus change mid-type; Cyber TUI/terminal and dashboard windows refused |
+| Windows target assurance before every event | Classifier/allowlist unit tests; fault-injected UIA timeouts | Same-process and other-process topmost and transparent overlays; another process's topmost window owned by the target; the target's own opened menu and drop-down refused; password field; fixture modal dialog; manually prepared elevated fixture (UAC never automated); focus change mid-type; Cyber TUI/terminal and dashboard windows refused |
 | Windows native input dispatch | Normalization, chunking, chord policy; zero events on refusal | Move, left/right/double click, drag, scroll, Unicode type (Greek, CJK, surrogate-pair emoji), named keys and Control chords on two keyboard layouts (one with IME), held-modifier cleanup, Stop during drag/type/wait |
-| Windows cross-process input lease | Two-process and abandoned-mutex tests on Windows CI | Two server homes on one desktop; crash while holding |
+| Windows cross-process input lease | Two-process and abandoned-mutex tests on Windows CI | Two server homes on one desktop; crash while holding, then the other home arms and sees the cleanup warning |
 | Windows support evidence gate | Health reports unaccepted build without an acceptance record | Acceptance record lists OS build, architecture, GPU, DPI layout, session type, binary SHA-256 and signature status, operation IDs and results; untested rows stay pending |
 | Sandboxed processes hold no native computer authority | AppContainer capability verification; capture-root read denial | — (CI is sufficient; the device run repeats it once) |
 | Computer use owner commands | CLI parsing/help/registry tests | `targets`, `allow --window`, `--display` refusal and Stop on the device |
