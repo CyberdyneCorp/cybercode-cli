@@ -3945,6 +3945,8 @@ Externally blocked:
   restart.
 - Product/security decision: the removed-Location maintenance and
   construction-evidence cleanup protocol revision (not covered by the 3.0 approval).
+- Product decision: what journal recovery listing reports for a Session whose
+  Location was removed (it currently fails with "No such file or directory").
 - Product decision: enabling default managed Git source admission.
 - Native platform CI (macOS Intel/ARM, Linux x64/ARM, Windows host) on the final
   pushed source for 4.1–4.4, 5.4, 6.2–6.4 and the managed-recovery tasks.
@@ -4130,8 +4132,11 @@ the CLI hint is best-effort (stderr note, exit unchanged). Regression tests:
 `managed_git_removed_location_keeps_preparation_listing` (`native-git-acceptance`,
 default and `include_cancelled` listings after real removal) and
 `unresolved_hint_is_best_effort`. `sessions recovery` journal listing for a
-removed Location still fails with "No such file or directory"; that predates this
-increment (same code on `main`) and is not changed here.
+removed Location still fails with "No such file or directory" and is not changed
+here. By code reading the route handler and `copy::Store::existing` (which
+canonicalizes the missing Location) behave the same on `main`; this was not
+reproduced by a run on `main`. What journal recovery should report once the
+Location is gone is an open product decision.
 
 Limits: a stage is shown by recovery clients only under a listed preparation row
 whose activity is the stage owner. Malformed stage names (no owner),
