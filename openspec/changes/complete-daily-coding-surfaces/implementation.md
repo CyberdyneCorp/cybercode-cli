@@ -3805,3 +3805,19 @@ fails at the delivery assertion. `cyber-server` library (474) and `auto` (12) te
 `cyber-app --test instructions` (20), Clippy with warnings denied, strict OpenSpec
 and spec lint passed. Withdrawal of rules already delivered in the Epoch,
 revocation/restart acceptance and platform acceptance remain open.
+
+## Rule leakage, precedence and estimate consistency tests (2026-11-14, local)
+
+Five real-App tests with the scripted provider close the remaining 4.4 test cases
+except platform acceptance: directory precedence and Claude opt-out from a nested
+Location; no reuse or supply of rule delivery across a worktree move; child and
+cut-fork Sessions start their own delivery record without changing the parent's;
+budget-truncated reminders record only the rules they label (body or whole list
+entry); and inspection estimates rebuilt from the provider's actual request body.
+`last_prepared_request` matches the sent request exactly, including the rule
+reminder. `next_request` adds two separately rounded parts and sizes the stored
+projection with an empty tool list (2 bytes), so it can differ from the request
+sent by one token; the test pins that composition. No product change was needed.
+Evidence: `cyber-app --test instructions` (29) and `cyber-server --test
+context_compaction` (27) under nextest `ci`, Clippy with warnings denied. Platform
+acceptance remains open.
