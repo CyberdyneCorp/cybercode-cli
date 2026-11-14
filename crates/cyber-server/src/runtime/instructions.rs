@@ -266,6 +266,10 @@ pub struct Instructions {
     /// Rule definitions that apply but were withheld, typed for inspection. Each also
     /// has a warning.
     pub withheld: Withheld,
+    /// Valid path-scoped rule definitions this load discovered but did not attach
+    /// because no operation target matched them; they attach on a matching file
+    /// operation.
+    pub scoped: usize,
     max_file_bytes: usize,
     max_total_bytes: usize,
 }
@@ -761,6 +765,7 @@ impl<'a> Loader<'a> {
         if (definition.paths.is_some() && !self.settings.scoped_rules)
             || !definition.applies(root, target)
         {
+            self.out.scoped += usize::from(definition.paths.is_some());
             return Ok(());
         }
         let generation = authorization

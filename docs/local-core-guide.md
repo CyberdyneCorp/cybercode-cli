@@ -1317,7 +1317,7 @@ These are read from the server's environment (a value of `1`, `true`, `yes` or `
 
 ### Checking what loads
 
-`cyber doctor` has an `instructions` line that lists, in load order, the files a new Session at the current directory loads (`N loaded: <path>, ...`), and warns about truncated files and unresolved or refused imports. `GET /api/v1/sessions/{id}/context?include_content=true` returns the rendered baseline with its `Instructions from:` labels.
+`cyber doctor` has an `instructions` line that lists, in load order, the files a new Session at the current directory loads (`N loaded: <path>, ...`), and warns about truncated files and unresolved or refused imports. It counts the valid path-scoped rule definitions it found (`N path-scoped rule definitions attached on matching file access`); they are not part of the baseline and their paths are not listed. Rule definitions the loader withheld are listed by reason (`withheld (trust_held): <path>, ...`, likewise `read_denied`, `invalid_frontmatter`, `compat_disabled` and `bound_exceeded`), at most 64 plus a count of the rest, without their text; any withheld definition makes the line a warning. With `compat.claude` false, `.claude/rules` directories are not read, so their definitions are neither counted nor listed; one reached through an import is listed as `compat_disabled`. `GET /api/v1/sessions/{id}/context?include_content=true` returns the rendered baseline with its `Instructions from:` labels.
 
 ### Migrating from Claude Code
 

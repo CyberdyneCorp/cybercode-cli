@@ -61,6 +61,19 @@ pub enum WithheldReason {
     BoundExceeded,
 }
 
+impl WithheldReason {
+    /// The reason as it is serialized.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TrustHeld => "trust_held",
+            Self::ReadDenied => "read_denied",
+            Self::InvalidFrontmatter => "invalid_frontmatter",
+            Self::CompatDisabled => "compat_disabled",
+            Self::BoundExceeded => "bound_exceeded",
+        }
+    }
+}
+
 /// A definition left out of context, without its content or size.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WithheldSource {
