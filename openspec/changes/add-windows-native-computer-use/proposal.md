@@ -14,9 +14,9 @@ Windows needs its own reviewed design before any code: its capture, input, integ
   - platform-neutral health that reports observation, input, session and policy readiness separately, with machine-readable reasons;
   - server-issued opaque target identifiers instead of numeric window/display handles in public schemas;
   - a target selector that does not reinterpret `app` as an executable path.
-- Bind a Windows grant to one top-level window, its process and process start time, the interactive logon session and the input desktop. Lock, logoff, disconnect, desktop switch, target destruction and topology changes revoke it.
-- Refuse elevated or unknown-integrity targets, a controller that runs elevated, `uiAccess` or outside an interactive session, secure and password fields, dialogs, OS security, credential and consent surfaces, Cyber's own windows, overlays and unidentifiable UI. When a guarantee cannot be checked, the action is refused.
-- Hold a per-user, per-session cross-process input lease, so separate server homes on the same desktop cannot drive input at the same time.
+- Bind a Windows grant to one top-level window, its process, process start time, image path and token user, the interactive logon session and the input desktop. Lock, logoff, disconnect, desktop switch and target destruction revoke it. A display topology change does not revoke it but makes every earlier screenshot stale.
+- Refuse elevated or unknown-integrity targets, a controller that runs elevated, `uiAccess` or outside an interactive session, targets owned by another user account, secure and password fields, dialogs, OS security, credential and consent surfaces, Cyber's own windows, overlays and owned popups (menus, drop-downs) in the first release, and unidentifiable UI. When a guarantee cannot be checked, the action is refused.
+- Hold a per-user, per-session cross-process input lease, so separate server homes on the same desktop cannot drive input at the same time. A server that inherits a lease abandoned by a crashed holder warns the owner that cleanup is uncertain; the crashed home settles its own open intents on restart.
 - Add a `cyber computer targets` listing and a Windows `--window` selection to the owner CLI/API, so the owner picks a window from what the server observed. A model never supplies a handle or PID.
 - Gate the advertised Windows support on recorded real-desktop acceptance, separate from CI.
 
