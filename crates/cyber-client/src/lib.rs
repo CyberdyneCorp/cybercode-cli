@@ -401,6 +401,20 @@ impl Client {
         Ok(parse_events(chunks))
     }
 
+    /// [`Client::events`] for every Location, plus the IO-free `session.hook.receipt`
+    /// summaries when `hook_receipts` is set (`include=hook_receipts`).
+    pub async fn all_events(
+        &self,
+        hook_receipts: bool,
+    ) -> Result<impl Stream<Item = Event> + use<>, ClientError> {
+        let path = if hook_receipts {
+            "/event?scope=all&include=hook_receipts"
+        } else {
+            "/event?scope=all"
+        };
+        Ok(parse_events(self.open_stream(path).await?))
+    }
+
     /// One owned Session event connection. Dropping this stream closes presence;
     /// unlike `session_events`, no detached reconnect task outlives its consumer.
     pub async fn session_event_stream(

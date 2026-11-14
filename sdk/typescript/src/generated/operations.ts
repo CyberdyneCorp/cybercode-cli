@@ -227,6 +227,7 @@ export interface Operations {
     path: Record<string, never>;
     query: {
       scope?: QueryValue;
+      include?: QueryValue;
     };
     body: undefined;
     response: S.EventEnvelope;
@@ -2225,7 +2226,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/event",
     pathParams: [],
-    query: ["scope"],
+    query: ["scope", "include"],
     body: "none",
     located: true,
     unwrap: false,
@@ -5385,7 +5386,7 @@ export function createGroups(caller: Caller) {
         caller.call("v1.config.setOutputStyle", { body }, options),
     },
     event: {
-      /** Live events for a Location (scope=all for every Location) (`GET /api/v1/event`) */
+      /** Live events for a Location (scope=all for every Location; include=hook_receipts adds IO-free `session.hook.receipt` summaries) (`GET /api/v1/event`) */
       subscribe: (query?: Operations["v1.event.subscribe"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
         caller.stream("v1.event.subscribe", { query }, options),
     },

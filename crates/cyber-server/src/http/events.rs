@@ -308,14 +308,20 @@ pub(super) fn stream_response(rx: mpsc::Receiver<Event>, runtime: Runtime) -> Re
     response
 }
 
-/// Live events for one Location (`scope=all` for every Location).
+/// The Session whose hook receipt this is, when the stream opted into receipts.
+fn receipt_session(event: &LiveEvent, receipts: bool) -> Option<&str> {
+    match event {
+        LiveEvent::HookReceipt { session_id, .. } if receipts => Some(session_id),
+        _ => None,
+    }
+}
+
+/// Live events for one Location (`scope=all` for every Location). `include=hook_receipts`
+/// adds the IO-free `session.hook.receipt` summaries; without it no stream carries them.
 async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Response, ApiError> {
-    let all = parts
-        .uri
-        .query()
-        .and_then(|q| query_value(q, "scope"))
-        .as_deref()
-        == Some("all");
+    let query = |name| parts.uri.query().and_then(|q| query_value(q, name));
+    let all = query("scope").as_deref() == Some("all");
+    let receipts = query("include").as_deref() == Some("hook_receipts");
     let directory = location(&parts, &state.options.default_directory)?
         .display()
         .to_string();
@@ -370,7 +376,8 @@ async fn instance(State(state): State<AppState>, parts: Parts) -> Result<Respons
                     event_location::canonical(directory.clone())
                 }
                 _ => {
-                    let Some(session) = session_of(&event) else {
+                    let session = session_of(&event).or(receipt_session(&event, receipts));
+                    let Some(session) = session else {
                         continue;
                     };
                     let Ok(directory) =

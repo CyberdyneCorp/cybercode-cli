@@ -469,10 +469,10 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/event",
             "v1.event.subscribe",
-            "Live events for a Location (scope=all for every Location)",
+            "Live events for a Location (scope=all for every Location; include=hook_receipts adds IO-free `session.hook.receipt` summaries)",
         )
         .located()
-        .query(&["scope"])
+        .query(&["scope", "include"])
         .stream(),
         op(
             "get",
