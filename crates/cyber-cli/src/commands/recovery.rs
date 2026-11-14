@@ -153,7 +153,7 @@ pub async fn run(client: &Client, args: RecoveryArgs, global: &GlobalArgs) -> Re
         let journals: Vec<SnapshotRecovery> = data(client.get(&base).await.map_err(api)?)?;
         list(&journals, global)?;
         if !output::is_json(global.format) {
-            super::preparation_recovery::unresolved_hint(client, &id).await?;
+            super::preparation_recovery::unresolved_hint(client, &id).await;
         }
         return Ok(());
     };

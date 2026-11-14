@@ -165,6 +165,7 @@ impl Drop for Env {
     }
 }
 
+#[track_caller]
 fn exits(output: &Output, code: i32) -> String {
     let text = format!(
         "{}{}",
@@ -175,6 +176,7 @@ fn exits(output: &Output, code: i32) -> String {
     text
 }
 
+#[track_caller]
 fn json(output: &Output) -> Value {
     let text = exits(output, 0);
     serde_json::from_slice(&output.stdout).unwrap_or_else(|_| panic!("{text}"))
@@ -3393,6 +3395,10 @@ fn kill_at_claim_stage(env: &Env, id: &str, first: &str) {
     while !marker.exists() {
         if confirm.try_wait().unwrap().is_some() || std::time::Instant::now() >= deadline {
             let _ = confirm.kill();
+            // The auto-started service may be parked at the cut point; never leak it.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                kill_registered_service(env)
+            }));
             panic!(
                 "claim construction cut was never reached: {}",
                 std::fs::read_to_string(&log).unwrap_or_default()
@@ -3479,4 +3485,30 @@ fn assert_removal_fenced(env: &Env, stage: &str) {
     assert!(text.contains("same-owner unknown constructor"), "{text}");
     assert!(text.contains(stage), "{text}");
     assert!(env.directory.exists());
+}
+
+/// Removing a managed worktree keeps the Sessions started in it. Their
+/// preparation listing (including cancelled history) stays available: the
+/// missing Location has no construction stages (removal refuses while any
+/// remain). Journal listing for a removed Location is a separate, older gap.
+#[test]
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn managed_git_removed_location_keeps_preparation_listing() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let (mut env, id) = managed_git_fixture(&model);
+    env.exec(Some(&id), "before removal");
+    exits(&env.cyber(&["api", "DELETE", "/worktrees/managed"]), 0);
+    assert!(!env.directory.exists());
+    env.directory = env.root.join("repo");
+    let list = json(&env.cyber(&["sessions", "recovery-preparation", &id, "--format", "json"]));
+    assert_eq!(list, json!([]));
+    let history = json(&env.cyber(&[
+        "api",
+        "GET",
+        &format!("/sessions/{id}/rewind/preparations?include_cancelled=true"),
+    ]));
+    assert_eq!(history["data"], json!([]));
 }

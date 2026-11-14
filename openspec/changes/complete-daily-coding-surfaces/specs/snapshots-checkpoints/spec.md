@@ -109,7 +109,8 @@
 - **GIVEN** a snapshot worker died after flushing a private checkout claim or acknowledgement stage and before its no-replace publication
 - **WHEN** the owner inspects recovery or attempts admission, retirement or removal
 - **THEN** the stage SHALL remain byte-identical private evidence and no stable claim or acknowledgement SHALL appear
-- **AND** the Session SHALL refuse new input until its pre-effect preparation is resolved, and preparation listing, `sessions recovery` and the TUI recovery panel SHALL name the stage as unresolved construction evidence by read-only name inventory only
+- **AND** the Session SHALL refuse new input until its pre-effect preparation is resolved, and preparation listing, `sessions recovery` and the TUI recovery panel SHALL name a well-formed stage under the listed preparation it belongs to as unresolved construction evidence by read-only name inventory only
+- **AND** a stage without a listed owning preparation (malformed name, unlisted owner, or cancelled preparation) SHALL be named by the removal and retirement refusals, and an unreadable inventory or removed Location SHALL NOT fail the preparation listing
 - **AND** cancelling the preparation SHALL NOT adopt or delete the stage; reuse of the same activity, metadata retirement and worktree removal SHALL refuse it as same-owner unknown constructor evidence until a separately approved construction-recovery protocol exists
 
 #### Scenario: Exact exited claim reacquisition is read-only

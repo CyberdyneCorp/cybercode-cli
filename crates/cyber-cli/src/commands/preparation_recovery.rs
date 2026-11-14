@@ -220,14 +220,26 @@ pub(super) fn construction_line(stage: &str) -> String {
         clean(stage)
     )
 }
-/// Text-only pointer from journal recovery to unresolved preparations, which
-/// include interrupted checkout construction that has no journal yet.
-pub(super) async fn unresolved_hint(client: &Client, session: &str) -> Result<(), CliError> {
+/// Best-effort text-only pointer from journal recovery to unresolved
+/// preparations, which include interrupted checkout construction that has no
+/// journal yet. The journal listing already succeeded, so a failed lookup is
+/// reported on stderr and never fails the command.
+pub(super) async fn unresolved_hint(client: &Client, session: &str) {
     let path = format!("/sessions/{}/rewind/preparations", encode(session));
-    let list: Vec<SnapshotPreparation> = data(client.get(&path).await.map_err(api)?)?;
-    if list.is_empty() {
-        return Ok(());
+    let list: Result<Vec<SnapshotPreparation>, CliError> = match client.get(&path).await {
+        Ok(response) => data(response),
+        Err(error) => Err(api(error)),
+    };
+    match list {
+        Ok(list) if !list.is_empty() => print_unresolved(&list, session),
+        Ok(_) => {}
+        Err(error) => eprintln!(
+            "Snapshot preparation listing unavailable: {}",
+            clean(&error.message)
+        ),
     }
+}
+fn print_unresolved(list: &[SnapshotPreparation], session: &str) {
     println!(
         "Unresolved snapshot preparations: {}. Review them with cyber sessions recovery-preparation {}",
         list.len(),
@@ -236,7 +248,6 @@ pub(super) async fn unresolved_hint(client: &Client, session: &str) -> Result<()
     for stage in list.iter().flat_map(|item| &item.checkout_constructions) {
         println!("  {}", construction_line(stage));
     }
-    Ok(())
 }
 fn review_output(review: &SnapshotPreparationReview, global: &GlobalArgs) -> Result<(), CliError> {
     if output::is_json(global.format) {
@@ -316,6 +327,17 @@ fn receipt_output(
 mod tests {
     use super::*;
     use clap::Parser;
+
+    /// The journal listing already printed; an unavailable preparation listing
+    /// is reported on stderr and never fails `sessions recovery`.
+    #[tokio::test]
+    async fn unresolved_hint_is_best_effort() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let client = Client::http(&format!("http://{address}"), None);
+        let () = unresolved_hint(&client, "ses_one").await;
+    }
 
     #[test]
     fn unreviewed_or_malformed_cancellations_fail_before_startup() {

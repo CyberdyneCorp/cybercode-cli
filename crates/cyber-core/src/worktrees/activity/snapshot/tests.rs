@@ -213,10 +213,22 @@ fn killed_acknowledgement_construction_retains_stage_and_fences_retirement() {
 
 #[test]
 fn malformed_or_foreign_construction_names_are_listed_and_fence_removal() {
-    for name in [
-        "preparing_6_op_cut_".to_string(),
-        format!("ack_preparing_9_op_other_{}", ulid::Ulid::new()),
-        format!("preparing_6_op_cut_{}", ulid::Ulid::new()),
+    // The length-mismatched name is malformed (no owner); the length-8 one is a
+    // well-formed acknowledgement stage for an owner that has no acknowledgement.
+    for (name, owner) in [
+        ("preparing_6_op_cut_".to_string(), None),
+        (
+            format!("ack_preparing_9_op_other_{}", ulid::Ulid::new()),
+            None,
+        ),
+        (
+            format!("ack_preparing_8_op_other_{}", ulid::Ulid::new()),
+            Some("op_other"),
+        ),
+        (
+            format!("preparing_6_op_cut_{}", ulid::Ulid::new()),
+            Some("op_cut"),
+        ),
     ] {
         let temp = tempfile::tempdir().unwrap();
         let managed = fixture(&temp.path().canonicalize().unwrap());
@@ -228,6 +240,7 @@ fn malformed_or_foreign_construction_names_are_listed_and_fence_removal() {
         std::fs::write(directory(&managed).join(&name), b"unknown constructor").unwrap();
         let listed = constructions::inventory(&managed).unwrap();
         assert_eq!(listed.len(), 1, "{name}");
+        assert_eq!(listed[0].owner_id.as_deref(), owner, "{name}");
         assert_fenced(CheckoutActivity.reserve(&managed).err().unwrap());
         assert_eq!(
             std::fs::read(directory(&managed).join(&name)).unwrap(),

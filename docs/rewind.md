@@ -521,6 +521,14 @@ stage behaves the same way for metadata retirement. Cleaning up construction
 evidence needs a separate recovery protocol that does not exist yet; do not delete
 the stage by hand to force removal.
 
+Recovery clients show a stage only under the preparation whose activity owns it.
+A stage with a malformed name, an acknowledgement stage whose owner has no listed
+preparation, and any stage after its preparation was cancelled (the default
+listing drops cancelled candidates; the TUI history view still shows them) appear
+only in the worktree removal or metadata retirement refusal, which always names
+them. The name inventory is advisory: if it cannot be read, the listing still
+returns its preparations without stage names.
+
 Confirm only a reviewed fingerprint and retain your stable cancellation ID:
 
 ```sh

@@ -1459,10 +1459,13 @@ impl ToolHost for BuiltinHost {
         if info.worktree_id.is_none() {
             return Ok(vec![]);
         }
-        cyber_core::worktrees::Repository::snapshot_constructions_at(std::path::Path::new(
+        // A removed Location retains no stages: removal refuses while any remain.
+        match cyber_core::worktrees::Repository::snapshot_constructions_at(std::path::Path::new(
             &info.directory,
-        ))
-        .map_err(|error| error.to_string())
+        )) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(vec![]),
+            result => result.map_err(|error| error.to_string()),
+        }
     }
 
     fn reacquire_snapshot_location(

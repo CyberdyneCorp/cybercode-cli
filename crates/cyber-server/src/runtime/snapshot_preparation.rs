@@ -583,11 +583,20 @@ impl Runtime {
         include_cancelled: bool,
     ) -> Result<Vec<SnapshotPreparation>, RuntimeError> {
         let info = self.session_info(session).await?;
+        // The construction inventory is advisory: worktree removal still names and
+        // refuses every stage, so an unreadable inventory never hides the rows.
         let constructions = self
             .inner
             .tools
             .snapshot_checkout_constructions(&info)
-            .map_err(RuntimeError::Conflict)?;
+            .unwrap_or_else(|error| {
+                cyber_core::log::warn(
+                    "snapshots",
+                    "checkout construction inventory unavailable",
+                    serde_json::json!({"session_id": session, "error": error}),
+                );
+                vec![]
+            });
         let created = self
             .inner
             .store

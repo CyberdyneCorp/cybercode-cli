@@ -4076,8 +4076,9 @@ then checks the state.
   one, and metadata retirement refuses with `same-owner unknown constructor`.
   Removal pins, and never deletes, the stage of the now exactly acknowledged owner.
 - `malformed_or_foreign_construction_names_are_listed_and_fence_removal`: claim
-  stages, malformed stage names and acknowledgement stages for another owner are
-  listed and refuse removal with the same message, keeping their bytes.
+  stages, malformed stage names (no owner) and well-formed acknowledgement stages
+  for another, unacknowledged owner are listed with the expected owner and refuse
+  removal with the same message, keeping their bytes.
 
 Cancellation record (`cyber-snapshot`): `preparation.json` is written by
 `storage::atomic` (`tmp_*` stage, then rename). This is a state-level cut, not a
@@ -4119,8 +4120,25 @@ Fixes found by this increment, each with a regression test:
   names them from a read-only name inventory (`Repository::snapshot_constructions_at`):
   no file is opened, locked, adopted or removed.
 
-Limits: after the preparation is cancelled the candidate leaves the default
-listing (it is still shown in the TUI's opt-in history), so the retained stage is
-then visible only through the removal refusal. Construction evidence cannot be
+Review follow-up: the inventory made preparation listing fail for a Session whose
+managed worktree was removed (the Session keeps `worktree_id`; the inventory's
+`canonicalize` returned NotFound), and `sessions recovery` text then exited
+non-zero through its hint. The inventory is now advisory: a missing Location
+yields no names (removal refuses while any stage remains, so none can survive it),
+any other inventory error is logged (`snapshots` warn) and yields no names, and
+the CLI hint is best-effort (stderr note, exit unchanged). Regression tests:
+`managed_git_removed_location_keeps_preparation_listing` (`native-git-acceptance`,
+default and `include_cancelled` listings after real removal) and
+`unresolved_hint_is_best_effort`. `sessions recovery` journal listing for a
+removed Location still fails with "No such file or directory"; that predates this
+increment (same code on `main`) and is not changed here.
+
+Limits: a stage is shown by recovery clients only under a listed preparation row
+whose activity is the stage owner. Malformed stage names (no owner),
+acknowledgement stages whose owner has no preparation row, and any stage after its
+preparation is cancelled (the candidate leaves the default listing; the TUI's
+opt-in history still shows it) are visible only through the worktree removal or
+metadata retirement refusal, which always names them. An inventory error also
+leaves the listing without names. Construction evidence cannot be
 cleaned up: that needs a separate construction-recovery protocol extension. All
 results are local macOS arm64; no Linux, macOS Intel or Windows result is claimed.
