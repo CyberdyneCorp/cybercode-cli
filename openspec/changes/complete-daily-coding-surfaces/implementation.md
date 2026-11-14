@@ -3843,8 +3843,9 @@ acceptance):
   driver owns background-subagent and `PreToolUse` hook asks; scoped interruption
   stops an owned background subagent subtree; stale, wrong-kind and cross-driver
   replies are refused.
-- 6.3: secret-redacted JSONL `error`/`result`/`end` fields and
-  `--include-hook-events` from durable hook receipts.
+- 6.3: secret-redacted JSONL `error`/`result`/`end` fields. An earlier
+  `--include-hook-events` commit here was reverted in favour of the separate
+  `add-exec-hook-events` change (PR #132).
 
 Guides updated to match: `docs/features.md` (Project instructions, Driven exec)
 and `docs/local-core-guide.md` (settlement fencing and restart behaviour replace

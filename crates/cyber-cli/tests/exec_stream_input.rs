@@ -803,33 +803,11 @@ fn unsupported_combinations_exit_2_before_any_session() {
             "5m",
         ],
         &["--include-partial-messages", "hi"],
-        &["--include-hook-events", "hi"],
     ] {
         let out = run(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
     }
     assert!(provider.turns().is_empty());
-}
-
-#[test]
-fn include_hook_events_needs_stream_json_input() {
-    let dir = tempfile::tempdir().unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_cyber"))
-        .args(["--cwd", dir.path().to_str().unwrap(), "exec", "--embedded"])
-        .args(["--include-hook-events", "hi"])
-        .env_clear()
-        .env("HOME", dir.path())
-        .env("CYBER_HOME", dir.path().join("cyber"))
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert_eq!(out.status.code(), Some(2), "{out:?}");
-    assert!(
-        String::from_utf8_lossy(&out.stderr).contains("--include-hook-events"),
-        "{out:?}"
-    );
-    assert!(!dir.path().join("cyber").join("embedded").exists());
 }
 
 #[test]

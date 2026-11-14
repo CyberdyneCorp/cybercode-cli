@@ -117,10 +117,6 @@ impl Inputs {
         self.owns_cohort(&ids).then_some(ids)
     }
 
-    pub fn get(&self, message_id: &str) -> Option<&Input> {
-        self.pending.get(message_id)
-    }
-
     pub fn get_mut(&mut self, message_id: &str) -> Option<&mut Input> {
         self.pending.get_mut(message_id)
     }
