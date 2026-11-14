@@ -7,13 +7,20 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{GitExecution, Managed, Name, RemovalActivity, Repository, RepositoryLock};
+mod snapshot;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use snapshot::CheckoutRetirementGuard;
+pub use snapshot::{CheckoutAcknowledgement, CheckoutBinding, CheckoutOwner, SnapshotClaim};
+pub use snapshot::{CheckoutRetirementFile, CheckoutRetirementPlan};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct UseRecord {
     worktree_id: String,
     #[serde(alias = "session_id")]
     owner_id: String,
     settled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot_binding: Option<CheckoutBinding>,
 }
 
 /// Dropping without `settle` releases the OS lock but retains unknown activity.
@@ -21,6 +28,7 @@ struct UseRecord {
 pub struct CheckoutLease {
     file: LockedRecord,
     record: UseRecord,
+    snapshot_pins: Option<snapshot::Pins>,
 }
 
 impl CheckoutLease {
@@ -32,14 +40,36 @@ impl CheckoutLease {
         &self.record.owner_id
     }
 
+    pub fn snapshot_binding(&self) -> io::Result<&CheckoutBinding> {
+        self.record
+            .snapshot_binding
+            .as_ref()
+            .ok_or_else(|| invalid("Checkout has no exact snapshot binding"))
+    }
+
+    /// Metadata-only verification against retained native descriptors. This does
+    /// not acknowledge an unknown lease or launch Git/process work.
+    pub fn verify_snapshot(&self) -> io::Result<()> {
+        self.snapshot_pins
+            .as_ref()
+            .ok_or_else(|| invalid("Checkout snapshot pins are missing"))?
+            .verify(&self.file, &self.record)
+    }
+
     pub fn settle(self) -> io::Result<()> {
         self.settle_retained().map(drop)
     }
 
     /// Record acknowledgement while retaining the native lock through a later commit.
     pub fn settle_retained(mut self) -> io::Result<Self> {
+        if self.record.snapshot_binding.is_some() {
+            self.verify_snapshot()?;
+        }
         self.record.settled = true;
         write_record(&mut self.file, &self.record)?;
+        if self.record.snapshot_binding.is_some() {
+            self.verify_snapshot()?;
+        }
         Ok(self)
     }
 }
@@ -72,19 +102,26 @@ pub struct CheckoutActivity;
 
 struct RemovalFence {
     _files: Vec<LockedRecord>,
+    _snapshots: Vec<Box<dyn Send>>,
 }
 
 impl RemovalActivity for CheckoutActivity {
     fn reserve(&self, managed: &Managed) -> io::Result<Box<dyn Send>> {
         let directory = use_directory(managed, false)?;
         if !directory.exists() {
-            return Ok(Box::new(RemovalFence { _files: Vec::new() }));
+            return Ok(Box::new(RemovalFence {
+                _files: Vec::new(),
+                _snapshots: vec![],
+            }));
         }
         let mut paths = std::fs::read_dir(&directory)?
             .map(|entry| entry.map(|entry| entry.path()))
             .collect::<io::Result<Vec<_>>>()?;
         paths.sort();
+        let (paths, inventory) = snapshot::acknowledgement::Inventory::split(paths)?;
         let mut files = Vec::with_capacity(paths.len());
+        let mut snapshots = vec![];
+        let mut acknowledged = std::collections::HashMap::new();
         for path in paths {
             let session = path
                 .file_stem()
@@ -101,16 +138,38 @@ impl RemovalActivity for CheckoutActivity {
             let mut file = LockedRecord(file);
             let record = read_record(&mut file)?;
             check_record(&record, managed, session)?;
-            if !record.settled {
+            let proof = snapshot::acknowledgement::for_removal(managed, &record, &file)?;
+            if !record.settled && proof.is_none() {
                 return Err(unknown(session));
+            }
+            if let Some((binding, proof)) = proof {
+                acknowledged.insert(session.to_owned(), binding);
+                snapshots.push(proof);
             }
             files.push(file);
         }
-        Ok(Box::new(RemovalFence { _files: files }))
+        files.extend(inventory.retain(managed, &acknowledged)?);
+        Ok(Box::new(RemovalFence {
+            _files: files,
+            _snapshots: snapshots,
+        }))
     }
 }
 
 impl Repository {
+    /// Reacquire exact existing evidence, without creating or settling a claim.
+    /// Caller must separately retain the matching snapshot lifetime proof.
+    pub fn reacquire_snapshot(
+        &self,
+        managed: &Managed,
+        binding: &CheckoutBinding,
+        owner: &CheckoutOwner,
+    ) -> io::Result<SnapshotClaim> {
+        if self.common_dir != managed.common_dir {
+            return Err(invalid("Foreign checkout repository"));
+        }
+        snapshot::reacquire(managed, binding, owner)
+    }
     /// Admit Location use under the same lock as removal and verify exact ready
     /// ownership before creating a persistent per-Session activity lock.
     pub async fn claim(
@@ -157,15 +216,37 @@ impl Repository {
         self.claim_owner(execution, managed, document).await
     }
 
-    async fn claim_owner(
+    /// A synchronous snapshot worker owns checkout activity independently of the
+    /// Session and of every other worker. An interrupted claim remains unknown.
+    pub async fn claim_snapshot(
         &self,
         execution: &dyn GitExecution,
         managed: &Managed,
-        session: &str,
+        activity: &str,
     ) -> io::Result<CheckoutLease> {
-        safe_owner_id(session)?;
+        safe_id(activity, "op")?;
+        let _lock = self.claim_ready(execution, managed).await?;
+        snapshot::publish(managed, activity, None)
+    }
+
+    pub async fn claim_snapshot_bound(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+        owner: &CheckoutOwner,
+    ) -> io::Result<CheckoutLease> {
+        owner.validate(managed)?;
+        let _lock = self.claim_ready(execution, managed).await?;
+        snapshot::publish(managed, &owner.activity_id, Some(owner.clone()))
+    }
+
+    async fn claim_ready(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+    ) -> io::Result<RepositoryLock> {
         safe_id(&managed.id, "wt")?;
-        let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
+        let lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
         if managed.common_dir != self.common_dir {
@@ -185,6 +266,17 @@ impl Repository {
         if stored != *managed {
             return Err(invalid("Worktree creation identity changed"));
         }
+        Ok(lock)
+    }
+
+    async fn claim_owner(
+        &self,
+        execution: &dyn GitExecution,
+        managed: &Managed,
+        session: &str,
+    ) -> io::Result<CheckoutLease> {
+        safe_owner_id(session)?;
+        let _lock = self.claim_ready(execution, managed).await?;
         let path = use_directory(managed, true)?.join(format!("{session}.lock"));
         let existed = path.try_exists()?;
         let file = open_record(&path, true)?;
@@ -203,14 +295,19 @@ impl Repository {
             worktree_id: managed.id.clone(),
             owner_id: session.into(),
             settled: false,
+            snapshot_binding: None,
         };
         write_record(&mut file, &record)?;
         sync_parent(&path)?;
-        Ok(CheckoutLease { file, record })
+        Ok(CheckoutLease {
+            file,
+            record,
+            snapshot_pins: None,
+        })
     }
 }
 
-fn safe_id(id: &str, prefix: &str) -> io::Result<()> {
+pub(super) fn safe_id(id: &str, prefix: &str) -> io::Result<()> {
     if !crate::ids::has_prefix(id, prefix)
         || id.len() > 128
         || !id
@@ -229,6 +326,8 @@ fn safe_owner_id(id: &str) -> io::Result<()> {
         "lsp"
     } else if crate::ids::has_prefix(id, "bin") {
         "bin"
+    } else if crate::ids::has_prefix(id, "op") {
+        "op"
     } else {
         "ses"
     };
@@ -285,11 +384,24 @@ fn try_lock(file: &File) -> io::Result<bool> {
 fn read_record(file: &mut File) -> io::Result<UseRecord> {
     file.rewind()?;
     let mut bytes = Vec::new();
-    file.take(4097).read_to_end(&mut bytes)?;
-    if bytes.len() > 4096 {
-        return Err(invalid("Activity record exceeds 4 KiB"));
+    file.take(16 * 1024 + 1).read_to_end(&mut bytes)?;
+    let record = serde_json::from_slice(&bytes).map_err(invalid)?;
+    if bytes.len() > record_limit(&record) {
+        return Err(invalid("Activity record exceeds limit"));
     }
-    serde_json::from_slice(&bytes).map_err(invalid)
+    Ok(record)
+}
+
+fn record_limit(record: &UseRecord) -> usize {
+    if record
+        .snapshot_binding
+        .as_ref()
+        .is_some_and(|binding| binding.version == 2)
+    {
+        16 * 1024
+    } else {
+        4096
+    }
 }
 
 fn check_record(record: &UseRecord, managed: &Managed, session: &str) -> io::Result<()> {
@@ -301,6 +413,9 @@ fn check_record(record: &UseRecord, managed: &Managed, session: &str) -> io::Res
 
 fn write_record(file: &mut File, record: &UseRecord) -> io::Result<()> {
     let bytes = serde_json::to_vec(record).map_err(invalid)?;
+    if bytes.len() > record_limit(record) {
+        return Err(invalid("Activity record exceeds limit"));
+    }
     file.rewind()?;
     file.set_len(0)?;
     file.write_all(&bytes)?;
@@ -350,11 +465,13 @@ mod tests {
             worktree_id: "wt_test".into(),
             owner_id: "ses_test".into(),
             settled: false,
+            snapshot_binding: None,
         };
         write_record(&mut file, &record).unwrap();
         let proof = CheckoutLease {
             file: LockedRecord(file),
             record,
+            snapshot_pins: None,
         }
         .settle_retained()
         .unwrap();
@@ -383,6 +500,7 @@ mod tests {
             worktree_id: "wt_test".into(),
             owner_id: "ses_test".into(),
             settled: false,
+            snapshot_binding: None,
         };
         write_record(&mut initial, &record).unwrap();
         drop(initial);
@@ -391,7 +509,8 @@ mod tests {
         assert!(
             CheckoutLease {
                 file: LockedRecord(file),
-                record
+                record,
+                snapshot_pins: None
             }
             .settle_retained()
             .is_err()
@@ -435,11 +554,13 @@ mod tests {
                 worktree_id: "wt_test".into(),
                 owner_id: "ses_test".into(),
                 settled: false,
+                snapshot_binding: None,
             };
             write_record(&mut file, &record).unwrap();
             let lease = CheckoutLease {
                 file: LockedRecord(file),
                 record,
+                snapshot_pins: None,
             };
             if settle {
                 lease.settle().unwrap();

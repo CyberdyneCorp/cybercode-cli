@@ -79,10 +79,15 @@ async fn a_tool_scoped_apply_patch_deny_blocks_the_shell_patch() {
         "rules": [{"action": "edit", "resource": "*", "effect": "deny", "tool": "apply_patch"}]
     }}));
     f.write("a.txt", "old\n");
-    let out = failed(
-        f.call("default", "bash", json!({"command": heredoc("")}))
-            .await,
-    );
+    let execution = f
+        .host
+        .execute_observed(
+            f.invocation("default", "bash", json!({"command": heredoc("")})),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    assert!(execution.files.unwrap().is_empty());
+    let out = failed(execution.outcome);
     assert!(!out.is_empty());
     assert_eq!(f.read("a.txt"), "old\n");
 }
@@ -95,9 +100,21 @@ async fn a_powershell_here_string_runs_as_apply_patch() {
     let f = Fixture::new();
     f.write("a.txt", "old\n");
     let script = format!("cd . && apply_patch @'\n{PATCH}\n'@");
-    let out = ok(f
-        .call("accept-edits", "powershell", json!({"command": script}))
-        .await);
+    let execution = f
+        .host
+        .execute_observed(
+            f.invocation("accept-edits", "powershell", json!({"command": script})),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+    let files = execution.files.unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(
+        files[0].evidence().path,
+        f.repo.join("a.txt").canonicalize().unwrap()
+    );
+    files[0].verify().unwrap();
+    let out = ok(execution.outcome);
     assert_eq!(out, "M a.txt");
     assert_eq!(f.read("a.txt"), "new\n");
     assert_eq!(
@@ -124,11 +141,16 @@ async fn an_installed_apply_patch_program_is_left_alone() {
     )))
     .unwrap();
     f.env.set("PATH", path.to_str().unwrap());
-    let _ = f
-        .call("default", "bash", json!({"command": heredoc("")}))
+    let execution = f
+        .host
+        .execute_observed(
+            f.invocation("default", "bash", json!({"command": heredoc("")})),
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await;
+    assert!(execution.files.unwrap().is_empty());
     assert_eq!(intercepted(&f, "call_bash"), None);
-    assert_eq!(f.read("a.txt"), "old\n", "our patch tool did not run");
+    // The external program may change the file. Only built-in routing can mint receipts.
 }
 
 /// Regression: PATH comes from the shell's environment, so an `apply_patch` program
@@ -170,11 +192,16 @@ async fn a_login_shell_runs_the_script_as_written() {
         "sandbox": {"env": {"login_shell": true}}
     }));
     f.write("a.txt", "old\n");
-    let _ = f
-        .call("default", "bash", json!({"command": heredoc("")}))
+    let execution = f
+        .host
+        .execute_observed(
+            f.invocation("default", "bash", json!({"command": heredoc("")})),
+            tokio_util::sync::CancellationToken::new(),
+        )
         .await;
+    assert!(execution.files.unwrap().is_empty());
     assert_eq!(intercepted(&f, "call_bash"), None);
-    assert_eq!(f.read("a.txt"), "old\n");
+    // Login profiles can make an external apply_patch program available.
 }
 
 /// "Long build log for an OpenAI model": a middle profile keeps about 20 KB of each

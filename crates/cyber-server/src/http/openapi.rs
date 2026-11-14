@@ -28,6 +28,7 @@ pub struct Op {
     optional_body: bool,
     response: Option<Schema>,
     query: Vec<&'static str>,
+    required_query: Vec<&'static str>,
     located: bool,
     stream: bool,
     binary: bool,
@@ -49,6 +50,7 @@ fn op(method: &'static str, path: &'static str, id: &'static str, summary: &'sta
         optional_body: false,
         response: None,
         query: Vec::new(),
+        required_query: Vec::new(),
         located: false,
         stream: false,
         binary: false,
@@ -95,6 +97,12 @@ impl Op {
 
     fn query(mut self, names: &[&'static str]) -> Self {
         self.query.extend_from_slice(names);
+        self
+    }
+
+    fn required_query(mut self, names: &[&'static str]) -> Self {
+        self.query.extend_from_slice(names);
+        self.required_query.extend_from_slice(names);
         self
     }
 
@@ -320,6 +328,16 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .query(&["session_id", "limit", "cursor"])
         .ok::<Page<crate::runtime::Job>>(g),
+        op("post", "/jobs/input-state", "v1.job.inputState", "Read bounded background settlement for a complete input cohort")
+            .body::<crate::runtime::InputJobQuery>(g)
+            .ok::<Data<Vec<crate::runtime::InputJobState>>>(g),
+        op("post", "/sessions/{id}/interrupt-inputs", "v1.session.interruptInputs", "Retain input-scoped interruption without targeting unrelated execution")
+            .body::<crate::runtime::InputInterrupt>(g)
+            .ok::<Data<crate::runtime::InputInterruptReceipt>>(g),
+        op("get", "/sessions/{id}/interrupt-inputs/{request_id}", "v1.session.inputInterruption", "Look up the original interruption receipt without targeting replacement execution")
+            .ok::<Data<crate::runtime::InputInterruptReceipt>>(g),
+        op("get", "/sessions/{id}/steps/{message_id}/input-origin", "v1.session.stepInputOrigin", "Read the bounded original input cohort of an exact recorded step")
+            .ok::<Data<Vec<String>>>(g),
         op("get", "/jobs/{id}", "v1.job.get", "Read a background task")
             .ok::<Data<crate::runtime::Job>>(g),
         op(
@@ -629,6 +647,11 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .error::<ErrorBody>(g, 413, "AttachmentTooLargeError with size and limit")
         .error::<ErrorBody>(g, 415, "UnsupportedAttachmentError with media_type")
         .error::<ErrorBody>(g, 422, "UnsupportedModalityError with model and modality"),
+        op("post","/sessions/{sessionID}/input-clients","v1.session.inputClientAttach","Create a 45-second input-only request attachment")
+            .status(201).ok::<Data<super::interactive::InteractiveClientLease>>(g),
+        op("put","/sessions/{sessionID}/input-clients/{clientID}","v1.session.inputClientRenew","Renew a live input-only attachment")
+            .ok::<Data<super::interactive::InteractiveClientLease>>(g),
+        op("delete","/sessions/{sessionID}/input-clients/{clientID}","v1.session.inputClientRelease","Release input-only attendance and settle its unattended requests").status(204),
         op("post","/sessions/{sessionID}/interactive-clients","v1.session.interactiveAttach","Create a 45-second owner-authenticated browser attachment")
             .status(201).ok::<Data<super::interactive::InteractiveClientLease>>(g),
         op("put","/sessions/{sessionID}/interactive-clients/{clientID}","v1.session.interactiveRenew","Renew only a live browser attachment")
@@ -760,6 +783,35 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Data<RevertState>>(g),
         op("get", "/sessions/{sessionID}/rewind/recovery", "v1.session.snapshotRecovery", "Inspect retained filesystem restore journals without acknowledging or replaying native effects")
             .ok::<Data<Vec<crate::runtime::SnapshotRecovery>>>(g),
+        op("post", "/sessions/{sessionID}/rewind/recovery/review", "v1.session.snapshotRecoveryReview", "Review retained snapshot effects without restoring, acknowledging native activity or starting inference")
+            .body::<crate::runtime::SnapshotRecoverySelection>(g)
+            .ok::<Data<crate::runtime::SnapshotRecoveryReview>>(g),
+        op("post", "/sessions/{sessionID}/rewind/recovery/confirm", "v1.session.snapshotRecoveryConfirm", "Resolve fingerprint-confirmed native snapshot effects with an exact durable request; repeated IDs are lookup-only")
+            .body::<crate::runtime::SnapshotRecoveryConfirmation>(g)
+            .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
+        op("get", "/sessions/{sessionID}/rewind/recovery/requests", "v1.session.snapshotRecoveryRequests", "Discover up to 4096 retained request identities for this Session creation and exact journal without native access, acknowledgement or replay")
+            .required_query(&["journal_id"])
+            .ok::<Data<Vec<crate::runtime::SnapshotRecoveryConfirmation>>>(g),
+        op("get", "/sessions/{sessionID}/rewind/recovery/requests/{requestID}", "v1.session.snapshotRecoveryLookup", "Look up a durable recovery request without native access, acknowledgement reconciliation, replay or inference")
+            .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
+        op("post", "/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge", "v1.session.snapshotRecoveryAcknowledge", "Reconcile journal acknowledgement for the exact committed native pair without replaying source changes or starting inference")
+            .ok::<Data<crate::runtime::SnapshotRecoveryResult>>(g),
+        op("get", "/sessions/{sessionID}/rewind/restores/{activityID}", "v1.session.snapshotRestoreLookup", "Read the exact committed ordinary restore receipt without native access or replay")
+            .ok::<Data<crate::runtime::SnapshotRestoreReceipt>>(g),
+        op("get", "/sessions/{sessionID}/rewind/preparations", "v1.session.snapshotPreparations", "List retained preparation candidates without native access; review checks eligibility")
+            .query(&["include_cancelled"]).ok::<Data<Vec<crate::runtime::SnapshotPreparation>>>(g),
+        op("get", "/sessions/{sessionID}/rewind/preparations/{activityID}/receipt", "v1.session.snapshotPreparationReceipt", "Discover the exact committed preparation cancellation receipt without source access or native acknowledgement; absence is not pre-effect proof")
+            .ok::<super::sessions::PreparationReceiptData>(g),
+        op("post", "/sessions/{sessionID}/rewind/preparations/{activityID}/review", "v1.session.snapshotPreparationReview", "Review cancellation of an exited preparation using its exact native lifetime proof")
+            .ok::<Data<crate::runtime::SnapshotPreparationReview>>(g),
+        op("post", "/sessions/{sessionID}/rewind/preparations/{activityID}/confirm", "v1.session.snapshotPreparationConfirm", "Cancel only a fingerprint-confirmed pre-effect snapshot preparation without moving files or transcript")
+            .body::<crate::runtime::SnapshotPreparationConfirmation>(g).ok::<Data<crate::runtime::SnapshotPreparationReceipt>>(g),
+        op("get", "/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}", "v1.session.snapshotPreparationLookup", "Look up the original durable preparation cancellation pair without native access or replay")
+            .ok::<Data<crate::runtime::SnapshotPreparationReceipt>>(g),
+        op("post", "/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}/acknowledge", "v1.session.snapshotPreparationAcknowledge", "Reconcile native metadata acknowledgement of an exact committed pre-effect cancellation without source changes")
+            .ok::<Data<crate::runtime::SnapshotPreparationReceipt>>(g),
+        op("post", "/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge", "v1.session.snapshotRestoreAcknowledge", "Acknowledge the immutable ordinary restore intent after its paired Session commit without replaying source files")
+            .ok::<Data<crate::runtime::SnapshotRestoreReceipt>>(g),
         op("post", "/sessions/{sessionID}/rewind/preview", "v1.session.rewindPreview", "Review a rewind without changing files or the active conversation")
             .body::<crate::runtime::RewindSelection>(g)
             .ok::<Data<crate::runtime::RewindPreview>>(g),
@@ -910,8 +962,9 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/sessions/{sessionID}/context",
             "v1.session.context",
-            "Context baseline, summary and task state",
+            "Inspect recorded context and estimates. Use include_content to return baseline, summary and task text.",
         )
+        .query(&["include_content"])
         .ok::<Data<SessionContext>>(g),
         op(
             "get",
@@ -935,7 +988,7 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "v1.session.events",
             "Replay durable events, then follow",
         )
-        .query(&["after"])
+        .query(&["after", "live", "presence"])
         .stream(),
         op(
             "post",
@@ -2023,7 +2076,7 @@ fn operation(o: &Op, error: &Schema, envelope: &Schema) -> Value {
     if o.id == "v1.memory.delete" {
         parameters.push(json!({ "name": "x-cyber-memory-review", "in": "header", "required": false, "schema": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }));
     }
-    parameters.extend(o.query.iter().map(|name| json!({ "name": name, "in": "query", "required": false, "schema": { "type": "string" } })));
+    parameters.extend(o.query.iter().map(|name| json!({ "name": name, "in": "query", "required": o.required_query.contains(name), "schema": { "type": "string" } })));
     if o.located {
         parameters.push(json!({ "name": "location[directory]", "in": "query", "required": false, "schema": { "type": "string" } }));
         parameters.push(json!({ "name": "x-cyber-directory", "in": "header", "required": false, "schema": { "type": "string" } }));

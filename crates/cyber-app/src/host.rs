@@ -76,6 +76,13 @@ impl ToolHost for AppHost {
         self.builtin.claude_compat(directory)
     }
 
+    fn instruction_limits(
+        &self,
+        directory: &str,
+    ) -> Result<cyber_core::config::InstructionLimits, String> {
+        self.builtin.instruction_limits(directory)
+    }
+
     fn language(&self, directory: &str) -> Option<cyber_core::locale::Locale> {
         self.builtin.language(directory)
     }
@@ -97,6 +104,21 @@ impl ToolHost for AppHost {
         directory: &str,
     ) -> Option<cyber_server::runtime::instructions::ReadGate> {
         self.builtin.instruction_read_gate(directory)
+    }
+
+    fn instruction_rule_gate(
+        &self,
+        directory: &str,
+    ) -> Option<cyber_server::runtime::instructions::RuleGate> {
+        self.builtin.instruction_rule_gate(directory)
+    }
+
+    fn rule_approval(
+        &self,
+        root: &std::path::Path,
+        generation: &str,
+    ) -> cyber_server::runtime::RuleApproval {
+        self.builtin.rule_approval(root, generation)
     }
 
     fn finalize_skill_output(
@@ -274,6 +296,36 @@ impl ToolHost for AppHost {
         self.builtin.claim_binary_location(info, document, cancel)
     }
 
+    fn claim_snapshot_location<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        activity: &'a str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        self.builtin.claim_snapshot_location(info, activity, cancel)
+    }
+
+    fn claim_snapshot_location_bound<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        activity: &'a str,
+        lifetime: Option<&'a cyber_server::runtime::SnapshotLifetimeBinding>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        self.builtin
+            .claim_snapshot_location_bound(info, activity, lifetime, cancel)
+    }
+
+    fn reacquire_snapshot_location(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        lifetime: &cyber_server::runtime::SnapshotLifetimeBinding,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        self.builtin
+            .reacquire_snapshot_location(info, lifetime, bindings)
+    }
+
     fn prepare_child_continuation<'a>(
         &'a self,
         parent: &'a cyber_server::runtime::SessionInfo,
@@ -319,6 +371,22 @@ impl ToolHost for AppHost {
             );
         }
         self.builtin.execute(call, cancel)
+    }
+
+    fn execute_observed(
+        &self,
+        call: Invocation,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, cyber_server::runtime::ObservedExecution> {
+        if self.remote.has(&call.name) {
+            return Box::pin(async move {
+                cyber_server::runtime::ObservedExecution {
+                    outcome: self.execute(call, cancel).await,
+                    files: None,
+                }
+            });
+        }
+        self.builtin.execute_observed(call, cancel)
     }
 
     fn lifecycle_hooks(

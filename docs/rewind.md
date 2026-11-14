@@ -164,8 +164,34 @@ A cap warning is emitted once per Location/condition in the running service;
 conversation work and successful `exec` results continue. A fresh capture retries
 availability after conditions change. Durable Session references protect staged
 baselines and inactive branches. Unreferenced old manifests/objects can be pruned
-only with a complete durable reference view. Every namespace containing journals
-is conservatively retained; no quota or timeout discards unresolved evidence.
+only with a complete durable reference view. Namespaces containing journals remain
+protected from manifest/object pruning; no quota or timeout discards unresolved
+evidence.
+
+On admitted Linux/macOS hosts, periodic maintenance can reclaim displaced regular
+file payloads from an ordinary, completed and natively acknowledged file-copy
+restore in an unmanaged Location. It requires the exact durable restore receipt,
+exited worker proof, a complete reference view and the retention period measured
+from durable settlement. Disabled snapshots or zero retention preserve payloads.
+Live readers, independent unknown effects, changed payloads or incomplete native
+ownership refuse cleanup. A full capture may attempt the same eligible cleanup
+and retry once. Cleanup retains the intent, lifetime records and durable retry
+receipt, and never reads or restores source files.
+
+Acknowledged keep/rollback recovery can also reclaim its original and resolution
+regular-file stages together under both exited worker lifetimes. It requires the
+exact paired receipt, both native acknowledgements, the original settlement link
+and unchanged recorded private slots. Both inventories are checked before deletion;
+interrupted cleanup resumes only through its durable plan. Both intents and lookup
+receipts remain usable afterward. Managed Git, preparation-construction, metadata/
+CAS and legacy payload reclamation remain unfinished.
+
+Cancelled pre-effect preparations can reclaim fully prepared regular target images
+after retention when their recorded inode identities and committed intent proof
+still match. Cleanup preserves the intent and cancellation records and permits
+later receipt acknowledgement without reading or restoring source files. Older
+cancellations lacking committed intent proof and incomplete constructions remain
+protected; their payloads are not inferred from filenames or matching bytes.
 
 Before file changes, restore durably publishes an intent and prepares private
 stages. Replacements retain displaced inodes; progress and completion are flushed
@@ -188,7 +214,314 @@ inference. `filesystem_complete` means only that the worker flushed its final
 filesystem record; it does not acknowledge the Session/native receipt. `applied`
 contains durable checkpoints; a missing entry is not proof of no effect.
 
-Managed keep/rollback resolution and acknowledgement/reclamation of retained
-journals are not implemented yet. Do not edit records or remove evidence to force
-a retry. This increment preserves recovery material and provides inspection; it
-does not claim complete operator recovery or arbitrary external-writer atomicity.
+Reviewed non-Git restores retain their actual worker ownership after a client
+disconnects. New input is refused while that worker is active or has unresolved
+effects; Stop and read-only inspection remain available between source changes.
+On success, Session changes and the exact worker acknowledgement commit together,
+followed by acknowledgement of the retained journal. A completed filesystem
+record without that acknowledgement still blocks another restore. Legacy journals
+remain readable without acquiring new authority to acknowledge native effects.
+The snapshot-worker compatibility migration makes older binaries open this
+database read-only; they cannot safely enforce the new admission fences.
+
+New version-3 file-copy journals record original/staged file identities and parent
+identities before source changes. Missing parents are prepared privately and their
+identities recorded before publication. This evidence distinguishes a completed
+rename from a later same-byte owner replacement even when progress was not saved.
+The journal bound includes this metadata; at most 4096 distinct parent paths are
+prepared for one restore. Older intents do not gain historical file ownership
+evidence from matching content. Read-only native inspection never captures new
+objects or changes owner files. Created-parent permissions and other metadata are
+checked against preparation; existing owner-directory modes are preserved.
+
+Read-only recovery review is available through the owner API:
+
+```sh
+cyber api POST /sessions/<session-id>/rewind/recovery/review \
+  -d '{"journal_id":"restore_...","action":"rollback"}'
+```
+
+Use `"keep"` to review preserving the current files. SDK callers can use
+`client.session.snapshotRecoveryReview(sessionID, { journal_id, action })`.
+Review reports recorded before/after images, current and retained private images,
+proposed changes, recorded created parents and retained exclusions. Missing
+exclusion history is explicit. A foreign replacement cannot become a rollback
+target merely because its bytes match. Live or already acknowledged activities,
+foreign Sessions and unavailable native proof prohibit confirmation. Review does
+not start inference, restore files, move the conversation or acknowledge activity.
+The bounded review is limited to 16 MiB; the simpler journal catalog remains 4 MiB.
+
+New origins bind the exact private lock inode. A replacement lock file cannot
+prove an old worker has exited; older origins without this proof stay inspectable
+and fenced. Retained file-copy evidence remains inspectable when capture is
+disabled or capture limits are lowered. Resolution writes still obey the cap.
+
+Confirm a reviewed keep/rollback using its exact fingerprint and a retained request ID:
+
+```sh
+cyber api POST /sessions/<session-id>/rewind/recovery/confirm \
+  -d '{"journal_id":"restore_...","action":"rollback","confirmation":"<fingerprint>","request_id":"<unique-request-id>"}'
+cyber api GET /sessions/<session-id>/rewind/recovery/requests/<request-id>
+```
+
+A repeated confirmation looks up that original request, including an incomplete
+outcome; it never runs the file changes again. Changed request content refuses.
+Lookup does not inspect native files, so `journal_acknowledged: null` means that
+response has not observed the journal acknowledgement. For an already committed
+recovery receipt, POST its `/acknowledge` child to reconcile only missing journal
+acknowledgements. Ordinary successful file-copy rewinds use GET
+`/sessions/<session-id>/rewind/restores/<activity-id>` and POST its `/acknowledge`
+child. These operations preserve later files, including unsupported replacements,
+and do not move the transcript. Historical receipts without immutable proof cannot
+authorize new journal writes.
+
+If a crash occurred before source effects were admitted, list the retained
+preparation candidates and review the selected activity:
+
+```sh
+cyber api GET /sessions/<session-id>/rewind/preparations
+cyber api POST /sessions/<session-id>/rewind/preparations/<activity-id>/review
+cyber api POST /sessions/<session-id>/rewind/preparations/<activity-id>/confirm \
+  -d '{"confirmation":"<fingerprint>","request_id":"<unique-cancellation-id>"}'
+cyber api GET /sessions/<session-id>/rewind/preparations/<activity-id>/requests/<request-id>
+```
+
+The SDK exposes `snapshotPreparations`, `snapshotPreparationReview`,
+`snapshotPreparationConfirm`, `snapshotPreparationLookup` and
+`snapshotPreparationAcknowledge` on `client.session`. Listing does not access native
+files; review determines eligibility. Review requires the exact retained lifetime
+lock proving that this worker exited and a version-2 native phase record proving
+that source effects were never admitted. A published origin is eligible only when
+the database also positively records no source admission. Missing journal files
+alone grant no authority. An older database backup cannot override an admitted
+native phase. Live workers, changed proof, legacy reservations and admitted source
+effects refuse cancellation.
+
+Confirmation cancels only that preparation: source files and transcript remain
+unchanged. Its paired durable receipt precedes native cancellation metadata; the
+original intent is retained without fabricating a completed restore. Retry and
+lookup return the original durable pair without reopening native proof. After a
+committed receipt with missing native acknowledgement, POST
+`/sessions/<session-id>/rewind/preparations/<activity-id>/requests/<request-id>/acknowledge`
+to reconcile metadata under the exact proof. This never replays source changes.
+A receipt with a complete acquired checkout binding can reconcile only that
+preparation's exact exited checkout claims. Independent checkout and process
+uncertainty remains fenced. Cancelling an unstarted keep/rollback request leaves its original failed restore unresolved; its lookup
+reports `cancelled_before_origin` or `cancelled_before_effects`.
+
+Created source directories, private payloads, native phase records and lifetime
+preparations remain protected for acknowledged safe cleanup. Do not edit records
+or remove evidence to force a retry. Partial acquisition recovery, owned Git
+journaling, reclamation, preparation/TUI recovery clients and broader native crash/platform
+acceptance remain unfinished.
+
+
+Managed checkout snapshots use an independent claim named by the snapshot's native
+activity, so they do not reuse a Session, binary document, MCP or language-server
+claim. The native claim remains locked through worker settlement. Hosts without
+explicit support refuse managed snapshot admission. A crash while acquiring a claim
+can still leave unknown checkout evidence. When the complete acquired set was
+published before checkout settlement, its committed preparation receipt can
+acknowledge those exact claims while retaining their original bytes. Missing or
+incomplete publication and legacy claims keep their fences; retain that evidence
+for the remaining recovery path.
+
+
+While a managed snapshot is running, the worker verifies its pinned checkout claim
+and worktree creation metadata before source changes and consuming commits. Aliased
+or replaced claim files, changed creation contents and replaced activity directories
+refuse. These checks preserve evidence. New checkout acknowledgement also requires
+the exact committed preparation receipt and complete acquired-resource binding;
+verification alone cannot clear an unknown claim.
+
+
+New Linux/macOS lifetime-bound checkout claims publish their complete native record
+before becoming visible under the activity name. A pre-publication crash retains a
+construction record and prevents reuse of that activity. Runtime validates Session
+creation, directory, lifetime digest and the whole returned resource set, then
+persists that set before settling checkout admission. Construction evidence is retained for the pending safe
+recovery/cleanup path; it cannot be removed to force a retry. Windows does not yet
+admit the lifetime-bound durability path.
+
+Native preparation acknowledgement publishes separate metadata after the consuming
+commit. It never rewrites an original checkout claim or clears another Session's
+unknown activity. If acknowledgement is interrupted, look up the committed request
+and use its explicit acknowledgement endpoint; confirming again only returns the
+receipt. Existing native journal or checkout receipts must match before a new
+consuming commit, so a database backup cannot replace a different native receipt.
+An authorized later worktree removal retains referenced creation metadata for
+retry/recreation. Payloads, construction records and archived creation evidence
+remain protected until reference-aware cleanup is implemented.
+
+Git restore resolves file paths literally and verifies each blob image against its
+Git object ID. Corrupt blob data or ambiguous image listings refuse before source
+replacement. Retain the snapshot data for diagnosis; this check does not provide
+the still-unfinished owned Git crash-recovery workflow.
+
+
+Recovery image views distinguish `kind: "file"` from `kind: "symlink"`; a missing
+kind means file, including in legacy responses. A link image's hash and byte length describe
+the link target text, not the contents of its target file. Native recovery never
+follows that target while staging, exchanging or reading retained preimages.
+The local Git journal bridge supports typed native link fixtures, but ordinary
+owned Git recovery remains unavailable until its remaining lifecycle, full-state
+and platform acceptance gates are complete.
+
+
+## Recovering an interrupted restore from the CLI
+
+List retained journals, then review an exact journal and action:
+
+```sh
+cyber sessions recovery ses_example
+cyber sessions recovery ses_example restore_example --action keep
+cyber sessions recovery ses_example restore_example --action rollback --format json
+```
+
+Review does not change files or move the conversation. Text quotes paths and request IDs, escaping terminal controls without collapsing
+distinct names. It shows original worker identity,
+current/before/after/retained/proposed images, historical exclusions,
+protected created parents, conflicts and acknowledgement status. Unavailable
+historical evidence is shown explicitly. `keep` preserves the reviewed live files;
+`rollback` reverses only effects proven to belong to that restore. Neither resumes
+the failed rewind or undoes external tool effects. Conflicted or unverifiable
+reviews have no confirmation fingerprint.
+
+Apply only a reviewed fingerprint, using a request ID you retain:
+
+```sh
+cyber sessions recovery ses_example restore_example --action rollback \
+  --confirm <review-fingerprint> --request-id recovery-one
+```
+
+Malformed fingerprints and incomplete option combinations fail before service
+startup. Request IDs contain 1–256 bytes without NUL; the CLI also refuses exact
+`.` and `..`, which URL clients normalize as path segments. Other spaces, slashes
+and URL punctuation are encoded without changing the request identity. Quote such
+IDs in your shell. For a lookup ID beginning with `-`, use
+`recovery-request <session> -- <request-id>` so it is parsed as an ID.
+
+If interrupted or unsure whether the reply arrived, look up the same request:
+
+```sh
+cyber sessions recovery-request ses_example recovery-one
+cyber sessions recovery-request ses_example recovery-one --format json
+```
+
+Lookup reads the durable request without replaying files. Repeating the original
+confirmation with the same request ID and identical content also performs lookup;
+changed content refuses. Never choose a new ID to retry an uncertain outcome.
+A successful lookup can report a pending or unknown outcome; inspect `state`.
+Runtime `acknowledged` and native journal acknowledgement are separate fields.
+`journal_acknowledged: null` means this lookup has not observed native metadata,
+not that the metadata is absent. To explicitly reconcile an acknowledged durable
+request whose native acknowledgement was interrupted:
+
+```sh
+cyber sessions recovery-request ses_example recovery-one --acknowledge
+```
+
+This verifies the exact retained worker/checkout receipts and writes only native
+acknowledgement metadata; it does not reinstall source files or change the
+conversation. Confirmation/reconciliation exits 1 if the returned state does not
+establish the requested acknowledgement. Lookup itself can return an unresolved
+state with exit 0 because the read succeeded. Both commands support `--format json`.
+
+These commands expose the implemented managed file-copy recovery path on admitted
+Linux/macOS hosts. Ordinary managed Git source recovery remains disabled pending
+its remaining compatibility and runtime acceptance gates. Reference-aware
+reclamation and complete native/platform acceptance remain open.
+
+## Recovery in the terminal panel
+
+Open `/rewind` (or idle Esc-Esc) and press **C** to inspect recovery. This entry
+also remains available when code rewind reports unavailable or conflicting state.
+Select a journal with Up/Down, then Enter to discover its retained requests.
+
+- If there are no requests, **K** reviews keep and **B** reviews rollback. The
+  review shows original worker identity, images, historical exclusions, protected
+  created parents and conflicts. A second Enter confirms its fingerprint.
+- If requests already exist, select one and press Enter to look it up. A fresh
+  terminal uses these server-retained identities after a lost reply; it does not
+  choose another request ID to replay the operation.
+- **R** refreshes the current read/review. After confirmation or an ambiguous
+  response it performs exact request lookup. Enter never retries source work from
+  an outcome view.
+- An acknowledged runtime result may still have unobserved native acknowledgement.
+  **A** explicitly reconciles that request's native metadata without reinstalling
+  source files. A positively cancelled pre-effect attempt, or an attempt resolved by another
+  owned request, offers K/B for a fresh review of the original restore;
+  pending/unknown outcomes retain their fences.
+- PgUp/PgDn scroll; Esc closes. Closing does not cancel an already admitted native
+  worker. Reopen recovery to discover its retained request.
+
+Recovery preserves the composer, attachments and conversation. Replies from an old
+Session, Location or UI generation are ignored. Missing legacy proof never enables
+confirmation, and failed request discovery cannot license a fresh attempt.
+Press **P** in recovery to inspect pre-effect preparations, including committed
+cancellations. Select a candidate and press Enter: the panel first discovers an
+existing cancellation receipt; otherwise it requests a fresh pre-effect review.
+Only a matching current review offers Enter to cancel. The panel retains the
+request identity before sending confirmation. After an ambiguous reply, **R**
+looks up that same request; Enter cannot repeat cancellation. **A** explicitly
+reconciles a committed receipt's native metadata. **J** returns to journals.
+A receipt alone does not establish observed native acknowledgement. Preparation
+cancellation preserves independent restore, process and checkout uncertainty.
+
+The panel uses the opt-in read
+`GET /api/v1/sessions/{id}/rewind/preparations?include_cancelled=true` and exact
+receipt discovery at `/rewind/preparations/{activity_id}/receipt`. Default listing
+continues to return pending candidates. History is scoped to the current Session
+creation; discovery validates the committed receipt pair and does not touch
+source files or perform native reconciliation. An absent receipt grants no
+cancellation authority: native proof must still pass review and confirmation.
+Managed Git, cleanup and complete crash/platform acceptance remain unfinished.
+
+`GET /api/v1/sessions/{id}/rewind/recovery/requests?journal_id=restore_example`
+provides the read-only discovery used by the panel. It requires an exact journal,
+filters to the current Session creation, verifies request-owner identities and
+returns at most 4096 retained confirmation records. Overflow refuses explicitly
+without deleting history. Discovery does not inspect source files, acknowledge
+native work or start inference. The SDK exposes `session.snapshotRecoveryRequests`.
+
+## Recovering an exited pre-effect preparation
+
+A worker can stop before it publishes an intent or admits source effects. Its
+missing journal alone does not prove that cancellation is safe. List retained
+candidates and review an exact activity:
+
+```sh
+cyber sessions recovery-preparation ses_example
+cyber sessions recovery-preparation ses_example op_example
+```
+
+Listing shows durable status and whether lifetime metadata exists; it does not
+establish that the worker exited. Review acquires the exact retained native
+lifetime/checkout evidence and refuses a live worker, missing historical proof,
+stale ownership or possible admitted effects. It shows the published-origin flag,
+versions/sequences, complete checkout-set digest when available and the protocol
+warning. Nothing is cancelled by review.
+
+Confirm only a reviewed fingerprint and retain your stable cancellation ID:
+
+```sh
+cyber sessions recovery-preparation ses_example op_example \\
+  --confirm <review-fingerprint> --request-id cancel-one
+cyber sessions recovery-preparation-request ses_example op_example cancel-one
+cyber sessions recovery-preparation-request ses_example op_example cancel-one --acknowledge
+```
+
+The second command looks up the exact committed cancellation without replay; the
+third explicitly reconciles that receipt's native metadata. Repeating the original
+confirmation with the same request ID/content also returns its retained receipt.
+A receipt lookup does not establish observation of native acknowledgement. Errors
+after confirmation include the exact lookup command, with quoted IDs. Never choose
+a new request ID to retry an uncertain outcome. All forms support `--format json`;
+malformed/incomplete confirmation options fail before service startup.
+
+Cancellation preserves files, transcript, retained intents, private payloads and
+independent process/checkout uncertainty. Older receipts can remain inspectable
+without gaining newer native acknowledgement authority. If source effects may
+have been admitted, use the journal's keep/rollback review instead. No force-clear
+or evidence deletion option exists. The TUI preparation path and remaining partial
+constructor/native-platform acceptance are still unfinished.

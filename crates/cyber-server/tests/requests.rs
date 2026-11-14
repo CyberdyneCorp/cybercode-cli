@@ -81,6 +81,168 @@ async fn once_lets_the_tool_run_and_is_recorded() {
 }
 
 #[tokio::test]
+async fn requests_bind_the_recorded_input_cohort_instead_of_later_session_input() {
+    let h = Harness::new(Setup {
+        compaction: cyber_server::runtime::CompactionConfig {
+            auto: false,
+            keep_tokens: 0,
+            keep_turns: Some(0),
+            ..Default::default()
+        },
+        scripts: vec![
+            (
+                "test/main",
+                vec![
+                    tools(&[("c0", "shell", "{}")]),
+                    tools(&[("c1", "shell", "{}")]),
+                    tools(&[("c2", "ask", "{}")]),
+                    text("done"),
+                ],
+            ),
+            ("test/summary", vec![text("summary")]),
+        ],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    h.tools.set("ask", Behavior::AskQuestion);
+    let session = h.session().await;
+    let first = h
+        .runtime
+        .admit(&session, admit("first owner"))
+        .await
+        .unwrap();
+    let initial = wait_pending(&h, &session, 1).await.remove(0);
+    assert_eq!(
+        initial.input_message_ids.as_slice(),
+        std::slice::from_ref(&first.message_id)
+    );
+    let second = h
+        .runtime
+        .admit(&session, admit("second owner"))
+        .await
+        .unwrap();
+    let third = h
+        .runtime
+        .admit(&session, admit("third owner"))
+        .await
+        .unwrap();
+    assert_eq!(
+        h.runtime.pending_requests(Some(&session))[0]
+            .input_message_ids
+            .as_slice(),
+        std::slice::from_ref(&first.message_id)
+    );
+    h.runtime
+        .reply_permission(&initial.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    let permission = wait_pending(&h, &session, 1).await.remove(0);
+    let cohort = vec![second.message_id, third.message_id];
+    assert_eq!(permission.call_id, "c1");
+    assert_eq!(permission.input_message_ids, cohort);
+    h.runtime.compact(&session, None).await.unwrap();
+    h.runtime
+        .reply_permission(&permission.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    let question = wait_pending(&h, &session, 1).await.remove(0);
+    assert_eq!(question.call_id, "c2");
+    assert_eq!(question.input_message_ids, cohort);
+    assert!(h.state(&session).await.compacted.is_some());
+    h.runtime
+        .answer_question(
+            &question.id,
+            QuestionReply::Answers {
+                answers: vec![vec!["sqlite".into()]],
+            },
+        )
+        .await
+        .unwrap();
+    h.settle(&session).await;
+    let event = h
+        .store
+        .read_events(&session, -1, 500)
+        .unwrap()
+        .events
+        .into_iter()
+        .find(|event| event.kind == "permission.asked.1")
+        .unwrap();
+    assert_eq!(
+        event.data["input_message_ids"],
+        serde_json::json!([first.message_id])
+    );
+}
+
+#[tokio::test]
+async fn checked_out_input_keeps_request_ownership_when_newer_promotions_are_inactive() {
+    use cyber_server::runtime::BranchCheckout;
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("a", "shell", "{}")]),
+                text("a done"),
+                tools(&[("b", "shell", "{}")]),
+                text("b done"),
+                tools(&[("resumed", "shell", "{}")]),
+                text("resumed done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("npm test".into()));
+    let session = h.session().await;
+    let first = h
+        .runtime
+        .admit(&session, admit("first branch"))
+        .await
+        .unwrap();
+    answer_permission(&h, &session).await;
+    h.runtime
+        .admit(&session, admit("newer input"))
+        .await
+        .unwrap();
+    answer_permission(&h, &session).await;
+    h.runtime
+        .checkout(
+            &session,
+            &BranchCheckout {
+                message_id: Some(first.message_id.clone()),
+                exact: true,
+                ..BranchCheckout::default()
+            },
+        )
+        .await
+        .unwrap();
+    h.runtime.resume(&session).await.unwrap();
+    let request = wait_pending(&h, &session, 1).await.remove(0);
+    assert_eq!(request.call_id, "resumed");
+    assert_eq!(request.input_message_ids, vec![first.message_id]);
+    h.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    h.settle(&session).await;
+}
+async fn answer_permission(h: &Harness, session: &str) {
+    let request = wait_pending(h, session, 1).await.remove(0);
+    h.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    h.settle(session).await;
+}
+
+#[tokio::test]
+async fn replay_rejects_a_step_input_cohort_from_another_active_path() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let mut events = h.store.read_events(&session, -1, 500).unwrap().events;
+    events.push(cyber_store::StoredEvent{id:"event_forged".into(),aggregate_id:session,seq:events.len() as i64,kind:"session.step.started.1".into(),data:serde_json::json!({"message_id":"msg_forged","provider":"test","model":"main","tools":false,"input_message_ids":["msg_other"]}),time_ms:0,causation_id:None});
+    assert!(cyber_server::runtime::SessionState::replay(&events).is_err());
+}
+
+#[tokio::test]
 async fn reject_with_feedback_continues_and_without_feedback_halts() {
     let h = Harness::new(Setup {
         scripts: vec![(

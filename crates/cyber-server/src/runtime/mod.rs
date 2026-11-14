@@ -36,7 +36,10 @@ mod compaction;
 pub use child_usage::ChildrenUsage;
 pub mod computer;
 mod context;
+mod context_inspection;
 mod context_meter;
+mod context_sources;
+pub use context_sources::{FileStamp, SourceMetadata, SourceStatus};
 mod continuation;
 mod delegations;
 mod deletion;
@@ -76,6 +79,10 @@ mod handoff;
 mod import;
 pub use import::{ImportDocument, ImportedMessage, ImportedSession};
 mod host;
+mod input_clients;
+pub use input_clients::InputClient;
+mod input_interrupt;
+mod input_jobs;
 pub mod instructions;
 mod jobs;
 pub mod loops;
@@ -94,18 +101,28 @@ mod subtask;
 mod subtree_reopen;
 mod subtree_stop;
 pub use delegations::{Delegation, DelegationPhase, DelegationStatus};
-pub use jobs::{Job, JobAdmission, JobAttempt, JobStatus, JobUsage};
+pub use input_interrupt::{
+    InputInterrupt, InputInterruptProblem, InputInterruptReceipt, InputInterruptStatus,
+};
+pub use input_jobs::{InputJobQuery, InputJobState};
+pub use jobs::{Job, JobAdmission, JobAttempt, JobInputOrigin, JobStatus, JobUsage};
 pub use names::ChildExecution;
 pub use subtask::UserSubtask;
 pub use subtree_reopen::SubtreeReopenReport;
 pub use subtree_stop::{SubtreeStopReport, SubtreeStopStatus};
 mod interactive;
 mod location;
+mod location_uncertainty;
 mod mcp;
 mod mcp_depth;
 pub mod messaging;
 pub mod peers;
 pub mod presence;
+mod process_cut;
+mod snapshot_acknowledgement;
+mod snapshot_recovery_authority;
+pub use snapshot_acknowledgement::{SnapshotAcknowledgementWork, SnapshotAcknowledgementWorker};
+mod snapshot_recovery_record;
 pub use mcp_depth::RunMarker;
 mod memory;
 pub use mcp::{
@@ -122,9 +139,33 @@ mod model;
 mod requests;
 mod rewind;
 mod rewind_preview;
+mod snapshot_lifetime;
+mod snapshot_preparation;
+pub use snapshot_preparation::{
+    SnapshotPreparation, SnapshotPreparationConfirmation, SnapshotPreparationReceipt,
+    SnapshotPreparationReview,
+};
+mod snapshot_recovery;
+mod snapshot_recovery_checkout;
+mod snapshot_recovery_types;
+mod snapshot_restore_receipt;
+pub use snapshot_lifetime::{SnapshotLifetime, SnapshotLifetimeBinding, SnapshotLifetimeRequest};
+pub mod snapshot_reclamation;
+mod snapshot_work;
 pub use rewind_preview::{
     RewindAction, RewindCodePreview, RewindConfirmation, RewindEffect, RewindPreview,
     RewindSelection,
+};
+pub use snapshot_recovery_types::{
+    SnapshotRecoveryAction, SnapshotRecoveryCheckout, SnapshotRecoveryCheckoutRole,
+    SnapshotRecoveryConfirmation, SnapshotRecoveryImage, SnapshotRecoveryImageKind,
+    SnapshotRecoveryPath, SnapshotRecoveryReceipt, SnapshotRecoveryResult, SnapshotRecoveryReview,
+    SnapshotRecoverySelection, SnapshotRecoveryState,
+};
+pub use snapshot_work::{
+    SnapshotBinding, SnapshotCompletion, SnapshotNativeGuard, SnapshotNativeResult, SnapshotOrigin,
+    SnapshotRestoreCheckout, SnapshotRestoreReceipt, SnapshotRestoreRequest, SnapshotWork,
+    SnapshotWorker,
 };
 mod routing;
 mod sandbox_events;
@@ -216,6 +257,7 @@ pub use auto::{AutoDecision, AutoEffect, AutoReview, AutoReviewStage, TAINTED_RE
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
+pub use context_inspection::{ContextInspection, PreparedContextEstimate, RuleApproval};
 pub use context_meter::ContextMeter;
 pub use cyber_core::prompts::ModelFamily;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};
@@ -223,10 +265,10 @@ pub use host::{
     AgentInference, CatalogResolver, CheckOutcome, ChildContinuation, ContentSource, FileDecision,
     FileDiff, FileReadError, GoalWorktree, HookEffects, Invocation, LifecycleHook,
     LifecycleVerdict, LocationGuard, LocationLease, ModelResolver, NoSnapshots, NoTools,
-    Provenance, Reconciliation, ResolvedModel, RestoreError, RuleEffect, RunWorktree,
-    SessionEnvelope, SkillSuggestion, Snapshot, SnapshotRecovery, Snapshots, TeamWorktree, ToolDef,
-    ToolHost, ToolOutcome, ToolScope, TurnContext, TurnWorktree, WorkflowAgentOutput,
-    WorkflowAgentRequest, WorkflowToolRequest,
+    ObservedExecution, Provenance, Reconciliation, ResolvedModel, RestoreError, RuleEffect,
+    RunWorktree, SessionEnvelope, SkillSuggestion, Snapshot, SnapshotLocationGuard,
+    SnapshotRecovery, Snapshots, TeamWorktree, ToolDef, ToolHost, ToolOutcome, ToolScope,
+    TurnContext, TurnWorktree, WorkflowAgentOutput, WorkflowAgentRequest, WorkflowToolRequest,
 };
 pub use model::{
     AssistantEntry, CallState, CallStatus, Delivery, Entry, InboxRow, InputStatus, LastStep,
@@ -393,7 +435,8 @@ impl From<StoreError> for RuntimeError {
         match error {
             StoreError::Projector { reason, .. }
                 if reason == admission_authority::STALE
-                    || reason == admission_authority::CLOSED =>
+                    || reason == admission_authority::CLOSED
+                    || reason == snapshot_recovery_record::FENCED =>
             {
                 Self::Conflict(reason)
             }
@@ -590,6 +633,7 @@ impl CommandPlan {
             request.delivery = delivery;
         }
         Admission {
+            input_client: None,
             skill_command: self.skill,
             template: self.template,
             message_id,
@@ -640,6 +684,8 @@ pub struct Admission {
     /// A JSON Schema the answer to this root prompt must satisfy (`session-runtime` →
     /// Structured output); validated before admission.
     pub output_schema: Option<serde_json::Value>,
+    /// Bind this original input to a dedicated client; absent keeps legacy presence.
+    pub input_client: Option<InputClient>,
 }
 
 impl Admission {
@@ -653,6 +699,13 @@ impl Admission {
             self.template.as_ref(),
             files,
         );
+        let base = match &self.input_client {
+            Some(client) => format!(
+                "{base}+input-client:{}",
+                serde_json::to_string(client).expect("input client serializes")
+            ),
+            None => base,
+        };
         // A retry with another schema is another prompt.
         match &self.output_schema {
             Some(schema) => format!("{base}+schema:{:x}", Sha256::digest(schema.to_string())),
@@ -662,6 +715,7 @@ impl Admission {
 
     pub fn text(text: impl Into<String>, delivery: Delivery) -> Self {
         Self {
+            input_client: None,
             skill_command: None,
             template: None,
             message_id: None,
@@ -741,11 +795,14 @@ pub struct SessionPage {
 
 pub(crate) struct Handle {
     pub state: Mutex<SessionState>,
+    pub snapshot_active: std::sync::atomic::AtomicBool,
     pub pending_compaction: StdMutex<Option<Option<String>>>,
     pub title_requested: std::sync::atomic::AtomicBool,
     /// Set by a reject without feedback or a dismissed question: stop after the current tool group.
     pub halt: std::sync::atomic::AtomicBool,
+    /// Opaque process/checkout outcomes cannot be cleared by snapshot proof.
     pub location_uncertain: std::sync::atomic::AtomicBool,
+    snapshot_uncertain: StdMutex<std::collections::HashSet<String>>,
     /// Fingerprints of calls since the last promoted input, for doom-loop detection.
     pub recent_calls: StdMutex<Vec<String>>,
     /// Serialized auto reviews and consecutive blocks, reset for each new Drain.
@@ -816,6 +873,9 @@ struct DrainEntry {
     follow_up: bool,
     /// A deletion fence, not a Drain: no Drain or child Job starts for the Session.
     deleting: bool,
+    completed: CancellationToken,
+    // Last: completion follows disposal of the actual Drain's retained owners.
+    _completion: tokio_util::sync::DropGuard,
 }
 
 pub(crate) struct Inner {
@@ -840,6 +900,8 @@ pub(crate) struct Inner {
     reservation_attempts: StdMutex<HashMap<String, std::sync::Weak<reservations::Attempt>>>,
     jobs: StdMutex<HashMap<String, Arc<jobs::Control>>>,
     job_admission: Arc<Mutex<()>>,
+    input_interrupt_generation: String,
+    input_interrupts: StdMutex<std::collections::HashSet<(String, String)>>,
     /// Foreground commands the user may move to the background, by Session.
     handoffs: StdMutex<HashMap<String, Vec<handoff::Entry>>>,
     /// Running PTYs and their attach tickets.
@@ -906,6 +968,9 @@ pub(crate) struct Inner {
     /// The clock usage limit waits read and sleep on; the system clock unless a test
     /// configures one.
     wait_clock: std::sync::OnceLock<Arc<dyn usage_wait::WaitClock>>,
+    /// Runs after nested instruction discovery and before its settlement lock; unset
+    /// unless a test configures one (`Runtime::configure_settlement_probe`).
+    settlement_probe: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
 
@@ -973,6 +1038,8 @@ impl Runtime {
             reservation_attempts: StdMutex::default(),
             jobs: StdMutex::default(),
             job_admission: Arc::new(Mutex::new(())),
+            input_interrupt_generation: cyber_core::ids::new_id("op"),
+            input_interrupts: StdMutex::default(),
             handoffs: StdMutex::default(),
             ptys: pty::Registry::default(),
             delegations: StdMutex::default(),
@@ -1003,9 +1070,19 @@ impl Runtime {
             workflow_progress: std::sync::OnceLock::new(),
             waiters: StdMutex::default(),
             wait_clock: std::sync::OnceLock::new(),
+            settlement_probe: std::sync::OnceLock::new(),
             me: me.clone(),
         });
         Self { inner }
+    }
+
+    /// Test seam: `probe` runs once per settling tool group, after its nested
+    /// instruction files were discovered and before the Session lock is taken to
+    /// commit them, so a test can change project approval inside that window. Only the
+    /// first configuration takes effect.
+    #[doc(hidden)]
+    pub fn configure_settlement_probe(&self, probe: Arc<dyn Fn() + Send + Sync>) {
+        let _ = self.inner.settlement_probe.set(probe);
     }
 
     /// Requests waiting for a client, optionally owned by or routed to one Session.
@@ -1627,6 +1704,30 @@ impl Runtime {
             .await
     }
 
+    async fn admission_effects(
+        &self,
+        session_id: &str,
+        admission: &Admission,
+        check: &PromptCheck,
+        message_id: &str,
+        digest: &str,
+    ) -> Result<(PromptEffects, PromptAttachments), RuntimeError> {
+        match check {
+            PromptCheck::Run | PromptCheck::RunWithFiles(_) => {
+                self.prompt_hooks(session_id, admission, check.files(), message_id, digest)
+                    .await
+            }
+            PromptCheck::Checked(context) => Ok((
+                PromptEffects {
+                    context: context.clone(),
+                    stop: None,
+                },
+                self.checked_attachments(session_id, &admission.parts)
+                    .await?,
+            )),
+        }
+    }
+
     /// A prompt's `output_schema` is for root Sessions and must pass the root schema
     /// bounds (`session-runtime` → Structured output).
     pub(crate) async fn check_output_schema(
@@ -1660,37 +1761,29 @@ impl Runtime {
         extra: Vec<NewEvent>,
         untrusted: Option<cyber_core::untrusted::UntrustedRecord>,
     ) -> Result<Receipt, RuntimeError> {
+        input_clients::validate_admission(admission.input_client.as_ref())?;
         let untrusted = untrusted.or_else(|| untrusted_input::channel_record(&admission));
         let message_id = admission
             .message_id
             .clone()
             .unwrap_or_else(|| cyber_core::ids::new_id("msg"));
         let digest = admission.digest(check.files());
+        {
+            let handle = self.inner.handle(session_id).await?;
+            let state = handle.state.lock().await;
+            if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
+                return Ok(receipt);
+            }
+            self.inner.ensure_snapshot_admission(&handle, session_id)?;
+        }
         // A denied prompt leaves no durable trace, including a staged revert.
         let prompt = check.runs_hooks();
-        let (effects, attachments) = match &check {
-            PromptCheck::Run | PromptCheck::RunWithFiles(_) => {
-                self.prompt_hooks(session_id, &admission, check.files(), &message_id, &digest)
-                    .await?
-            }
-            PromptCheck::Checked(context) => (
-                PromptEffects {
-                    context: context.clone(),
-                    stop: None,
-                },
-                self.checked_attachments(session_id, &admission.parts)
-                    .await?,
-            ),
-        };
+        let (effects, attachments) = self
+            .admission_effects(session_id, &admission, &check, &message_id, &digest)
+            .await?;
         let _admission = self.inner.open().await?;
         self.inner.ensure_admission_open(session_id)?;
-        let admission_bindings = self.callback_admission_bindings(session_id)?;
-        if let Some(bindings) = attempt
-            .as_ref()
-            .and_then(|attempt| attempt.admission_bindings.as_ref())
-        {
-            self.verify_admission_bindings(bindings)?;
-        }
+        let admission_bindings = self.admitted_bindings(session_id, attempt.as_ref())?;
         let handle = self.inner.handle(session_id).await?;
         handle.state.lock().await.ensure_worktree_ready()?;
         self.inner.commit_staged_revert(&handle).await?;
@@ -1703,13 +1796,14 @@ impl Runtime {
         let observation_scope = self
             .capture_observation_input(&handle, prompt && admission.source == "user")
             .await;
-        let (receipt, observed_input) = {
+        let (receipt, observed_input, interrupted) = {
             let mut state = handle.state.lock().await;
             state.ensure_worktree_ready()?;
             if let Some(receipt) = existing_receipt(&state, &message_id, &digest)? {
                 blobs.keep();
                 return Ok(receipt);
             }
+            self.inner.ensure_snapshot_admission(&handle, session_id)?;
             // The state lock makes accepted input visible before settlement chooses cleanup.
             if self.child_is_settling(session_id) {
                 return Err(RuntimeError::Busy(session_id.into()));
@@ -1741,14 +1835,34 @@ impl Runtime {
             }
             events.push(event(ADMITTED, &payload));
             let admitted = events.len() - 1;
+            events.extend(input_clients::admission_event(
+                &state,
+                &payload,
+                admission.input_client.as_ref(),
+            )?);
+            let interrupted = input_interrupt::notifier_refused(
+                &self.inner.store,
+                session_id,
+                &message_id,
+                &extra,
+            )?;
             events.extend(extra);
-            let stored = self.inner.commit_locked(&mut state, events)?;
+            if interrupted {
+                events.push(input_interrupt::refused(&message_id));
+            }
+            let stored = input_clients::commit(
+                &self.inner,
+                &mut state,
+                events,
+                admission.input_client.as_ref(),
+            )?;
             blobs.keep();
             let observed_input = (prompt && payload.source == "user")
                 .then(|| (state.info.clone(), stored[admitted].id.clone()));
             (
                 receipt_for(&state, &message_id, stored[admitted].seq),
                 observed_input,
+                interrupted,
             )
         };
         if let Some((info, event_id)) = observed_input {
@@ -1759,7 +1873,7 @@ impl Runtime {
                 .stop_continuations
                 .store(0, std::sync::atomic::Ordering::SeqCst);
         }
-        if admission.resume && admission.delivery != Delivery::Hold {
+        if admission.resume && admission.delivery != Delivery::Hold && !interrupted {
             self.inner.start_drain(session_id, false);
         }
         Ok(receipt)
@@ -2267,6 +2381,10 @@ impl Runtime {
             skill_activation: None,
             skill_reminders: Vec::new(),
             instruction_reminders: Vec::new(),
+            rule_reminders: Vec::new(),
+            rule_read: None,
+            rule_edit: None,
+            rule_patch: Vec::new(),
             structured_output: None,
             call_id: call_id.into(),
             status,
@@ -2595,12 +2713,15 @@ impl Inner {
                 RuntimeError::Invalid("browser-managed Session capacity reached".into())
             })?;
         }
+        let (opaque_unknown, snapshot_unknown) = location_uncertainty::load(&self.store, id)?;
         let handle = Arc::new(Handle {
             title_requested: std::sync::atomic::AtomicBool::new(!state.info.default_title),
             state: Mutex::new(state),
+            snapshot_active: std::sync::atomic::AtomicBool::new(false),
             pending_compaction: StdMutex::default(),
             halt: std::sync::atomic::AtomicBool::new(false),
-            location_uncertain: std::sync::atomic::AtomicBool::new(false),
+            location_uncertain: std::sync::atomic::AtomicBool::new(opaque_unknown),
+            snapshot_uncertain: StdMutex::new(snapshot_unknown),
             recent_calls: StdMutex::default(),
             auto_blocks: Mutex::new(0),
             stop_continuations: std::sync::atomic::AtomicUsize::new(0),
@@ -2716,6 +2837,14 @@ impl Inner {
         if events.is_empty() {
             return Ok(Vec::new());
         }
+        for event in &events {
+            if event.kind == events::STEP_STARTED {
+                let step: events::StepStarted = serde_json::from_value(event.data.clone())
+                    .map_err(|error| RuntimeError::Corrupt(error.to_string()))?;
+                requests::input_owners::validate(state, &step.input_message_ids)
+                    .map_err(RuntimeError::Invalid)?;
+            }
+        }
         let stored = self
             .store
             .append(&state.info.id, Expected::Seq(state.last_seq), events)?;
@@ -2762,6 +2891,7 @@ impl Inner {
             return;
         }
         let cancel = CancellationToken::new();
+        let completed = CancellationToken::new();
         drains.insert(
             id.into(),
             DrainEntry {
@@ -2771,6 +2901,8 @@ impl Inner {
                 cancel: cancel.clone(),
                 follow_up: false,
                 deleting: false,
+                completed: completed.clone(),
+                _completion: completed.drop_guard(),
             },
         );
         tokio::spawn(drain::run(Arc::clone(self), id.to_string(), forced, cancel));

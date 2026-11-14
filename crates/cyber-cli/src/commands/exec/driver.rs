@@ -7,28 +7,27 @@
 //! which correlates its `result` and makes a retry after a lost acknowledgement the same
 //! prompt. Permission and question requests go to the driver instead of being declined;
 //! after `end` or EOF nothing new is admitted, unanswered requests are declined, and the
-//! process exits once its inputs are answered and the Session is idle.
+//! process exits once its owned inputs and background work have settled.
 
-use std::collections::BTreeMap;
-use std::path::Path;
+mod interruption;
+
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use cyber_client::{Client, Event};
+use cyber_client::{Client, ClientError, Event};
 use futures::StreamExt;
 use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 
-use super::background::{Owned, Settle};
 use super::frames::{self, Frame, MAX_LINE};
+use super::inputs::{Input, Inputs};
 use super::report::{Out, Run};
 use super::{EXIT_ERROR, EXIT_INTERRUPTED, ExecArgs, NO_APPROVER, api, safe_id};
 use crate::error::CliError;
 
 /// How often the interactive lease (45 s) is renewed.
 const LEASE_RENEWAL: Duration = Duration::from_secs(15);
-/// Inputs admitted and not yet answered, at most.
-const MAX_PENDING: usize = 32;
 /// A fatal protocol error.
 const EXIT_PROTOCOL: u8 = 2;
 
@@ -40,27 +39,22 @@ enum Line {
     Eof,
 }
 
-/// One admitted input and its outcome.
-struct Input {
-    /// The driver's correlation ID, when the line had one.
-    id: Option<String>,
-    message_id: String,
-    answered: bool,
-    text: String,
-    error: Option<String>,
-    structured: Option<Value>,
+/// The control loop selects a ready source before applying its side effects.
+enum Wake {
+    Input(Line),
+    Event(Option<Event>),
+    Poll,
+    Renew,
+    Interrupt,
 }
 
-impl Input {
-    fn exit_code(&self) -> u8 {
-        if self.error.is_some() { EXIT_ERROR } else { 0 }
-    }
-}
-
-/// A permission or question request this Session raised, with the Session to reply to.
+/// A live permission/question request bound to this driver's exact admitted inputs:
+/// asked by the driven Session itself, or by a descendant (subagent) Session whose
+/// root cohort is this driver's, in which case `session_id` is that child Session.
 struct Ask {
     session_id: String,
     question: bool,
+    inputs: Vec<String>,
 }
 
 struct Driver<'a> {
@@ -69,10 +63,15 @@ struct Driver<'a> {
     args: &'a ExecArgs,
     out: &'a mut Out,
     run: Run,
-    owned: Owned,
-    inputs: Vec<Input>,
-    /// Indexes of promoted inputs whose answer is in progress.
-    answering: Vec<usize>,
+    step: Option<String>,
+    seen_seq: Option<i64>,
+    background_failed: bool,
+    /// Each new control must cover a previously uncovered pending input, so
+    /// the 32-input capacity also bounds retained overlapping controls to 32.
+    interruptions: VecDeque<interruption::Pending>,
+    inputs: Inputs,
+    /// Exact message identities of promoted inputs whose answer is in progress.
+    answering: Vec<String>,
     /// The last finished step ended the answer (no tool calls followed).
     answer_done: bool,
     asks: BTreeMap<String, Ask>,
@@ -98,35 +97,16 @@ pub async fn execute(
     let baseline = client.get(&format!("/sessions/{id}")).await.map_err(api)?;
     run.begin_session(&baseline["data"])?;
     out.init_version(client, session, 2).await;
-    let filter = id.clone();
     let mut events = Box::pin(
         client
-            .events(true)
+            .session_input_event_stream(&id, baseline["data"]["seq"].as_i64().unwrap_or(-1))
             .await
-            .map_err(api)?
-            .filter(move |e| futures::future::ready(e.session_id.as_deref() == Some(&filter))),
+            .map_err(api)?,
     );
-    let owned = Owned::capture(client, &id).await?;
     let (sender, mut lines) = mpsc::channel(64);
     tokio::spawn(read_stdin(sender));
-    let mut driver = Driver {
-        client,
-        id: &id,
-        args,
-        out: &mut out,
-        run,
-        owned,
-        inputs: Vec::new(),
-        answering: Vec::new(),
-        answer_done: false,
-        asks: BTreeMap::new(),
-        closed: false,
-        idle: true,
-        fatal: None,
-        interrupted: false,
-        last_text: String::new(),
-        lease: None,
-    };
+    let mut driver = Driver::new(client, &id, args, &mut out, run);
+    driver.seen_seq = baseline["data"]["seq"].as_i64();
     driver.attach().await;
     driver.drive(&mut events, &mut lines).await;
     driver.release().await;
@@ -162,7 +142,45 @@ async fn read_stdin(sender: mpsc::Sender<Line>) {
     }
 }
 
-impl Driver<'_> {
+/// Durable kinds carry a numeric version; live kinds such as session.idle do not.
+fn event_base(kind: &str) -> &str {
+    match kind.rsplit_once('.') {
+        Some((base, version)) if version.bytes().all(|byte| byte.is_ascii_digit()) => base,
+        _ => kind,
+    }
+}
+
+impl<'a> Driver<'a> {
+    fn new(
+        client: &'a Client,
+        id: &'a str,
+        args: &'a ExecArgs,
+        out: &'a mut Out,
+        run: Run,
+    ) -> Self {
+        Self {
+            client,
+            id,
+            args,
+            out,
+            run,
+            step: None,
+            seen_seq: None,
+            background_failed: false,
+            interruptions: VecDeque::new(),
+            inputs: Inputs::default(),
+            answering: Vec::new(),
+            answer_done: false,
+            asks: BTreeMap::new(),
+            closed: false,
+            idle: true,
+            fatal: None,
+            interrupted: false,
+            last_text: String::new(),
+            lease: None,
+        }
+    }
+
     async fn drive<S: futures::Stream<Item = Event> + Unpin>(
         &mut self,
         events: &mut S,
@@ -174,28 +192,51 @@ impl Driver<'_> {
         settle_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let interrupt = tokio::signal::ctrl_c();
         tokio::pin!(interrupt);
-        loop {
-            tokio::select! {
-                line = lines.recv(), if !self.closed => {
-                    self.line(line.unwrap_or(Line::Eof)).await;
-                }
-                event = events.next() => match event {
-                    Some(event) => self.event(event).await,
-                    None => {
-                        self.fatal.get_or_insert_with(|| "the server closed the event stream".into());
-                        return;
-                    }
-                },
-                _ = settle_poll.tick(), if self.closed && self.idle => {}
-                _ = renewal.tick(), if self.lease.is_some() => self.renew().await,
-                _ = &mut interrupt, if !self.interrupted => {
-                    self.interrupted = true;
-                    self.close().await;
-                    self.interrupt().await;
+        while !self.done().await {
+            let wake = tokio::select! {
+                line = lines.recv(), if !self.closed => Wake::Input(line.unwrap_or(Line::Eof)),
+                event = events.next() => Wake::Event(event),
+                _ = settle_poll.tick(), if self.inputs.has_ready() || !self.interruptions.is_empty() => Wake::Poll,
+                _ = renewal.tick(), if self.lease.is_some() => Wake::Renew,
+                _ = &mut interrupt, if !self.interrupted => Wake::Interrupt,
+            };
+            if self.dispatch(wake).await {
+                return;
+            }
+        }
+    }
+
+    async fn dispatch(&mut self, wake: Wake) -> bool {
+        match wake {
+            Wake::Input(line) => self.line(line).await,
+            Wake::Event(event) => return self.consume_event(event).await,
+            Wake::Poll => {
+                self.poll_interruption().await;
+                if !self.background_failed {
+                    self.refresh_background().await;
                 }
             }
-            if self.done().await {
-                return;
+            Wake::Renew => self.renew().await,
+            Wake::Interrupt => {
+                self.interrupted = true;
+                self.closed = true;
+                self.interrupt().await;
+                self.release().await;
+            }
+        }
+        false
+    }
+
+    async fn consume_event(&mut self, event: Option<Event>) -> bool {
+        match event {
+            Some(event) => {
+                self.event(event).await;
+                false
+            }
+            None => {
+                self.fatal
+                    .get_or_insert_with(|| "the server closed the event stream".into());
+                true
             }
         }
     }
@@ -233,34 +274,46 @@ impl Driver<'_> {
     }
 
     /// Admit a prompt under a message ID chosen here; a lost acknowledgement is retried
-    /// once with the same ID, which the server answers with the original receipt.
+    /// once with the same ID, which the server answers with the original receipt. When
+    /// that reply is lost too, the inbox decides: a held row is admitted, none is refused,
+    /// and a server that cannot be asked ends the run rather than guess.
     async fn admit(&mut self, id: Option<String>, parts: Vec<Value>, delivery: &str) {
-        let open = self.inputs.iter().filter(|i| !i.answered).count();
-        if open >= MAX_PENDING {
-            self.protocol_error("more than 32 inputs waiting for an answer");
-            self.fatal = Some("protocol error: input over capacity".into());
+        let message_id = cyber_core::ids::new_id("msg");
+        let input = Input::new(id, message_id.clone());
+        if let Err(error) = self.inputs.admit(input) {
+            self.protocol_error(error);
+            self.fatal = Some(format!("protocol error: {error}"));
             return self.close().await;
         }
-        let message_id = cyber_core::ids::new_id("msg");
-        let mut body = json!({ "id": message_id, "parts": parts, "delivery": delivery });
+        let mut body = json!({ "id": message_id, "parts": parts, "delivery": delivery,
+            "input_client":{"client_id":self.lease} });
         if let Some(schema) = &self.args.schema {
             body["format"] = json!({ "type": "json_schema", "schema": schema });
         }
         let path = format!("/sessions/{}/prompt", self.id);
-        let mut sent = self.client.post(&path, body.clone()).await;
-        if matches!(&sent, Err(cyber_client::ClientError::Transport(_))) {
-            sent = self.client.post(&path, body).await;
+        let mut sent = self.client.post(&path, body.clone()).await.map(drop);
+        if matches!(&sent, Err(ClientError::Transport(_))) {
+            sent = self.client.post(&path, body).await.map(drop);
         }
-        let mut input = Input {
-            id,
-            message_id,
-            answered: false,
-            text: String::new(),
-            error: None,
-            structured: None,
-        };
+        if let Err(ClientError::Transport(lost)) = &sent {
+            match self.committed(&message_id).await {
+                Ok(true) => sent = Ok(()),
+                Ok(false) => {}
+                Err(error) => {
+                    let why = format!("cannot confirm admission of {message_id}: {lost}; {error}");
+                    self.out.error(&why);
+                    self.inputs
+                        .get_mut(&message_id)
+                        .expect("reserved input")
+                        .error = Some(why.clone());
+                    self.fatal = Some(why);
+                    return self.close().await;
+                }
+            }
+        }
+        let input = self.inputs.get_mut(&message_id).expect("reserved input");
         match sent {
-            Ok(_) => {
+            Ok(()) => {
                 self.idle = false;
                 self.out.stream_line(
                     "input",
@@ -269,26 +322,33 @@ impl Driver<'_> {
             }
             Err(error) => {
                 input.error = Some(error.to_string());
-                input.answered = true;
                 self.out.stream_line(
                     "input",
                     json!({ "id": input.id, "message_id": input.message_id, "status": "refused", "error": input.error }),
                 );
+                let input = self.inputs.complete(&message_id).expect("refused input");
                 self.emit_result(&input);
             }
         }
-        self.inputs.push(input);
     }
 
-    async fn interrupt(&mut self) {
-        let path = format!("/sessions/{}/interrupt", self.id);
-        if let Err(error) = self.client.post(&path, json!({})).await {
-            self.out
-                .error(&format!("interrupt was not acknowledged: {error}"));
-        }
+    /// Whether the server holds `message_id` as an admitted input, for an admission whose
+    /// every reply was lost: a committed prompt runs whether or not its receipt arrived.
+    async fn committed(&self, message_id: &str) -> Result<bool, String> {
+        let rows = self
+            .client
+            .get(&format!("/sessions/{}/inbox", self.id))
+            .await
+            .map_err(|error| error.to_string())?;
+        let row = rows["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|row| row["message_id"] == message_id);
+        Ok(row.is_some_and(|row| row["status"] != "refused"))
     }
 
-    /// Answer a request this Session raised and is still waiting on; any other ID is a
+    /// Answer a request bound to this driver's live inputs; any other ID is a
     /// protocol error that leaves the run going.
     async fn reply(&mut self, request_id: &str, question: bool, body: Value) {
         let owned = self
@@ -318,7 +378,7 @@ impl Driver<'_> {
     /// Hold an interactive lease while the driver is live, so the Session's requests
     /// come here instead of being denied as unattended.
     async fn attach(&mut self) {
-        let path = format!("/sessions/{}/interactive-clients", self.id);
+        let path = format!("/sessions/{}/input-clients", self.id);
         match self.client.post(&path, json!({})).await {
             Ok(body) => self.lease = body["data"]["client_id"].as_str().map(str::to_owned),
             Err(error) => self.out.error(&format!(
@@ -329,7 +389,7 @@ impl Driver<'_> {
 
     async fn renew(&mut self) {
         let Some(lease) = &self.lease else { return };
-        let path = format!("/sessions/{}/interactive-clients/{lease}", self.id);
+        let path = format!("/sessions/{}/input-clients/{lease}", self.id);
         if let Err(error) = self.client.request("PUT", &path, Some(json!({}))).await {
             self.out.error(&format!("interactive lease lost: {error}"));
             self.lease = None;
@@ -338,15 +398,22 @@ impl Driver<'_> {
 
     async fn release(&mut self) {
         if let Some(lease) = self.lease.take() {
-            let path = format!("/sessions/{}/interactive-clients/{lease}", self.id);
+            let path = format!("/sessions/{}/input-clients/{lease}", self.id);
             let _ = self.client.request("DELETE", &path, None).await;
         }
     }
 
     /// No more input: the lease goes and unanswered requests are declined, so nothing
-    /// waits on a driver that is gone.
+    /// waits on a driver that is gone. Releasing first settles requests bound to the
+    /// lease (a descendant's included) as unattended, which lets their Turn go on; the
+    /// declines that follow cover the rest.
     async fn close(&mut self) {
         self.closed = true;
+        if self.fatal.is_some() {
+            self.interrupt().await;
+            self.release().await;
+            return;
+        }
         self.release().await;
         let asks = std::mem::take(&mut self.asks);
         for (request_id, ask) in asks {
@@ -361,87 +428,185 @@ impl Driver<'_> {
             let path = format!("/sessions/{}/{route}/{request_id}/reply", ask.session_id);
             let _ = self.client.post(&path, body).await;
         }
-        if self.fatal.is_some() {
-            self.interrupt().await;
-        }
     }
 
     async fn event(&mut self, event: Event) {
-        self.owned.observe(&event);
+        if self.routed_here(&event) {
+            return self.descendant(&event).await;
+        }
+        if !self.accept_sequence(&event).await {
+            return;
+        }
+        self.apply(&event).await;
+    }
+
+    async fn apply(&mut self, event: &Event) {
         let kind = event.kind.as_str();
-        // Durable kinds end with a version (`.1`); live ones such as `session.idle` do not.
-        let base = match kind.rsplit_once('.') {
-            Some((base, version)) if version.bytes().all(|b| b.is_ascii_digit()) => base,
-            _ => kind,
-        };
+        let base = event_base(kind);
         match base {
-            "session.idle" => {
-                self.idle = true;
-                self.flush_answers();
-            }
+            "session.idle" => self.became_idle().await,
             "session.prompt.promoted" => self.promoted(&event.data),
-            "session.step.started" => self.idle = false,
-            "session.step.ended" => {
+            "session.step.started" => self.begin_step(&event.data).await,
+            "session.step.ended" if self.owns_step(&event.data) => {
                 self.answer_done = event.data["finish"] != "tool_calls";
                 self.out.durable(&mut self.run, kind, &event.data);
             }
-            "session.text.ended" => {
-                self.out.durable(&mut self.run, kind, &event.data);
-                self.last_text = self.run.text.clone();
-                for &index in &self.answering {
-                    self.inputs[index].text = self.run.text.clone();
-                }
+            "session.text.ended" if self.owns_step(&event.data) => {
+                self.record_text(kind, &event.data)
             }
             "session.structured_output.settled" => self.structured(&event.data),
             "permission.asked" | "question.asked" => self.asked(base, &event.data).await,
-            "permission.replied" | "question.replied" => {
-                if let Some(id) = event.data["id"].as_str() {
-                    self.asks.remove(id);
-                }
-            }
-            "session.text.delta" | "session.reasoning.delta"
-                if self.args.include_partial_messages =>
-            {
-                let line = if base == "session.text.delta" {
-                    "text_delta"
-                } else {
-                    "reasoning_delta"
-                };
-                self.out.stream_line(
-                    line,
-                    json!({ "message_id": event.data["message_id"], "text": event.data["text"] }),
+            "permission.replied" | "question.replied" => self.replied(&event.data),
+            "session.text.delta" | "session.reasoning.delta" => self.partial(base, &event.data),
+            "session.error" if event.data["kind"] == "snapshot" => {
+                eprintln!(
+                    "snapshot warning: {}",
+                    event.data["message"]
+                        .as_str()
+                        .unwrap_or("code rewind unavailable")
                 );
             }
-            "session.error" => self.failed(&event.data),
-            "session.retry" => self.out.retry(&event.data),
-            _ => self.out.durable(&mut self.run, kind, &event.data),
+            "session.retry" if self.owns_step(&event.data) => self.out.retry(&event.data),
+            "session.step.failed" if self.owns_step(&event.data) => {
+                self.failed(&event.data);
+                self.answer_done = true;
+            }
+            _ if self.allows_durable(&event.data) => {
+                self.out.durable(&mut self.run, kind, &event.data)
+            }
+            _ => {}
+        }
+    }
+
+    /// A descendant Session's request (or its reply) routed to this Session's stream:
+    /// live only, so it has no sequence of this Session.
+    fn routed_here(&self, event: &Event) -> bool {
+        event.seq.is_none()
+            && event.session_id.as_deref() != Some(self.id)
+            && event.data["routed_to"]
+                .as_array()
+                .is_some_and(|routes| routes.iter().any(|route| route["session_id"] == self.id))
+    }
+
+    /// Only requests whose root cohort is this driver's are claimed; anything else
+    /// routed here belongs to another client.
+    async fn descendant(&mut self, event: &Event) {
+        let base = event_base(&event.kind);
+        match base {
+            "permission.asked" | "question.asked" => self.asked(base, &event.data).await,
+            "permission.replied" | "question.replied" => self.replied(&event.data),
+            _ => {}
+        }
+    }
+
+    /// A request answered elsewhere (a cascade, another client or the server) is no
+    /// longer this driver's to answer or decline.
+    fn replied(&mut self, data: &Value) {
+        if let Some(id) = data["request_id"].as_str().or(data["id"].as_str()) {
+            self.asks.remove(id);
+        }
+    }
+
+    fn allows_durable(&self, data: &Value) -> bool {
+        self.step.is_some() && (data.get("message_id").is_none() || self.owns_step(data))
+    }
+
+    fn partial(&self, base: &str, data: &Value) {
+        if !self.args.include_partial_messages || !self.owns_step(data) {
+            return;
+        }
+        let line = if base == "session.text.delta" {
+            "text_delta"
+        } else {
+            "reasoning_delta"
+        };
+        self.out.stream_line(
+            line,
+            json!({"message_id":data["message_id"],"text":data["text"]}),
+        );
+    }
+
+    async fn accept_sequence(&mut self, event: &Event) -> bool {
+        if event.session_id.as_deref() != Some(self.id) {
+            return false;
+        }
+        let Some(seq) = event.seq else {
+            return true;
+        };
+        if self.seen_seq.is_some_and(|seen| seq <= seen) {
+            return false;
+        }
+        if self.seen_seq.is_some_and(|seen| seq != seen + 1) {
+            self.background_error(
+                "Session event history has a gap; retained inputs require reconciliation".into(),
+            )
+            .await;
+            return false;
+        }
+        self.seen_seq = Some(seq);
+        true
+    }
+
+    async fn became_idle(&mut self) {
+        self.idle = true;
+        if !self.answer_done && !self.answering.is_empty() {
+            for id in &self.answering {
+                if let Some(input) = self.inputs.get_mut(id)
+                    && input.structured.is_none()
+                {
+                    input.error.get_or_insert_with(|| {
+                        "Execution stopped before a recorded final answer; inspect the Session"
+                            .into()
+                    });
+                }
+            }
+        }
+        self.stage_answers();
+        self.step = None;
+        self.refresh_background().await;
+    }
+
+    async fn refresh_background(&mut self) {
+        if let Err(error) = self.poll_background().await {
+            self.background_error(error.message).await;
+        }
+    }
+
+    fn record_text(&mut self, kind: &str, data: &Value) {
+        self.out.durable(&mut self.run, kind, data);
+        self.last_text = self.run.text.clone();
+        for id in &self.answering {
+            if let Some(input) = self.inputs.get_mut(id) {
+                input.text = self.run.text.clone();
+            }
         }
     }
 
     /// A promoted input of this run joins the answer in progress, or starts the next one
     /// once the previous answer has ended.
     fn promoted(&mut self, data: &Value) {
-        let Some(index) = self
-            .inputs
-            .iter()
-            .position(|i| data["message_id"] == i.message_id.as_str())
-        else {
+        let Some(message_id) = data["message_id"].as_str() else {
             return;
         };
+        if !self.inputs.contains(message_id) {
+            return;
+        }
         if self.answer_done {
-            self.flush_answers();
+            self.stage_answers();
+        }
+        if !self.inputs.contains(message_id) || self.answering.iter().any(|id| id == message_id) {
+            return;
         }
         self.answer_done = false;
         self.idle = false;
         self.run.text.clear();
-        self.answering.push(index);
+        self.answering.push(message_id.to_owned());
     }
 
     fn structured(&mut self, data: &Value) {
-        let Some(input) = self
-            .inputs
-            .iter_mut()
-            .find(|i| data["message_id"] == i.message_id.as_str())
+        let Some(input) = data["message_id"]
+            .as_str()
+            .and_then(|id| self.inputs.get_mut(id))
         else {
             return;
         };
@@ -455,14 +620,17 @@ impl Driver<'_> {
     fn failed(&mut self, data: &Value) {
         let message = data["message"].as_str().unwrap_or("error").to_owned();
         self.out.error(&message);
-        for &index in &self.answering {
-            self.inputs[index]
-                .error
-                .get_or_insert_with(|| message.clone());
+        for message_id in &self.answering {
+            if let Some(input) = self.inputs.get_mut(message_id) {
+                input.error.get_or_insert_with(|| message.clone());
+            }
         }
     }
 
     async fn asked(&mut self, base: &str, data: &Value) {
+        let Some(inputs) = self.inputs.request_cohort(self.id, data) else {
+            return;
+        };
         let (Some(request_id), Some(session_id)) =
             (data["id"].as_str(), data["session_id"].as_str())
         else {
@@ -478,6 +646,7 @@ impl Driver<'_> {
             Ask {
                 session_id: session_id.to_owned(),
                 question,
+                inputs,
             },
         );
         let line = if question {
@@ -485,7 +654,11 @@ impl Driver<'_> {
         } else {
             "permission_request"
         };
-        self.out.stream_line(line, data.clone());
+        // Every line's `session_id` is the driven Session; a descendant's request
+        // keeps its asking Session, which the reply is posted to.
+        let mut payload = data.clone();
+        payload["request_session_id"] = json!(session_id);
+        self.out.stream_line(line, payload);
         if self.closed {
             // Nobody will answer: decline at once.
             self.close().await;
@@ -493,12 +666,14 @@ impl Driver<'_> {
     }
 
     /// Emit the results of the inputs whose answer ended.
-    fn flush_answers(&mut self) {
-        for index in std::mem::take(&mut self.answering) {
-            self.inputs[index].answered = true;
-            let input = &self.inputs[index];
-            self.emit_result(input);
+    fn stage_answers(&mut self) {
+        for message_id in std::mem::take(&mut self.answering) {
+            if let Some(input) = self.inputs.get_mut(&message_id) {
+                input.answer_ready = true;
+                input.ready_seq = self.seen_seq.unwrap_or(-1);
+            }
         }
+        self.run.retire_driver_answer();
         self.answer_done = false;
     }
 
@@ -525,67 +700,182 @@ impl Driver<'_> {
             .stream_line("error", json!({ "code": "protocol", "message": why }));
     }
 
-    /// The run is over once input is closed, the Session is idle, every input has its
-    /// answer and the background work the run started has settled.
+    /// Completion follows owned inputs and retained control, independently of
+    /// another driver's Session activity.
     async fn done(&mut self) -> bool {
-        if !(self.closed && self.idle) {
-            return false;
+        self.background_failed
+            || (self.closed && self.inputs.is_empty() && self.interruptions.is_empty())
+    }
+
+    fn owns_step(&self, data: &Value) -> bool {
+        self.step
+            .as_deref()
+            .is_some_and(|step| data["message_id"].as_str() == Some(step))
+    }
+
+    async fn begin_step(&mut self, data: &Value) {
+        self.idle = false;
+        if self.answer_done {
+            self.stage_answers();
         }
-        // An input admitted but not yet promoted keeps the run open.
-        if self.inputs.iter().any(|i| !i.answered) && self.fatal.is_none() && !self.interrupted {
-            return false;
+        self.step = None;
+        let Some(message) = data["message_id"].as_str().filter(|id| safe_id(id, "msg")) else {
+            return;
+        };
+        let response = self
+            .client
+            .get(&format!(
+                "/sessions/{}/steps/{message}/input-origin",
+                self.id
+            ))
+            .await;
+        let roots = response.map_err(api).and_then(|response| {
+            serde_json::from_value::<Vec<String>>(response["data"].clone())
+                .map_err(|_| CliError::runtime("Invalid step input provenance"))
+        });
+        let roots = match roots {
+            Ok(roots) => roots,
+            Err(error) => return self.background_error(error.message).await,
+        };
+        if !self.inputs.owns_cohort(&roots) {
+            return;
         }
-        match self
-            .owned
-            .settle(self.client, self.interrupted || self.fatal.is_some())
-            .await
-        {
-            Ok(Settle::Done) => true,
-            Ok(Settle::Wait) => false,
-            Err(error) => {
-                self.run.error = Some(error.message);
-                true
+        self.step = Some(message.to_owned());
+        self.answer_done = false;
+        self.run.text.clear();
+        for root in roots {
+            if let Some(input) = self.inputs.get_mut(&root) {
+                input.answer_ready = false;
+            }
+            if !self.answering.contains(&root) {
+                self.answering.push(root);
             }
         }
+    }
+
+    async fn poll_background(&mut self) -> Result<bool, CliError> {
+        let ids = self.inputs.identities();
+        if ids.is_empty() {
+            return Ok(true);
+        }
+        let response = self
+            .client
+            .post(
+                "/jobs/input-state",
+                json!({"session_id":self.id,"input_message_ids":ids}),
+            )
+            .await
+            .map_err(api)?;
+        let states: Vec<cyber_server::runtime::InputJobState> =
+            serde_json::from_value(response["data"].clone())
+                .map_err(|_| CliError::runtime("Invalid input Job state"))?;
+        let mut returned: Vec<_> = states
+            .iter()
+            .map(|state| state.message_id.clone())
+            .collect();
+        returned.sort();
+        let mut expected = ids;
+        expected.sort();
+        if returned != expected {
+            return Err(CliError::runtime(
+                "Input Job lookup returned a different cohort",
+            ));
+        }
+        if states
+            .iter()
+            .any(|state| self.seen_seq.is_none_or(|seq| state.session_seq > seq))
+        {
+            return Ok(false);
+        }
+        let mut settled = true;
+        for state in states {
+            settled &= !(state.running || state.awaiting_handback || state.handback_pending);
+            if self.stopping_input(&state.message_id) {
+                continue;
+            }
+            // An input stays pending while a request it owns (a descendant's
+            // included) still waits for this driver.
+            if self
+                .asks
+                .values()
+                .any(|ask| ask.inputs.contains(&state.message_id))
+            {
+                settled = false;
+                continue;
+            }
+            let Some(input) = self.inputs.get_mut(&state.message_id) else {
+                continue;
+            };
+            if !input.answer_ready {
+                continue;
+            }
+            if state.awaiting_handback {
+                let since = input.unnotified_since.get_or_insert_with(Instant::now);
+                if since.elapsed() < cyber_server::runtime::settlement::HANDBACK_GRACE {
+                    continue;
+                }
+                input.error.get_or_insert_with(|| {
+                    "Background handback was not admitted; inspect the Session Jobs".into()
+                });
+            } else {
+                input.unnotified_since = None;
+                if state.running
+                    || state.handback_pending
+                    || state.handback_seq.is_some_and(|seq| input.ready_seq < seq)
+                {
+                    continue;
+                }
+            }
+            if let Some(input) = self.inputs.complete(&state.message_id) {
+                self.emit_result(&input);
+            }
+        }
+        Ok(settled)
+    }
+
+    async fn background_error(&mut self, message: String) {
+        self.run.error = Some(format!(
+            "Background ownership could not be reconciled; inspect Session {}: {message}",
+            self.id
+        ));
+        self.background_failed = true;
+        self.closed = true;
+        self.release().await;
     }
 
     /// The aggregate exit: 130 for SIGINT, 2 for a fatal protocol error, else the first
     /// failed input's code in admission order. Ends with one `end` line.
     fn finish(mut self) -> u8 {
-        for input in self.inputs.iter_mut().filter(|i| !i.answered) {
-            input
-                .error
-                .get_or_insert_with(|| "not answered before the run ended".into());
-            input.answered = true;
+        for input in self.inputs.unfinished() {
+            self.emit_result(&input);
         }
-        for input in &self.inputs {
-            if input.error.as_deref() == Some("not answered before the run ended") {
-                self.emit_result(input);
-            }
-        }
-        let code = if self.interrupted {
+        let mut code = if self.interrupted {
             EXIT_INTERRUPTED
         } else if self.fatal.is_some() {
             EXIT_PROTOCOL
         } else {
             self.inputs
-                .iter()
-                .map(Input::exit_code)
-                .find(|code| *code != 0)
+                .failure_code()
                 .or(self.run.error.as_ref().map(|_| EXIT_ERROR))
                 .unwrap_or(0)
         };
+        let mut final_error = self.fatal.or(self.run.error.clone());
         if let Some(path) = &self.args.output_last_message
-            && let Err(error) = write_atomically(path, &self.last_text)
+            && let Err(error) = super::last_message::write(path, &self.last_text)
         {
-            self.out.error(&format!("--output-last-message: {error}"));
+            let message = format!("--output-last-message: {error}");
+            self.out.error(&message);
+            final_error.get_or_insert(message);
+            if code == 0 {
+                code = EXIT_ERROR;
+            }
         }
         self.out.stream_line(
             "end",
             json!({
                 "exit_code": code,
-                "error": self.fatal.or(self.run.error.clone()),
-                "inputs": self.inputs.len(),
+                "error": final_error,
+                "inputs": self.inputs.total(),
                 "usage": { "input": self.run.input_tokens, "output": self.run.output_tokens },
                 "cost_usd": self.run.combined_cost(),
                 "duration_ms": self.run.started.elapsed().as_millis() as u64,
@@ -595,13 +885,5 @@ impl Driver<'_> {
     }
 }
 
-/// Write `text` next to `path` and rename it over, so a reader never sees half a file.
-fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let temporary = path.with_file_name(format!(".{name}.tmp"));
-    std::fs::write(&temporary, text)?;
-    std::fs::rename(&temporary, path)
-}
+#[cfg(test)]
+mod request_tests;

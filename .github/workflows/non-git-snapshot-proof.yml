@@ -1,10 +1,86 @@
-name: Non-Git snapshot native proof
+name: Snapshot native proof
 on:
   pull_request:
     paths:
       - crates/cyber-snapshot/**
+      - crates/cyber-app/Cargo.toml
+      - crates/cyber-app/src/**
+      - crates/cyber-app/tests/support/scripted_model.rs
+      - crates/cyber-app/tests/support/snapshot*.rs
+      - crates/cyber-app/tests/support/managed_retirement_cut.rs
+      - crates/cyber-app/tests/support/managed_recovery_cut.rs
+      - crates/cyber-app/tests/support/location_retirement.rs
+      - crates/cyber-server/src/runtime/snapshot*.rs
+      - crates/cyber-server/src/runtime/snapshot_reclamation/**
+      - crates/cyber-server/src/runtime/rewind*.rs
+      - crates/cyber-server/src/runtime/drain.rs
+      - crates/cyber-server/src/runtime/structured*.rs
+      - crates/cyber-server/src/runtime/model.rs
+      - crates/cyber-server/src/runtime/mod.rs
+      - crates/cyber-server/src/runtime/events.rs
+      - crates/cyber-server/src/runtime/activity.rs
+      - crates/cyber-server/src/runtime/jobs.rs
+      - crates/cyber-server/src/runtime/input_jobs.rs
+      - crates/cyber-server/src/runtime/input_clients.rs
+      - crates/cyber-server/src/runtime/input_interrupt.rs
+      - crates/cyber-server/src/runtime/presence.rs
+      - crates/cyber-server/src/runtime/interactive.rs
+      - crates/cyber-server/src/runtime/goals/unattended.rs
+      - crates/cyber-server/tests/input_clients.rs
+      - crates/cyber-server/tests/input_interrupt.rs
+      - crates/cyber-server/tests/interactive_clients.rs
+      - crates/cyber-server/src/http/interactive.rs
+      - crates/cyber-server/src/runtime/process_jobs.rs
+      - crates/cyber-server/src/runtime/requests.rs
+      - crates/cyber-server/src/runtime/requests/**
+      - crates/cyber-server/tests/requests.rs
+      - crates/cyber-server/tests/jobs.rs
+      - crates/cyber-server/tests/structured_root.rs
+      - crates/cyber-server/tests/support/structured_terminal_fault.rs
+      - crates/cyber-server/src/http/sessions.rs
+      - crates/cyber-server/src/http/events.rs
+      - crates/cyber-server/src/http/jobs.rs
+      - crates/cyber-client/src/lib.rs
+      - crates/cyber-app/tests/snapshot_git_runtime.rs
+      - crates/cyber-app/tests/snapshot_reclamation.rs
+      - crates/cyber-app/tests/instructions.rs
+      - crates/cyber-core/src/config/**
+      - crates/cyber-core/src/rules.rs
+      - crates/cyber-core/src/import/snapshot.rs
+      - crates/cyber-core/src/memory/windows.rs
+      - crates/cyber-core/tests/import_snapshot.rs
+      - crates/cyber-core/src/import/mod.rs
+      - crates/cyber-core/src/lib.rs
+      - crates/cyber-core/tests/config.rs
+      - crates/cyber-tools/src/host.rs
+      - crates/cyber-tools/src/tools/fs.rs
+      - crates/cyber-tools/src/tools/patch.rs
+      - crates/cyber-tools/src/tools/agent.rs
+      - crates/cyber-tools/src/tools/background.rs
+      - crates/cyber-tools/tests/background_bash.rs
+      - crates/cyber-tools/tests/background_subagents.rs
+      - crates/cyber-server/src/runtime/auto_override.rs
+      - crates/cyber-tools/tests/instruction_config.rs
+      - crates/cyber-tools/tests/path_skills.rs
+      - crates/cyber-tools/tests/shell_patch.rs
+      - crates/cyber-server/src/runtime/context*.rs
+      - crates/cyber-server/src/runtime/instructions.rs
+      - crates/cyber-server/src/runtime/instructions/**
+      - crates/cyber-server/src/runtime/host.rs
+      - crates/cyber-server/tests/context_compaction.rs
+      - crates/cyber-server/tests/http.rs
+      - crates/cyber-tui/src/context_inspection.rs
+      - crates/cyber-server/tests/support/mod.rs
+      - crates/cyber-cli/Cargo.toml
+      - crates/cyber-cli/src/**
+      - crates/cyber-cli/tests/branches_cli.rs
+      - crates/cyber-cli/tests/exec_stream_input.rs
+      - crates/cyber-cli/tests/exec_output_schema.rs
+      - crates/cyber-cli/tests/support/**
+      - crates/cyber-server/src/workspace.rs
       - crates/cyber-core/src/binary/native/**
       - crates/cyber-core/src/binary/native.rs
+      - crates/cyber-core/src/worktrees/**
       - Cargo.lock
       - .github/workflows/non-git-snapshot-proof.yml
   workflow_dispatch:
@@ -12,12 +88,16 @@ permissions:
   contents: read
 concurrency:
   group: non-git-snapshots-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Let explicit native proofs finish and retain evidence while a newer run waits.
+  # Pull-request checks still cancel obsolete heads.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   native:
-    name: File-copy snapshots (${{ matrix.os }})
+    name: Snapshot native (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # Intel's complete matrix can exceed 45 minutes while compiling the final
+    # structured-result binaries after all native recovery checks have passed.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -34,15 +114,186 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: non-git-snapshot-proof
+      - name: Sandbox prerequisites
+        id: sandbox
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.*
+          sudo apt-get update 2>&1 | tee sandbox-prerequisites.log
+          sudo apt-get install -y bubblewrap 2>&1 | tee -a sandbox-prerequisites.log
+          command -v bwrap | tee -a sandbox-prerequisites.log
+          # Ubuntu 24.04 restricts the user namespaces required by bubblewrap.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec 2>&1 | tee -a sandbox-prerequisites.log
       - name: Native storage, conflict and process-kill proof
         shell: bash
         run: |
           set -euo pipefail
           cargo test --locked -p cyber-snapshot -- --nocapture 2>&1 | tee non-git-snapshot-proof.log
+      - name: Read-only checkout acknowledgement requirement
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-core --lib worktrees::activity::snapshot::acknowledgement::tests::maintenance_requires_an_existing_acknowledgement_without_publishing_one -- --exact --nocapture 2>&1 | tee managed-checkout-ack-proof.log
+      - name: Owned Git runtime acceptance candidate
+        # App proxy sockets include the Session ID. Short roots fit Linux
+        # sockaddr_un; the same root is retained by the artifact step below.
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-snapshot --features native-git-acceptance -- --nocapture 2>&1 | tee git-adapter-proof.log
+          cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_git_runtime -- --nocapture 2>&1 | tee git-runtime-proof.log
+      - name: Exact acknowledged checkout retirement and resumption
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-core --lib worktrees::activity::snapshot::retirement:: -- --nocapture 2>&1 | tee checkout-retirement-proof.log
+      - name: Store-bound fallback collection and reclamation
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-app --features native-git-acceptance --test snapshot_reclamation -- --nocapture 2>&1 | tee fallback-collection-proof.log
+      - name: Managed Git CLI process-death recovery and cancellation candidate
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_git_ -- --nocapture --test-threads=1 2>&1 | tee git-cli-recovery-proof.log
+      - name: Pre-effect preparation and TUI lost-reply reconciliation
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli preparation_ -- --nocapture --test-threads=1 2>&1 | tee preparation-client-proof.log
+      - name: Prepared cancellation metadata retirement
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli fully_prepared_pre_effect_cancellation_reclaims_only_persisted_target_inodes -- --exact --nocapture --test-threads=1 2>&1 | tee preparation-retirement-proof.log
+      - name: Paired metadata retirement after native source kill
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay -- --exact --nocapture --test-threads=1 2>&1 | tee paired-retirement-proof.log
+      - name: Zero-payload preparation and paired retirement after native cuts
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli zero_payload:: -- --nocapture --test-threads=1 2>&1 | tee zero-payload-retirement-proof.log
+      - name: JSONL driver and atomic last-message regressions
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-server --lib runtime::requests::input_owners:: -- --nocapture 2>&1 | tee jsonl-driver-proof.log
+          cargo test --locked -p cyber-server --test requests -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::exec:: -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test exec_stream_input -- --nocapture 2>&1 | tee -a jsonl-driver-proof.log
+      - name: Root structured result recovery and CLI stop regressions
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cyber-server -p cyber-cli --features cyber-cli/native-git-acceptance --test structured_root --test exec_output_schema -- --nocapture 2>&1 | tee structured-result-proof.log
+      - name: Instruction limits and context observation regressions
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-core --test config instruction_limits -- --nocapture 2>&1 | tee instruction-limits-proof.log
+          cargo test --locked -p cyber-core --lib rules:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-core --test import_snapshot -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-core --test config rule_definition_bytes -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --lib runtime::context:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --lib runtime::instructions:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --lib runtime::context_sources:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --lib runtime::drain::skill_reminder_tests:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --test context_compaction -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-server --test http context_inspection -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-app --features native-git-acceptance --test instructions -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-tools --test instruction_config -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-tools --test path_skills -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-tools --test shell_patch -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --bin cyber commands::doctor::instruction_tests:: -- --nocapture 2>&1 | tee -a instruction-limits-proof.log
+      - name: Snapshot worker and Job ownership
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-server --lib runtime::snapshot_work:: -- --nocapture 2>&1 | tee worker-ownership-proof.log
+          cargo test --locked -p cyber-server --lib runtime::input_jobs:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --test jobs -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --lib runtime::input_clients:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --lib runtime::input_interrupt:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --lib runtime::presence::input_tests:: -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-server --test input_clients --test input_interrupt --test interactive_clients --test requests -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
+          cargo test --locked -p cyber-tools --test background_bash --test background_subagents -- --nocapture 2>&1 | tee -a worker-ownership-proof.log
       - name: Retain native evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: non-git-snapshot-proof-${{ matrix.os }}
-          path: non-git-snapshot-proof.log
+          path: |
+            sandbox-prerequisites.log
+            non-git-snapshot-proof.log
+            managed-checkout-ack-proof.log
+            checkout-retirement-proof.log
+            git-adapter-proof.log
+            git-runtime-proof.log
+            fallback-collection-proof.log
+            git-cli-recovery-proof.log
+            preparation-client-proof.log
+            preparation-retirement-proof.log
+            paired-retirement-proof.log
+            zero-payload-retirement-proof.log
+            jsonl-driver-proof.log
+            structured-result-proof.log
+            instruction-limits-proof.log
+            worker-ownership-proof.log
+          if-no-files-found: warn
+      - name: Retain failed CLI fixture evidence
+        if: ${{ failure() && !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-failed-cli-fixtures-${{ matrix.os }}
+          path: /tmp/c${{ github.run_number }}
+          include-hidden-files: true
           if-no-files-found: warn

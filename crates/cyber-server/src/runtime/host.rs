@@ -15,10 +15,114 @@ use super::model::{CallState, RetrySafety, SessionInfo};
 /// An owned Location admission. Disposal without settlement must retain recovery evidence.
 pub trait LocationGuard: Send {
     fn settle(self: Box<Self>) -> Result<(), String>;
+    fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        Err("Snapshot checkout binding inspection is unsupported".into())
+    }
 
     /// Acknowledge native settlement and retain ownership through a consuming commit.
     fn settle_retained(self: Box<Self>) -> Result<Box<dyn Send>, String> {
         Err("Location host does not support retained native settlement".into())
+    }
+    fn settle_snapshot_retained(self: Box<Self>) -> Result<Box<dyn SnapshotLocationGuard>, String> {
+        Err("Exact retained snapshot checkout proof is unsupported".into())
+    }
+}
+
+/// Native metadata proof retained by the actual synchronous snapshot worker.
+/// Verification and proof disposal must not reenter the primary runtime/Store,
+/// launch processes or perform source effects; disposal may run in the writer.
+pub trait SnapshotLocationGuard: Send {
+    fn verify(&self) -> Result<(), String>;
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        Ok(vec![])
+    }
+    /// Read-only verification of a proposed receipt against existing native
+    /// acknowledgements. Retain any existing marker through the consuming commit.
+    fn prepare_preparation_acknowledgement(
+        &mut self,
+        receipt: &super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        let resources = self.bindings()?;
+        if receipt.lifetime.owner.worktree_id.is_some() || !resources.is_empty() {
+            return Err("Native snapshot checkout acknowledgement is unsupported".into());
+        }
+        if receipt.checkout_resources_digest.as_ref()
+            != Some(&receipt.lifetime.checkout_resources_digest(&resources)?)
+        {
+            return Err("Receipt differs from retained snapshot resources".into());
+        }
+        Ok(())
+    }
+
+    /// Explicit native metadata publication after the exact consuming commit.
+    /// This must never reenter the primary Store or dispatch source effects.
+    fn acknowledge_preparation(
+        &mut self,
+        receipt: &super::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        self.prepare_preparation_acknowledgement(receipt)
+    }
+
+    /// Read-only candidate check under retained exact checkout locks.
+    fn prepare_restore_acknowledgement(
+        &mut self,
+        receipt: &super::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        let checkout = receipt
+            .checkout
+            .as_ref()
+            .ok_or("Missing restore checkout proof")?;
+        let resources = self.bindings()?;
+        if checkout.lifetime.owner.worktree_id.is_some() || !resources.is_empty() {
+            return Err("Native restore checkout acknowledgement is unsupported".into());
+        }
+        if checkout.lifetime.checkout_resources_digest(&resources)? != checkout.resources_digest {
+            return Err("Receipt differs from retained restore resources".into());
+        }
+        Ok(())
+    }
+
+    /// Metadata only, issued after observing the exact consuming runtime pair.
+    fn acknowledge_restore(
+        &mut self,
+        receipt: &super::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        self.prepare_restore_acknowledgement(receipt)
+    }
+    fn prepare_recovery_acknowledgement(
+        &mut self,
+        receipt: &super::SnapshotRecoveryReceipt,
+        role: super::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        receipt.checkout_acknowledgement_digest()?;
+        let evidence = receipt
+            .checkout_evidence(role)
+            .ok_or("Missing recovery resource role")?;
+        let resources = self.bindings()?;
+        if evidence.lifetime.owner.worktree_id.is_some() || !resources.is_empty() {
+            return Err("Native recovery checkout acknowledgement is unsupported".into());
+        }
+        if evidence.lifetime.checkout_resources_digest(&resources)? != evidence.resources_digest {
+            return Err("Recovery resource role differs from retained claims".into());
+        }
+        Ok(())
+    }
+    fn acknowledge_recovery(
+        &mut self,
+        receipt: &super::SnapshotRecoveryReceipt,
+        role: super::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.prepare_recovery_acknowledgement(receipt, role)
+    }
+}
+struct UnmanagedSnapshotLocation {
+    _owner: Box<dyn Send>,
+}
+impl SnapshotLocationGuard for UnmanagedSnapshotLocation {
+    fn verify(&self) -> Result<(), String> {
+        Ok(())
     }
 }
 
@@ -28,6 +132,15 @@ pub struct LocationLease {
 }
 
 impl LocationLease {
+    pub fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        if self.worktree_id.is_none() {
+            return Ok(vec![]);
+        }
+        self.guard
+            .as_ref()
+            .ok_or("Missing managed checkout guard")?
+            .snapshot_bindings()
+    }
     pub fn guarded(worktree_id: Option<String>, guard: Box<dyn LocationGuard>) -> Self {
         Self {
             worktree_id,
@@ -58,6 +171,17 @@ impl LocationLease {
             || Ok(Box::new(()) as Box<dyn Send>),
             |guard| guard.settle_retained(),
         )
+    }
+
+    pub fn settle_snapshot_retained(self) -> Result<Box<dyn SnapshotLocationGuard>, String> {
+        if self.worktree_id.is_none() {
+            return Ok(Box::new(UnmanagedSnapshotLocation {
+                _owner: self.settle_retained()?,
+            }));
+        }
+        self.guard
+            .ok_or("Managed checkout proof is missing")?
+            .settle_snapshot_retained()
     }
 }
 
@@ -362,6 +486,14 @@ pub struct Invocation {
 pub struct SkillSuggestion {
     pub name: String,
     pub description: String,
+}
+
+/// An execution with actual file operations, when the host instruments them. `None`
+/// preserves legacy ordinary instruction loading; `Some([])` reports no eligible operation.
+#[derive(Debug)]
+pub struct ObservedExecution {
+    pub outcome: ToolOutcome,
+    pub files: Option<Vec<std::sync::Arc<cyber_core::rules::FileReceipt>>>,
 }
 
 /// How a tool run ended.
@@ -785,10 +917,35 @@ pub trait ToolHost: Send + Sync {
         None
     }
 
+    /// Validated byte budgets from the same resolved Location configuration.
+    /// A resolution error must not fall back to reading with different limits.
+    fn instruction_limits(
+        &self,
+        _directory: &str,
+    ) -> Result<cyber_core::config::InstructionLimits, String> {
+        Ok(Default::default())
+    }
+
     /// The Location's `read` permission rules as a gate on project instruction files and
     /// their imports; `None` (a host without a permission policy) loads every one.
     fn instruction_read_gate(&self, _directory: &str) -> Option<super::instructions::ReadGate> {
         None
+    }
+
+    /// Exact approved project rule definitions; absent hosts hold project rules.
+    fn instruction_rule_gate(&self, _directory: &str) -> Option<super::instructions::RuleGate> {
+        None
+    }
+
+    /// The current trust-inventory state of the checkout approval `generation` that
+    /// admitted a delivered project rule under `root`. Only the approval record is
+    /// consulted, never definition bytes. Hosts without a trust inventory report unknown.
+    fn rule_approval(
+        &self,
+        _root: &std::path::Path,
+        _generation: &str,
+    ) -> super::context_inspection::RuleApproval {
+        super::context_inspection::RuleApproval::Unknown
     }
 
     /// Finalize the complete reminder and tool text before recording delivered skill names.
@@ -860,6 +1017,55 @@ pub trait ToolHost: Send + Sync {
         Box::pin(async { Err("Binary worker checkout ownership is unsupported".into()) })
     }
 
+    /// Retain a snapshot worker's checkout independently of any Session claim.
+    /// Managed hosts must implement this explicitly; the generic Session claim
+    /// cannot supply exact snapshot ownership.
+    fn claim_snapshot_location<'a>(
+        &'a self,
+        info: &'a SessionInfo,
+        _activity: &'a str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<LocationLease, String>> {
+        if info.worktree_id.is_some() {
+            Box::pin(async { Err("Snapshot worker checkout ownership is unsupported".into()) })
+        } else {
+            self.claim_location(info, false, cancel)
+        }
+    }
+
+    fn claim_snapshot_location_bound<'a>(
+        &'a self,
+        info: &'a SessionInfo,
+        activity: &'a str,
+        lifetime: Option<&'a super::SnapshotLifetimeBinding>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<LocationLease, String>> {
+        if lifetime.is_some() && info.worktree_id.is_some() {
+            Box::pin(async {
+                Err("Lifetime-bound snapshot checkout ownership is unsupported".into())
+            })
+        } else {
+            self.claim_snapshot_location(info, activity, cancel)
+        }
+    }
+
+    /// Reacquire only original snapshot evidence, without creating or settling claims.
+    /// The caller retains the matching lifetime lock independently.
+    fn reacquire_snapshot_location(
+        &self,
+        info: &SessionInfo,
+        _lifetime: &super::SnapshotLifetimeBinding,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn SnapshotLocationGuard>, String> {
+        if info.worktree_id.is_none() && bindings.is_empty() {
+            Ok(Box::new(UnmanagedSnapshotLocation {
+                _owner: Box::new(()),
+            }))
+        } else {
+            Err("Exact snapshot checkout reacquisition is unsupported".into())
+        }
+    }
+
     /// Prepare an existing child under its exclusive owner. Opening a client view grants no bypass.
     fn prepare_child_continuation<'a>(
         &'a self,
@@ -888,6 +1094,21 @@ pub trait ToolHost: Send + Sync {
 
     /// Run a call. Implementations stop within 2 s once `cancel` fires.
     fn execute(&self, call: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome>;
+
+    /// Run with native file observations when the host can supply them. The
+    /// default has no operation receipt and cannot activate scoped rules.
+    fn execute_observed(
+        &self,
+        invocation: Invocation,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, ObservedExecution> {
+        Box::pin(async move {
+            ObservedExecution {
+                outcome: self.execute(invocation, cancel).await,
+                files: None,
+            }
+        })
+    }
 
     /// An explicit user request for a forked background child. Deny rules still apply.
     fn subtask(
@@ -1435,6 +1656,64 @@ pub struct SnapshotRecovery {
 
 /// Working-tree snapshots for a Location.
 pub trait Snapshots: Send + Sync {
+    /// Read-only acquisition of an existing exact worker lifetime lock.
+    fn lock_worker(
+        &self,
+        _binding: super::SnapshotLifetimeBinding,
+    ) -> BoxFuture<'_, Result<Box<dyn super::SnapshotLifetime>, String>> {
+        Box::pin(async { Err("Snapshot lifetime recovery is unavailable".into()) })
+    }
+    /// Pure filesystem lifetime ownership, acquired before durable reservation.
+    /// Legacy hosts omit it and cannot gain pre-origin acknowledgement authority.
+    fn reserve_worker(
+        &self,
+        _request: super::SnapshotLifetimeRequest,
+    ) -> BoxFuture<'_, Result<Option<Box<dyn super::SnapshotLifetime>>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn recovery_review(
+        &self,
+        _directory: &str,
+        _journal: &str,
+        _action: super::SnapshotRecoveryAction,
+    ) -> BoxFuture<'_, Result<super::SnapshotRecoveryReview, String>> {
+        Box::pin(async { Err("Snapshot recovery review is unavailable".into()) })
+    }
+    fn resolve_recovery(
+        &self,
+        _directory: String,
+        _request: super::SnapshotRecoveryConfirmation,
+        _worker: super::SnapshotWorker,
+    ) -> BoxFuture<'_, Result<super::SnapshotCompletion, RestoreError>> {
+        Box::pin(async { Err(RestoreError::Failed("Owned recovery is unavailable".into())) })
+    }
+    /// Metadata-only reconciliation of an already committed native owner pair.
+    /// The actual synchronous callback must retain the supplied worker and may
+    /// not install source files, create a restore intent or launch subprocesses.
+    fn acknowledge_recovery(
+        &self,
+        _directory: String,
+        _worker: super::SnapshotAcknowledgementWorker,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async {
+            Err("Native snapshot acknowledgement reconciliation is unavailable".into())
+        })
+    }
+    /// Only synchronous filesystem hosts retaining runtime-issued worker ownership.
+    fn owned_restore_available(&self, _directory: &str) -> bool {
+        false
+    }
+    fn restore_owned(
+        &self,
+        _request: super::SnapshotRestoreRequest,
+        _worker: super::SnapshotWorker,
+    ) -> BoxFuture<'_, Result<super::SnapshotCompletion, RestoreError>> {
+        Box::pin(async {
+            Err(RestoreError::Failed(
+                "Owned snapshot restore is unsupported".into(),
+            ))
+        })
+    }
     /// Actionable unavailability retained after a one-time automatic warning.
     fn unavailable_reason(&self, _directory: &str) -> Option<String> {
         None

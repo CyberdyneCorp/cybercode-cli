@@ -225,11 +225,7 @@ async fn disposed_binary_request_retains_worker_ownership_until_actual_exit() {
         "timed-out Stop released the actual worker guard"
     );
     let handle = runtime.inner.handle(&session).await.unwrap();
-    assert!(
-        !handle
-            .location_uncertain
-            .load(std::sync::atomic::Ordering::SeqCst)
-    );
+    assert!(!handle.has_location_uncertainty());
     let shutdown = {
         let runtime = runtime.clone();
         tokio::spawn(async move { runtime.shutdown().await })
@@ -372,11 +368,7 @@ async fn unwound_binary_worker_does_not_claim_file_success_or_poison_native_proc
     assert!(result.is_err());
     assert_eq!(paths.available_permits(), 1);
     let handle = runtime.inner.handle(&session).await.unwrap();
-    assert!(
-        !handle
-            .location_uncertain
-            .load(std::sync::atomic::Ordering::SeqCst)
-    );
+    assert!(!handle.has_location_uncertainty());
     activities_drained(&runtime).await;
     runtime.shutdown().await;
 }

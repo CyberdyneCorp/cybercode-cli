@@ -45,6 +45,52 @@ impl Project {
         self.snapshots.track(&self.dir()).await.unwrap().unwrap()
     }
 }
+
+#[tokio::test]
+async fn replaced_location_after_plan_never_supplies_a_new_restore_target() {
+    refuses_replaced_location(false).await;
+    refuses_replaced_location(true).await;
+}
+
+async fn refuses_replaced_location(symlink: bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let p = Project::new();
+    p.write("a.txt", "before\n");
+    let before = p.track().await;
+    p.write("a.txt", "after\n");
+    let after = p.track().await;
+    let root = p.root.clone();
+    let displaced = root.with_file_name("displaced-root");
+    let moved = displaced.clone();
+    let calls = AtomicUsize::new(0);
+    let result = p
+        .snapshots
+        .restore_reviewed(
+            &p.dir(),
+            &before.tree,
+            &after.tree,
+            &after.tree,
+            Arc::new(move || {
+                if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    std::fs::rename(&root, &moved).unwrap();
+                    if symlink {
+                        std::os::unix::fs::symlink(&moved, &root).unwrap();
+                    } else {
+                        std::fs::create_dir(&root).unwrap();
+                        std::fs::write(root.join("a.txt"), "after\n").unwrap();
+                    }
+                }
+                Ok(())
+            }),
+        )
+        .await;
+    assert!(
+        matches!(result, Err(RestoreError::Failed(message)) if message.contains("Location identity changed"))
+    );
+    assert_eq!(std::fs::read(p.root.join("a.txt")).unwrap(), b"after\n");
+    assert_eq!(std::fs::read(displaced.join("a.txt")).unwrap(), b"after\n");
+}
+
 #[tokio::test]
 async fn non_git_snapshots_hash_bytes_preserve_owner_edits_and_restore_without_a_repository() {
     let p = Project::new();
@@ -197,7 +243,6 @@ async fn storage_cap_and_foreign_location_do_not_authorize_restore() {
 }
 #[tokio::test]
 async fn admission_loss_after_a_replacement_retains_journal_and_blocks_replay() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     let p = Project::new();
     p.write("a.txt", "old a");
     p.write("b.txt", "old b");
@@ -205,8 +250,7 @@ async fn admission_loss_after_a_replacement_retains_journal_and_blocks_replay() 
     p.write("a.txt", "new a");
     p.write("b.txt", "new b");
     let after = p.track().await;
-    let calls = Arc::new(AtomicUsize::new(0));
-    let count = calls.clone();
+    let first = p.root.join("a.txt");
     let result = p
         .snapshots
         .restore_reviewed(
@@ -215,7 +259,7 @@ async fn admission_loss_after_a_replacement_retains_journal_and_blocks_replay() 
             &after.tree,
             &after.tree,
             Arc::new(move || {
-                if count.fetch_add(1, Ordering::SeqCst) >= 2 {
+                if std::fs::read(&first).ok().as_deref() == Some(b"old a") {
                     Err("admission revoked".into())
                 } else {
                     Ok(())
@@ -349,7 +393,7 @@ fn killed_restore_worker() {
         let ids: Value =
             serde_json::from_slice(&std::fs::read(base.join("ids.json")).unwrap()).unwrap();
         let marker = base.join("restore-paused");
-        let count = std::sync::atomic::AtomicUsize::new(0);
+        let first = base.join("work/a.txt");
         let _ = snapshots
             .restore_reviewed(
                 &directory,
@@ -357,7 +401,7 @@ fn killed_restore_worker() {
                 ids[1].as_str().unwrap(),
                 ids[1].as_str().unwrap(),
                 Arc::new(move || {
-                    if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 2 {
+                    if std::fs::read(&first).ok().as_deref() == Some(b"before a") {
                         std::fs::write(&marker, b"first native replacement acknowledged").unwrap();
                         loop {
                             std::thread::sleep(std::time::Duration::from_millis(20));
@@ -515,7 +559,7 @@ async fn macos_acl_grants_cannot_make_private_snapshot_storage_readable() {
 
 #[tokio::test]
 async fn recovery_inspection_does_not_wait_for_a_paused_native_writer() {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
     struct Release(Arc<AtomicBool>);
     impl Drop for Release {
         fn drop(&mut self) {
@@ -536,8 +580,9 @@ async fn recovery_inspection_does_not_wait_for_a_paused_native_writer() {
     let snapshots = p.snapshots.clone();
     let directory = p.dir();
     let resume = released.clone();
+    let first = p.root.join("a.txt");
     let task = tokio::spawn(async move {
-        let count = AtomicUsize::new(0);
+        let signaled = AtomicBool::new(false);
         snapshots
             .restore_reviewed(
                 &directory,
@@ -545,7 +590,9 @@ async fn recovery_inspection_does_not_wait_for_a_paused_native_writer() {
                 &after.tree,
                 &after.tree,
                 Arc::new(move || {
-                    if count.fetch_add(1, Ordering::SeqCst) == 2 {
+                    if std::fs::read(&first).ok().as_deref() == Some(b"old a")
+                        && !signaled.swap(true, Ordering::SeqCst)
+                    {
                         signal.notify_one();
                         while !resume.load(Ordering::SeqCst) {
                             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -717,4 +764,581 @@ async fn restore_reserves_displaced_preimages_before_changing_source_files() {
     );
     assert_eq!(std::fs::read(p.root.join("a.txt")).unwrap(), b"new a\n");
     assert!(p.snapshots.recovery(&p.dir()).await.unwrap().is_empty());
+}
+
+/// Age both published roots and private orphan/temporary bytes without changing
+/// their content identities; collection receives a complete empty reference set.
+async fn aged_collection_fixture() -> (Project, Vec<(PathBuf, Vec<u8>)>) {
+    let mut p = Project::new();
+    for text in ["first", "second"] {
+        p.write("a.txt", text);
+        p.track().await;
+    }
+    let namespace = namespace(&p);
+    let manifests = namespace.join("manifests");
+    for entry in std::fs::read_dir(&manifests).unwrap() {
+        let path = entry.unwrap().path();
+        let mut value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        value["accessed"] = json!(0);
+        std::fs::write(path, value.to_string()).unwrap();
+    }
+    let orphan = b"unpublished object";
+    std::fs::write(
+        namespace
+            .join("files")
+            .join(blake3::hash(orphan).to_hex().as_str()),
+        orphan,
+    )
+    .unwrap();
+    let mut retained = vec![];
+    for directory in [manifests, namespace.join("files")] {
+        std::fs::write(
+            directory.join(format!("tmp_{}", ulid::Ulid::new())),
+            b"unpublished temporary",
+        )
+        .unwrap();
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(
+                    std::fs::FileTimes::new()
+                        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1)),
+                )
+                .unwrap();
+            retained.push((path.clone(), std::fs::read(path).unwrap()));
+        }
+    }
+    let config = p.config.clone();
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(move |_| config.lock().unwrap().clone()),
+        vec![],
+        Some(Arc::new(|| Ok(Default::default()))),
+    );
+    (p, retained)
+}
+fn assert_collection_retained(retained: &[(PathBuf, Vec<u8>)]) {
+    for (path, bytes) in retained {
+        assert_eq!(
+            std::fs::read(path).ok().as_ref(),
+            Some(bytes),
+            "{}",
+            path.display()
+        );
+    }
+}
+#[tokio::test]
+async fn collection_disabled_snapshots_preserves_manifests_objects_and_temporary_bytes() {
+    let (p, retained) = aged_collection_fixture().await;
+    *p.config.lock().unwrap() = json!({"snapshots":false});
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+}
+#[tokio::test]
+async fn collection_zero_retention_preserves_orphan_and_temporary_bytes() {
+    let (p, retained) = aged_collection_fixture().await;
+    *p.config.lock().unwrap() = json!({"snapshots":{"retention_days":0}});
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+}
+#[tokio::test]
+async fn collection_unavailable_configuration_preserves_the_complete_inventory() {
+    let (p, retained) = aged_collection_fixture().await;
+    *p.config.lock().unwrap() = Value::Null;
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+    assert!(!namespace(&p).join("collection.json").exists());
+}
+#[tokio::test]
+async fn collection_missing_location_evidence_preserves_orphans() {
+    let (p, mut retained) = aged_collection_fixture().await;
+    retained.retain(|(path, _)| {
+        if path.parent().unwrap().ends_with("manifests")
+            && !path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("tmp_")
+        {
+            std::fs::remove_file(path).unwrap();
+            false
+        } else {
+            true
+        }
+    });
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+}
+#[tokio::test]
+async fn collection_corrupt_inventory_refuses_before_any_manifest_is_removed() {
+    let (p, retained) = aged_collection_fixture().await;
+    std::fs::write(
+        namespace(&p).join("manifests").join("f".repeat(64)),
+        b"malformed manifest",
+    )
+    .unwrap();
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+}
+#[tokio::test]
+async fn collection_policy_revocation_before_unlink_preserves_the_inventory() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (mut p, retained) = aged_collection_fixture().await;
+    let calls = AtomicUsize::new(0);
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(move |_| {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                json!({})
+            } else {
+                json!({"snapshots":false})
+            }
+        }),
+        vec![],
+        Some(Arc::new(|| Ok(Default::default()))),
+    );
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+}
+
+#[tokio::test]
+async fn collection_orphan_age_uses_the_configured_retention_instead_of_seven_days() {
+    let (p, _) = aged_collection_fixture().await;
+    *p.config.lock().unwrap() = json!({"snapshots":{"retention_days":30}});
+    let orphan = namespace(&p)
+        .join("files")
+        .join(blake3::hash(b"unpublished object").to_hex().as_str());
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&orphan)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(
+            std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 86400),
+        ))
+        .unwrap();
+    p.snapshots.gc().await;
+    assert_eq!(std::fs::read(orphan).unwrap(), b"unpublished object");
+}
+
+#[tokio::test]
+async fn collection_foreign_location_manifest_does_not_select_another_policy() {
+    let (p, retained) = aged_collection_fixture().await;
+    let foreign = Project::new();
+    foreign.write("foreign.txt", "another Location");
+    let snapshot = foreign.track().await;
+    let name = snapshot.tree.strip_prefix("copy:").unwrap();
+    std::fs::copy(
+        namespace(&foreign).join("manifests").join(name),
+        namespace(&p).join("manifests").join(name),
+    )
+    .unwrap();
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+}
+
+#[tokio::test]
+async fn collection_policy_revocation_after_manifest_deletion_preserves_objects() {
+    let (mut p, retained) = aged_collection_fixture().await;
+    let manifests = namespace(&p).join("manifests");
+    for entry in std::fs::read_dir(&manifests).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("tmp_")
+        {
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(move |_| {
+            if std::fs::read_dir(&manifests).unwrap().next().is_none() {
+                json!({"snapshots":false})
+            } else {
+                json!({})
+            }
+        }),
+        vec![],
+        Some(Arc::new(|| Ok(Default::default()))),
+    );
+    p.snapshots.gc().await;
+    let objects: Vec<_> = retained
+        .into_iter()
+        .filter(|(path, _)| path.parent().unwrap().ends_with("files"))
+        .collect();
+    assert_collection_retained(&objects);
+    // Simulate a fresh collector after the stop between manifest and object
+    // removal. It must use durable Location evidence rather than orphan names.
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(|_| json!({})),
+        vec![],
+        Some(Arc::new(|| Ok(Default::default()))),
+    );
+    p.snapshots.gc().await;
+    for (path, _) in objects {
+        assert!(
+            !path.exists(),
+            "old orphan survived restart: {}",
+            path.display()
+        );
+    }
+}
+
+#[tokio::test]
+async fn collection_temporary_alias_refuses_before_any_manifest_is_removed() {
+    let (p, retained) = aged_collection_fixture().await;
+    let target = p.root.join("owner-evidence");
+    std::fs::write(&target, b"owner bytes").unwrap();
+    let alias = namespace(&p)
+        .join("manifests")
+        .join(format!("tmp_{}", ulid::Ulid::new()));
+    std::os::unix::fs::symlink(&target, &alias).unwrap();
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+    assert_eq!(std::fs::read(target).unwrap(), b"owner bytes");
+    assert!(
+        std::fs::symlink_metadata(alias)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+#[tokio::test]
+async fn collection_unknown_object_refuses_before_any_manifest_is_removed() {
+    let (p, retained) = aged_collection_fixture().await;
+    let unknown = namespace(&p).join("files").join("foreign-owner-evidence");
+    std::fs::write(&unknown, b"unknown owner").unwrap();
+    p.snapshots.gc().await;
+    assert_collection_retained(&retained);
+    assert_eq!(std::fs::read(unknown).unwrap(), b"unknown owner");
+}
+
+#[tokio::test]
+async fn collection_dangling_reference_preserves_orphans_despite_valid_provenance() {
+    let (mut p, retained) = aged_collection_fixture().await;
+    let manifest = retained
+        .iter()
+        .find(|(path, _)| {
+            path.parent().unwrap().ends_with("manifests")
+                && !path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("tmp_")
+        })
+        .unwrap()
+        .0
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    p.snapshots.gc().await;
+    let objects = restore_old_orphans(&retained);
+    let provenance = std::fs::read(namespace(&p).join("collection.json")).unwrap();
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(|_| json!({})),
+        vec![],
+        Some(Arc::new(move || {
+            Ok(std::collections::BTreeSet::from([format!(
+                "copy:{manifest}"
+            )]))
+        })),
+    );
+    p.snapshots.gc().await;
+    assert_collection_retained(&objects);
+    assert_eq!(
+        std::fs::read(namespace(&p).join("collection.json")).unwrap(),
+        provenance
+    );
+}
+
+#[tokio::test]
+async fn collection_resolves_other_location_roots_before_reclaiming_old_orphans() {
+    let (mut p, retained) = aged_collection_fixture().await;
+    let original_namespace = namespace(&p);
+    p.snapshots.gc().await;
+    let objects = restore_old_orphans(&retained);
+    let other = p.root.parent().unwrap().join("other-work");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(other.join("owner"), b"other Location bytes").unwrap();
+    let protected = p
+        .snapshots
+        .track(other.to_str().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let root = protected.tree.clone();
+    p.snapshots = GitSnapshots::with_policy(
+        p.data.clone(),
+        Arc::new(|_| json!({})),
+        vec![],
+        Some(Arc::new(move || {
+            Ok(std::collections::BTreeSet::from([
+                root.clone(),
+                "a".repeat(40),
+            ]))
+        })),
+    );
+    p.snapshots.gc().await;
+    for (path, _) in objects {
+        assert!(!path.exists(), "{}", path.display());
+    }
+    assert!(
+        std::fs::read_dir(original_namespace.join("files"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    assert_eq!(
+        std::fs::read(other.join("owner")).unwrap(),
+        b"other Location bytes"
+    );
+    assert!(
+        p.snapshots
+            .changed(other.to_str().unwrap(), &protected.tree, &protected.tree)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+fn restore_old_orphans(retained: &[(PathBuf, Vec<u8>)]) -> Vec<(PathBuf, Vec<u8>)> {
+    retained
+        .iter()
+        .filter(|(path, _)| path.parent().unwrap().ends_with("files"))
+        .map(|(path, bytes)| {
+            std::fs::write(path, bytes).unwrap();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_times(std::fs::FileTimes::new().set_modified(std::time::UNIX_EPOCH))
+                .unwrap();
+            (path.clone(), bytes.clone())
+        })
+        .collect()
+}
+
+fn mode(path: &std::path::Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777
+}
+
+#[tokio::test]
+async fn rename_is_restored_as_delete_plus_create_and_preserves_unrelated_owner_edits() {
+    for edited in [false, true] {
+        renamed_restore(edited).await;
+    }
+}
+
+/// A non-Git rename has no move record: undo removes the new name only when its
+/// bytes still match the captured agent result and recreates the old name.
+async fn renamed_restore(edited: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let p = Project::new();
+    p.write("a.txt", "renamed bytes\n");
+    p.write("c.txt", "owner base\n");
+    std::fs::set_permissions(p.root.join("a.txt"), PermissionsExt::from_mode(0o640)).unwrap();
+    let before = p.track().await;
+    std::fs::rename(p.root.join("a.txt"), p.root.join("b.txt")).unwrap();
+    let after = p.track().await;
+    p.write("c.txt", "owner edit\n");
+    if edited {
+        p.write("b.txt", "owner edit after rename\n");
+    }
+    let current = p.track().await;
+    let result = p
+        .snapshots
+        .restore_reviewed(
+            &p.dir(),
+            &before.tree,
+            &after.tree,
+            &current.tree,
+            Arc::new(|| Ok(())),
+        )
+        .await;
+    assert_eq!(
+        std::fs::read(p.root.join("c.txt")).unwrap(),
+        b"owner edit\n"
+    );
+    if edited {
+        return assert_edited_rename_refused(&p, result).await;
+    }
+    assert_eq!(result.unwrap(), ["a.txt", "b.txt"]);
+    assert!(!p.root.join("b.txt").exists());
+    assert_eq!(
+        std::fs::read(p.root.join("a.txt")).unwrap(),
+        b"renamed bytes\n"
+    );
+    assert_eq!(mode(&p.root.join("a.txt")), 0o640);
+}
+
+/// An owner edit to the new name is not the captured agent result: the whole
+/// restore refuses, so neither name changes and no journal is left.
+async fn assert_edited_rename_refused(p: &Project, result: Result<Vec<String>, RestoreError>) {
+    assert!(matches!(result, Err(RestoreError::Conflict(paths)) if paths == ["b.txt"]));
+    assert!(!p.root.join("a.txt").exists());
+    assert_eq!(
+        std::fs::read(p.root.join("b.txt")).unwrap(),
+        b"owner edit after rename\n"
+    );
+    assert!(p.snapshots.recovery(&p.dir()).await.unwrap().is_empty());
+}
+
+fn mkfifo(path: &std::path::Path) {
+    let status = std::process::Command::new("mkfifo")
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+fn inode(path: &std::path::Path) -> (u64, std::fs::FileType) {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    (metadata.ino(), metadata.file_type())
+}
+
+/// FIFOs and sockets stand in for every non-regular entry (device nodes take the same
+/// `!is_file()` branch but cannot be created without privilege). An open on a FIFO
+/// without a writer blocks, so a bounded restore also shows it is never opened.
+#[tokio::test]
+async fn fifo_socket_and_device_entries_are_disclosed_unsupported_and_never_restored_or_deleted() {
+    use std::os::unix::fs::FileTypeExt;
+    let p = Project::new();
+    p.write("a.txt", "before\n");
+    mkfifo(&p.root.join("old-pipe"));
+    let before = p.track().await;
+    assert!(before.skipped.iter().any(|s| s == "unsupported: old-pipe"));
+    std::fs::remove_file(p.root.join("old-pipe")).unwrap();
+    p.write("a.txt", "after\n");
+    mkfifo(&p.root.join("new-pipe"));
+    let _socket = std::os::unix::net::UnixListener::bind(p.root.join("sock")).unwrap();
+    let after = p.track().await;
+    for name in ["new-pipe", "sock"] {
+        let label = format!("unsupported: {name}");
+        assert!(after.skipped.contains(&label), "{:?}", after.skipped);
+    }
+    let disclosed = p
+        .snapshots
+        .exclusions(&p.dir(), vec![before.tree.clone(), after.tree.clone()])
+        .await
+        .unwrap();
+    for name in ["old-pipe", "new-pipe", "sock"] {
+        let label = format!("unsupported: {name}");
+        assert!(
+            disclosed.iter().any(|d| d.ends_with(&label)),
+            "{disclosed:?}"
+        );
+    }
+    let preview = p
+        .snapshots
+        .preview_restore(&p.dir(), &before.tree, &after.tree, &after.tree)
+        .await
+        .unwrap();
+    assert_eq!(
+        preview.iter().map(|f| f.file.as_str()).collect::<Vec<_>>(),
+        ["a.txt"]
+    );
+    let (pipe, sock) = (inode(&p.root.join("new-pipe")), inode(&p.root.join("sock")));
+    let restored = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        p.snapshots.restore_reviewed(
+            &p.dir(),
+            &before.tree,
+            &after.tree,
+            &after.tree,
+            Arc::new(|| Ok(())),
+        ),
+    )
+    .await
+    .expect("restore must never open a FIFO")
+    .unwrap();
+    assert_eq!(restored, ["a.txt"]);
+    assert_eq!(std::fs::read(p.root.join("a.txt")).unwrap(), b"before\n");
+    assert!(std::fs::symlink_metadata(p.root.join("old-pipe")).is_err());
+    assert_eq!(inode(&p.root.join("new-pipe")), pipe);
+    assert_eq!(inode(&p.root.join("sock")), sock);
+    assert!(pipe.1.is_fifo() && sock.1.is_socket());
+}
+
+/// Parks the in-process restore after its first actual replacement, lets an editor
+/// write a path the plan has not reached, then resumes the same restore.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_concurrent_editor_write_between_replacements_refuses_the_rest_and_keeps_the_edit() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    let p = Project::new();
+    p.write("a.txt", "before a");
+    p.write("b.txt", "before b");
+    let before = p.track().await;
+    p.write("a.txt", "after a");
+    p.write("b.txt", "after b");
+    let after = p.track().await;
+    let (parked_tx, parked_rx) = mpsc::channel::<()>();
+    let (resume_tx, resume_rx) = mpsc::channel::<()>();
+    let (parked_tx, resume_rx) = (Mutex::new(parked_tx), Mutex::new(resume_rx));
+    let first = p.root.join("a.txt");
+    let parked = AtomicBool::new(false);
+    let park: Arc<dyn Fn() -> Result<(), String> + Send + Sync> = Arc::new(move || {
+        if std::fs::read(&first).ok().as_deref() == Some(b"before a")
+            && !parked.swap(true, Ordering::SeqCst)
+        {
+            parked_tx.lock().unwrap().send(()).unwrap();
+            resume_rx.lock().unwrap().recv().unwrap();
+        }
+        Ok(())
+    });
+    let (snapshots, dir) = (p.snapshots.clone(), p.dir());
+    let (target, recorded) = (before.tree.clone(), after.tree.clone());
+    let restore = tokio::spawn(async move {
+        snapshots
+            .restore_reviewed(&dir, &target, &recorded, &recorded, park)
+            .await
+    });
+    tokio::task::spawn_blocking(move || {
+        parked_rx
+            .recv_timeout(std::time::Duration::from_secs(20))
+            .expect("restore did not reach the between-file cut")
+    })
+    .await
+    .unwrap();
+    p.write("b.txt", "editor b");
+    resume_tx.send(()).unwrap();
+    let result = restore.await.unwrap();
+    assert!(
+        matches!(&result, Err(RestoreError::Failed(message)) if message.contains("conflicts: b.txt")),
+        "{result:?}"
+    );
+    assert_eq!(std::fs::read(p.root.join("a.txt")).unwrap(), b"before a");
+    assert_eq!(std::fs::read(p.root.join("b.txt")).unwrap(), b"editor b");
+    let recovery = p.snapshots.recovery(&p.dir()).await.unwrap();
+    assert_eq!(recovery.len(), 1);
+    assert!(!recovery[0].filesystem_complete);
+    assert_eq!(recovery[0].applied, ["a.txt"]);
+    let journal = namespace(&p).join("journals").join(&recovery[0].id);
+    assert_eq!(std::fs::read(journal.join("stage_0")).unwrap(), b"after a");
+    assert!(
+        p.snapshots
+            .track(&p.dir())
+            .await
+            .unwrap_err()
+            .contains("requires recovery")
+    );
+    assert_eq!(std::fs::read(p.root.join("b.txt")).unwrap(), b"editor b");
 }

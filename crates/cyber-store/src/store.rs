@@ -212,6 +212,56 @@ impl Store {
         Ok((stored, result))
     }
 
+    /// Decide and append to exactly two distinct owners in one writer transaction.
+    /// Used when a recovery receipt and its native acknowledgement must commit together.
+    /// Each owner supplies its exact latest sequence (`-1` for a new owner). Decision
+    /// writes, validation, both appends and projectors roll back together on failure;
+    /// commit notifications are published for each changed owner only after commit.
+    ///
+    /// Owner IDs are nonempty and at most 256 bytes. The pair may contain at most 64
+    /// events and 16 MiB of encoded event data. The callback must not perform external
+    /// effects. A commit error may mean both owners committed: reconcile by durable
+    /// request identity after recovery, never redispatch filesystem effects.
+    pub fn append_pair_checked<T, F>(
+        &self,
+        owners: [(String, i64); 2],
+        decide: F,
+    ) -> Result<([Vec<StoredEvent>; 2], T), StoreError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&rusqlite::Transaction<'_>) -> Result<([Vec<NewEvent>; 2], T), StoreError>
+            + Send
+            + 'static,
+    {
+        if owners[0].0 == owners[1].0
+            || owners
+                .iter()
+                .any(|(id, seq)| id.is_empty() || id.len() > 256 || *seq < -1)
+        {
+            return Err(StoreError::InvalidAppend(
+                "expected two distinct bounded owner IDs and sequences >= -1".into(),
+            ));
+        }
+        let registry = Arc::clone(&self.registry);
+        let (stored, result) = self.transaction(move |tx| {
+            let (events, result) = decide(tx)?;
+            validate_pair(&events)?;
+            let mut stored = [vec![], vec![]];
+            for (index, ((owner, sequence), events)) in owners.into_iter().zip(events).enumerate() {
+                for event in &events {
+                    registry.check(event)?;
+                }
+                stored[index] =
+                    append_in_tx(tx, &registry, &owner, Expected::Seq(sequence), events)?;
+            }
+            Ok((stored, result))
+        })?;
+        for events in &stored {
+            self.notify(events);
+        }
+        Ok((stored, result))
+    }
+
     /// Events of `aggregate_id` with `seq > after` (use `-1` for all), upcast to current versions.
     pub fn read_events(
         &self,
@@ -349,6 +399,35 @@ impl Store {
 
     fn upcast(&self, row: RawEvent) -> Result<StoredEvent, StoreError> {
         upcast(&self.registry, row)
+    }
+}
+
+fn validate_pair(events: &[Vec<NewEvent>; 2]) -> Result<(), StoreError> {
+    if events.iter().map(Vec::len).sum::<usize>() > 64 {
+        return Err(StoreError::InvalidAppend("more than 64 events".into()));
+    }
+    let mut bytes = EventBudget(0);
+    for event in events.iter().flatten() {
+        serde_json::to_writer(&mut bytes, event)
+            .map_err(|_| StoreError::InvalidAppend("more than 16 MiB of events".into()))?;
+    }
+    Ok(())
+}
+
+/// Count the exact encoding without allocating an unbounded serialized copy.
+struct EventBudget(usize);
+
+impl std::io::Write for EventBudget {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > (16 * 1024 * 1024) - self.0 {
+            return Err(std::io::Error::other("paired event byte limit"));
+        }
+        self.0 += bytes.len();
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -508,4 +587,71 @@ fn open_reader(path: &Path) -> Result<Connection, StoreError> {
     conn.busy_timeout(BUSY_TIMEOUT)?;
     conn.execute_batch("PRAGMA query_only = ON; PRAGMA cache_size = -64000;")?;
     Ok(conn)
+}
+
+#[cfg(test)]
+mod paired_tests {
+    use super::*;
+
+    #[test]
+    fn paired_lost_commit_reply_retains_both_owners_without_notifications_or_replay() {
+        fn lost_reply(_: &rusqlite::hooks::Wal, _: i32) -> rusqlite::Result<()> {
+            Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                Some("injected paired commit reply loss".into()),
+            ))
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("paired.db");
+        let mut registry = EventRegistry::default();
+        registry.register("test.owner.changed.1").unwrap();
+        let store = Store::open(StoreOptions::new(
+            DatabaseLocation::File(path.clone()),
+            registry.clone(),
+        ))
+        .unwrap();
+        store
+            .transaction(|tx| {
+                tx.wal_hook(Some(lost_reply));
+                Ok(())
+            })
+            .unwrap();
+        let notifications = store.subscribe();
+        let owners = [("native".to_owned(), -1), ("receipt".to_owned(), -1)];
+        let events = || {
+            [
+                vec![NewEvent::new(
+                    "test.owner.changed.1",
+                    serde_json::json!({"request": "same"}),
+                )],
+                vec![NewEvent::new(
+                    "test.owner.changed.1",
+                    serde_json::json!({"request": "same"}),
+                )],
+            ]
+        };
+        let result = store.append_pair_checked(owners.clone(), move |_| Ok((events(), ())));
+        assert!(matches!(result, Err(StoreError::Unavailable(_))));
+        assert!(store.has_failed());
+        assert!(notifications.try_recv().is_err());
+        // Read through the independent file connection, not a cached writer result.
+        assert_eq!(store.aggregate_seq("native").unwrap(), Some(0));
+        assert_eq!(store.aggregate_seq("receipt").unwrap(), Some(0));
+        assert!(matches!(
+            store.append_pair_checked(owners.clone(), move |_| Ok((events(), ()))),
+            Err(StoreError::Unavailable(_))
+        ));
+        drop(store);
+        let reopened =
+            Store::open(StoreOptions::new(DatabaseLocation::File(path), registry)).unwrap();
+        assert!(matches!(
+            reopened.append_pair_checked(owners, move |_| Ok((events(), ()))),
+            Err(StoreError::Concurrency { .. })
+        ));
+        for owner in ["native", "receipt"] {
+            let page = reopened.read_events(owner, -1, 10).unwrap();
+            assert_eq!(page.events.len(), 1);
+            assert_eq!(page.events[0].data["request"], "same");
+        }
+    }
 }

@@ -722,6 +722,12 @@ export interface Operations {
     body: undefined;
     response: S.Job;
   };
+  "v1.job.inputState": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.InputJobQuery;
+    response: S.InputJobState[];
+  };
   "v1.job.list": {
     path: Record<string, never>;
     query: {
@@ -1211,7 +1217,9 @@ export interface Operations {
   };
   "v1.session.context": {
     path: { sessionID: string };
-    query: Record<string, never>;
+    query: {
+      include_content?: QueryValue;
+    };
     body: undefined;
     response: S.SessionContext;
   };
@@ -1263,6 +1271,8 @@ export interface Operations {
     path: { sessionID: string };
     query: {
       after?: QueryValue;
+      live?: QueryValue;
+      presence?: QueryValue;
     };
     body: undefined;
     response: S.EventEnvelope;
@@ -1367,6 +1377,30 @@ export interface Operations {
     body: undefined;
     response: void;
   };
+  "v1.session.inputClientAttach": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InteractiveClient;
+  };
+  "v1.session.inputClientRelease": {
+    path: { sessionID: string; clientID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: void;
+  };
+  "v1.session.inputClientRenew": {
+    path: { sessionID: string; clientID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InteractiveClient;
+  };
+  "v1.session.inputInterruption": {
+    path: { id: string; request_id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.InputInterruptReceipt;
+  };
   "v1.session.interactiveAttach": {
     path: { sessionID: string };
     query: Record<string, never>;
@@ -1390,6 +1424,12 @@ export interface Operations {
     query: Record<string, never>;
     body: undefined;
     response: void;
+  };
+  "v1.session.interruptInputs": {
+    path: { id: string };
+    query: Record<string, never>;
+    body: S.InputInterrupt;
+    response: S.InputInterruptReceipt;
   };
   "v1.session.label": {
     path: { sessionID: string; name: string };
@@ -1553,17 +1593,105 @@ export interface Operations {
     body: undefined;
     response: S.Data_Nullable_Goal;
   };
+  "v1.session.snapshotPreparationAcknowledge": {
+    path: { sessionID: string; activityID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotPreparationReceipt;
+  };
+  "v1.session.snapshotPreparationConfirm": {
+    path: { sessionID: string; activityID: string };
+    query: Record<string, never>;
+    body: S.SnapshotPreparationConfirmation;
+    response: S.SnapshotPreparationReceipt;
+  };
+  "v1.session.snapshotPreparationLookup": {
+    path: { sessionID: string; activityID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotPreparationReceipt;
+  };
+  "v1.session.snapshotPreparationReceipt": {
+    path: { sessionID: string; activityID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotPreparationReceipt | null;
+  };
+  "v1.session.snapshotPreparationReview": {
+    path: { sessionID: string; activityID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotPreparationReview;
+  };
+  "v1.session.snapshotPreparations": {
+    path: { sessionID: string };
+    query: {
+      include_cancelled?: QueryValue;
+    };
+    body: undefined;
+    response: S.SnapshotPreparation[];
+  };
   "v1.session.snapshotRecovery": {
     path: { sessionID: string };
     query: Record<string, never>;
     body: undefined;
     response: S.SnapshotRecovery[];
   };
+  "v1.session.snapshotRecoveryAcknowledge": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotRecoveryResult;
+  };
+  "v1.session.snapshotRecoveryConfirm": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.SnapshotRecoveryConfirmation;
+    response: S.SnapshotRecoveryResult;
+  };
+  "v1.session.snapshotRecoveryLookup": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotRecoveryResult;
+  };
+  "v1.session.snapshotRecoveryRequests": {
+    path: { sessionID: string };
+    query: {
+      journal_id?: QueryValue;
+    };
+    body: undefined;
+    response: S.SnapshotRecoveryConfirmation[];
+  };
+  "v1.session.snapshotRecoveryReview": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.SnapshotRecoverySelection;
+    response: S.SnapshotRecoveryReview;
+  };
+  "v1.session.snapshotRestoreAcknowledge": {
+    path: { sessionID: string; activityID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotRestoreReceipt;
+  };
+  "v1.session.snapshotRestoreLookup": {
+    path: { sessionID: string; activityID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.SnapshotRestoreReceipt;
+  };
   "v1.session.startDelegation": {
     path: { sessionID: string; requestID: string };
     query: Record<string, never>;
     body: S.SubtaskBody;
     response: S.Delegation;
+  };
+  "v1.session.stepInputOrigin": {
+    path: { id: string; message_id: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: string[];
   };
   "v1.session.stopDelegation": {
     path: { sessionID: string; requestID: string };
@@ -3107,6 +3235,18 @@ export const operations = {
     unwrap: true,
     stream: false,
   },
+  "v1.job.inputState": {
+    tag: "job",
+    name: "inputState",
+    method: "POST",
+    path: "/api/v1/jobs/input-state",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.job.list": {
     tag: "job",
     name: "list",
@@ -4002,7 +4142,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/context",
     pathParams: ["sessionID"],
-    query: [],
+    query: ["include_content"],
     body: "none",
     located: false,
     unwrap: true,
@@ -4098,7 +4238,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/events",
     pathParams: ["sessionID"],
-    query: ["after"],
+    query: ["after", "live", "presence"],
     body: "none",
     located: false,
     unwrap: false,
@@ -4284,6 +4424,54 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.inputClientAttach": {
+    tag: "session",
+    name: "inputClientAttach",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/input-clients",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.inputClientRelease": {
+    tag: "session",
+    name: "inputClientRelease",
+    method: "DELETE",
+    path: "/api/v1/sessions/{sessionID}/input-clients/{clientID}",
+    pathParams: ["sessionID", "clientID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.session.inputClientRenew": {
+    tag: "session",
+    name: "inputClientRenew",
+    method: "PUT",
+    path: "/api/v1/sessions/{sessionID}/input-clients/{clientID}",
+    pathParams: ["sessionID", "clientID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.inputInterruption": {
+    tag: "session",
+    name: "inputInterruption",
+    method: "GET",
+    path: "/api/v1/sessions/{id}/interrupt-inputs/{request_id}",
+    pathParams: ["id", "request_id"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.interactiveAttach": {
     tag: "session",
     name: "interactiveAttach",
@@ -4330,6 +4518,18 @@ export const operations = {
     body: "none",
     located: false,
     unwrap: false,
+    stream: false,
+  },
+  "v1.session.interruptInputs": {
+    tag: "session",
+    name: "interruptInputs",
+    method: "POST",
+    path: "/api/v1/sessions/{id}/interrupt-inputs",
+    pathParams: ["id"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.session.label": {
@@ -4632,12 +4832,168 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.snapshotPreparationAcknowledge": {
+    tag: "session",
+    name: "snapshotPreparationAcknowledge",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}/acknowledge",
+    pathParams: ["sessionID", "activityID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotPreparationConfirm": {
+    tag: "session",
+    name: "snapshotPreparationConfirm",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/confirm",
+    pathParams: ["sessionID", "activityID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotPreparationLookup": {
+    tag: "session",
+    name: "snapshotPreparationLookup",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}",
+    pathParams: ["sessionID", "activityID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotPreparationReceipt": {
+    tag: "session",
+    name: "snapshotPreparationReceipt",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/receipt",
+    pathParams: ["sessionID", "activityID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotPreparationReview": {
+    tag: "session",
+    name: "snapshotPreparationReview",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/review",
+    pathParams: ["sessionID", "activityID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotPreparations": {
+    tag: "session",
+    name: "snapshotPreparations",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/preparations",
+    pathParams: ["sessionID"],
+    query: ["include_cancelled"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.snapshotRecovery": {
     tag: "session",
     name: "snapshotRecovery",
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/rewind/recovery",
     pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotRecoveryAcknowledge": {
+    tag: "session",
+    name: "snapshotRecoveryAcknowledge",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotRecoveryConfirm": {
+    tag: "session",
+    name: "snapshotRecoveryConfirm",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery/confirm",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotRecoveryLookup": {
+    tag: "session",
+    name: "snapshotRecoveryLookup",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotRecoveryRequests": {
+    tag: "session",
+    name: "snapshotRecoveryRequests",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery/requests",
+    pathParams: ["sessionID"],
+    query: ["journal_id"],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotRecoveryReview": {
+    tag: "session",
+    name: "snapshotRecoveryReview",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/recovery/review",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotRestoreAcknowledge": {
+    tag: "session",
+    name: "snapshotRestoreAcknowledge",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge",
+    pathParams: ["sessionID", "activityID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.snapshotRestoreLookup": {
+    tag: "session",
+    name: "snapshotRestoreLookup",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/restores/{activityID}",
+    pathParams: ["sessionID", "activityID"],
     query: [],
     body: "none",
     located: false,
@@ -4652,6 +5008,18 @@ export const operations = {
     pathParams: ["sessionID", "requestID"],
     query: [],
     body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.stepInputOrigin": {
+    tag: "session",
+    name: "stepInputOrigin",
+    method: "GET",
+    path: "/api/v1/sessions/{id}/steps/{message_id}/input-origin",
+    pathParams: ["id", "message_id"],
+    query: [],
+    body: "none",
     located: false,
     unwrap: true,
     stream: false,
@@ -5623,6 +5991,9 @@ export function createGroups(caller: Caller) {
       /** Read a background task (`GET /api/v1/jobs/{id}`) */
       get: (id: string, options?: RequestOptions): Promise<Operations["v1.job.get"]["response"]> =>
         caller.call("v1.job.get", { path: { id } }, options),
+      /** Read bounded background settlement for a complete input cohort (`POST /api/v1/jobs/input-state`) */
+      inputState: (body: Operations["v1.job.inputState"]["body"], options?: RequestOptions): Promise<Operations["v1.job.inputState"]["response"]> =>
+        caller.call("v1.job.inputState", { body }, options),
       /** List durable background tasks (`GET /api/v1/jobs`) */
       list: (query?: Operations["v1.job.list"]["query"], options?: RequestOptions): Promise<Operations["v1.job.list"]["response"]> =>
         caller.call("v1.job.list", { query }, options),
@@ -5875,9 +6246,9 @@ export function createGroups(caller: Caller) {
       /** Revoke this Session's native grant (`POST /api/v1/sessions/{sessionID}/computer/stop`) */
       computerStop: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.computerStop"]["response"]> =>
         caller.call("v1.session.computerStop", { path: { sessionID } }, options),
-      /** Context baseline, summary and task state (`GET /api/v1/sessions/{sessionID}/context`) */
-      context: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.context"]["response"]> =>
-        caller.call("v1.session.context", { path: { sessionID } }, options),
+      /** Inspect recorded context and estimates. Use include_content to return baseline, summary and task text. (`GET /api/v1/sessions/{sessionID}/context`) */
+      context: (sessionID: string, query?: Operations["v1.session.context"]["query"], options?: RequestOptions): Promise<Operations["v1.session.context"]["response"]> =>
+        caller.call("v1.session.context", { path: { sessionID }, query }, options),
       /** Create a Session (`POST /api/v1/sessions`) */
       create: (body?: Operations["v1.session.create"]["body"], options?: RequestOptions): Promise<Operations["v1.session.create"]["response"]> =>
         caller.call("v1.session.create", { body }, options),
@@ -5947,6 +6318,18 @@ export function createGroups(caller: Caller) {
       /** Remove an unpromoted input (`DELETE /api/v1/sessions/{sessionID}/inbox/{messageID}`) */
       inboxRemove: (sessionID: string, messageID: string, options?: RequestOptions): Promise<Operations["v1.session.inboxRemove"]["response"]> =>
         caller.call("v1.session.inboxRemove", { path: { sessionID, messageID } }, options),
+      /** Create a 45-second input-only request attachment (`POST /api/v1/sessions/{sessionID}/input-clients`) */
+      inputClientAttach: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.inputClientAttach"]["response"]> =>
+        caller.call("v1.session.inputClientAttach", { path: { sessionID } }, options),
+      /** Release input-only attendance and settle its unattended requests (`DELETE /api/v1/sessions/{sessionID}/input-clients/{clientID}`) */
+      inputClientRelease: (sessionID: string, clientID: string, options?: RequestOptions): Promise<Operations["v1.session.inputClientRelease"]["response"]> =>
+        caller.call("v1.session.inputClientRelease", { path: { sessionID, clientID } }, options),
+      /** Renew a live input-only attachment (`PUT /api/v1/sessions/{sessionID}/input-clients/{clientID}`) */
+      inputClientRenew: (sessionID: string, clientID: string, options?: RequestOptions): Promise<Operations["v1.session.inputClientRenew"]["response"]> =>
+        caller.call("v1.session.inputClientRenew", { path: { sessionID, clientID } }, options),
+      /** Look up the original interruption receipt without targeting replacement execution (`GET /api/v1/sessions/{id}/interrupt-inputs/{request_id}`) */
+      inputInterruption: (id: string, request_id: string, options?: RequestOptions): Promise<Operations["v1.session.inputInterruption"]["response"]> =>
+        caller.call("v1.session.inputInterruption", { path: { id, request_id } }, options),
       /** Create a 45-second owner-authenticated browser attachment (`POST /api/v1/sessions/{sessionID}/interactive-clients`) */
       interactiveAttach: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interactiveAttach"]["response"]> =>
         caller.call("v1.session.interactiveAttach", { path: { sessionID } }, options),
@@ -5959,6 +6342,9 @@ export function createGroups(caller: Caller) {
       /** Interrupt the running Drain (`POST /api/v1/sessions/{sessionID}/interrupt`) */
       interrupt: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.interrupt"]["response"]> =>
         caller.call("v1.session.interrupt", { path: { sessionID } }, options),
+      /** Retain input-scoped interruption without targeting unrelated execution (`POST /api/v1/sessions/{id}/interrupt-inputs`) */
+      interruptInputs: (id: string, body: Operations["v1.session.interruptInputs"]["body"], options?: RequestOptions): Promise<Operations["v1.session.interruptInputs"]["response"]> =>
+        caller.call("v1.session.interruptInputs", { path: { id }, body }, options),
       /** Label a message of the branch tree (`PUT /api/v1/sessions/{sessionID}/labels/{name}`) */
       label: (sessionID: string, name: string, body: Operations["v1.session.label"]["body"], options?: RequestOptions): Promise<Operations["v1.session.label"]["response"]> =>
         caller.call("v1.session.label", { path: { sessionID, name }, body }, options),
@@ -6034,12 +6420,54 @@ export function createGroups(caller: Caller) {
       /** Clear the current Goal and activate the next queued one; null when the queue was empty (`POST /api/v1/sessions/{sessionID}/goals/skip`) */
       skipGoal: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.skipGoal"]["response"]> =>
         caller.call("v1.session.skipGoal", { path: { sessionID } }, options),
+      /** Reconcile native metadata acknowledgement of an exact committed pre-effect cancellation without source changes (`POST /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}/acknowledge`) */
+      snapshotPreparationAcknowledge: (sessionID: string, activityID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationAcknowledge"]["response"]> =>
+        caller.call("v1.session.snapshotPreparationAcknowledge", { path: { sessionID, activityID, requestID } }, options),
+      /** Cancel only a fingerprint-confirmed pre-effect snapshot preparation without moving files or transcript (`POST /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/confirm`) */
+      snapshotPreparationConfirm: (sessionID: string, activityID: string, body: Operations["v1.session.snapshotPreparationConfirm"]["body"], options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationConfirm"]["response"]> =>
+        caller.call("v1.session.snapshotPreparationConfirm", { path: { sessionID, activityID }, body }, options),
+      /** Look up the original durable preparation cancellation pair without native access or replay (`GET /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}`) */
+      snapshotPreparationLookup: (sessionID: string, activityID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationLookup"]["response"]> =>
+        caller.call("v1.session.snapshotPreparationLookup", { path: { sessionID, activityID, requestID } }, options),
+      /** Discover the exact committed preparation cancellation receipt without source access or native acknowledgement; absence is not pre-effect proof (`GET /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/receipt`) */
+      snapshotPreparationReceipt: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationReceipt"]["response"]> =>
+        caller.call("v1.session.snapshotPreparationReceipt", { path: { sessionID, activityID } }, options),
+      /** Review cancellation of an exited preparation using its exact native lifetime proof (`POST /api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/review`) */
+      snapshotPreparationReview: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparationReview"]["response"]> =>
+        caller.call("v1.session.snapshotPreparationReview", { path: { sessionID, activityID } }, options),
+      /** List retained preparation candidates without native access; review checks eligibility (`GET /api/v1/sessions/{sessionID}/rewind/preparations`) */
+      snapshotPreparations: (sessionID: string, query?: Operations["v1.session.snapshotPreparations"]["query"], options?: RequestOptions): Promise<Operations["v1.session.snapshotPreparations"]["response"]> =>
+        caller.call("v1.session.snapshotPreparations", { path: { sessionID }, query }, options),
       /** Inspect retained filesystem restore journals without acknowledging or replaying native effects (`GET /api/v1/sessions/{sessionID}/rewind/recovery`) */
       snapshotRecovery: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecovery"]["response"]> =>
         caller.call("v1.session.snapshotRecovery", { path: { sessionID } }, options),
+      /** Reconcile journal acknowledgement for the exact committed native pair without replaying source changes or starting inference (`POST /api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge`) */
+      snapshotRecoveryAcknowledge: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryAcknowledge"]["response"]> =>
+        caller.call("v1.session.snapshotRecoveryAcknowledge", { path: { sessionID, requestID } }, options),
+      /** Resolve fingerprint-confirmed native snapshot effects with an exact durable request; repeated IDs are lookup-only (`POST /api/v1/sessions/{sessionID}/rewind/recovery/confirm`) */
+      snapshotRecoveryConfirm: (sessionID: string, body: Operations["v1.session.snapshotRecoveryConfirm"]["body"], options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryConfirm"]["response"]> =>
+        caller.call("v1.session.snapshotRecoveryConfirm", { path: { sessionID }, body }, options),
+      /** Look up a durable recovery request without native access, acknowledgement reconciliation, replay or inference (`GET /api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}`) */
+      snapshotRecoveryLookup: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryLookup"]["response"]> =>
+        caller.call("v1.session.snapshotRecoveryLookup", { path: { sessionID, requestID } }, options),
+      /** Discover up to 4096 retained request identities for this Session creation and exact journal without native access, acknowledgement or replay (`GET /api/v1/sessions/{sessionID}/rewind/recovery/requests`) */
+      snapshotRecoveryRequests: (sessionID: string, query?: Operations["v1.session.snapshotRecoveryRequests"]["query"], options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryRequests"]["response"]> =>
+        caller.call("v1.session.snapshotRecoveryRequests", { path: { sessionID }, query }, options),
+      /** Review retained snapshot effects without restoring, acknowledging native activity or starting inference (`POST /api/v1/sessions/{sessionID}/rewind/recovery/review`) */
+      snapshotRecoveryReview: (sessionID: string, body: Operations["v1.session.snapshotRecoveryReview"]["body"], options?: RequestOptions): Promise<Operations["v1.session.snapshotRecoveryReview"]["response"]> =>
+        caller.call("v1.session.snapshotRecoveryReview", { path: { sessionID }, body }, options),
+      /** Acknowledge the immutable ordinary restore intent after its paired Session commit without replaying source files (`POST /api/v1/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge`) */
+      snapshotRestoreAcknowledge: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRestoreAcknowledge"]["response"]> =>
+        caller.call("v1.session.snapshotRestoreAcknowledge", { path: { sessionID, activityID } }, options),
+      /** Read the exact committed ordinary restore receipt without native access or replay (`GET /api/v1/sessions/{sessionID}/rewind/restores/{activityID}`) */
+      snapshotRestoreLookup: (sessionID: string, activityID: string, options?: RequestOptions): Promise<Operations["v1.session.snapshotRestoreLookup"]["response"]> =>
+        caller.call("v1.session.snapshotRestoreLookup", { path: { sessionID, activityID } }, options),
       /** Durably reserve a named user delegation request (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}`) */
       startDelegation: (sessionID: string, requestID: string, body: Operations["v1.session.startDelegation"]["body"], options?: RequestOptions): Promise<Operations["v1.session.startDelegation"]["response"]> =>
         caller.call("v1.session.startDelegation", { path: { sessionID, requestID }, body }, options),
+      /** Read the bounded original input cohort of an exact recorded step (`GET /api/v1/sessions/{id}/steps/{message_id}/input-origin`) */
+      stepInputOrigin: (id: string, message_id: string, options?: RequestOptions): Promise<Operations["v1.session.stepInputOrigin"]["response"]> =>
+        caller.call("v1.session.stepInputOrigin", { path: { id, message_id } }, options),
       /** Cancel one admission request or its recorded Job (`POST /api/v1/sessions/{sessionID}/delegations/{requestID}/stop`) */
       stopDelegation: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.stopDelegation"]["response"]> =>
         caller.call("v1.session.stopDelegation", { path: { sessionID, requestID } }, options),

@@ -415,6 +415,34 @@ impl Client {
         Ok(parse_events(self.open_stream(&path).await?))
     }
 
+    /// Replay one Session's durable events and include its live idle/delta/error
+    /// notices, under the same owned connection and durable cursor.
+    pub async fn session_live_event_stream(
+        &self,
+        session_id: &str,
+        after: i64,
+    ) -> Result<impl Stream<Item = Event> + use<>, ClientError> {
+        let path = format!(
+            "/sessions/{}/events?after={after}&live=true",
+            encode(session_id).replace('/', "%2F")
+        );
+        Ok(parse_events(self.open_stream(&path).await?))
+    }
+
+    /// JSONL input observation grants no Session-wide interactive presence.
+    /// The caller retains a separate input-client lease for its own admissions.
+    pub async fn session_input_event_stream(
+        &self,
+        session_id: &str,
+        after: i64,
+    ) -> Result<impl Stream<Item = Event> + use<>, ClientError> {
+        let path = format!(
+            "/sessions/{}/events?after={after}&live=true&presence=false",
+            encode(session_id).replace('/', "%2F")
+        );
+        Ok(parse_events(self.open_stream(&path).await?))
+    }
+
     /// Live events of one team (`/teams/:id/events`): its `team.*` records and its
     /// members' permission and question events.
     pub async fn team_events(
@@ -886,6 +914,27 @@ mod tests {
         assert!(!closed.load(Ordering::Acquire));
         drop(stream);
         assert!(closed.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn input_observation_stream_explicitly_declines_session_presence() {
+        let router = axum::Router::new().route(
+            "/api/v1/sessions/{id}/events",
+            axum::routing::get(|uri: axum::http::Uri| async move {
+                assert_eq!(uri.path(), "/api/v1/sessions/ses_owner/events");
+                assert_eq!(uri.query(), Some("after=42&live=true&presence=false"));
+                axum::http::Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+            }),
+        );
+        let client = Client::embedded(EmbeddedClient::new(router));
+        let stream = client
+            .session_input_event_stream("ses_owner", 42)
+            .await
+            .unwrap();
+        drop(stream);
     }
 
     #[test]

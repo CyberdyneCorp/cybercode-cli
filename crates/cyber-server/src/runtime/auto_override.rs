@@ -369,9 +369,7 @@ impl Inner {
             record.status = "cancelled".into();
             self.commit(handle, vec![change(&record)]).await?;
         }
-        if !handle
-            .location_uncertain
-            .load(std::sync::atomic::Ordering::SeqCst)
+        if !handle.has_location_uncertainty()
             && !handle.state.lock().await.calls.values().any(|c| {
                 matches!(
                     c.status,
@@ -462,7 +460,7 @@ impl Inner {
             call_id: replay.id.clone(),
             tool: replay.name.clone(),
             input,
-            authority: scope.authority(),
+            authority: scope.authority()?,
             cancel: scope.control.stop.clone(),
             done: invocation_done.clone(),
         });
@@ -475,6 +473,10 @@ impl Inner {
             .await;
         let nested = nested.pop().unwrap_or_default();
         let mut state = handle.state.lock().await;
+        let nested = run.current_nested(&state, nested, |directory| {
+            self.tools.instruction_rule_gate(directory)
+        });
+        let proof = run.operation_proof();
         let mut seen = super::drain::Reminded::of(&state);
         let (settled, loaded) = super::drain::settlement_with_reminders(
             &replay.id,
@@ -487,6 +489,7 @@ impl Inner {
                     .finalize_skill_output(&state.info.directory, output, reminder)
             },
         );
+        let settled = super::drain::with_operation_proof(settled, &run.def.spec.name, proof);
         let session_id = state.info.id.clone();
         let settled =
             self.with_call_metadata(&session_id, &replay.id, &state.info.directory, settled);
@@ -503,7 +506,11 @@ impl Inner {
         self.instructions_loaded(
             handle,
             loaded.into_iter().collect(),
-            super::drain::NESTED_LOAD_REASON,
+            match run.def.spec.name.as_str() {
+                "edit" => "nested_edit",
+                tool if super::events::is_patch_carrier(tool) => "nested_patch",
+                _ => super::drain::NESTED_LOAD_REASON,
+            },
         )
         .await;
         if let Some(reason) = &stop {

@@ -13,6 +13,7 @@ mod edit;
 mod gate;
 mod git;
 mod hooks;
+mod instructions;
 mod intelligence;
 mod jsonc;
 mod load;
@@ -52,6 +53,7 @@ pub use edit::{set_document_member, set_global_key};
 pub use gate::{SensitiveSplit, canonical_json, split_sensitive};
 pub use git::GitSettings;
 pub use hooks::{HookCondition, HookGroup, HookHandler, HookKind, HookSettings};
+pub use instructions::{DEFAULT_MAX_FILE_BYTES, DEFAULT_MAX_TOTAL_BYTES, InstructionLimits};
 pub use intelligence::{FormatterConfig, FormatterSettings, LspServerConfig, LspSettings};
 pub use jsonc::{parse as parse_jsonc, to_json as jsonc_to_json};
 pub use load::{
@@ -114,6 +116,9 @@ pub enum ConfigError {
 /// Workspace-trust state of the project layers.
 #[derive(Debug, Clone, Serialize)]
 pub struct TrustReport {
+    /// Exact rule-file bytes covered by this approval; not part of public config output.
+    #[serde(skip)]
+    pub rule_digests: BTreeMap<PathBuf, String>,
     /// Canonical checkout root the approval is keyed by.
     pub checkout_root: PathBuf,
     /// `sha256:<hex>` of the security-sensitive definitions, absent when there are none.

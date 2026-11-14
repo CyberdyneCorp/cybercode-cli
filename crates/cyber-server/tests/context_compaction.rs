@@ -21,6 +21,208 @@ fn small_tail() -> CompactionConfig {
 }
 
 #[tokio::test]
+async fn inspection_preserves_source_provenance_when_a_later_observation_is_unavailable() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("first"), text("second")])],
+        ..Setup::default()
+    });
+    std::fs::write(
+        h.repo.join("CYBER.md"),
+        "Private retained instruction body.",
+    )
+    .unwrap();
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("begin")).await.unwrap();
+    h.settle(&id).await;
+    let before = h.runtime.state(&id).await.unwrap();
+    let first = serde_json::to_value(h.runtime.inspect_context(&before)).unwrap();
+    let source = |inspection: &serde_json::Value| {
+        inspection["effective_sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == "core/instructions")
+            .unwrap()
+            .clone()
+    };
+    let active = source(&first);
+    assert_eq!(active["status"], "active");
+    assert_eq!(active["origin"], "instruction_files");
+    assert!(
+        active["file_paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| { path.as_str().unwrap().ends_with("CYBER.md") })
+    );
+    *h.tools.instruction_limits.lock().unwrap() = Err("private diagnostic sentinel".into());
+    h.runtime.admit(&id, admit("continue")).await.unwrap();
+    h.settle(&id).await;
+    let after = h.runtime.state(&id).await.unwrap();
+    let system_entries = |state: &cyber_server::runtime::SessionState| {
+        state
+            .entries
+            .iter()
+            .filter(|entry| matches!(entry, cyber_server::runtime::Entry::System { .. }))
+            .count()
+    };
+    assert_eq!(system_entries(&before), system_entries(&after));
+    let inspection = serde_json::to_value(h.runtime.inspect_context(&after)).unwrap();
+    let retained = source(&inspection);
+    assert_eq!(retained["status"], "retained_unavailable");
+    assert_eq!(retained["file_paths"], active["file_paths"]);
+    assert_eq!(retained["estimated_tokens"], active["estimated_tokens"]);
+    assert_eq!(
+        before.epoch.unwrap().baseline,
+        after.epoch.unwrap().baseline
+    );
+    assert!(
+        !inspection
+            .to_string()
+            .contains("private diagnostic sentinel")
+    );
+    assert!(
+        !inspection
+            .to_string()
+            .contains("Private retained instruction body.")
+    );
+    let restarted = h.restart();
+    let loaded = restarted.state(&id).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(restarted.inspect_context(&loaded)).unwrap(),
+        inspection
+    );
+    assert_eq!(h.models.requests("test/main").len(), 2);
+}
+
+/// `system-context` → Scope-aware rule inspection and loading: an edited or removed
+/// instruction file shows as changed on disk until the next request boundary reads it,
+/// and inspection neither opens it nor records anything.
+#[tokio::test]
+async fn inspection_reports_instruction_files_changed_since_they_were_read() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("first"), text("second")])],
+        ..Setup::default()
+    });
+    let file = h.repo.join("CYBER.md");
+    std::fs::write(&file, "Original instruction.").unwrap();
+    let id = h.session().await;
+    let fresh = serde_json::to_value(
+        h.runtime
+            .inspect_context(&h.runtime.state(&id).await.unwrap()),
+    )
+    .unwrap();
+    assert!(fresh["next_request"].is_null(), "tool schemas are unknown");
+    h.runtime.admit(&id, admit("begin")).await.unwrap();
+    h.settle(&id).await;
+    let inspect = |runtime: &cyber_server::runtime::Runtime,
+                   state: &cyber_server::runtime::SessionState| {
+        let inspection = serde_json::to_value(runtime.inspect_context(state)).unwrap();
+        let source = inspection["effective_sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == "core/instructions")
+            .unwrap()
+            .clone();
+        (inspection, source)
+    };
+    let (inspection, source) = inspect(&h.runtime, &h.runtime.state(&id).await.unwrap());
+    assert_eq!(source["changed_on_disk"], false, "{inspection:#}");
+    assert_eq!(inspection["changed_sources"], 0);
+    // The next request adds the last request's tool schemas to the stored projection.
+    let tools = inspection["last_prepared_request"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["id"] == "tool_schemas")
+        .unwrap()["estimated_tokens"]
+        .as_u64()
+        .unwrap();
+    let next = &inspection["next_request"];
+    assert_eq!(
+        next["estimated_input_tokens"].as_u64().unwrap(),
+        inspection["estimated_input_tokens"].as_u64().unwrap() + tools,
+        "{inspection:#}"
+    );
+    assert_eq!(
+        next["assumptions"],
+        serde_json::json!([
+            "tool_schemas_from_last_request",
+            "excludes_turn_instructions"
+        ])
+    );
+    let path = file.to_str().unwrap();
+    assert!(source["file_stamps"][path]["bytes"].as_u64().unwrap() > 0);
+
+    std::fs::write(&file, "Edited instruction, now longer than before.").unwrap();
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    let state = h.runtime.state(&id).await.unwrap();
+    let (inspection, source) = inspect(&h.runtime, &state);
+    assert_eq!(source["changed_on_disk"], true, "{inspection:#}");
+    assert_eq!(inspection["changed_sources"], 1);
+    assert!(
+        inspection["next_request"]["assumptions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("sources_changed_on_disk"))
+    );
+    assert!(!inspection.to_string().contains("Edited instruction"));
+    assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    let restarted = h.restart();
+    let (_, source) = inspect(&restarted, &restarted.state(&id).await.unwrap());
+    assert_eq!(source["changed_on_disk"], true);
+
+    restarted.admit(&id, admit("continue")).await.unwrap();
+    restarted.wait_idle(&id).await;
+    let requests = h.models.requests("test/main");
+    assert!(format!("{:?}", requests[1]).contains("Edited instruction"));
+    let (inspection, source) = inspect(&restarted, &restarted.state(&id).await.unwrap());
+    assert_eq!(source["changed_on_disk"], false, "{inspection:#}");
+
+    std::fs::remove_file(&file).unwrap();
+    let (inspection, source) = inspect(&restarted, &restarted.state(&id).await.unwrap());
+    assert_eq!(source["changed_on_disk"], true, "{inspection:#}");
+    assert_eq!(inspection["changed_sources"], 1);
+}
+
+#[tokio::test]
+async fn historical_source_provenance_stays_unknown_during_read_only_inspection() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    h.store
+        .append(
+            &id,
+            cyber_store::Expected::Seq(seq),
+            vec![cyber_store::NewEvent::new(
+                "session.context.epoch_started.1",
+                serde_json::json!({
+                    "epoch": 1, "baseline": "Private old bytes.",
+                    "snapshot": {"legacy/source": "Private old bytes."}, "provider": "test"
+                }),
+            )],
+        )
+        .unwrap();
+    let restarted = h.restart();
+    let state = restarted.state(&id).await.unwrap();
+    let inspection = serde_json::to_value(restarted.inspect_context(&state)).unwrap();
+    let source = inspection["effective_sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|source| source["id"] == "legacy/source")
+        .unwrap();
+    assert_eq!(source["status"], "unknown");
+    assert_eq!(source["origin"], "unknown");
+    assert!(source["estimated_tokens"].as_u64().unwrap() > 0);
+    assert!(!inspection.to_string().contains("Private old bytes."));
+    assert!(h.models.requests("test/main").is_empty());
+    assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq + 1);
+}
+
+#[tokio::test]
 async fn historical_epoch_without_a_system_prefix_keeps_legacy_request_bytes() {
     let h = Harness::new(Setup {
         scripts: vec![("test/main", vec![text("reply")])],
@@ -215,6 +417,30 @@ async fn unreadable_instructions_block_the_first_turn_and_keep_the_prompt() {
     std::fs::remove_dir(h.repo.join("AGENTS.md")).unwrap();
     h.runtime.wake(&id).await.unwrap();
     h.settle(&id).await;
+    assert_eq!(h.state(&id).await.inbox[0].status, InputStatus::Promoted);
+}
+
+#[tokio::test]
+async fn unavailable_instruction_limits_keep_the_first_input_retryable_without_inference() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("ok")])],
+        ..Setup::default()
+    });
+    std::fs::write(h.repo.join("AGENTS.md"), "configured instructions").unwrap();
+    *h.tools.instruction_limits.lock().unwrap() = Err("instruction_limits unavailable".into());
+    let mut live = h.runtime.subscribe();
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("hi")).await.unwrap();
+    h.settle(&id).await;
+    let (kind, _) = next_error(&mut live).await;
+    assert_eq!(kind, "context_initialization_blocked");
+    assert!(h.models.requests("test/main").is_empty());
+    assert!(h.state(&id).await.epoch.is_none());
+    assert_eq!(h.state(&id).await.inbox[0].status, InputStatus::Pending);
+    *h.tools.instruction_limits.lock().unwrap() = Ok(Default::default());
+    h.runtime.wake(&id).await.unwrap();
+    h.settle(&id).await;
+    assert_eq!(h.models.requests("test/main").len(), 1);
     assert_eq!(h.state(&id).await.inbox[0].status, InputStatus::Promoted);
 }
 
@@ -650,4 +876,347 @@ async fn compaction_summary_carries_no_opaque_state_and_the_tail_replays() {
         })
         .collect();
     assert_eq!(tail, [("new thought", true)]);
+}
+
+/// A successful operation does not authorize instruction loading with callbacks
+/// captured before a configuration change while the operation was in flight.
+#[tokio::test]
+async fn nested_instructions_resolve_settings_after_the_successful_operation() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("read_one", "read", r#"{"path":"web/app.ts"}"#)]),
+                text("done"),
+                tools(&[("read_two", "read", r#"{"path":"web/app.ts"}"#)]),
+                text("done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    std::fs::create_dir(h.repo.join("web")).unwrap();
+    std::fs::write(h.repo.join("web/CYBER.md"), "fresh operation instructions").unwrap();
+    std::fs::write(h.repo.join("web/app.ts"), "contents").unwrap();
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Gated);
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("first read")).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        h.tools.started.notified(),
+    )
+    .await
+    .unwrap();
+    *h.tools.instruction_limits.lock().unwrap() = Err("configuration changed during read".into());
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert_eq!(state.calls["read_one"].output.as_deref(), Some("done"));
+    assert!(state.epoch.unwrap().reminded_instructions.is_empty());
+    *h.tools.instruction_limits.lock().unwrap() = Ok(Default::default());
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Return("contents".into()));
+    h.runtime.admit(&id, admit("second read")).await.unwrap();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert!(
+        state.calls["read_two"]
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("fresh operation instructions")
+    );
+    assert_eq!(state.epoch.unwrap().reminded_instructions.len(), 1);
+}
+
+/// Inspection of an untrusted source: definitions withheld at the request boundary are
+/// listed with their reason, without opening them again, returning their bodies,
+/// counting their bytes or appending events.
+#[tokio::test]
+async fn inspection_reports_held_rule_definitions_without_reading_or_counting_them() {
+    async fn inspect_with_held_body(body: &str) -> (serde_json::Value, Harness, String) {
+        let h = Harness::new(Setup {
+            scripts: vec![("test/main", vec![text("first")])],
+            ..Setup::default()
+        });
+        let rules = h.repo.join(".cyber/rules");
+        std::fs::create_dir_all(&rules).unwrap();
+        std::fs::write(rules.join("held.md"), body).unwrap();
+        let global = h.dir.path().join("global/rules");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join("broken.md"),
+            "---\npaths: 7\n---\nINVALID_RULE_BODY",
+        )
+        .unwrap();
+        // A canonical Location: rule directories reached through a symlinked path are
+        // refused as a whole (`read_denied`) before any definition is considered.
+        let request = cyber_server::runtime::CreateSession {
+            directory: h.repo.canonicalize().unwrap().display().to_string(),
+            model: "test/main".into(),
+            ..Default::default()
+        };
+        let id = h.runtime.create_session(request).await.unwrap().id;
+        h.runtime.admit(&id, admit("begin")).await.unwrap();
+        h.settle(&id).await;
+        // Unreadable now: inspection must use what the request boundary recorded.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                rules.join("held.md"),
+                std::fs::Permissions::from_mode(0o000),
+            )
+            .unwrap();
+        }
+        let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+        let state = h.runtime.state(&id).await.unwrap();
+        let inspection = serde_json::to_value(h.runtime.inspect_context(&state)).unwrap();
+        assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(
+                rules.join("held.md"),
+                std::fs::Permissions::from_mode(0o644),
+            )
+            .unwrap();
+        }
+        (inspection, h, id)
+    }
+
+    let held_body = format!("PRIVATE_HELD_RULE {}", "y".repeat(64 * 1024));
+    let (inspection, h, _) = inspect_with_held_body(&held_body).await;
+    let canonical = |path: std::path::PathBuf| path.canonicalize().unwrap().display().to_string();
+    let held = canonical(h.repo.join(".cyber/rules/held.md"));
+    let broken = canonical(h.dir.path().join("global/rules/broken.md"));
+    let withheld = inspection["withheld_sources"].as_array().unwrap();
+    let entries: Vec<_> = withheld
+        .iter()
+        .map(|entry| {
+            (
+                entry["path"].as_str().unwrap().to_owned(),
+                entry["reason"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert!(
+        entries.contains(&(held.clone(), "trust_held".into())),
+        "{inspection:#}"
+    );
+    assert!(
+        entries.contains(&(broken, "invalid_frontmatter".into())),
+        "{inspection:#}"
+    );
+    assert!(
+        withheld
+            .iter()
+            .all(|entry| entry["source"] == "core/instructions")
+    );
+    assert_eq!(inspection["omitted_withheld_sources"], 0);
+    let text = inspection.to_string();
+    assert!(!text.contains("PRIVATE_HELD_RULE"));
+    assert!(!text.contains("INVALID_RULE_BODY"));
+    // Withheld entries move to the inspection list; effective sources do not repeat them.
+    assert!(
+        inspection["effective_sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|source| source.get("withheld").is_none())
+    );
+    let request = h.models.requests("test/main");
+    assert_eq!(request.len(), 1);
+    assert!(!format!("{:?}", request[0]).contains("PRIVATE_HELD_RULE"));
+
+    // The held definition's size contributes nothing to the estimate.
+    let (small, _small_h, _) = inspect_with_held_body("PRIVATE_HELD_RULE").await;
+    assert_eq!(
+        small["estimated_input_tokens"], inspection["estimated_input_tokens"],
+        "{small:#}\n{inspection:#}"
+    );
+    assert!(inspection["estimated_input_tokens"].as_u64().unwrap() < 16 * 1024);
+}
+
+/// Same-path replacement must not load the new checkout's instruction files for
+/// an operation captured against the old physical Location.
+#[tokio::test]
+async fn a_replaced_location_cannot_supply_instructions_for_an_inflight_read() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![
+                tools(&[("read_old", "read", r#"{"path":"web/app.ts"}"#)]),
+                text("done"),
+                tools(&[("read_new", "read", r#"{"path":"web/app.ts"}"#)]),
+                text("done"),
+            ],
+        )],
+        ..Setup::default()
+    });
+    std::fs::create_dir(h.repo.join("web")).unwrap();
+    std::fs::write(h.repo.join("web/app.ts"), "original file").unwrap();
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Gated);
+    let id = h.session().await;
+    h.runtime
+        .admit(&id, admit("read old checkout"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        h.tools.started.notified(),
+    )
+    .await
+    .unwrap();
+    std::fs::rename(&h.repo, h.dir.path().join("old-checkout")).unwrap();
+    std::fs::create_dir_all(h.repo.join("web")).unwrap();
+    std::fs::create_dir(h.repo.join(".git")).unwrap();
+    std::fs::write(h.repo.join("web/app.ts"), "replacement file").unwrap();
+    std::fs::write(h.repo.join("web/CYBER.md"), "replacement checkout guidance").unwrap();
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert_eq!(state.calls["read_old"].output.as_deref(), Some("done"));
+    assert!(state.epoch.unwrap().reminded_instructions.is_empty());
+    h.tools
+        .behavior
+        .lock()
+        .unwrap()
+        .insert("read".into(), Behavior::Return("replacement file".into()));
+    h.runtime
+        .admit(&id, admit("read new checkout"))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert!(
+        state.calls["read_new"]
+            .output
+            .as_deref()
+            .unwrap()
+            .contains("replacement checkout guidance")
+    );
+    assert_eq!(state.epoch.unwrap().reminded_instructions.len(), 1);
+}
+
+/// `system-context` → Scope-aware rule inspection and loading: inspection lists the rules
+/// delivered in the current Epoch with their current approval, from the trust inventory
+/// and file metadata only, and flags that the next Epoch will differ.
+#[tokio::test]
+async fn inspection_lists_delivered_rules_and_marks_revoked_approval_without_reading_them() {
+    use cyber_server::runtime::RuleApproval;
+    use cyber_server::runtime::instructions::RuleBinding;
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("first")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("begin")).await.unwrap();
+    h.settle(&id).await;
+    let rules = h.repo.join(".cyber/rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    let rule = |name: &str, generation: &str| {
+        let path = rules.join(name);
+        std::fs::write(&path, format!("PRIVATE_RULE_BODY_{name}")).unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        RuleBinding {
+            root: h.repo.display().to_string(),
+            path: path.display().to_string(),
+            digest: format!("sha256:{}", "ab".repeat(32)),
+            generation: generation.into(),
+            native_root: None,
+            operation_path: None,
+            stamp: Some(cyber_server::runtime::FileStamp::of(&metadata)),
+        }
+    };
+    let bindings = [
+        rule("kept.md", "sha256:approved"),
+        rule("revoked.md", "sha256:withdrawn"),
+        rule("edited.md", "owner-global"),
+        RuleBinding {
+            stamp: None,
+            ..rule("legacy.md", "sha256:approved")
+        },
+    ];
+    std::fs::write(
+        rules.join("edited.md"),
+        "PRIVATE_RULE_BODY_edited, now longer",
+    )
+    .unwrap();
+    h.tools
+        .rule_approvals
+        .lock()
+        .unwrap()
+        .insert("sha256:approved".into(), RuleApproval::Current);
+    h.tools
+        .rule_approvals
+        .lock()
+        .unwrap()
+        .insert("sha256:withdrawn".into(), RuleApproval::Revoked);
+    let mut state = h.runtime.state(&id).await.unwrap();
+    let epoch = state.epoch.as_mut().unwrap();
+    for binding in &bindings {
+        epoch.reminded_rules.insert(binding.identity());
+        epoch.delivered_rules.push(binding.clone());
+    }
+    // An unreadable definition still reports its approval: only metadata is consulted.
+    #[cfg(unix)]
+    for name in ["kept.md", "revoked.md"] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(rules.join(name), std::fs::Permissions::from_mode(0o000)).unwrap();
+    }
+    let seq = h.store.aggregate_seq(&id).unwrap().unwrap();
+    let inspection = serde_json::to_value(h.runtime.inspect_context(&state)).unwrap();
+    assert_eq!(inspection["delivered_rule_count"], 4);
+    assert_eq!(inspection["omitted_delivered_rules"], 0);
+    let listed = inspection["delivered_rules"].as_array().unwrap();
+    let approvals: Vec<_> = listed
+        .iter()
+        .map(|rule| {
+            let path = rule["path"].as_str().unwrap();
+            (
+                path.rsplit('/').next().unwrap().to_owned(),
+                rule["approval"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        approvals,
+        [
+            ("kept.md".into(), serde_json::json!("current")),
+            ("revoked.md".into(), serde_json::json!("revoked")),
+            ("edited.md".into(), serde_json::json!("changed")),
+            ("legacy.md".into(), serde_json::json!("unknown")),
+        ],
+        "{inspection:#}"
+    );
+    assert_eq!(listed[0]["digest_prefix"], "abababababab");
+    assert_eq!(listed[0]["generation"], "sha256:approved");
+    assert_eq!(listed[0]["root"], h.repo.display().to_string());
+    assert_eq!(inspection["changed_delivered_rules"], 2);
+    assert!(
+        inspection["next_request"]["assumptions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("delivered_rules_changed")),
+        "{inspection:#}"
+    );
+    assert!(!inspection.to_string().contains("PRIVATE_RULE_BODY"));
+    assert_eq!(h.store.aggregate_seq(&id).unwrap().unwrap(), seq);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+    #[cfg(unix)]
+    for name in ["kept.md", "revoked.md"] {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(rules.join(name), std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
 }

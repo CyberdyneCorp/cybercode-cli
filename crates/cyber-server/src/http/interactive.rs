@@ -15,11 +15,59 @@ use axum::{
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/sessions/{sessionID}/input-clients", post(input_create))
+        .route(
+            "/sessions/{sessionID}/input-clients/{clientID}",
+            put(input_renew).delete(input_release),
+        )
         .route("/sessions/{sessionID}/interactive-clients", post(create))
         .route(
             "/sessions/{sessionID}/interactive-clients/{clientID}",
             put(renew).delete(release),
         )
+}
+async fn input_create(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    parts: Parts,
+) -> Result<Response, ApiError> {
+    let directory = binding(&state, &id, &parts).await?;
+    let data = state
+        .runtime
+        .add_input_client(&id, &directory)
+        .await
+        .map_err(error)?;
+    Ok((
+        StatusCode::CREATED,
+        [("cache-control", "no-store")],
+        Json(Data { data }),
+    )
+        .into_response())
+}
+async fn input_renew(
+    State(state): State<AppState>,
+    Path((session, client)): Path<(String, String)>,
+    parts: Parts,
+) -> Result<Response, ApiError> {
+    let directory = binding(&state, &session, &parts).await?;
+    let data = state
+        .runtime
+        .renew_input_client(&session, &directory, &client)
+        .map_err(error)?;
+    Ok(([("cache-control", "no-store")], Json(Data { data })).into_response())
+}
+async fn input_release(
+    State(state): State<AppState>,
+    Path((session, client)): Path<(String, String)>,
+    parts: Parts,
+) -> Result<Response, ApiError> {
+    let directory = binding(&state, &session, &parts).await?;
+    state
+        .runtime
+        .release_input_client(&session, &directory, &client)
+        .await
+        .map_err(error)?;
+    Ok((StatusCode::NO_CONTENT, [("cache-control", "no-store")]).into_response())
 }
 async fn binding(state: &AppState, id: &str, parts: &Parts) -> Result<String, ApiError> {
     let directory = location(parts, &state.options.default_directory)?;

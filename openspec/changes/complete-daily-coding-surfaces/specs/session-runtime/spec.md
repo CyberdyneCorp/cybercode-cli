@@ -14,3 +14,30 @@
 #### Scenario: Restart between queued schemas
 - **WHEN** a Session restarts after completing one schema-governed prompt and before promoting another with a different schema
 - **THEN** each retained input has its own schema, retry count and result and the second cannot reuse the first's successful value
+
+#### Scenario: Interruption or budget stops an open result
+- **WHEN** execution is interrupted or an ordinary budget stops a root prompt before valid finalization
+- **THEN** the Drain SHALL durably record the matching input's terminal error and current submission count before releasing its owner or publishing idle
+- **AND** an already durable valid finalizer SHALL remain its successful value, result-settlement failure SHALL remain an execution failure, and lookup after restart SHALL NOT redispatch work
+- **AND** shutdown SHALL preserve an open attempt for explicit restart recovery rather than inventing terminal cancellation
+
+#### Scenario: Compaction between validation submissions
+- **WHEN** automatic compaction recovers an overflow during a root result correction
+- **THEN** the retried request SHALL retain the matching input schema and finalization instruction, without resetting the submitted-attempt count or counting overflow as a submission
+
+#### Scenario: Durable finalization precedes a failed terminal outcome append
+- **GIVEN** a root prompt's valid finalizer or exhausted submissions are durable but its terminal outcome append failed
+- **WHEN** an explicit resume recovers that unfinished result after restart
+- **THEN** it SHALL settle the original value or exhausted error before model dispatch, preserving its exact input and attempt count without another provider request
+- **AND** any new queued prompt SHALL be promoted only after that reconciliation, retaining its own schema and result; ordinary result lookup SHALL never redispatch work
+
+#### Scenario: Steering replaces an unfinished structured input
+- **WHEN** a Safe Boundary promotes another root input while a structured result remains open
+- **THEN** the previous input SHALL retain its durable valid finalizer or receive a terminal `StructuredOutputError` naming the superseding input, with its original submission count
+- **AND** that outcome and the replacement promotion SHALL commit atomically in order; several steered schema inputs promoted together SHALL each retain their own outcome, including zero-submission superseded inputs
+- **AND** a new unstructured input SHALL not inherit the previous schema, and a different schema SHALL not borrow the previous result or retry count
+
+#### Scenario: Terminal or steering commit acknowledgement is lost
+- **WHEN** SQLite commits a terminal outcome or outcome/promotion batch but its commit acknowledgement fails
+- **THEN** the failed writer SHALL remain fenced and cached terminal state SHALL NOT be advanced on an unacknowledged reply
+- **AND** reopening the physical database SHALL recover the exact committed outcome and attempt count without inference; a committed steering promotion SHALL resume only its new input without replaying the displaced input or tool

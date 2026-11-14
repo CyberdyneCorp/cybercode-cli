@@ -30,6 +30,8 @@ pub enum StoreError {
     Projector { kind: String, reason: String },
     #[error("InvalidLimitError: limit must be between 1 and 500, got {0}")]
     InvalidLimit(u32),
+    #[error("invalid paired append: {0}")]
+    InvalidAppend(String),
     #[error("the live database cannot be on a network filesystem ({0}); use a local disk")]
     NetworkFilesystem(String),
     #[error("another cyber server holds the writer lock {}", .0.display())]

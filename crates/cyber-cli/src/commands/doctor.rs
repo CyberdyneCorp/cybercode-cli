@@ -132,14 +132,29 @@ fn commands_check(catalog: &Value) -> Check {
 
 /// The instruction files the next Session at this Location loads, in load order, with a
 /// warning for truncated files and unresolved or refused imports. `config` is `None` when
-/// the Location's config failed to load: like the runtime, `CLAUDE.md` is then off and no
-/// project file passes the read gate.
+/// the Location's config failed to load: like the runtime, no instruction file is read
+/// using fallback limits.
 fn instructions(ctx: &Context, config: Option<&cyber_core::config::Resolved>) -> Check {
     use cyber_server::runtime::instructions::{InstructionSettings, load_baseline};
     // The same per-Location `compat.claude` and `read` rules the runtime reads through its
     // tool host.
     let compat = config.is_some_and(|c| cyber_core::config::claude_compat(&c.value));
     let mut settings = InstructionSettings::from_env(compat, &ctx.env);
+    let limits = config
+        .ok_or_else(|| "configuration unavailable".to_owned())
+        .and_then(|c| cyber_core::config::InstructionLimits::from_config(&c.value));
+    match limits {
+        Ok(limits) => settings.set_limits(limits),
+        Err(reason) => {
+            return check(
+                "instructions",
+                Status::Warn,
+                format!("unavailable: {reason}"),
+            );
+        }
+    }
+    settings.rule_gate = config
+        .map(|config| cyber_server::runtime::instructions::RuleGate::from_report(&config.trust));
     settings.read_gate = Some(cyber_tools::permissions::instruction_read_gate(
         config.map(|c| (&c.value, &c.sources)),
         &ctx.location,
@@ -154,6 +169,13 @@ fn instructions(ctx: &Context, config: Option<&cyber_core::config::Resolved>) ->
             );
         }
     };
+    instructions_check(&loaded)
+}
+
+/// Baseline files, path-scoped rule definitions discovered for later attachment, and
+/// withheld rule definitions grouped by reason. A loader warning that only repeats a
+/// withheld definition is not listed twice.
+fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions) -> Check {
     let files: Vec<String> = loaded
         .files
         .iter()
@@ -163,11 +185,49 @@ fn instructions(ctx: &Context, config: Option<&cyber_core::config::Resolved>) ->
         0 => "no instruction files".to_owned(),
         n => format!("{n} loaded: {}", files.join(", ")),
     };
-    if loaded.warnings.is_empty() {
-        return check("instructions", Status::Pass, detail);
+    if loaded.scoped > 0 {
+        let plural = if loaded.scoped == 1 { "" } else { "s" };
+        detail.push_str(&format!(
+            "; {} path-scoped rule definition{plural} attached on matching file access",
+            loaded.scoped
+        ));
     }
-    detail.push_str(&format!("; {}", loaded.warnings.join("; ")));
-    check("instructions", Status::Warn, detail)
+    let withheld = &loaded.withheld;
+    let mut by_reason = std::collections::BTreeMap::<&str, Vec<&str>>::new();
+    for entry in &withheld.entries {
+        by_reason
+            .entry(entry.reason.as_str())
+            .or_default()
+            .push(&entry.path);
+    }
+    for (reason, paths) in &by_reason {
+        detail.push_str(&format!("; withheld ({reason}): {}", paths.join(", ")));
+    }
+    if withheld.omitted > 0 {
+        detail.push_str(&format!(
+            "; {} more withheld rule definitions",
+            withheld.omitted
+        ));
+    }
+    let warnings: Vec<&String> = loaded
+        .warnings
+        .iter()
+        .filter(|warning| {
+            !withheld
+                .entries
+                .iter()
+                .any(|entry| warning.starts_with(&format!("{}: ", entry.path)))
+        })
+        .collect();
+    for warning in &warnings {
+        detail.push_str(&format!("; {warning}"));
+    }
+    let status = if warnings.is_empty() && by_reason.is_empty() && withheld.omitted == 0 {
+        Status::Pass
+    } else {
+        Status::Warn
+    };
+    check("instructions", status, detail)
 }
 
 fn lsp_checks(ctx: &Context, config: &Value) -> Vec<Check> {
@@ -520,5 +580,178 @@ async fn account_check(ctx: &Context) -> Check {
             "not logged in; local use needs no account",
         ),
         Err(error) => check("account", Status::Warn, error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod instruction_tests {
+    use super::*;
+    use clap::Parser;
+    use std::collections::HashMap;
+
+    /// A Context whose home, config directory and Location (a checkout) live in `temp`.
+    /// Like the CLI's, the Location is canonical.
+    fn context(temp: &tempfile::TempDir) -> (Context, HashMap<String, String>) {
+        let root = temp.path().canonicalize().unwrap();
+        let env = HashMap::from([(
+            "CYBER_HOME".to_owned(),
+            root.join("cyber").display().to_string(),
+        )]);
+        let cli = crate::cli::Cli::try_parse_from(["cyber", "doctor"]).unwrap();
+        let mut ctx = Context::existing(&cli.global).unwrap();
+        ctx.home = root.join("home");
+        ctx.paths = cyber_core::paths::Paths::resolve(&env, &ctx.home);
+        ctx.paths.ensure().unwrap();
+        ctx.location = root.join("repo");
+        std::fs::create_dir_all(ctx.location.join(".git")).unwrap();
+        (ctx, env)
+    }
+
+    fn resolve(ctx: &Context, env: &HashMap<String, String>) -> cyber_core::config::Resolved {
+        cyber_core::config::load(&cyber_core::config::LoadRequest {
+            location: &ctx.location,
+            paths: &ctx.paths,
+            env,
+            home: &ctx.home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .unwrap()
+    }
+
+    fn write(path: &std::path::Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn doctor_uses_configured_limits_and_does_not_load_without_configuration() {
+        let temp = tempfile::tempdir().unwrap();
+        let (ctx, env) = context(&temp);
+        std::fs::write(ctx.paths.config.join("AGENTS.md"), "λ".repeat(40)).unwrap();
+        std::fs::write(
+            ctx.paths.config.join("cyber.json"),
+            r#"{"instruction_limits":{"max_file_bytes":16,"max_total_bytes":1024}}"#,
+        )
+        .unwrap();
+        let resolved = resolve(&ctx, &env);
+        let check = instructions(&ctx, Some(&resolved));
+        assert_eq!(check.status, Status::Warn);
+        assert!(
+            check
+                .detail
+                .contains("instruction_limits.max_file_bytes (16 bytes)"),
+            "{}",
+            check.detail
+        );
+        // An unreadable instruction must not be inspected when configuration fails.
+        std::fs::remove_file(ctx.paths.config.join("AGENTS.md")).unwrap();
+        std::fs::create_dir(ctx.paths.config.join("AGENTS.md")).unwrap();
+        let check = instructions(&ctx, None);
+        assert_eq!(check.status, Status::Warn);
+        assert_eq!(check.detail, "unavailable: configuration unavailable");
+    }
+
+    /// Held and invalid rule definitions are listed by reason, once each, without their
+    /// bodies.
+    #[test]
+    fn doctor_warns_about_held_and_invalid_rule_definitions() {
+        let temp = tempfile::tempdir().unwrap();
+        let (ctx, env) = context(&temp);
+        write(
+            &ctx.paths.config.join("rules/broken.md"),
+            "---\npaths: 7\n---\nBROKEN_RULE",
+        );
+        write(&ctx.location.join(".cyber/rules/held.md"), "HELD_RULE");
+        let check = instructions(&ctx, Some(&resolve(&ctx, &env)));
+        assert_eq!(check.status, Status::Warn, "{}", check.detail);
+        let detail = &check.detail;
+        assert!(detail.starts_with("no instruction files"), "{detail}");
+        let invalid = detail
+            .split("; ")
+            .find(|part| part.starts_with("withheld (invalid_frontmatter): "))
+            .unwrap_or_else(|| panic!("{detail}"));
+        assert!(invalid.ends_with("rules/broken.md"), "{detail}");
+        let held = detail
+            .split("; ")
+            .find(|part| part.starts_with("withheld (trust_held): "))
+            .unwrap_or_else(|| panic!("{detail}"));
+        assert!(held.ends_with(".cyber/rules/held.md"), "{detail}");
+        // Each definition is reported once: its loader warning is not repeated.
+        assert_eq!(detail.matches("held.md").count(), 1, "{detail}");
+        assert_eq!(detail.matches("broken.md").count(), 1, "{detail}");
+        assert!(!detail.contains("_RULE"), "{detail}");
+    }
+
+    /// A path-scoped definition is counted, but it is not part of the baseline that
+    /// doctor lists; an unscoped one is.
+    #[test]
+    fn doctor_counts_scoped_rules_without_adding_them_to_the_baseline() {
+        let temp = tempfile::tempdir().unwrap();
+        let (ctx, env) = context(&temp);
+        write(&ctx.paths.config.join("rules/always.md"), "ALWAYS_RULE");
+        for name in ["scoped", "tests"] {
+            write(
+                &ctx.paths.config.join(format!("rules/{name}.md")),
+                "---\npaths: [\"src/**\"]\n---\nSCOPED_RULE",
+            );
+        }
+        let check = instructions(&ctx, Some(&resolve(&ctx, &env)));
+        assert_eq!(check.status, Status::Pass, "{}", check.detail);
+        let mut parts = check.detail.split("; ");
+        let baseline = parts.next().unwrap();
+        assert!(baseline.starts_with("1 loaded: "), "{}", check.detail);
+        assert!(baseline.ends_with("rules/always.md"), "{}", check.detail);
+        assert_eq!(
+            parts.collect::<Vec<_>>(),
+            ["2 path-scoped rule definitions attached on matching file access"]
+        );
+    }
+
+    /// With `compat.claude` false, `.claude/rules` definitions are neither loaded,
+    /// counted nor reported as held; one pulled in by an import is reported as
+    /// compatibility-disabled.
+    #[test]
+    fn doctor_respects_compat_claude_false_for_claude_rules() {
+        let temp = tempfile::tempdir().unwrap();
+        let (ctx, env) = context(&temp);
+        write(
+            &ctx.location.join(".claude/rules/scoped.md"),
+            "---\npaths: [\"src/**\"]\n---\nCLAUDE_RULE",
+        );
+        let check = instructions(&ctx, Some(&resolve(&ctx, &env)));
+        assert_eq!(check.status, Status::Warn, "{}", check.detail);
+        assert!(
+            check.detail.contains("withheld (trust_held): ")
+                && check.detail.contains(".claude/rules/scoped.md"),
+            "{}",
+            check.detail
+        );
+
+        std::fs::write(
+            ctx.paths.config.join("cyber.json"),
+            r#"{"compat":{"claude":false}}"#,
+        )
+        .unwrap();
+        let check = instructions(&ctx, Some(&resolve(&ctx, &env)));
+        assert_eq!(check.status, Status::Pass, "{}", check.detail);
+        assert_eq!(check.detail, "no instruction files");
+
+        write(&ctx.location.join("CYBER.md"), "@.claude/rules/scoped.md");
+        let check = instructions(&ctx, Some(&resolve(&ctx, &env)));
+        assert_eq!(check.status, Status::Warn, "{}", check.detail);
+        let disabled = check
+            .detail
+            .split("; ")
+            .find(|part| part.starts_with("withheld (compat_disabled): "))
+            .unwrap_or_else(|| panic!("{}", check.detail));
+        assert!(
+            disabled.ends_with(".claude/rules/scoped.md"),
+            "{}",
+            check.detail
+        );
+        assert!(!check.detail.contains("path-scoped"), "{}", check.detail);
+        assert!(!check.detail.contains("CLAUDE_RULE"), "{}", check.detail);
     }
 }

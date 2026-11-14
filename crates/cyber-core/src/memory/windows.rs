@@ -76,6 +76,20 @@ pub fn identity(file: &File) -> Result<FileIdentity, MemoryStorageError> {
     if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
         verify_regular(file)?;
     }
+    full_file_id(file)
+}
+
+/// Metadata-only identity of an operation target. This grants no memory-storage
+/// authority: memory callers retain `identity`/`verify_regular` and their link checks.
+pub(crate) fn observation_identity(file: &File) -> Result<FileIdentity, MemoryStorageError> {
+    information(file)?; // all reparse types remain refused
+    if !file.metadata()?.is_file() {
+        return Err(refusal("expected a regular observation target"));
+    }
+    full_file_id(file)
+}
+
+fn full_file_id(file: &File) -> Result<FileIdentity, MemoryStorageError> {
     let mut id = FILE_ID_INFO::default();
     if unsafe {
         GetFileInformationByHandleEx(

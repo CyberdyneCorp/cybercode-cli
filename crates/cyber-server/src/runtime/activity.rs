@@ -1,6 +1,7 @@
 //! Durable idle-operation ownership; disposal is not native acknowledgement.
 use super::{AdmissionAuthority, Handle, Inner, Runtime, RuntimeError};
 use cyber_store::{Expected, NewEvent, Store};
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, PoisonError, Weak, atomic::Ordering};
 use tokio_util::sync::CancellationToken;
@@ -11,6 +12,7 @@ tokio::task_local! { static CANCEL: CancellationToken; }
 pub(super) struct Control {
     pub source: String,
     pub binary_document: Option<String>,
+    pub snapshot_worker: bool,
     pub admission_sessions: std::collections::HashSet<String>,
     pub stop: CancellationToken,
     pub done: CancellationToken,
@@ -23,6 +25,24 @@ pub(super) struct Record {
     /// Trusted synchronous filesystem-only workers; no subprocess can escape this scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary_document: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub snapshot_worker: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_origin: Option<super::SnapshotOrigin>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_request: Option<super::snapshot_recovery_types::RecoveryRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_receipt: Option<super::SnapshotRecoveryReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_restore_receipt: Option<super::SnapshotRestoreReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_lifetime: Option<super::SnapshotLifetimeBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_preparation_receipt: Option<super::SnapshotPreparationReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_preparation_intent_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_source_admitted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admission_bindings: Option<Vec<super::admission_authority::Binding>>,
 }
@@ -31,18 +51,41 @@ pub(super) struct Scope {
     inner: Weak<Inner>,
     store: Arc<Store>,
     handle: Arc<Handle>,
-    authority: AdmissionAuthority,
+    authority: Authority,
     record: Record,
     pub control: Arc<Control>,
     launched: bool,
     settled: bool,
+    disposal_started: bool,
+    source_admitted: std::sync::Mutex<bool>,
+}
+enum Authority {
+    Ordinary(AdmissionAuthority),
+    Recovery(super::snapshot_recovery_authority::RecoveryAuthority),
 }
 impl Scope {
     pub fn id(&self) -> &str {
         &self.id
     }
-    pub fn authority(&self) -> AdmissionAuthority {
-        self.authority.clone()
+    pub fn authority(&self) -> Result<AdmissionAuthority, RuntimeError> {
+        match &self.authority {
+            Authority::Ordinary(authority) => Ok(authority.clone()),
+            Authority::Recovery(_) => Err(RuntimeError::Conflict(
+                "Snapshot recovery cannot lend ordinary launch authority".into(),
+            )),
+        }
+    }
+    pub(super) fn verify_authority(&self) -> Result<(), RuntimeError> {
+        let runtime = Runtime {
+            inner: self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?,
+        };
+        if self.control.stop.is_cancelled() {
+            return Err(RuntimeError::Conflict("Native worker was cancelled".into()));
+        }
+        match &self.authority {
+            Authority::Ordinary(authority) => authority.verify(&runtime, &self.control.source),
+            Authority::Recovery(authority) => authority.verify(&runtime),
+        }
     }
     pub async fn reserve(inner: &Inner, handle: &Handle) -> Result<Self, RuntimeError> {
         Self::reserve_kind(inner, handle, None).await
@@ -60,18 +103,119 @@ impl Scope {
         handle: &Handle,
         binary_document: Option<String>,
     ) -> Result<Self, RuntimeError> {
+        let source = handle.state.lock().await.info.id.clone();
+        Self::reserve_owner(inner, source, binary_document, false, None).await
+    }
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(super) async fn reserve_snapshot(
+        inner: &Inner,
+        source: String,
+    ) -> Result<Self, RuntimeError> {
+        Self::reserve_owner(inner, source, None, true, None).await
+    }
+    pub(super) async fn reserve_snapshot_owned(
+        inner: &Inner,
+        source: String,
+        id: String,
+        lifetime: Option<super::SnapshotLifetimeBinding>,
+    ) -> Result<Self, RuntimeError> {
+        Self::reserve_owner(inner, source, None, true, Some((id, lifetime))).await
+    }
+    pub(super) fn reserve_recovery(
+        runtime: &Runtime,
+        handle: Arc<Handle>,
+        id: String,
+        request: super::snapshot_recovery_types::RecoveryRequest,
+        authority: super::snapshot_recovery_authority::RecoveryAuthority,
+        lifetime: Option<super::SnapshotLifetimeBinding>,
+    ) -> Result<Self, RuntimeError> {
+        let source = request.original.session_id.clone();
+        let record = Record {
+            session_id: source.clone(),
+            status: "pending".into(),
+            phase: "reserved".into(),
+            binary_document: None,
+            snapshot_worker: true,
+            snapshot_origin: None,
+            snapshot_request: Some(request.clone()),
+            snapshot_receipt: None,
+            snapshot_restore_receipt: None,
+            snapshot_source_admitted: lifetime.as_ref().map(|_| false),
+            snapshot_lifetime: lifetime,
+            snapshot_preparation_receipt: None,
+            snapshot_preparation_intent_digest: None,
+            admission_bindings: Some(authority.bindings().to_vec()),
+        };
+        let captured = authority.clone();
+        let closed = runtime.inner.closed.clone();
+        let event = change(&record);
+        runtime
+            .inner
+            .store
+            .append_checked(&id, Expected::Seq(-1), move |tx| {
+                let (_, original) = super::snapshot_recovery_record::attest(tx, &request.original)?;
+                if closed.is_cancelled() || !captured.current(tx)? || original.status == "settled" {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        "Snapshot recovery reservation authority changed".into(),
+                    ));
+                }
+                Ok((vec![event], ()))
+            })?;
+        let control = Arc::new(Control {
+            source,
+            binary_document: None,
+            snapshot_worker: true,
+            admission_sessions: super::admission_authority::binding_sessions(authority.bindings()),
+            stop: runtime.inner.closed.child_token(),
+            done: CancellationToken::new(),
+        });
+        runtime
+            .inner
+            .activities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.clone(), control.clone());
+        Ok(Self {
+            id,
+            inner: Arc::downgrade(&runtime.inner),
+            store: runtime.inner.store.clone(),
+            handle,
+            authority: Authority::Recovery(authority),
+            record,
+            control,
+            launched: false,
+            settled: false,
+            disposal_started: false,
+            source_admitted: std::sync::Mutex::new(false),
+        })
+    }
+    async fn reserve_owner(
+        inner: &Inner,
+        source: String,
+        binary_document: Option<String>,
+        snapshot_worker: bool,
+        owner: Option<(String, Option<super::SnapshotLifetimeBinding>)>,
+    ) -> Result<Self, RuntimeError> {
         let runtime = Runtime {
             inner: inner.me.upgrade().ok_or(RuntimeError::ShuttingDown)?,
         };
-        let source = handle.state.lock().await.info.id.clone();
         let authority = runtime.capture_child_admission(&source)?;
         let owned_handle = runtime.inner.handle(&source).await?;
-        let id = cyber_core::ids::new_id("op");
+        let (id, lifetime) = owner.unwrap_or_else(|| (cyber_core::ids::new_id("op"), None));
         let record = Record {
             session_id: source.clone(),
             status: "pending".into(),
             phase: "reserved".into(),
             binary_document,
+            snapshot_worker,
+            snapshot_origin: None,
+            snapshot_request: None,
+            snapshot_receipt: None,
+            snapshot_restore_receipt: None,
+            snapshot_source_admitted: lifetime.as_ref().map(|_| false),
+            snapshot_lifetime: lifetime,
+            snapshot_preparation_receipt: None,
+            snapshot_preparation_intent_digest: None,
             admission_bindings: Some(authority.bindings.clone()),
         };
         inner
@@ -80,6 +224,7 @@ impl Scope {
         let control = Arc::new(Control {
             source: source.clone(),
             binary_document: record.binary_document.clone(),
+            snapshot_worker,
             admission_sessions: super::admission_authority::binding_sessions(&authority.bindings),
             stop: inner.closed.child_token(),
             done: CancellationToken::new(),
@@ -94,18 +239,17 @@ impl Scope {
             inner: Arc::downgrade(&runtime.inner),
             store: inner.store.clone(),
             handle: owned_handle,
-            authority,
+            authority: Authority::Ordinary(authority),
             record,
             control,
             launched: false,
             settled: false,
+            disposal_started: false,
+            source_admitted: std::sync::Mutex::new(false),
         })
     }
     pub fn launch(&mut self) -> Result<(), RuntimeError> {
-        let runtime = Runtime {
-            inner: self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?,
-        };
-        self.authority.verify(&runtime, &self.control.source)?;
+        self.verify_authority()?;
         if self.control.stop.is_cancelled() {
             return Err(RuntimeError::Invalid(
                 "Idle operation cancelled before launch".into(),
@@ -117,51 +261,476 @@ impl Scope {
         self.launched = true;
         Ok(())
     }
-    pub fn settle(&mut self) -> Result<(), RuntimeError> {
-        self.record.status = "settled".into();
-        self.record.admission_bindings = None;
+    pub(super) fn launch_snapshot(
+        &mut self,
+        origin: super::SnapshotOrigin,
+    ) -> Result<(), RuntimeError> {
+        if !self.record.snapshot_worker
+            || self.record.snapshot_origin.is_some()
+            || self.launched
+            || origin.version != 1
+            || origin.binding.directory.to_str().is_none()
+            || origin.activity_id != self.id
+            || origin.session_id != self.control.source
+        {
+            return Err(RuntimeError::Conflict(
+                "Snapshot origin cannot replace another activity".into(),
+            ));
+        }
+        self.record.snapshot_origin = Some(origin);
+        self.launch()
+    }
+    pub(super) fn snapshot_origin(&self) -> Option<&super::SnapshotOrigin> {
+        self.launched
+            .then_some(self.record.snapshot_origin.as_ref())
+            .flatten()
+    }
+    fn sequence(&self) -> i64 {
+        if *self
+            .source_admitted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            2
+        } else if self.launched {
+            1
+        } else {
+            0
+        }
+    }
+    fn snapshot_record(&self) -> Record {
+        let mut record = self.record.clone();
+        if record.snapshot_source_admitted.is_some() {
+            let admitted = *self
+                .source_admitted
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            record.snapshot_source_admitted = Some(admitted);
+            if admitted {
+                record.phase = "snapshot_source_admitted".into();
+            }
+        }
+        record
+    }
+    pub(super) fn snapshot_lifetime(&self) -> Option<&super::SnapshotLifetimeBinding> {
+        self.record.snapshot_lifetime.as_ref()
+    }
+    /// A committed marker precedes the first source mutation. A lost reply stops
+    /// effects and conservatively retains a possibly-admitted outcome.
+    pub(super) fn admit_snapshot_source(&self) -> Result<(), RuntimeError> {
+        if self.record.snapshot_source_admitted.is_none() {
+            return Ok(());
+        }
+        let mut admitted = self
+            .source_admitted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if *admitted {
+            return Ok(());
+        }
+        self.verify_authority()?;
+        if self.snapshot_origin().is_none() {
+            return Err(RuntimeError::Conflict(
+                "Source admission lacks its native origin".into(),
+            ));
+        }
+        let mut record = self.record.clone();
+        record.phase = "snapshot_source_admitted".into();
+        record.snapshot_source_admitted = Some(true);
         self.store
-            .append(&self.id, Expected::Any, vec![change(&self.record)])?;
+            .append(&self.id, Expected::Seq(1), vec![change(&record)])?;
+        *admitted = true;
+        Ok(())
+    }
+    pub(super) fn commit_snapshot(
+        &mut self,
+        state: &mut super::SessionState,
+        sequence: i64,
+        events: Vec<NewEvent>,
+        intent_digest: Option<&str>,
+        mut location: Box<dyn super::SnapshotLocationGuard>,
+    ) -> Result<Box<dyn super::SnapshotLocationGuard>, RuntimeError> {
+        let runtime = Runtime {
+            inner: self.inner.upgrade().ok_or(RuntimeError::ShuttingDown)?,
+        };
+        let authority = self.authority()?;
+        authority.verify(&runtime, &self.control.source)?;
+        if state.last_seq != sequence
+            || !self.record.snapshot_worker
+            || state.info.id != self.control.source
+            || self.control.stop.is_cancelled()
+        {
+            return Err(RuntimeError::Conflict(
+                "Snapshot commit authority changed".into(),
+            ));
+        }
+        let mut settled = self.snapshot_record();
+        settled.status = "settled".into();
+        settled.phase = "snapshot_restore_committed".into();
+        settled.admission_bindings = None;
+        settled.snapshot_restore_receipt = intent_digest
+            .map(|digest| {
+                super::snapshot_restore_receipt::capture(
+                    self.snapshot_origin(),
+                    digest,
+                    sequence,
+                    &events,
+                    self.snapshot_lifetime(),
+                    &location.bindings().map_err(RuntimeError::Conflict)?,
+                )
+            })
+            .transpose()?;
+        if settled.snapshot_restore_receipt.is_none()
+            && self
+                .snapshot_lifetime()
+                .is_some_and(|lifetime| lifetime.owner.worktree_id.is_some())
+        {
+            return Err(RuntimeError::Conflict(
+                "Managed snapshot completion lacks a consuming journal receipt; inspect retained recovery evidence".into(),
+            ));
+        }
+        let receipt = settled.snapshot_restore_receipt.clone();
+        let candidate = receipt.clone();
+        let checkout = settled
+            .snapshot_restore_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.checkout.clone());
+        let bindings = authority.bindings.clone();
+        let acknowledgement = change(&settled);
+        let owners = [
+            (state.info.id.clone(), state.last_seq),
+            (self.id.clone(), self.sequence()),
+        ];
+        let stop = self.control.stop.clone();
+        let (stored, mut location) = self
+            .store
+            .append_pair_checked(owners, move |tx| {
+                location
+                    .verify()
+                    .map_err(cyber_store::StoreError::InvalidAppend)?;
+                if let Some(checkout) = &checkout {
+                    let resources = location
+                        .bindings()
+                        .map_err(cyber_store::StoreError::InvalidAppend)?;
+                    if checkout
+                        .lifetime
+                        .checkout_resources_digest(&resources)
+                        .map_err(cyber_store::StoreError::InvalidAppend)?
+                        != checkout.resources_digest
+                    {
+                        return Err(cyber_store::StoreError::InvalidAppend(
+                            "Snapshot consuming checkout resources changed".into(),
+                        ));
+                    }
+                }
+                if let Some(receipt) = &candidate
+                    && receipt.checkout.is_some()
+                {
+                    location
+                        .prepare_restore_acknowledgement(receipt)
+                        .map_err(cyber_store::StoreError::InvalidAppend)?;
+                }
+                if stop.is_cancelled() {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        "Snapshot consuming acknowledgement was cancelled".into(),
+                    ));
+                }
+                if !super::admission_authority::bindings_current(tx, &bindings)? {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        super::admission_authority::STALE.into(),
+                    ));
+                }
+                Ok(([events, vec![acknowledgement]], location))
+            })
+            .map_err(consuming_error)?;
+        self.record = settled;
+        self.settled = true;
+        for event in &stored[0] {
+            state.apply(event).map_err(RuntimeError::Corrupt)?;
+        }
+        runtime.inner.publish(&stored[0]);
+        if let Some(receipt) = &receipt
+            && receipt.checkout.is_some()
+        {
+            location.acknowledge_restore(receipt).map_err(|error| RuntimeError::Conflict(format!(
+                "Snapshot runtime acknowledgement committed; checkout acknowledgement requires reconciliation: {error}"
+            )))?;
+        }
+        Ok(location)
+    }
+    pub fn settle(&mut self) -> Result<(), RuntimeError> {
+        if matches!(self.authority, Authority::Recovery(_)) {
+            return Err(RuntimeError::Conflict(
+                "Recovery requires its paired native acknowledgement".into(),
+            ));
+        }
+        let mut record = self.snapshot_record();
+        record.status = "settled".into();
+        record.admission_bindings = None;
+        self.store
+            .append(&self.id, Expected::Any, vec![change(&record)])?;
+        self.record = record;
         self.settled = true;
         Ok(())
     }
+    pub(super) fn commit_recovery(
+        &mut self,
+        state: &super::SessionState,
+        sequence: i64,
+        receipt: &super::SnapshotRecoveryReceipt,
+        mut location: super::snapshot_recovery_checkout::RecoveryClaims,
+    ) -> Result<super::snapshot_recovery_checkout::RecoveryClaims, RuntimeError> {
+        self.verify_authority()?;
+        let Authority::Recovery(authority) = &self.authority else {
+            return Err(RuntimeError::Conflict(
+                "Ordinary activity cannot acknowledge recovery".into(),
+            ));
+        };
+        let request = self
+            .record
+            .snapshot_request
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Conflict("Missing recovery request owner".into()))?;
+        let origin = self
+            .snapshot_origin()
+            .ok_or_else(|| RuntimeError::Conflict("Missing resolution origin".into()))?;
+        let original = &request.original;
+        if state.info.id != self.control.source
+            || state.last_seq != sequence
+            || receipt.original != *original
+            || !receipt.filesystem_complete
+            || receipt.request_id != request.confirmation.request_id
+            || receipt.journal_id != request.confirmation.journal_id
+            || receipt.confirmation != request.confirmation.confirmation
+            || receipt.action != request.confirmation.action
+            || receipt.resolution_id != origin.binding.journal_id
+            || origin.binding.journal_id == original.binding.journal_id
+            || origin.binding.directory != original.binding.directory
+            || origin.binding.root_identity != original.binding.root_identity
+            || origin.binding.namespace_identity != original.binding.namespace_identity
+            || origin.binding.lock_identity.is_none()
+            || origin.binding.lock_identity != original.binding.lock_identity
+        {
+            return Err(RuntimeError::Conflict(
+                "Resolution receipt differs from its exact request and native origin".into(),
+            ));
+        }
+        let original = original.clone();
+        let origin = origin.clone();
+        let original_sequence = self
+            .store
+            .aggregate_seq(&original.activity_id)?
+            .ok_or_else(|| RuntimeError::Conflict("Original native owner disappeared".into()))?;
+        let mut settled = self.snapshot_record();
+        settled.status = "settled".into();
+        settled.phase = "snapshot_recovery_committed".into();
+        settled.admission_bindings = None;
+        settled.snapshot_receipt = Some(receipt.clone());
+        let resolution_event = change(&settled);
+        let authority = authority.clone();
+        let published_receipt = receipt.clone();
+        let receipt = receipt.clone();
+        let expected_request = request.clone();
+        let stop = self.control.stop.clone();
+        let owners = [
+            (original.activity_id.clone(), original_sequence),
+            (self.id.clone(), self.sequence()),
+        ];
+        let (_, mut location) = self
+            .store
+            .append_pair_checked(owners, move |tx| {
+                location
+                    .prepare(&receipt)
+                    .map_err(cyber_store::StoreError::InvalidAppend)?;
+                let (_, mut original_record) =
+                    super::snapshot_recovery_record::attest(tx, &original)?;
+                let (_, resolution_record) = super::snapshot_recovery_record::attest(tx, &origin)?;
+                if let Some(checkout) = &receipt.checkout {
+                    receipt
+                        .validate_checkout(&origin)
+                        .map_err(cyber_store::StoreError::InvalidAppend)?;
+                    if resolution_record.snapshot_lifetime.as_ref()
+                        != Some(&checkout.resolution.lifetime)
+                        || original_record
+                            .snapshot_lifetime
+                            .as_ref()
+                            .filter(|life| life.version == 2)
+                            != checkout
+                                .original
+                                .as_ref()
+                                .map(|original| &original.lifetime)
+                    {
+                        return Err(cyber_store::StoreError::InvalidAppend(
+                            "Recovery receipt lifetime history differs".into(),
+                        ));
+                    }
+                } else if original_record
+                    .snapshot_lifetime
+                    .as_ref()
+                    .is_some_and(|life| life.version == 2)
+                    || resolution_record
+                        .snapshot_lifetime
+                        .as_ref()
+                        .is_some_and(|life| life.version == 2)
+                {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        "Recovery receipt is missing lifetime evidence".into(),
+                    ));
+                }
+                let current: i64 = tx.query_row(
+                    "SELECT COALESCE(MAX(seq),-1) FROM event WHERE aggregate_id=?1",
+                    [&original.session_id],
+                    |row| row.get(0),
+                )?;
+                let created: String = tx.query_row(
+                    "SELECT id FROM event WHERE aggregate_id=?1 ORDER BY seq LIMIT 1",
+                    [&original.session_id],
+                    |row| row.get(0),
+                )?;
+                if stop.is_cancelled()
+                    || !authority.current(tx)?
+                    || current != sequence
+                    || created != original.session_created_id
+                    || original_record.status == "settled"
+                    || resolution_record.status != "pending"
+                    || resolution_record.snapshot_request.as_ref() != Some(&expected_request)
+                {
+                    return Err(cyber_store::StoreError::InvalidAppend(
+                        "Recovery consuming acknowledgement authority changed".into(),
+                    ));
+                }
+                original_record.status = "settled".into();
+                original_record.phase = "snapshot_recovery_committed".into();
+                original_record.admission_bindings = None;
+                original_record.snapshot_receipt = Some(receipt);
+                Ok((
+                    [vec![change(&original_record)], vec![resolution_event]],
+                    location,
+                ))
+            })
+            .map_err(consuming_error)?;
+        self.handle
+            .acknowledge_snapshot_uncertainty(&request.original.activity_id);
+        self.record = settled;
+        self.settled = true;
+        location.acknowledge(&published_receipt).map_err(|error| RuntimeError::Conflict(format!(
+            "Recovery runtime acknowledgement committed; checkout acknowledgement requires reconciliation: {error}"
+        )))?;
+        Ok(location)
+    }
     pub async fn run<T>(&self, future: impl std::future::Future<Output = T>) -> T {
+        let Authority::Ordinary(authority) = &self.authority else {
+            return CANCEL.scope(self.control.stop.clone(), future).await;
+        };
         CANCEL
             .scope(
                 self.control.stop.clone(),
-                self.authority
+                authority
                     .clone()
                     .with_cancellation(self.control.done.clone())
                     .scope(self.control.stop.clone(), future),
             )
             .await
     }
+    fn dispose(&self, record: Record) -> Result<bool, cyber_store::StoreError> {
+        let id = self.id.clone();
+        let original = self.record.clone();
+        let handle = self.handle.clone();
+        let sequence = self.sequence();
+        // Publish before enqueueing. Even an unavailable writer retains the exact
+        // owner; a later writer acknowledgement can clear it without racing a
+        // post-commit caller-side flag write.
+        if original.snapshot_worker
+            && (self.launched
+                || original.snapshot_request.is_some()
+                || original.snapshot_lifetime.is_some())
+        {
+            handle.mark_snapshot_uncertain(&id);
+        }
+        let (_, uncertain) = self.store.append_checked(&self.id, Expected::Any, move |tx| {
+            let latest = tx.query_row(
+                "SELECT seq,type,data FROM event WHERE aggregate_id=?1 ORDER BY seq DESC LIMIT 1",
+                [&id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+            ).optional()?;
+            let Some((seq, kind, data)) = latest else {
+                return Err(cyber_store::StoreError::InvalidAppend("Native activity disappeared before disposal".into()));
+            };
+            let current: Record = serde_json::from_str(&data).map_err(|error|
+                cyber_store::StoreError::CorruptEvent { id: id.clone(), reason: error.to_string() })?;
+            // An unsuccessful launch may have set the in-memory origin without
+            // publishing it. Its durable reservation must still have no origin.
+            let origin = if original.snapshot_origin.is_some() && sequence >= 1 { original.snapshot_origin.as_ref() } else { None };
+            if kind != CHANGED || current.session_id != original.session_id
+                || current.binary_document != original.binary_document
+                || current.snapshot_worker != original.snapshot_worker
+                || current.snapshot_origin.as_ref() != origin
+                || current.snapshot_request != original.snapshot_request
+                || current.snapshot_lifetime != original.snapshot_lifetime
+            {
+                return Err(cyber_store::StoreError::InvalidAppend("Native activity ownership changed before disposal".into()));
+            }
+            // Recovery may have committed after the native lock was released but
+            // before this scope unwound. Preserve the complete durable receipt.
+            if current.status == "settled" {
+                if current.snapshot_worker {
+                    handle.acknowledge_snapshot_uncertainty(&id);
+                }
+                return Ok((vec![], false));
+            }
+            if current.snapshot_source_admitted != record.snapshot_source_admitted {
+                return Err(cyber_store::StoreError::InvalidAppend("Snapshot source-admission state changed before disposal".into()));
+            }
+            if seq != sequence {
+                return Err(cyber_store::StoreError::Concurrency { aggregate: id, expected: sequence, actual: seq });
+            }
+            let uncertain = record.status == "unknown";
+            Ok((vec![change(&record)], uncertain))
+        })?;
+        Ok(uncertain)
+    }
 }
-impl Drop for Scope {
-    fn drop(&mut self) {
+impl Scope {
+    /// Persist disposal while the worker still retains native ownership.
+    /// Final scope destruction releases the activity and its completion signal.
+    pub(super) fn dispose_before_completion(&mut self) {
+        if self.disposal_started {
+            return;
+        }
+        self.disposal_started = true;
         self.control.stop.cancel();
         if !self.settled {
             let filesystem_only = self.record.binary_document.is_some();
-            if self.launched && !filesystem_only {
-                self.handle.location_uncertain.store(true, Ordering::SeqCst);
-            }
             // This trusted scope owns only synchronous filesystem calls. Once
             // its actual worker unwinds, it has no escaped task/process to settle;
             // possible file effects remain in the separate document intent.
-            self.record.status = if self.launched && !filesystem_only {
+            let mut disposed = self.snapshot_record();
+            disposed.snapshot_origin = self.snapshot_origin().cloned();
+            // A lifetime-bound reservation can already own checkout evidence
+            // before origin publication; only exact reconciliation clears it.
+            disposed.status = if (self.launched
+                || self.record.snapshot_request.is_some()
+                || self.record.snapshot_worker && self.record.snapshot_lifetime.is_some())
+                && !filesystem_only
+            {
                 "unknown"
             } else {
                 "settled"
             }
             .into();
             if filesystem_only {
-                self.record.phase = "filesystem_worker_disposed_query_document".into();
+                disposed.phase = "filesystem_worker_disposed_query_document".into();
             }
-            self.record.admission_bindings = None;
-            if let Err(error) =
-                self.store
-                    .append(&self.id, Expected::Any, vec![change(&self.record)])
+            disposed.admission_bindings = None;
+            let result = self.dispose(disposed);
+            if self.launched
+                && !filesystem_only
+                && !self.record.snapshot_worker
+                && result.as_ref().copied().unwrap_or(true)
             {
+                self.handle.location_uncertain.store(true, Ordering::SeqCst);
+            }
+            if let Err(error) = result {
                 cyber_core::log::error(
                     "activity",
                     &error.to_string(),
@@ -169,6 +738,11 @@ impl Drop for Scope {
                 );
             }
         }
+    }
+}
+impl Drop for Scope {
+    fn drop(&mut self) {
+        self.dispose_before_completion();
         if let Some(inner) = self.inner.upgrade() {
             inner
                 .activities
@@ -179,6 +753,13 @@ impl Drop for Scope {
         self.control.done.cancel();
     }
 }
+fn consuming_error(error: cyber_store::StoreError) -> RuntimeError {
+    match error {
+        cyber_store::StoreError::InvalidAppend(reason) => RuntimeError::Conflict(reason),
+        error => error.into(),
+    }
+}
+
 fn change(record: &Record) -> NewEvent {
     NewEvent::new(
         CHANGED,
@@ -210,7 +791,8 @@ impl Inner {
         }
         let filesystem_only = controls
             .iter()
-            .all(|control| control.binary_document.is_some());
+            .all(|control| control.binary_document.is_some() || control.snapshot_worker);
+        let snapshot_worker = controls.iter().any(|control| control.snapshot_worker);
         let acknowledged = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             for control in controls {
                 control.done.cancelled().await;
@@ -222,14 +804,18 @@ impl Inner {
             if !filesystem_only {
                 handle.location_uncertain.store(true, Ordering::SeqCst);
             }
-            return Err(RuntimeError::Invalid(if filesystem_only {
-                "Binary filesystem work is still settling; query its operation before retrying"
-                    .into()
-            } else {
-                "Idle operation did not acknowledge interruption; recovery is required".into()
-            }));
+            return Err(RuntimeError::Invalid(
+                if filesystem_only && snapshot_worker {
+                    "Snapshot filesystem work is still settling; inspect recovery evidence before retrying".into()
+                } else if filesystem_only {
+                    "Binary filesystem work is still settling; query its operation before retrying"
+                        .into()
+                } else {
+                    "Idle operation did not acknowledge interruption; recovery is required".into()
+                },
+            ));
         }
-        if handle.location_uncertain.load(Ordering::SeqCst) {
+        if handle.has_location_uncertainty() {
             return Err(RuntimeError::Invalid(
                 "Idle operation did not acknowledge interruption; recovery is required".into(),
             ));

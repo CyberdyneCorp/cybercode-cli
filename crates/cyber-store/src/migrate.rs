@@ -173,6 +173,46 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261030000000_usage_limit_wait",
         sql: include_str!("../migrations/20261030000000_usage_limit_wait.sql"),
     },
+    Migration {
+        id: "20261106000000_snapshot_worker_ownership",
+        sql: include_str!("../migrations/20261106000000_snapshot_worker_ownership.sql"),
+    },
+    Migration {
+        id: "20261106010000_snapshot_source_admission",
+        sql: include_str!("../migrations/20261106010000_snapshot_source_admission.sql"),
+    },
+    Migration {
+        id: "20261106020000_snapshot_checkout_proof",
+        sql: include_str!("../migrations/20261106020000_snapshot_checkout_proof.sql"),
+    },
+    Migration {
+        id: "20261106030000_snapshot_checkout_lifetime",
+        sql: include_str!("../migrations/20261106030000_snapshot_checkout_lifetime.sql"),
+    },
+    Migration {
+        id: "20261107000000_snapshot_checkout_resources",
+        sql: include_str!("../migrations/20261107000000_snapshot_checkout_resources.sql"),
+    },
+    Migration {
+        id: "20261107010000_snapshot_consumed_resources",
+        sql: include_str!("../migrations/20261107010000_snapshot_consumed_resources.sql"),
+    },
+    Migration {
+        id: "20261107020000_snapshot_checkout_acknowledgements",
+        sql: include_str!("../migrations/20261107020000_snapshot_checkout_acknowledgements.sql"),
+    },
+    Migration {
+        id: "20261107030000_snapshot_reference_index",
+        sql: include_str!("../migrations/20261107030000_snapshot_reference_index.sql"),
+    },
+    Migration {
+        id: "20261110000000_snapshot_metadata_retirement",
+        sql: include_str!("../migrations/20261110000000_snapshot_metadata_retirement.sql"),
+    },
+    Migration {
+        id: "20261110010000_snapshot_checkout_retirement",
+        sql: include_str!("../migrations/20261110010000_snapshot_checkout_retirement.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -259,6 +299,401 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(ids, sorted);
+    }
+
+    #[test]
+    fn snapshot_worker_marker_survives_reopen_and_refuses_the_older_catalog() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("compatibility.db");
+        let at = MIGRATIONS
+            .iter()
+            .position(|m| m.id == "20261106000000_snapshot_worker_ownership")
+            .unwrap();
+        let legacy = &MIGRATIONS[..at];
+        let mut conn = Connection::open(&path).unwrap();
+        assert!(matches!(
+            migrate(&mut conn, legacy).unwrap(),
+            Outcome::Current
+        ));
+        let evidence = r#"{"session_id":"ses_retained","status":"unknown"}"#;
+        conn.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_retained','op_retained',0,'native.activity.changed.1',?1,1)", [evidence]).unwrap();
+        let tables: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type='table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(matches!(
+            migrate(&mut conn, &MIGRATIONS[..=at]).unwrap(),
+            Outcome::Current
+        ));
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM sqlite_schema WHERE type='table'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            tables
+        );
+        drop(conn);
+        let mut reopened = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut reopened, legacy).unwrap() else {
+            panic!("older binaries accepted snapshot-worker storage for mutation");
+        };
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..=at]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
+        let retained: String = reopened
+            .query_row(
+                "SELECT data FROM event WHERE id='evt_retained'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, evidence);
+    }
+
+    #[test]
+    fn source_admission_marker_preserves_evidence_and_rejects_the_previous_worker_catalog() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("source-admission.db");
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261106010000_snapshot_source_admission")
+            .unwrap();
+        let legacy = &MIGRATIONS[..at];
+        let mut conn = Connection::open(&path).unwrap();
+        assert!(matches!(
+            migrate(&mut conn, legacy).unwrap(),
+            Outcome::Current
+        ));
+        let evidence = r#"{"session_id":"ses_retained","snapshot_worker":true,"status":"unknown","snapshot_source_admitted":true}"#;
+        conn.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_source','op_source',0,'native.activity.changed.1',?1,1)", [evidence]).unwrap();
+        assert!(matches!(
+            migrate(&mut conn, MIGRATIONS).unwrap(),
+            Outcome::Current
+        ));
+        drop(conn);
+        let mut reopened = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut reopened, legacy).unwrap() else {
+            panic!("previous worker catalog admitted source-admission storage");
+        };
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
+        let retained: String = reopened
+            .query_row("SELECT data FROM event WHERE id='evt_source'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(retained, evidence);
+    }
+
+    #[test]
+    fn checkout_proof_marker_rejects_previous_writers_without_changing_native_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let database = directory.path().join("checkout.db");
+        let claim = directory.path().join("op_worker.lock");
+        let evidence =
+            br#"{"owner_id":"op_worker","settled":false,"snapshot_binding":{"version":1}}"#;
+        std::fs::write(&claim, evidence).unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261106020000_snapshot_checkout_proof")
+            .unwrap();
+        let previous = &MIGRATIONS[..at];
+        let mut db = Connection::open(&database).unwrap();
+        assert!(matches!(
+            migrate(&mut db, previous).unwrap(),
+            Outcome::Current
+        ));
+        assert!(matches!(
+            migrate(&mut db, MIGRATIONS).unwrap(),
+            Outcome::Current
+        ));
+        drop(db);
+        let mut db = Connection::open(database).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, previous).unwrap() else {
+            panic!("previous writers bypassed checkout proof admission");
+        };
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(std::fs::read(claim).unwrap(), evidence);
+    }
+
+    #[test]
+    fn checkout_lifetime_catalog_rejects_activity_only_writers_and_preserves_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("lifetime.db");
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261106030000_snapshot_checkout_lifetime")
+            .unwrap();
+        let mut db = Connection::open(&path).unwrap();
+        assert!(matches!(
+            migrate(&mut db, &MIGRATIONS[..at]).unwrap(),
+            Outcome::Current
+        ));
+        let evidence = r#"{"session_id":"ses_retained","snapshot_worker":true,"status":"unknown","snapshot_lifetime":{"version":2}}"#;
+        db.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_context','op_retained',0,'native.activity.changed.1',?1,1)", [evidence]).unwrap();
+        assert!(matches!(
+            migrate(&mut db, MIGRATIONS).unwrap(),
+            Outcome::Current
+        ));
+        drop(db);
+        let mut db = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("activity-only writer accepted lifetime-bound checkout storage");
+        };
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
+        let retained: String = db
+            .query_row("SELECT data FROM event WHERE id='evt_context'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(retained, evidence);
+    }
+
+    #[test]
+    fn native_resource_catalog_blocks_previous_writers_without_changing_reference_evidence() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("resources.db");
+        let phase = directory.path().join("phase_retained");
+        let evidence = br#"{"admitted":false,"checkout_bindings":[]}"#;
+        std::fs::write(&phase, evidence).unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261107000000_snapshot_checkout_resources")
+            .unwrap();
+        let mut db = Connection::open(&path).unwrap();
+        assert!(matches!(
+            migrate(&mut db, &MIGRATIONS[..at]).unwrap(),
+            Outcome::Current
+        ));
+        assert!(matches!(
+            migrate(&mut db, MIGRATIONS).unwrap(),
+            Outcome::Current
+        ));
+        drop(db);
+        let mut db = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted native resource publication");
+        };
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(std::fs::read(phase).unwrap(), evidence);
+    }
+
+    #[test]
+    fn consumed_resource_receipts_reject_previous_writers_and_preserve_event_bytes() {
+        let mut db = Connection::open_in_memory().unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261107010000_snapshot_consumed_resources")
+            .unwrap();
+        migrate(&mut db, &MIGRATIONS[..at]).unwrap();
+        let evidence = r#"{"checkout_resources_digest":"retained","activity_id":"op_original"}"#;
+        db.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_resources','op_receipt',0,'snapshot.preparation.cancelled.1',?1,1)", [evidence]).unwrap();
+        migrate(&mut db, MIGRATIONS).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted consumed checkout evidence");
+        };
+        assert_eq!(
+            unknown,
+            MIGRATIONS[at..]
+                .iter()
+                .map(|migration| migration.id)
+                .collect::<Vec<_>>()
+        );
+        let retained: String = db
+            .query_row(
+                "SELECT data FROM event WHERE id='evt_resources'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, evidence);
+    }
+
+    #[test]
+    fn native_acknowledgement_catalog_preserves_unknown_claim_and_disposition_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let claim = temp.path().join("op_original.lock");
+        let marker = temp.path().join("op_original.snapshot-ack");
+        std::fs::write(&claim, b"retained unknown claim").unwrap();
+        std::fs::write(&marker, b"retained exact receipt metadata").unwrap();
+        let mut db = Connection::open_in_memory().unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| {
+                migration.id == "20261107020000_snapshot_checkout_acknowledgements"
+            })
+            .unwrap();
+        migrate(&mut db, &MIGRATIONS[..at]).unwrap();
+        migrate(&mut db, &MIGRATIONS[..=at]).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted native checkout disposition");
+        };
+        assert_eq!(
+            unknown,
+            ["20261107020000_snapshot_checkout_acknowledgements"]
+        );
+        assert_eq!(std::fs::read(claim).unwrap(), b"retained unknown claim");
+        assert_eq!(
+            std::fs::read(marker).unwrap(),
+            b"retained exact receipt metadata"
+        );
+    }
+
+    #[test]
+    fn snapshot_reference_index_backfills_and_tracks_event_transactions() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == "20261107030000_snapshot_reference_index")
+            .unwrap();
+        migrate(&mut db, &MIGRATIONS[..at]).unwrap();
+        let first = format!("copy:{}", "a".repeat(64));
+        let second = format!("copy:{}", "b".repeat(64));
+        let evidence = serde_json::json!({
+            "nested": [{"snapshot": first}, first],
+            "invalid": ["copy:short", format!("copy:{}", "A".repeat(64)),
+                format!("copy:{}", "g".repeat(64)), format!("copy:{}", "a".repeat(65))]
+        })
+        .to_string();
+        db.execute(
+            "INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('old','ses_old',0,'retained.1',?1,1)",
+            [&evidence],
+        ).unwrap();
+        migrate(&mut db, &MIGRATIONS[..=at]).unwrap();
+        let roots = |db: &Connection| -> Vec<(String, String)> {
+            db.prepare("SELECT event_id,root FROM snapshot_reference ORDER BY event_id,root")
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        assert_eq!(roots(&db), [("old".into(), first.clone())]);
+        assert_eq!(
+            db.query_row("SELECT data FROM event WHERE id='old'", [], |row| row
+                .get::<_, String>(0))
+                .unwrap(),
+            evidence
+        );
+
+        // Generic imports retain shared roots independently of runtime projectors.
+        let fresh = serde_json::json!([first, second, second]).to_string();
+        db.execute(
+            "INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('new','ses_new',0,'imported.1',?1,2)",
+            [&fresh],
+        ).unwrap();
+        assert_eq!(
+            roots(&db),
+            [
+                ("new".into(), first.clone()),
+                ("new".into(), second.clone()),
+                ("old".into(), first.clone())
+            ]
+        );
+        // A failed append/projector transaction must not publish new references.
+        {
+            let tx = db.transaction().unwrap();
+            tx.execute(
+                "INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('rolled_back','ses_failed',0,'imported.1',?1,3)",
+                [&fresh],
+            ).unwrap();
+            assert_eq!(roots(&tx).len(), 5);
+            tx.rollback().unwrap();
+        }
+        assert_eq!(roots(&db).len(), 3);
+        db.execute(
+            "UPDATE event SET data=?1 WHERE id='old'",
+            [serde_json::json!({"repaired":second}).to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            roots(&db),
+            [
+                ("new".into(), first),
+                ("new".into(), second.clone()),
+                ("old".into(), second.clone())
+            ]
+        );
+        db.execute("DELETE FROM event WHERE id='new'", []).unwrap();
+        assert_eq!(roots(&db), [("old".into(), second)]);
+        db.execute("DELETE FROM event WHERE id='old'", []).unwrap();
+        assert!(roots(&db).is_empty());
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted reference-index storage");
+        };
+        assert_eq!(unknown, [MIGRATIONS[at].id]);
+    }
+
+    #[test]
+    fn metadata_retirement_catalog_survives_reopen_and_preserves_unknown_evidence() {
+        for id in [
+            "20261110000000_snapshot_metadata_retirement",
+            "20261110010000_snapshot_checkout_retirement",
+        ] {
+            metadata_catalog_fence(id);
+        }
+    }
+    fn metadata_catalog_fence(id: &str) {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("retirement.db");
+        let marker = temp.path().join("retained-intent.next");
+        std::fs::write(&marker, b"unknown native metadata").unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|migration| migration.id == id)
+            .unwrap();
+        let mut db = Connection::open(&path).unwrap();
+        migrate(&mut db, &MIGRATIONS[..at]).unwrap();
+        let evidence = r#"{"retained":"unknown native owner","metadata_plan":"exact bytes"}"#;
+        db.execute("INSERT INTO event(id,aggregate_id,seq,type,data,time) VALUES ('evt_meta','snapshot_reclaim_fixture',2,'snapshot.reclamation.metadata.planned.1',?1,1)", [evidence]).unwrap();
+        migrate(&mut db, &MIGRATIONS[..=at]).unwrap();
+        drop(db);
+        let mut db = Connection::open(path).unwrap();
+        let Outcome::TooNew(unknown) = migrate(&mut db, &MIGRATIONS[..at]).unwrap() else {
+            panic!("previous writer accepted metadata retirement storage");
+        };
+        assert_eq!(unknown, [MIGRATIONS[at].id]);
+        assert_eq!(
+            db.query_row("SELECT data FROM event WHERE id='evt_meta'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            evidence
+        );
+        assert_eq!(std::fs::read(marker).unwrap(), b"unknown native metadata");
     }
 
     #[test]

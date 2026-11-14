@@ -336,9 +336,19 @@ pub struct Epoch {
     /// Canonical paths of nested instruction files attached this epoch.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub reminded_instructions: std::collections::BTreeSet<String>,
+    /// Opaque identities of rule definitions delivered this Epoch.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub reminded_rules: std::collections::BTreeSet<String>,
+    /// The bindings behind `reminded_rules`, in delivery order, for inspection. Bindings
+    /// delivered by an older version have no stamp.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(skip)]
+    pub delivered_rules: Vec<super::instructions::RuleBinding>,
     pub number: u32,
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, super::context_sources::SourceMetadata>,
     pub provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prefix: Option<String>,
@@ -452,6 +462,11 @@ pub struct LastStep {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StepSnapshot {
     pub step_id: String,
+    /// Internal immutable provenance, reconstructed from step events on replay.
+    #[serde(skip)]
+    pub(crate) input_message_ids: Vec<String>,
+    #[serde(skip)]
+    pub(crate) input_root: Option<String>,
     /// The user message the step answers.
     pub user_message_id: Option<String>,
     pub pre: Option<String>,
@@ -550,6 +565,8 @@ pub struct SessionState {
     /// Boxed: Session state is held in deeply nested futures, so it stays small.
     #[serde(skip)]
     pub last_step: Option<Box<LastStep>>,
+    #[serde(skip)]
+    pub(crate) prepared_context: Option<super::context_inspection::PreparedContextEstimate>,
     pub steps: Vec<StepSnapshot>,
     /// File diffs by user message.
     pub diffs: BTreeMap<String, Vec<super::host::FileDiff>>,
@@ -598,6 +615,50 @@ const MAX_INSTRUCTION_CHARS: usize = 2000;
 pub(crate) const USER_SOURCES: [&str; 3] = ["user", super::MCP_PROMPT_SOURCE, "loop"];
 /// Digest prefix of a Stop-hook continuation row; public digests are `sha256:`.
 pub(crate) const STOP_CONTINUATION_DIGEST: &str = "hook:Stop:";
+
+fn rule_operation_matches(
+    settled: &ToolSettled,
+    binding: &super::instructions::RuleBinding,
+    epoch: u32,
+    info: &SessionInfo,
+    call: &CallState,
+    stale: bool,
+) -> bool {
+    if !settled.rule_patch.is_empty() {
+        let intercepted = settled
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.get("intercepted"))
+            .and_then(Value::as_str)
+            == Some("apply_patch");
+        return !stale
+            && (call.name.eq_ignore_ascii_case("apply_patch")
+                || (is_patch_carrier(&call.name) && intercepted))
+            && binding.native_root.is_some()
+            && settled.rule_read.is_none()
+            && settled.rule_edit.is_none()
+            && binding.operation_path.as_ref().is_some_and(|target| {
+                settled
+                    .rule_patch
+                    .iter()
+                    .any(|op| &op.evidence.path == target)
+            })
+            && settled.rule_patch.len() <= cyber_core::rules::MAX_OPERATION_RECEIPTS
+            && settled
+                .rule_patch
+                .iter()
+                .all(|op| op.matches(binding, epoch, &call.name, info, call));
+    }
+    if settled.status != CallStatus::Ok {
+        return false;
+    }
+    match (&binding.native_root, &settled.rule_read, &settled.rule_edit) {
+        (None, None, None) => true,
+        (Some(_), Some(read), None) => !stale && read.matches(binding, epoch, "read", info, call),
+        (Some(_), None, Some(edit)) => !stale && edit.matches(binding, epoch, "edit", info, call),
+        _ => false,
+    }
+}
 
 impl SessionState {
     pub(super) fn ensure_worktree_ready(&self) -> Result<(), super::RuntimeError> {
@@ -773,6 +834,7 @@ impl SessionState {
             turn_mode: None,
             turn_agent: None,
             last_step: None,
+            prepared_context: None,
             steps: Vec::new(),
             diffs: BTreeMap::new(),
             revert: None,
@@ -983,6 +1045,14 @@ impl SessionState {
             }
             "session.context.epoch_started" => self.on_epoch(decode(e)?),
             "session.context.updated" => self.on_context_updated(decode(e)?),
+            "session.context.observed" => {
+                let observed: super::context_sources::SourcesObserved = decode(e)?;
+                if let Some(epoch) = &mut self.epoch
+                    && epoch.number == observed.epoch
+                {
+                    epoch.sources = observed.sources;
+                }
+            }
             "session.system.added" => self.on_system(decode(e)?),
             "session.structured_output.settled" => {
                 let outcome: super::StructuredOutcome = decode(e)?;
@@ -1002,7 +1072,7 @@ impl SessionState {
                 self.session_started = true;
                 self.hook_stop_step = marker.stop_after_step;
             }
-            "session.step.started" => self.on_step_started(decode(e)?, e.time_ms),
+            "session.step.started" => self.on_step_started(decode(e)?, e.time_ms)?,
             "session.text.ended" | "session.reasoning.ended" => self.on_content(kind, decode(e)?),
             "session.tool.called" => self.on_called(decode(e)?),
             "session.tool.dispatched" => self.on_dispatched(decode(e)?),
@@ -1383,10 +1453,13 @@ impl SessionState {
     fn on_epoch(&mut self, e: EpochStarted) {
         self.epoch = Some(Epoch {
             reminded_skills: Default::default(),
+            reminded_rules: Default::default(),
+            delivered_rules: Default::default(),
             reminded_instructions: Default::default(),
             number: e.epoch,
             baseline: e.baseline,
             snapshot: e.snapshot,
+            sources: e.sources,
             provider: e.provider,
             system_prefix: e.system_prefix,
             family: e.family,
@@ -1418,7 +1491,9 @@ impl SessionState {
         });
     }
 
-    fn on_step_started(&mut self, s: StepStarted, time_ms: i64) {
+    fn on_step_started(&mut self, s: StepStarted, time_ms: i64) -> Result<(), String> {
+        super::requests::input_owners::validate(self, &s.input_message_ids)?;
+        self.prepared_context = s.context_estimate;
         self.first_turn_started = true;
         self.turn_mode = Some(s.mode.unwrap_or_else(|| self.info.mode.clone()));
         let agent = s.agent.unwrap_or_else(|| self.info.agent.clone());
@@ -1427,6 +1502,8 @@ impl SessionState {
         self.step_origin = s.origin;
         self.steps.push(StepSnapshot {
             step_id: s.message_id.clone(),
+            input_message_ids: s.input_message_ids,
+            input_root: super::requests::input_owners::current(self).map(|(_, id)| id.to_owned()),
             user_message_id: self.current_user_message().map(str::to_string),
             pre: s.snapshot.clone(),
             post: None,
@@ -1439,6 +1516,7 @@ impl SessionState {
             started_ms: Some(time_ms),
             ..AssistantEntry::default()
         }));
+        Ok(())
     }
 
     fn assistant(&mut self, id: &str) -> Option<&mut AssistantEntry> {
@@ -1497,6 +1575,20 @@ impl SessionState {
             if matches!(s.status, CallStatus::Ok | CallStatus::Error)
                 && let Some(epoch) = &mut self.epoch
             {
+                for binding in s.rule_reminders.iter().filter(|binding| {
+                    rule_operation_matches(
+                        &s,
+                        binding,
+                        epoch.number,
+                        &self.info,
+                        call,
+                        self.epoch_stale,
+                    )
+                }) {
+                    if epoch.reminded_rules.insert(binding.identity()) {
+                        epoch.delivered_rules.push(binding.clone());
+                    }
+                }
                 epoch.reminded_skills.extend(s.skill_reminders);
                 epoch.reminded_instructions.extend(s.instruction_reminders);
             }

@@ -981,6 +981,59 @@ async fn session_stream_replays_then_follows_without_gaps() {
 }
 
 #[tokio::test]
+async fn session_stream_live_opt_in_preserves_durable_cursor_and_delivers_idle_and_deltas() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("live answer")])],
+        ..Default::default()
+    });
+    let id = h.session().await;
+    let cursor = h.state(&id).await.last_seq;
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!(
+            "{base}/sessions/{id}/events?after={cursor}&live=true"
+        ))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    let mut stream = response.bytes_stream();
+    Api::new(&h)
+        .post(&format!("/sessions/{id}/prompt"), prompt("hello"))
+        .await;
+    let content = read_sse_until(&mut stream, "session.idle").await;
+    assert!(content.contains("session.text.delta"), "{content}");
+    let mut seqs = Vec::new();
+    for frame in content.split("\n\n") {
+        for line in frame.lines().filter_map(|line| line.strip_prefix("data: ")) {
+            let event: Value = serde_json::from_str(line).unwrap();
+            if let Some(seq) = event["durable"]["seq"].as_i64() {
+                seqs.push(seq);
+            } else {
+                assert!(
+                    !frame.lines().any(|line| line.starts_with("id:")),
+                    "live event changed cursor: {frame}"
+                );
+            }
+        }
+    }
+    assert_eq!(seqs.first(), Some(&(cursor + 1)));
+    assert!(seqs.windows(2).all(|pair| pair[1] == pair[0] + 1));
+    assert_eq!(seqs.last(), Some(&h.state(&id).await.last_seq));
+    assert_eq!(
+        client
+            .get(format!("{base}/sessions/{id}/events?live=invalid"))
+            .basic_auth("cyber", Some("pw"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+}
+
+#[tokio::test]
 async fn location_stream_delivers_setup_output_and_filters_other_locations() {
     use base64::Engine as _;
     use cyber_core::worktrees::{Managed, SetupEvent, SetupSink, SetupStream};
@@ -1203,6 +1256,20 @@ fn openapi_document_is_current() {
     assert!(
         committed == current,
         "sdk/openapi.json is stale; rerun with UPDATE_OPENAPI=1"
+    );
+}
+
+#[test]
+fn preparation_discovery_schema_requires_the_nullable_data_field() {
+    let document = http::openapi::document("1");
+    let schema = &document["components"]["schemas"]["PreparationReceiptData"];
+    assert_eq!(schema["required"], json!(["data"]));
+    assert!(
+        schema["properties"]["data"]["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|variant| variant["type"] == "null")
     );
 }
 
@@ -1784,6 +1851,115 @@ async fn background_job_routes_list_scope_and_stop_a_child() {
     assert_eq!(stopped["data"]["status"], "cancelled");
     assert_eq!(h.runtime.job(&job.id).unwrap().status, JobStatus::Cancelled);
     assert_eq!(api.get("/jobs/missing").await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn input_job_state_is_authenticated_bounded_and_read_only() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let body = json!({"session_id":session,"input_message_ids":["msg_driver"]});
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    assert_eq!(
+        client
+            .post(format!("{base}/jobs/input-state"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .post(format!("{base}/jobs/input-state"))
+            .basic_auth("cyber", Some("secret"))
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let api = Api::new(&h);
+    let before = h.runtime.state(&session).await.unwrap().last_seq;
+    let (status, result) = api.post("/jobs/input-state", body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(
+        result["data"],
+        json!([{"message_id":"msg_driver","running":false,
+        "awaiting_handback":false,"oldest_unnotified_ms":null,"handback_pending":false,"session_seq":0,"handback_seq":null}])
+    );
+    for ids in [
+        json!([]),
+        json!(vec!["msg_driver"; 33]),
+        json!(["msg_driver", "msg_driver"]),
+        json!(["x".repeat(257)]),
+        json!([""]),
+    ] {
+        let (status, result) = api
+            .post(
+                "/jobs/input-state",
+                json!({"session_id":session,"input_message_ids":ids}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{result}");
+    }
+    assert_eq!(
+        api.post(
+            "/jobs/input-state",
+            json!({"session_id":"ses_missing","input_message_ids":["msg_driver"]})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(h.runtime.state(&session).await.unwrap().last_seq, before);
+}
+
+#[tokio::test]
+async fn step_input_origin_reads_only_the_exact_recorded_step() {
+    use cyber_server::runtime::{Admission, Delivery};
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("answer")])],
+        ..Default::default()
+    });
+    let session = h.session().await;
+    let input = h
+        .runtime
+        .admit(&session, Admission::text("hello", Delivery::Queue))
+        .await
+        .unwrap();
+    h.runtime.wait_idle(&session).await;
+    let state = h.runtime.state(&session).await.unwrap();
+    let step = &state.steps[0].step_id;
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{session}/steps/{step}/input-origin");
+    assert_eq!(client.get(&path).send().await.unwrap().status(), 401);
+    let response: Value = client
+        .get(&path)
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["data"], json!([input.message_id]));
+    let api = Api::new(&h);
+    assert_eq!(
+        api.get(&format!(
+            "/sessions/{session}/steps/msg_unknown/input-origin"
+        ))
+        .await
+        .1["data"],
+        json!([])
+    );
+    assert_eq!(
+        h.runtime.state(&session).await.unwrap().last_seq,
+        state.last_seq
+    );
 }
 
 async fn stream_binding_fixture(
@@ -4040,6 +4216,96 @@ async fn context_meter_reports_last_request_prompt_tokens_window_and_compaction_
     assert_eq!(session["data"]["context"], expected);
 }
 
+#[tokio::test]
+async fn context_inspection_is_authenticated_read_only_and_metadata_only_by_default() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("hello")])],
+        ..Setup::default()
+    });
+    let api = Api::new(&h);
+    std::fs::create_dir_all(h.repo.join(".cyber/rules")).unwrap();
+    std::fs::write(
+        h.repo.join(".cyber/rules/web.md"),
+        "---\npaths: ['**']\n---\nPRIVATE_RULE_BODY_SENTINEL",
+    )
+    .unwrap();
+    let id = h.session().await;
+    let base = tcp(&h, "pw").await;
+    let url = format!("{base}/sessions/{id}/context");
+    let client = reqwest::Client::new();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 401);
+    let inspect = || client.get(&url).basic_auth("cyber", Some("pw"));
+    let fresh: Value = inspect().send().await.unwrap().json().await.unwrap();
+    assert_eq!(fresh["data"]["inspection"]["epoch_pending"], true);
+    assert_eq!(
+        fresh["data"]["inspection"]["estimated_input_tokens"],
+        Value::Null
+    );
+    assert!(fresh["data"]["inspection"]["last_prepared_request"].is_null());
+    assert!(h.models.requests("test/main").is_empty());
+
+    api.post(&format!("/sessions/{id}/prompt"), prompt("hi"))
+        .await;
+    h.settle(&id).await;
+    let result: Value = inspect().send().await.unwrap().json().await.unwrap();
+    let data = &result["data"];
+    assert!(data["baseline"].is_null());
+    assert!(data["summary"].is_null());
+    // Delivered rules are listed by path and approval only, never with their body.
+    assert!(data["inspection"]["delivered_rules"].is_array());
+    // The held definition is reported as withheld by path and reason only.
+    let withheld = data["inspection"]["withheld_sources"].as_array().unwrap();
+    assert!(!withheld.is_empty(), "{result:#}");
+    for entry in withheld {
+        let mut keys: Vec<_> = entry.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, ["path", "reason", "source"]);
+        assert!(entry["path"].as_str().unwrap().contains(".cyber/rules"));
+    }
+    assert!(!result.to_string().contains("PRIVATE_RULE_BODY_SENTINEL"));
+    let estimate = &data["inspection"];
+    let effective = estimate["effective_sources"].as_array().unwrap();
+    let date = effective
+        .iter()
+        .find(|source| source["id"] == "core/date")
+        .unwrap();
+    assert_eq!(date["status"], "active");
+    assert_eq!(date["origin"], "runtime");
+    assert_eq!(estimate["epoch_pending"], false);
+    assert_eq!(estimate["last_request_tokens"], 100);
+    assert!(
+        estimate["last_prepared_request"]["estimated_input_tokens"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(estimate["window"], 200_000);
+    let tokens = estimate["estimated_input_tokens"].as_u64().unwrap();
+    assert!(tokens > 0);
+    assert_eq!(
+        estimate["estimated_input_utilization"],
+        tokens as f64 / 200_000.0
+    );
+    let sources = estimate["sources"].as_array().unwrap();
+    assert!(sources.iter().any(|source| source["id"] == "history"));
+    assert!(sources.windows(2).all(|pair| {
+        pair[0]["estimated_tokens"].as_u64().unwrap()
+            >= pair[1]["estimated_tokens"].as_u64().unwrap()
+    }));
+    let explicit: Value = client
+        .get(format!("{url}?include_content=true"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(explicit["data"]["baseline"].is_string());
+    assert_eq!(explicit["data"]["inspection"], *estimate);
+    assert_eq!(h.models.requests("test/main").len(), 1);
+}
+
 impl Api {
     /// Start an inline run owned by `session` and wait until it ends.
     async fn ended_run(&self, session: &str, script: &str) -> String {
@@ -4904,4 +5170,333 @@ async fn budget_reservation_http_requires_owner_auth_and_checks_origin_before_mu
         .await
         .unwrap();
     assert_eq!(released.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn scoped_interruption_http_is_authenticated_idempotent_and_revision_bound() {
+    use cyber_server::runtime::{Admission, Delivery};
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let mut admission = Admission::text("held", Delivery::Hold);
+    admission.resume = false;
+    let input = h.runtime.admit(&session, admission).await.unwrap();
+    let body = json!({"request_id":"op_http_stop","input_message_ids":[input.message_id]});
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{session}/interrupt-inputs");
+    assert_eq!(
+        client
+            .post(&path)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    assert_eq!(
+        client
+            .get(format!("{path}/op_http_stop"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
+    let response: Value = client
+        .post(&path)
+        .basic_auth("cyber", Some("secret"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(response["data"]["request_id"], "op_http_stop");
+    let api = Api::new(&h);
+    let receipt = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (status, response) = api
+                .get(&format!(
+                    "/sessions/{session}/interrupt-inputs/op_http_stop"
+                ))
+                .await;
+            assert_eq!(status, StatusCode::OK);
+            if response["data"]["status"] != "requested" {
+                break response["data"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(receipt["status"], "acknowledged");
+    let history = h.store.read_events(&session, -1, 500).unwrap();
+    let event = history
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "session.input.interruption.1")
+        .unwrap();
+    assert_eq!(receipt["session_seq"], event.seq);
+    let before = h.runtime.state(&session).await.unwrap().last_seq;
+    let (status, retry) = api
+        .post(&format!("/sessions/{session}/interrupt-inputs"), body)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(retry["data"], receipt);
+    assert_eq!(h.runtime.state(&session).await.unwrap().last_seq, before);
+    assert_eq!(
+        api.get(&format!("/sessions/{session}/interrupt-inputs/op_unknown"))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        api.get("/sessions/ses_unknown/interrupt-inputs/op_http_stop")
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    h.runtime.shutdown().await;
+}
+#[tokio::test]
+async fn scoped_interruption_http_refuses_invalid_foreign_and_reused_scopes_without_signalling() {
+    use cyber_server::runtime::{Admission, Delivery, InputStatus};
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let other = h.session().await;
+    let input = h
+        .runtime
+        .admit(&session, Admission::text("held", Delivery::Hold))
+        .await
+        .unwrap();
+    let api = Api::new(&h);
+    let path = format!("/sessions/{session}/interrupt-inputs");
+    for ids in [
+        json!([]),
+        json!(vec![input.message_id.clone(); 33]),
+        json!([input.message_id, input.message_id]),
+        json!(["x".repeat(257)]),
+        json!([""]),
+        json!(["msg_unknown"]),
+    ] {
+        assert_eq!(
+            api.post(
+                &path,
+                json!({"request_id":"op_invalid","input_message_ids":ids})
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    assert_eq!(
+        api.post(
+            &format!("/sessions/{other}/interrupt-inputs"),
+            json!({"request_id":"op_foreign","input_message_ids":[input.message_id]})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        h.runtime
+            .state(&session)
+            .await
+            .unwrap()
+            .input(&input.message_id)
+            .unwrap()
+            .status,
+        InputStatus::Held
+    );
+    assert_eq!(
+        api.post(
+            &path,
+            json!({"request_id":"op_scope","input_message_ids":[input.message_id]})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let next = h
+        .runtime
+        .admit(&session, Admission::text("other held", Delivery::Hold))
+        .await
+        .unwrap();
+    assert_eq!(
+        api.post(
+            &path,
+            json!({"request_id":"op_scope","input_message_ids":[next.message_id]})
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        h.runtime
+            .state(&session)
+            .await
+            .unwrap()
+            .input(&next.message_id)
+            .unwrap()
+            .status,
+        InputStatus::Held
+    );
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn input_client_routes_bind_live_admissions_and_cannot_upgrade_browser_authority() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let other = h.session().await;
+    let base = tcp(&h, "secret").await;
+    let client = reqwest::Client::new();
+    let path = format!("{base}/sessions/{session}/input-clients");
+    assert_eq!(client.post(&path).send().await.unwrap().status(), 401);
+    let response = client
+        .post(&path)
+        .basic_auth("cyber", Some("secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let lease: Value = response.json().await.unwrap();
+    let id = lease["data"]["client_id"].as_str().unwrap();
+    let api = Api::new(&h);
+    assert_eq!(
+        api.call(
+            Method::PUT,
+            &format!("/sessions/{session}/interactive-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        api.call(
+            Method::DELETE,
+            &format!("/sessions/{session}/interactive-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        api.call(
+            Method::PUT,
+            &format!("/sessions/{session}/input-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let body = json!({"id":"msg_http_input_client","parts":[{"type":"text","text":"held"}],"delivery":"hold","input_client":{"client_id":id}});
+    assert_eq!(
+        api.post(&format!("/sessions/{other}/prompt"), body.clone())
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (status, accepted) = api
+        .post(&format!("/sessions/{session}/prompt"), body.clone())
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    assert_eq!(
+        api.call(
+            Method::DELETE,
+            &format!("/sessions/{session}/input-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    let (status, retry) = api
+        .post(&format!("/sessions/{session}/prompt"), body.clone())
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(retry, accepted);
+    let mut later = body;
+    later["id"] = json!("msg_after_release");
+    assert_eq!(
+        api.post(&format!("/sessions/{session}/prompt"), later)
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        api.call(
+            Method::PUT,
+            &format!("/sessions/{session}/input-clients/{id}"),
+            None,
+            &[]
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    h.runtime.shutdown().await;
+}
+#[tokio::test]
+async fn observational_session_stream_has_no_presence_and_default_stream_stays_compatible() {
+    let h = Harness::new(Setup::default());
+    let session = h.session().await;
+    let directory = h.repo.display().to_string();
+    let lease = h
+        .runtime
+        .add_interactive_client(&session, &directory)
+        .await
+        .unwrap();
+    h.runtime
+        .release_interactive_client(&session, &directory, &lease.client_id)
+        .await
+        .unwrap();
+    let asker = h.runtime.operation_asker(&session).await.unwrap();
+    assert!(!asker.attended());
+    let api = Api::new(&h);
+    let response=api.client.request(Request::builder().uri(format!("http://cyber.internal/api/v1/sessions/{session}/events?live=true&presence=false")).body(Body::empty()).unwrap()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        !asker.attended(),
+        "observational replay advertised broad attendance"
+    );
+    let invalid = api
+        .client
+        .request(
+            Request::builder()
+                .uri(format!(
+                    "http://cyber.internal/api/v1/sessions/{session}/events?presence=invalid"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    let compatible = api
+        .client
+        .request(
+            Request::builder()
+                .uri(format!(
+                    "http://cyber.internal/api/v1/sessions/{session}/events?live=true"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(compatible.status(), StatusCode::OK);
+    assert!(asker.attended(), "changed legacy stream defaults");
+    drop(response);
+    drop(compatible);
+    h.runtime.shutdown().await;
 }

@@ -2,17 +2,47 @@
 //! output): a valid `structured_output` call ends the answer, a Turn that ends without
 //! one is asked again, and three failed submissions end it with `StructuredOutputError`.
 
-use std::sync::Arc;
+use std::{borrow::Cow, collections::BTreeMap, sync::Arc};
+
+use cyber_store::NewEvent;
 
 use super::bus::LiveEvent;
 use super::drain::TurnEnd;
 use super::events::{SYSTEM_ADDED, SystemAdded, event};
-use super::structured::{MISSING_REASON, ROOT_ATTEMPTS, ROOT_TOOL, SETTLED};
-use super::{Handle, Inner, RuntimeError, StructuredOutcome};
+use super::structured::{MISSING_REASON, ROOT_ATTEMPTS, ROOT_TOOL, ResultState, SETTLED};
+use super::{Handle, Inner, RuntimeError, SessionState, StructuredOutcome, StructuredSchema};
 
 const KIND: &str = "structured_output";
 
 impl Inner {
+    /// A terminal Drain exit must not strand its root input's result. Keep this
+    /// before releasing the Drain entry, so another pass cannot replace ownership.
+    /// Shutdown preserves an open attempt for recovery in the next process.
+    pub(crate) async fn root_result_at_exit(
+        &self,
+        session_id: &str,
+        failure: Option<&(String, String)>,
+        interrupted: bool,
+    ) -> Result<(), RuntimeError> {
+        if self.closed.is_cancelled() {
+            return Ok(());
+        }
+        let handle = self.handle(session_id).await?;
+        let mut state = handle.state.lock().await;
+        if self.closed.is_cancelled() || !state.result.root_open() {
+            return Ok(());
+        }
+        let why = match failure {
+            Some((kind, message)) => format!("{kind}: {message}"),
+            None if interrupted => "interrupted".into(),
+            None => "execution ended before structured_output".into(),
+        };
+        if let Some(outcome) = state.result.terminal_outcome(&why) {
+            self.commit_locked(&mut state, vec![event(SETTLED, &outcome)])?;
+        }
+        Ok(())
+    }
+
     /// After a Turn's calls settle: the input's valid result, or its last failure, ends
     /// the answer; otherwise the model goes on.
     pub(crate) async fn root_result_end(
@@ -106,4 +136,35 @@ impl Inner {
             message,
         })
     }
+}
+
+/// Freeze each replaced root input's outcome without changing live state. The
+/// caller inserts it immediately before its replacement's promotion in one append.
+pub(crate) fn promotion_outcomes(
+    state: &SessionState,
+    inputs: &[String],
+) -> BTreeMap<String, NewEvent> {
+    let mut outcomes = BTreeMap::new();
+    if state.info.parent_id.is_some() {
+        return outcomes;
+    }
+    let mut previous = Cow::Borrowed(&state.result);
+    for input in inputs {
+        if let Some(outcome) = previous.terminal_outcome(&format!("superseded by input {input}")) {
+            outcomes.insert(input.clone(), event(SETTLED, &outcome));
+        }
+        // Match on_promoted's schema selection for an intermediate input in this
+        // batch. Uncompilable historical schemas grant no new result ownership.
+        previous = Cow::Owned(
+            state
+                .inbox
+                .iter()
+                .find(|row| row.message_id == *input)
+                .and_then(|row| row.output_schema.clone())
+                .and_then(|schema| StructuredSchema::new(schema).ok())
+                .map(|schema| ResultState::root(schema, input.clone()))
+                .unwrap_or_default(),
+        );
+    }
+    outcomes
 }

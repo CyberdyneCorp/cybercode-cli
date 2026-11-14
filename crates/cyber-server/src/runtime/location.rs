@@ -16,6 +16,30 @@ impl Inner {
         let claim = self
             .tools
             .claim_location(info, creating, cancel.child_token());
+        self.await_location_claim(claim, cancel).await
+    }
+
+    pub(super) async fn claim_snapshot_location(
+        &self,
+        info: &SessionInfo,
+        activity: &str,
+        lifetime: Option<&super::SnapshotLifetimeBinding>,
+        cancel: CancellationToken,
+    ) -> Result<LocationLease, RuntimeError> {
+        let claim = self.tools.claim_snapshot_location_bound(
+            info,
+            activity,
+            lifetime,
+            cancel.child_token(),
+        );
+        self.await_location_claim(claim, cancel).await
+    }
+
+    async fn await_location_claim(
+        &self,
+        claim: impl Future<Output = Result<LocationLease, String>>,
+        cancel: CancellationToken,
+    ) -> Result<LocationLease, RuntimeError> {
         tokio::pin!(claim);
         let result = tokio::select! {
             result = &mut claim => result,
@@ -68,7 +92,7 @@ impl Inner {
         if let Some(slot) = slot {
             lease = slot.empty();
         }
-        let unsettled = handle.location_uncertain.load(Ordering::SeqCst)
+        let unsettled = handle.has_location_uncertainty()
             || handle.state.lock().await.calls.values().any(|call| {
                 matches!(
                     call.status,
@@ -129,7 +153,7 @@ impl Inner {
                 }
             }).await
         }).await;
-        if !handle.location_uncertain.load(Ordering::SeqCst) {
+        if !handle.has_location_uncertainty() {
             scope.settle()?;
         }
         result

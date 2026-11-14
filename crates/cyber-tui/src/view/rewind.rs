@@ -47,12 +47,16 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 "Waiting for the owner server… Esc closes. Failed confirmations require fresh status and review.",
             ));
         }
+        Phase::Recovery => lines.extend(crate::recovery::lines(app)),
         Phase::Review => review(app, &mut lines),
         _ => choose(app, &mut lines),
     }
     if let Some(error) = &view.code_error {
         lines.push(Line::styled(
-            format!("Code unavailable/conflicting: {}", clean(error)),
+            format!(
+                "Code unavailable/conflicting: {} · C inspects retained recovery",
+                clean(error)
+            ),
             Style::default().fg(app.theme.warning),
         ));
     }
@@ -76,7 +80,7 @@ fn choose(app: &App, lines: &mut Vec<Line<'static>>) {
         view.target, view.action
     )));
     lines.push(Line::from(
-        "↑/↓ select · Enter preview · U undo · D redo · R reload · Esc close",
+        "↑/↓ select · Enter preview · U undo · D redo · C recovery · R reload · Esc close",
     ));
     if view.saved_draft(&app.session).is_some() {
         lines.push(Line::from("P copies the saved original text draft"));
@@ -170,5 +174,77 @@ fn review(app: &App, lines: &mut Vec<Line<'static>>) {
             clean(&effect.tool),
             effect.status
         )));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        app::{Action, App},
+        model::Session,
+        rewind::{Boundary, Command, Intent, Phase},
+    };
+    use cyber_server::runtime::{RevertTarget, RewindAction, RewindSelection};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    const CAP: &str = "Non-Git snapshot storage cap reached; conversation rewind remains available";
+
+    fn screen(app: &App) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(200, 30)).unwrap();
+        terminal
+            .draw(|frame| super::draw(frame, app, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_cap_refused_code_preview_shows_the_reason_and_the_conversation_only_hint() {
+        let mut app = App::new(
+            Session {
+                id: "ses_one".into(),
+                directory: "/project".into(),
+                ..Default::default()
+            },
+            vec![],
+            "cyber",
+        );
+        app.open_rewind(Intent::Menu);
+        app.rewind.boundaries = vec![Boundary {
+            id: "msg_first".into(),
+            text: "first prompt".into(),
+        }];
+        let selection = RewindSelection {
+            action: RewindAction::Commit,
+            message_id: "msg_first".into(),
+            target: RevertTarget::Code,
+            expected_directory: "/project".into(),
+        };
+        let mut actions = app.rewind_request(Command::Preview(selection));
+        let Some(Action::Rewind(request)) = actions.pop() else {
+            panic!("expected a rewind preview request");
+        };
+        assert!(actions.is_empty());
+        crate::rewind::apply(&mut app, &mut Default::default(), request, Err(CAP.into()));
+        assert_eq!(app.rewind.phase, Phase::Choose);
+        let text = screen(&app);
+        assert!(
+            text.contains(&format!("Code unavailable/conflicting: {CAP}")),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "Conversation-only rewind remains available when code snapshots are unavailable."
+            ),
+            "{text}"
+        );
+        assert!(text.contains("2 conversation"), "{text}");
     }
 }

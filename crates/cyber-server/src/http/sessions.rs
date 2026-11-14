@@ -79,7 +79,9 @@ pub struct SessionContext {
     pub epoch: Option<u32>,
     pub baseline: Option<String>,
     pub summary: Option<String>,
+    /// Task text is included only on explicit request.
     pub task: TaskState,
+    pub inspection: crate::runtime::ContextInspection,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -181,6 +183,8 @@ pub struct SubtaskBody {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct PromptBody {
     pub id: Option<String>,
+    /// Bind direct request attendance to an input-client lease; null client means unattended.
+    pub input_client: Option<crate::runtime::InputClient>,
     /// Text and media parts; at most 20 media parts.
     pub parts: Vec<PromptPart>,
     #[serde(default = "steer")]
@@ -359,6 +363,58 @@ pub fn routes() -> Router<AppState> {
         .route(&format!("{s}/rewind"), post(rewind))
         .route(&format!("{s}/rewind/preview"), post(rewind_preview))
         .route(&format!("{s}/rewind/recovery"), get(snapshot_recovery))
+        .route(
+            &format!("{s}/rewind/recovery/review"),
+            post(snapshot_recovery_review),
+        )
+        .route(
+            &format!("{s}/rewind/recovery/confirm"),
+            post(snapshot_recovery_confirm),
+        )
+        .route(
+            &format!("{s}/rewind/recovery/requests"),
+            get(snapshot_recovery_requests),
+        )
+        .route(
+            &format!("{s}/rewind/recovery/requests/{{request_id}}"),
+            get(snapshot_recovery_lookup),
+        )
+        .route(
+            &format!("{s}/rewind/recovery/requests/{{request_id}}/acknowledge"),
+            post(snapshot_recovery_acknowledge),
+        )
+        .route(
+            &format!("{s}/rewind/restores/{{activity_id}}"),
+            get(snapshot_restore_lookup),
+        )
+        .route(
+            &format!("{s}/rewind/restores/{{activity_id}}/acknowledge"),
+            post(snapshot_restore_acknowledge),
+        )
+        .route(
+            &format!("{s}/rewind/preparations"),
+            get(snapshot_preparations),
+        )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/receipt"),
+            get(snapshot_preparation_receipt),
+        )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/review"),
+            post(snapshot_preparation_review),
+        )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/confirm"),
+            post(snapshot_preparation_confirm),
+        )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/requests/{{request_id}}"),
+            get(snapshot_preparation_lookup),
+        )
+        .route(
+            &format!("{s}/rewind/preparations/{{activity_id}}/requests/{{request_id}}/acknowledge"),
+            post(snapshot_preparation_acknowledge),
+        )
         .route(&format!("{s}/rewind/confirm"), post(rewind_confirm))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
@@ -676,6 +732,7 @@ pub(crate) async fn submit_prompt(
     let inputs = prompt_parts::inputs(body.parts)?;
     let stored = state.runtime.store_prompt_parts(id, inputs).await?;
     let admission = Admission {
+        input_client: body.input_client,
         skill_command: None,
         template: None,
         message_id: body.id,
@@ -1135,18 +1192,45 @@ async fn release(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Debug, Deserialize)]
+struct ContextQuery {
+    #[serde(default)]
+    include_content: bool,
+}
+
 async fn context(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<ContextQuery>,
 ) -> Result<Json<Data<SessionContext>>> {
     let s = state.runtime.state(&id).await?;
-    let data = SessionContext {
-        epoch: s.epoch.as_ref().map(|e| e.number),
-        baseline: s.epoch.map(|e| e.baseline),
-        summary: s.compacted.map(|c| c.summary),
-        task: s.task,
+    let inspection = state.runtime.inspect_context(&s);
+    let epoch = s.epoch.as_ref().map(|e| e.number);
+    let (baseline, summary, task) = if query.include_content {
+        (
+            s.epoch.map(|e| e.baseline),
+            s.compacted.map(|c| c.summary),
+            s.task,
+        )
+    } else {
+        (
+            None,
+            None,
+            TaskState {
+                version: s.task.version,
+                ..TaskState::default()
+            },
+        )
     };
-    Ok(Json(Data { data }))
+    Ok(Json(Data {
+        data: SessionContext {
+            epoch,
+            baseline,
+            summary,
+            task,
+            inspection,
+        },
+    }))
 }
 
 async fn diff(
@@ -1212,6 +1296,190 @@ async fn snapshot_recovery(
 ) -> Result<Json<Data<Vec<crate::runtime::SnapshotRecovery>>>> {
     Ok(Json(Data {
         data: state.runtime.snapshot_recovery(&id).await?,
+    }))
+}
+async fn snapshot_recovery_review(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(selection): Json<crate::runtime::SnapshotRecoverySelection>,
+) -> Result<Json<Data<crate::runtime::SnapshotRecoveryReview>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_review(&id, &selection)
+            .await?,
+    }))
+}
+async fn snapshot_recovery_confirm(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(confirmation): Json<crate::runtime::SnapshotRecoveryConfirmation>,
+) -> Result<Json<Data<crate::runtime::SnapshotRecoveryResult>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_confirm(&id, &confirmation)
+            .await?,
+    }))
+}
+#[derive(Deserialize)]
+struct RecoveryRequestsQuery {
+    journal_id: String,
+}
+async fn snapshot_recovery_requests(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<RecoveryRequestsQuery>,
+) -> Result<Json<Data<Vec<crate::runtime::SnapshotRecoveryConfirmation>>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_requests(&id, &query.journal_id)
+            .await?,
+    }))
+}
+async fn snapshot_recovery_lookup(
+    State(state): State<AppState>,
+    Path((id, request_id)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotRecoveryResult>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_lookup(&id, &request_id)
+            .await?
+            .ok_or_else(|| {
+                ApiError::not_found(
+                    "RequestNotFoundError",
+                    "No retained snapshot recovery request",
+                )
+            })?,
+    }))
+}
+async fn snapshot_recovery_acknowledge(
+    State(state): State<AppState>,
+    Path((id, request_id)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotRecoveryResult>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_recovery_acknowledge(&id, &request_id)
+            .await?,
+    }))
+}
+async fn snapshot_restore_lookup(
+    State(state): State<AppState>,
+    Path((id, activity_id)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotRestoreReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_restore_lookup(&id, &activity_id)
+            .await?
+            .ok_or_else(|| {
+                ApiError::not_found(
+                    "RestoreNotFoundError",
+                    "No immutable committed restore receipt",
+                )
+            })?,
+    }))
+}
+async fn snapshot_restore_acknowledge(
+    State(state): State<AppState>,
+    Path((id, activity_id)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotRestoreReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_restore_acknowledge(&id, &activity_id)
+            .await?,
+    }))
+}
+#[derive(Default, Deserialize)]
+struct PreparationsQuery {
+    #[serde(default)]
+    include_cancelled: bool,
+}
+async fn snapshot_preparations(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<PreparationsQuery>,
+) -> Result<Json<Data<Vec<crate::runtime::SnapshotPreparation>>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparations_with_history(&id, query.include_cancelled)
+            .await?,
+    }))
+}
+/// A discovery response always contains `data`, including an explicit absent receipt.
+#[derive(Serialize, JsonSchema)]
+#[schemars(transform = preparation_receipt_required)]
+pub(super) struct PreparationReceiptData {
+    data: Option<crate::runtime::SnapshotPreparationReceipt>,
+}
+fn preparation_receipt_required(schema: &mut schemars::Schema) {
+    schema.insert("required".into(), serde_json::json!(["data"]));
+}
+async fn snapshot_preparation_receipt(
+    State(state): State<AppState>,
+    Path((id, activity)): Path<(String, String)>,
+) -> Result<Json<PreparationReceiptData>> {
+    Ok(Json(PreparationReceiptData {
+        data: state
+            .runtime
+            .snapshot_preparation_receipt(&id, &activity)
+            .await?,
+    }))
+}
+async fn snapshot_preparation_review(
+    State(state): State<AppState>,
+    Path((id, activity)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotPreparationReview>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparation_review(&id, &activity)
+            .await?,
+    }))
+}
+async fn snapshot_preparation_confirm(
+    State(state): State<AppState>,
+    Path((id, activity)): Path<(String, String)>,
+    Json(confirmation): Json<crate::runtime::SnapshotPreparationConfirmation>,
+) -> Result<Json<Data<crate::runtime::SnapshotPreparationReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparation_confirm(&id, &activity, &confirmation)
+            .await?,
+    }))
+}
+async fn snapshot_preparation_lookup(
+    State(state): State<AppState>,
+    Path((id, activity, request)): Path<(String, String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotPreparationReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparation_lookup(&id, &activity, &request)
+            .await?
+            .ok_or_else(|| {
+                ApiError::not_found(
+                    "PreparationRequestNotFoundError",
+                    "No retained preparation cancellation request",
+                )
+            })?,
+    }))
+}
+async fn snapshot_preparation_acknowledge(
+    State(state): State<AppState>,
+    Path((id, activity, request)): Path<(String, String, String)>,
+) -> Result<Json<Data<crate::runtime::SnapshotPreparationReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .snapshot_preparation_acknowledge(&id, &activity, &request)
+            .await?,
     }))
 }
 async fn rewind_preview(

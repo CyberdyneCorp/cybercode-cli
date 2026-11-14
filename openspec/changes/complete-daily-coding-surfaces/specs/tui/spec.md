@@ -28,3 +28,12 @@
 #### Scenario: Preserve unrelated files through repeated undo
 - **WHEN** several reviewed code stages are replayed and then cleared
 - **THEN** the original baseline and durable set of changed paths constrain clear, and unrelated owner files are not adopted into redo authority
+
+#### Scenario: Preparation cancellation discovery after reply loss
+- GIVEN an exact pre-effect snapshot preparation or its committed cancellation remains retained for the current Session creation
+- WHEN the owner opens preparation recovery from the rewind recovery panel
+- THEN the terminal SHALL discover an existing cancellation receipt before offering a new native-proof review
+- AND confirmation SHALL retain its stable request identity before admission and drop the consumed review
+- AND a lost reply SHALL permit lookup of that original request without replaying cancellation
+- AND native metadata reconciliation SHALL require an explicit action and preserve independent uncertainty
+- AND stale Session, Location or UI generation responses SHALL NOT change the draft, attachments or confirmation authority

@@ -68,6 +68,7 @@ const ALL: &[&str] = &[
     CHILD_INPUT_PAUSED,
     super::admission_authority::FENCED,
     super::activity::CHANGED,
+    super::snapshot_preparation::CANCELLED,
     super::child_ownership::CHANGED,
     super::subtree_stop::SETTLED,
     super::subtree_stop::STARTED,
@@ -81,6 +82,7 @@ const ALL: &[&str] = &[
     SKILL_FORWARDED,
     EPOCH_STARTED,
     CONTEXT_UPDATED,
+    super::context_sources::OBSERVED,
     super::deferred_tools::LOADED,
     SYSTEM_ADDED,
     SESSION_STARTED,
@@ -226,6 +228,8 @@ pub struct EpochStarted {
     pub epoch: u32,
     pub baseline: String,
     pub snapshot: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, super::context_sources::SourceMetadata>,
     pub provider: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_prefix: Option<String>,
@@ -264,6 +268,11 @@ pub struct SystemAdded {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepStarted {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_estimate: Option<super::context_inspection::PreparedContextEstimate>,
+    /// Complete active input cohort captured before this inference step.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_message_ids: Vec<String>,
     /// Agent identity pinned for inference and every tool group of this Turn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
@@ -363,6 +372,54 @@ pub struct ToolDispatched {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleOperation {
+    pub evidence: cyber_core::rules::FileEvidence,
+    pub epoch: u32,
+    pub location: String,
+    pub operation_key: String,
+    pub attempt: u32,
+}
+/// Shell tools can carry patch receipts only when the host intercepts the call.
+pub(super) fn is_patch_carrier(tool: &str) -> bool {
+    ["apply_patch", "bash", "powershell"]
+        .iter()
+        .any(|name| tool.eq_ignore_ascii_case(name))
+}
+
+impl RuleOperation {
+    pub fn matches(
+        &self,
+        binding: &super::instructions::RuleBinding,
+        epoch: u32,
+        tool: &str,
+        info: &super::model::SessionInfo,
+        call: &super::model::CallState,
+    ) -> bool {
+        call.status == super::model::CallStatus::Dispatched
+            && call.name.eq_ignore_ascii_case(tool)
+            && self.epoch == epoch
+            && self.location == info.directory
+            && self.attempt != 0
+            && self.attempt == call.attempt
+            && self.operation_key == format!("{}:{}", info.id, call.call_id)
+            && binding.native_root.as_deref() == Some(self.evidence.root_identity.as_str())
+            && self.evidence.root.to_str() == Some(binding.root.as_str())
+            && self.evidence.root.is_absolute()
+            && self.evidence.path.starts_with(&self.evidence.root)
+            && (is_patch_carrier(tool)
+                || matches!(
+                    self.evidence.target,
+                    cyber_core::rules::OperationTarget::File { .. }
+                ))
+            && (is_patch_carrier(tool)
+                || binding
+                    .operation_path
+                    .as_ref()
+                    .is_none_or(|path| path == &self.evidence.path))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSettled {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_activation: Option<cyber_core::skills::SkillActivation>,
@@ -371,6 +428,15 @@ pub struct ToolSettled {
     /// Canonical paths of nested instruction files attached to this result.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instruction_reminders: Vec<String>,
+    /// Approved rule definitions actually labelled in this successful result.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_reminders: Vec<super::instructions::RuleBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_read: Option<RuleOperation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_edit: Option<RuleOperation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_patch: Vec<RuleOperation>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -543,12 +609,19 @@ pub fn registry() -> EventRegistry {
         .register(super::auto_statistics::RESET)
         .expect("valid auto statistics reset event");
     registry
+        .register_with(
+            super::snapshot_preparation::CANCELLED,
+            super::snapshot_preparation::validate_event,
+        )
+        .expect("valid snapshot preparation cancellation receipt");
+    registry
         .register_with(MESSAGING_UPDATED, |data| {
             serde_json::from_value::<MessagingUpdated>(data.clone())
                 .map(drop)
                 .map_err(|e| e.to_string())
         })
         .expect("valid messaging override event");
+    super::snapshot_reclamation::register(&mut registry);
     registry
         .register_with(super::structured::SETTLED, |data| {
             serde_json::from_value::<super::StructuredOutcome>(data.clone())
@@ -563,6 +636,8 @@ pub fn registry() -> EventRegistry {
     super::file_observations::register(&mut registry);
     super::binary_effects::register(&mut registry);
     super::jobs::register(&mut registry);
+    super::input_interrupt::register(&mut registry);
+    super::input_clients::register(&mut registry);
     super::delegations::register(&mut registry);
     super::mcp::register(&mut registry);
     super::memory::register(&mut registry);
@@ -584,6 +659,7 @@ pub fn registry() -> EventRegistry {
 }
 
 fn project(tx: &Transaction<'_>, e: &StoredEvent) -> Result<(), String> {
+    super::snapshot_reclamation::project(tx, e)?;
     super::deferred_tools::validate_event(tx, e)?;
     super::admission_authority::project(tx, e)?;
     super::hooks::project(tx, e)?;

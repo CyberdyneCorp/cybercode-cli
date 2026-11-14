@@ -1,11 +1,31 @@
-//! Private BLAKE3 snapshots for exact non-Git Locations; no user repository required.
+//! Location-bound native recovery journals and private non-Git BLAKE3 snapshots.
+pub(crate) mod config_inputs;
+pub(crate) fn object_digest(bytes: &[u8]) -> String {
+    storage::digest(bytes)
+}
+mod collection;
+pub(crate) mod generated_rules;
+mod git;
+pub(crate) mod git_capture;
+mod git_images;
+pub(crate) mod git_rules;
+mod intent_slots;
+mod inventory;
+pub(crate) use collection::gc;
+mod links;
+#[cfg(test)]
+mod managed_tests;
+mod ownership;
+mod preparation;
+pub(crate) mod reclamation;
+mod resolution;
 mod restore;
 mod storage;
 mod tree;
 use cap_fs_ext::DirExt;
 use cap_std::fs::Dir;
 pub use cyber_server::runtime::SnapshotRecovery as Recovery;
-use cyber_server::runtime::{FileDiff, Snapshot};
+use cyber_server::runtime::{FileDiff, Snapshot, SnapshotRecoveryImageKind as ImageKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -23,12 +43,18 @@ pub(crate) struct Options {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
+    #[serde(default, skip_serializing_if = "is_regular")]
+    kind: ImageKind,
     object: String,
     length: u64,
     mode: u32,
     uid: u32,
     gid: u32,
 }
+fn is_regular(kind: &ImageKind) -> bool {
+    *kind == ImageKind::File
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Tree {
@@ -55,7 +81,9 @@ pub(crate) struct Store {
     root: PathBuf,
     root_id: String,
     data_path: PathBuf,
+    managed_source: Option<cyber_core::worktrees::Managed>,
     work: Dir,
+    namespace: Dir,
 
     objects: Dir,
     manifests: Dir,
@@ -64,11 +92,59 @@ pub(crate) struct Store {
     options: Options,
     usage: std::cell::Cell<Option<u64>>,
 }
+
+mod lifetime;
+
+pub(crate) struct WorkerGuard {
+    pub store: Store,
+    pub workspace: tokio::sync::OwnedMutexGuard<()>,
+    pub origin: Option<cyber_server::runtime::SnapshotOrigin>,
+    pub digest: Option<String>,
+    pub receipt: Option<cyber_server::runtime::SnapshotRecoveryReceipt>,
+}
+
+impl cyber_server::runtime::SnapshotNativeGuard for WorkerGuard {
+    fn intent_digest(&self) -> Option<&str> {
+        self.digest.as_deref()
+    }
+    fn verify(&self, origin: Option<&cyber_server::runtime::SnapshotOrigin>) -> Result<()> {
+        let _retained_workspace = &self.workspace;
+        if origin != self.origin.as_ref() {
+            return Err("Snapshot receipt belongs to another worker".into());
+        }
+        if self.store.worker_digest(origin)? != self.digest {
+            return Err("Snapshot immutable intent changed before consumption".into());
+        }
+        if let Some(receipt) = &self.receipt {
+            self.store.verify_receipt(origin, receipt)?;
+        }
+        self.store.verify_worker_origin(origin)
+    }
+    fn acknowledge(
+        &mut self,
+        origin: Option<&cyber_server::runtime::SnapshotOrigin>,
+    ) -> Result<()> {
+        self.verify(origin)?;
+        self.store.acknowledge_worker(origin)
+    }
+}
 impl Store {
     pub fn open(data: &Path, location: &str, options: Options) -> Result<Self> {
-        Self::open_mode(data, location, options, true)
+        Self::open_mode(data, location, options, true, true)
     }
     pub fn existing(data: &Path, location: &str, options: Options) -> Result<Option<Self>> {
+        Self::existing_mode(data, location, options, false)
+    }
+    pub fn recover_existing(data: &Path, location: &str, options: Options) -> Result<Self> {
+        Self::existing_mode(data, location, options, true)?
+            .ok_or("No retained file-copy namespace for this Location".into())
+    }
+    fn existing_mode(
+        data: &Path,
+        location: &str,
+        options: Options,
+        own: bool,
+    ) -> Result<Option<Self>> {
         if !data.exists() {
             return Ok(None);
         }
@@ -88,9 +164,15 @@ impl Store {
         if global.symlink_metadata(&key).is_err() {
             return Ok(None);
         }
-        Self::open_mode(data, location, options, false).map(Some)
+        Self::open_mode(data, location, options, false, own).map(Some)
     }
-    fn open_mode(data: &Path, location: &str, mut options: Options, create: bool) -> Result<Self> {
+    fn open_mode(
+        data: &Path,
+        location: &str,
+        mut options: Options,
+        create: bool,
+        own: bool,
+    ) -> Result<Self> {
         options.private_roots = options
             .private_roots
             .into_iter()
@@ -104,7 +186,8 @@ impl Store {
             std::fs::create_dir_all(data).map_err(fail)?;
         }
         let data_path = data.canonicalize().map_err(fail)?;
-        if root.starts_with(&data_path) {
+        let managed_source = crate::git::managed_data_source(&data_path, &root)?;
+        if root.starts_with(&data_path) && managed_source.is_none() {
             return Err("Private owner state cannot be a snapshot Location".into());
         }
         let work = Dir::open_ambient_dir(&root, cap_std::ambient_authority()).map_err(fail)?;
@@ -136,8 +219,8 @@ impl Store {
         let copy = child(&snapshot, "global", true)?;
         let key = storage::digest(format!("{}\0{}", root.display(), root_id).as_bytes());
         let dir = child(&copy, &key, true)?;
-        let lock = if create {
-            Some(storage::lock(&dir, true)?)
+        let lock = if own {
+            Some(storage::lock(&dir, create)?)
         } else {
             None
         };
@@ -148,7 +231,9 @@ impl Store {
             root,
             root_id,
             data_path,
+            managed_source,
             work,
+            namespace: dir,
             objects,
             manifests,
             journals,
@@ -158,6 +243,18 @@ impl Store {
         })
     }
     fn verify_root(&self) -> Result<()> {
+        if self.managed_source.is_some()
+            && crate::git::managed_data_source(&self.data_path, &self.root)? != self.managed_source
+        {
+            return Err("Managed snapshot Location registration changed".into());
+        }
+        if !std::fs::symlink_metadata(&self.root)
+            .map_err(fail)?
+            .file_type()
+            .is_dir()
+        {
+            return Err("Snapshot Location identity changed".into());
+        }
         let fresh =
             Dir::open_ambient_dir(&self.root, cap_std::ambient_authority()).map_err(fail)?;
         if storage::dir_identity(&fresh)? != self.root_id {
@@ -165,11 +262,38 @@ impl Store {
         }
         Ok(())
     }
+    fn private_data_path(&self, path: &Path) -> bool {
+        path.starts_with(&self.data_path)
+            && !self.managed_source.as_ref().is_some_and(|managed| {
+                path.starts_with(&managed.path)
+                    && !path.starts_with(self.data_path.join("snapshot"))
+            })
+    }
+    pub(super) fn lock_identity(&self) -> Result<String> {
+        storage::identity(
+            self._lock
+                .as_ref()
+                .ok_or("Snapshot mutation lock is not held")?,
+        )
+    }
+    pub(super) fn verify_lock_route(&self, expected: &str) -> Result<()> {
+        let current = storage::open(&self.namespace, Path::new("lock"))?;
+        storage::validate_lock(&current)?;
+        if storage::identity(&current)? != expected
+            || self
+                ._lock
+                .as_ref()
+                .is_some_and(|held| storage::identity(held).as_deref() != Ok(expected))
+        {
+            return Err("Snapshot private lock identity changed".into());
+        }
+        Ok(())
+    }
     fn usage(&self) -> Result<u64> {
         if let Some(size) = self.usage.get() {
             return Ok(size);
         }
-        let mut size = 0u64;
+        let mut size = self.namespace_metadata_size()?;
         for dir in [&self.objects, &self.manifests] {
             for name in storage::names(dir, 100_000)? {
                 size = size
@@ -186,17 +310,68 @@ impl Store {
         for name in storage::names(&self.journals, ENTRY_LIMIT)? {
             let journal = self.journals.open_dir_nofollow(&name).map_err(fail)?;
             for file in storage::names(&journal, ENTRY_LIMIT * 3)? {
+                if journal.symlink_metadata(&file).map_err(fail)?.is_dir() {
+                    let parent = journal.open_dir_nofollow(&file).map_err(fail)?;
+                    if !file.starts_with("parent_") || !storage::names(&parent, 1)?.is_empty() {
+                        return Err("Unexpected snapshot journal directory".into());
+                    }
+                    continue;
+                }
                 size = size
                     .checked_add(
-                        storage::open(&journal, Path::new(&file))?
-                            .metadata()
-                            .map_err(fail)?
-                            .len(),
+                        (if file.starts_with("stage_") {
+                            links::pin_image(&journal, std::ffi::OsStr::new(&file))?
+                        } else {
+                            storage::open(&journal, Path::new(&file))?
+                        })
+                        .metadata()
+                        .map_err(fail)?
+                        .len(),
                     )
                     .ok_or("Snapshot storage overflow")?;
             }
         }
+        match self.namespace.symlink_metadata("workers") {
+            Ok(_) => {
+                let workers = storage::existing_child(&self.namespace, "workers", true)?;
+                for name in storage::names(&workers, ENTRY_LIMIT)? {
+                    let file = storage::open(&workers, Path::new(&name))?;
+                    storage::validate_lock(&file)?;
+                    size = size
+                        .checked_add(file.metadata().map_err(fail)?.len())
+                        .ok_or("Snapshot storage overflow")?;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(fail(error)),
+        }
         self.usage.set(Some(size));
+        Ok(size)
+    }
+    fn namespace_metadata_size(&self) -> Result<u64> {
+        let mut size = 0u64;
+        for name in storage::names(&self.namespace, ENTRY_LIMIT)? {
+            let metadata = self.namespace.symlink_metadata(&name).map_err(fail)?;
+            if metadata.is_dir() {
+                if !matches!(
+                    name.as_str(),
+                    "files" | "manifests" | "journals" | "workers"
+                ) {
+                    return Err("Unexpected snapshot namespace directory".into());
+                }
+                continue;
+            }
+            // Include durable collection provenance and unpublished construction
+            // bytes. Unknown files stay retained; names never grant cleanup.
+            size = size
+                .checked_add(
+                    storage::open(&self.namespace, Path::new(&name))?
+                        .metadata()
+                        .map_err(fail)?
+                        .len(),
+                )
+                .ok_or("Snapshot storage overflow")?;
+        }
         Ok(size)
     }
     fn reserve(&self, size: u64) -> Result<()> {
@@ -232,6 +407,7 @@ impl Store {
             }
         }
         Ok(Entry {
+            kind: ImageKind::File,
             object,
             length: bytes.len() as u64,
             mode: 0o644,
@@ -287,6 +463,10 @@ impl Store {
             || tree.location != self.root
             || tree.root != self.root_id
             || tree.files.len() > ENTRY_LIMIT
+            || tree
+                .files
+                .values()
+                .any(|entry| entry.kind != ImageKind::File)
             || storage::digest(&serde_json::to_vec(&tree).map_err(fail)?) != digest
         {
             return Err("Snapshot belongs to a different Location or is corrupt".into());
@@ -377,110 +557,6 @@ fn changes(a: &Tree, b: &Tree) -> Vec<String> {
         .collect()
 }
 
-/// Prune only unreferenced, old manifests. Journals keep all their objects pinned;
-/// an unavailable durable-reference view never authorizes deletion.
-pub(crate) fn gc(
-    data: &Path,
-    config: &std::sync::Arc<crate::ConfigFn>,
-    protected: &BTreeSet<String>,
-) -> Result<()> {
-    if !data.exists() {
-        return Ok(());
-    }
-    let data = Dir::open_ambient_dir(data, cap_std::ambient_authority()).map_err(fail)?;
-    if data.symlink_metadata("snapshot").is_err() {
-        return Ok(());
-    }
-    let snapshot = storage::existing_child(&data, "snapshot", false)?;
-    if snapshot.symlink_metadata("global").is_err() {
-        return Ok(());
-    }
-    let root = storage::existing_child(&snapshot, "global", true)?;
-    for location in storage::names(&root, 100_000)? {
-        if !storage::valid_digest(&location) {
-            return Err("Invalid snapshot namespace".into());
-        }
-        let dir = storage::private_child(&root, &location)?;
-        let _lock = match storage::lock(&dir, false) {
-            Ok(lock) => lock,
-            Err(_) => continue,
-        };
-        gc_location(&dir, config, protected)?;
-    }
-    Ok(())
-}
-fn gc_location(
-    dir: &Dir,
-    config: &std::sync::Arc<crate::ConfigFn>,
-    protected: &BTreeSet<String>,
-) -> Result<()> {
-    let manifests = storage::private_child(dir, "manifests")?;
-    let journals = storage::private_child(dir, "journals")?;
-    // Until an owner resolves/acknowledges native evidence, no journal is evicted.
-    if !storage::names(&journals, ENTRY_LIMIT)?.is_empty() {
-        return Ok(());
-    }
-    let objects = storage::private_child(dir, "files")?;
-    let mut keep = BTreeSet::new();
-    for name in storage::names(&manifests, 100_000)? {
-        if temporary(&name) {
-            prune_temporary(&manifests, &name)?;
-            continue;
-        }
-        if !storage::valid_digest(&name) {
-            return Err("Unrecognized snapshot manifest".into());
-        }
-        let manifest: Manifest =
-            serde_json::from_slice(&storage::read(&manifests, &name, RECORD_LIMIT)?)
-                .map_err(fail)?;
-        if manifest.tree.version != 1
-            || storage::digest(&serde_json::to_vec(&manifest.tree).map_err(fail)?) != name
-        {
-            return Err("Corrupt snapshot manifest".into());
-        }
-        let days = config(&manifest.tree.location)
-            .pointer("/snapshots/retention_days")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(7);
-        let old = days != 0 && now().saturating_sub(manifest.accessed) > days.saturating_mul(86400);
-        if old && !protected.contains(&format!("copy:{name}")) {
-            manifests.remove_file(&name).map_err(fail)?;
-        } else {
-            keep.extend(
-                manifest
-                    .tree
-                    .files
-                    .values()
-                    .map(|entry| entry.object.clone()),
-            );
-        }
-    }
-    storage::sync(&manifests)?;
-    for name in storage::names(&objects, 100_000)? {
-        if temporary(&name) {
-            prune_temporary(&objects, &name)?;
-            continue;
-        }
-        if !storage::valid_digest(&name) {
-            continue;
-        }
-        if !keep.contains(&name) {
-            let metadata = storage::open(&objects, Path::new(&name))?
-                .metadata()
-                .map_err(fail)?;
-            let old = metadata
-                .modified()
-                .ok()
-                .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
-                .is_some_and(|age| age.as_secs() > 7 * 86400);
-            if old {
-                objects.remove_file(&name).map_err(fail)?;
-            }
-        }
-    }
-    storage::sync(&objects)
-}
-
 fn excluded(tree: &Tree, path: &str) -> bool {
     tree.skipped
         .iter()
@@ -500,24 +576,4 @@ impl Store {
         }
         Ok(skipped.into_iter().collect())
     }
-}
-
-fn temporary(name: &str) -> bool {
-    name.strip_prefix("tmp_")
-        .is_some_and(|id| id.len() == 26 && id.parse::<ulid::Ulid>().is_ok())
-}
-fn prune_temporary(dir: &Dir, name: &str) -> Result<()> {
-    let file = storage::open(dir, Path::new(name))?;
-    let old = file
-        .metadata()
-        .map_err(fail)?
-        .modified()
-        .ok()
-        .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
-        .is_some_and(|age| age.as_secs() > 7 * 86400);
-    if old {
-        dir.remove_file(name).map_err(fail)?;
-        storage::sync(dir)?;
-    }
-    Ok(())
 }

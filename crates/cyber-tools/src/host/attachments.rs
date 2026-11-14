@@ -53,7 +53,13 @@ impl BuiltinHost {
             .await
             .map_err(denied)?;
         let mut ctx = self
-            .call_ctx(&invocation, hook_decision, cancel, DenialHooks::default())
+            .call_ctx(
+                &invocation,
+                hook_decision,
+                cancel,
+                DenialHooks::default(),
+                Default::default(),
+            )
             .await
             .map_err(FileReadError::Denied)?;
         ctx.location = super::canonical(Path::new(&invocation.directory));

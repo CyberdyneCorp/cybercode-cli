@@ -28,6 +28,7 @@ pub mod project;
 pub mod prompts;
 pub mod redact;
 pub mod review;
+pub mod rules;
 pub mod skills;
 pub mod teams;
 pub mod trust;

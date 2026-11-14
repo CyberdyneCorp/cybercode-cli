@@ -29,22 +29,33 @@ enum Identity {
     Windows(crate::memory::windows::FileIdentity),
 }
 fn identity(file: &File, path: &Path) -> Result<Identity, DiscoveryError> {
+    observed_identity(file, path, false)
+}
+fn observed_identity(
+    file: &File,
+    path: &Path,
+    allow_file_links: bool,
+) -> Result<Identity, DiscoveryError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let m = file
             .metadata()
             .map_err(|_| error(path, "source identity is unavailable"))?;
-        if m.is_file() && m.nlink() != 1 {
+        if !allow_file_links && m.is_file() && m.nlink() != 1 {
             return Err(error(path, "hard-linked source file is unsupported"));
         }
         Ok(Identity::Unix(m.dev(), m.ino()))
     }
     #[cfg(windows)]
     {
-        crate::memory::windows::identity(file)
-            .map(Identity::Windows)
-            .map_err(|_| error(path, "source native identity or reparse check failed"))
+        (if allow_file_links {
+            crate::memory::windows::observation_identity(file)
+        } else {
+            crate::memory::windows::identity(file)
+        })
+        .map(Identity::Windows)
+        .map_err(|_| error(path, "source native identity or reparse check failed"))
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -73,6 +84,13 @@ struct FileState {
     modified: SystemTime,
 }
 fn state(file: &File, path: &Path) -> Result<FileState, DiscoveryError> {
+    observed_state(file, path, false)
+}
+fn observed_state(
+    file: &File,
+    path: &Path,
+    allow_file_links: bool,
+) -> Result<FileState, DiscoveryError> {
     let metadata = file
         .metadata()
         .map_err(|_| error(path, "source file metadata is unavailable"))?;
@@ -80,7 +98,7 @@ fn state(file: &File, path: &Path) -> Result<FileState, DiscoveryError> {
         return Err(error(path, "source is not a regular file"));
     }
     Ok(FileState {
-        identity: identity(file, path)?,
+        identity: observed_identity(file, path, allow_file_links)?,
         len: metadata.len(),
         modified: metadata
             .modified()
@@ -116,6 +134,224 @@ fn directory_chain(path: &Path) -> Result<(Vec<Dir>, Vec<Identity>), DiscoveryEr
     Ok((directories, bindings))
 }
 
+/// Native identities of every directory from the volume root to one physical
+/// directory. Capturing this reads metadata only, never directory contents.
+pub(crate) struct DirectorySnapshot {
+    path: PathBuf,
+    bindings: Vec<Identity>,
+    _retained: Option<Vec<Dir>>,
+}
+impl DirectorySnapshot {
+    pub(crate) fn capture(path: &Path) -> Result<Self, DiscoveryError> {
+        let (directories, bindings) = directory_chain(path)?;
+        let snapshot = Self::from_chain(path.into(), directories, bindings);
+        snapshot.verify()?;
+        Ok(snapshot)
+    }
+
+    fn from_chain(path: PathBuf, directories: Vec<Dir>, bindings: Vec<Identity>) -> Self {
+        // NTFS directory handles would freeze ordinary editor/worktree renames.
+        // Full Windows file IDs retain reuse protection without open handles.
+        #[cfg(windows)]
+        let retained = {
+            drop(directories);
+            None
+        };
+        #[cfg(not(windows))]
+        let retained = Some(directories);
+        Self {
+            path,
+            bindings,
+            _retained: retained,
+        }
+    }
+    pub(crate) fn verify(&self) -> Result<(), DiscoveryError> {
+        let (_, bindings) = directory_chain(&self.path)?;
+        if bindings != self.bindings {
+            return Err(error(&self.path, "source directory incarnation changed"));
+        }
+        Ok(())
+    }
+}
+
+fn fingerprint(identities: &[Identity]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"cyber-native-observation-v1\0");
+    for identity in identities {
+        match identity {
+            #[cfg(unix)]
+            Identity::Unix(device, inode) => {
+                hash.update([1]);
+                hash.update(device.to_le_bytes());
+                hash.update(inode.to_le_bytes());
+            }
+            #[cfg(windows)]
+            Identity::Windows(id) => {
+                hash.update([2]);
+                hash.update(id.volume.to_le_bytes());
+                hash.update(id.file);
+            }
+        }
+    }
+    format!("sha256:{:x}", hash.finalize())
+}
+impl DirectorySnapshot {
+    pub(crate) fn ancestor_identity(&self, ancestor: &Path) -> Option<String> {
+        let depth = self.path.strip_prefix(ancestor).ok()?.components().count();
+        Some(fingerprint(
+            &self.bindings[..self.bindings.len().checked_sub(depth)?],
+        ))
+    }
+}
+
+/// An actual read performed through the captured no-follow file handle. Unlike
+/// definition snapshots this preserves the read tool's existing file-size contract.
+pub(crate) struct ObservedFileHandle {
+    path: PathBuf,
+    opened: OpenSource,
+}
+pub(crate) struct FileHandleReceipt {
+    path: PathBuf,
+    bindings: Vec<Identity>,
+    state: FileState,
+    _retained: Option<OpenSource>,
+}
+impl ObservedFileHandle {
+    pub(crate) fn open(path: &Path) -> Result<Self, DiscoveryError> {
+        Ok(Self {
+            path: path.into(),
+            opened: OpenSource::open_observed(path, true)?,
+        })
+    }
+    pub(crate) fn read(mut self) -> std::io::Result<(Vec<u8>, FileHandleReceipt)> {
+        let mut bytes = Vec::new();
+        self.opened.file.read_to_end(&mut bytes)?;
+        Ok((bytes, self.receipt()))
+    }
+
+    pub(crate) fn after_write(self, file: &File) -> Result<FileHandleReceipt, DiscoveryError> {
+        if observed_identity(file, &self.path, true)? != self.opened.state.identity {
+            return Err(error(
+                &self.path,
+                "write handle differs from the authorized file",
+            ));
+        }
+        let receipt = self.receipt();
+        receipt.verify()?;
+        Ok(receipt)
+    }
+
+    fn receipt(self) -> FileHandleReceipt {
+        let bindings = self.opened.bindings.clone();
+        let state = self.opened.state.clone();
+        #[cfg(windows)]
+        let retained = {
+            drop(self.opened);
+            None
+        };
+        #[cfg(not(windows))]
+        let retained = Some(self.opened);
+        FileHandleReceipt {
+            path: self.path,
+            bindings,
+            state,
+            _retained: retained,
+        }
+    }
+}
+impl FileHandleReceipt {
+    pub(crate) fn verify(&self) -> Result<(), DiscoveryError> {
+        let current = OpenSource::open_observed(&self.path, true)?;
+        if current.bindings != self.bindings || current.state.identity != self.state.identity {
+            return Err(error(
+                &self.path,
+                "read target changed since the observed operation",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn identity(&self) -> String {
+        let mut identities = self.bindings.clone();
+        identities.push(self.state.identity.clone());
+        fingerprint(&identities)
+    }
+}
+
+/// A removal carried out relative to the pinned physical parent directory.
+pub(crate) struct ObservedRemoval {
+    path: PathBuf,
+    directories: Vec<Dir>,
+    bindings: Vec<Identity>,
+}
+
+pub(crate) struct RemovalReceipt {
+    parent: DirectorySnapshot,
+    path: PathBuf,
+}
+
+impl ObservedRemoval {
+    pub(crate) fn open(path: &Path) -> Result<Self, DiscoveryError> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| error(path, "removal has no parent"))?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| error(path, "removal has no filename"))?;
+        let (directories, bindings) = directory_chain(parent)?;
+        let metadata = directories
+            .last()
+            .unwrap()
+            .symlink_metadata(name)
+            .map_err(|_| error(path, "removal target is unavailable"))?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(error(path, "removal target is not a regular file"));
+        }
+        Ok(Self {
+            path: path.into(),
+            directories,
+            bindings,
+        })
+    }
+
+    pub(crate) fn remove(self) -> std::io::Result<RemovalReceipt> {
+        let (_, current) = directory_chain(self.path.parent().unwrap())
+            .map_err(|error| std::io::Error::other(error.reason))?;
+        if current != self.bindings {
+            return Err(std::io::Error::other("authorized removal parent changed"));
+        }
+        self.directories
+            .last()
+            .unwrap()
+            .remove_file(self.path.file_name().unwrap())?;
+        let parent = DirectorySnapshot::from_chain(
+            self.path.parent().unwrap().into(),
+            self.directories,
+            self.bindings,
+        );
+        Ok(RemovalReceipt {
+            parent,
+            path: self.path,
+        })
+    }
+}
+
+impl RemovalReceipt {
+    pub(crate) fn verify(&self) -> Result<(), DiscoveryError> {
+        self.parent.verify()?;
+        match std::fs::symlink_metadata(&self.path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => self.parent.verify(),
+            _ => Err(error(
+                &self.path,
+                "removed target no longer has a verified absence",
+            )),
+        }
+    }
+
+    pub(crate) fn parent_identity(&self) -> String {
+        fingerprint(&self.parent.bindings)
+    }
+}
+
 /// Internal read-time command discovery keeps every directory binding live during enumeration.
 pub(crate) fn command_directory(path: &Path) -> Result<Vec<Dir>, DiscoveryError> {
     directory_chain(path).map(|(directories, _)| directories)
@@ -127,6 +363,9 @@ pub(crate) fn verify_command_directory(dir: &Dir, path: &Path) -> Result<(), Dis
 
 impl OpenSource {
     fn open(path: &Path) -> Result<Self, DiscoveryError> {
+        Self::open_observed(path, false)
+    }
+    fn open_observed(path: &Path, allow_file_links: bool) -> Result<Self, DiscoveryError> {
         let name = path
             .file_name()
             .ok_or_else(|| error(path, "source file name is missing"))?;
@@ -152,7 +391,7 @@ impl OpenSource {
             .open_with(name, &options)
             .map_err(|_| error(path, "source file cannot be opened without links"))?
             .into_std();
-        let state = state(&file, path)?;
+        let state = observed_state(&file, path, allow_file_links)?;
         Ok(Self {
             _directories: directories,
             bindings,

@@ -76,6 +76,14 @@ pub enum SessionsCmd {
         #[arg(long, value_parser = super::rewind::fingerprint)]
         confirm: Option<String>,
     },
+    /// List retained restore journals, review keep/rollback, or confirm a reviewed recovery.
+    Recovery(super::recovery::RecoveryArgs),
+    /// Look up a retained recovery request; optionally reconcile its native acknowledgement.
+    RecoveryRequest(super::recovery::RequestArgs),
+    /// Review or cancel an exited snapshot preparation before source effects were admitted.
+    RecoveryPreparation(super::preparation_recovery::PreparationArgs),
+    /// Look up a committed preparation cancellation; optionally reconcile its native metadata.
+    RecoveryPreparationRequest(super::preparation_recovery::RequestArgs),
     /// Set or remove a branch label.
     Label {
         /// ID, exact title or unique ID prefix.
@@ -199,8 +207,32 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
             target,
             confirm,
         } => super::rewind::run(client, &session, &to, target, confirm, global).await,
+        recovery @ (SessionsCmd::Recovery(_)
+        | SessionsCmd::RecoveryRequest(_)
+        | SessionsCmd::RecoveryPreparation(_)
+        | SessionsCmd::RecoveryPreparationRequest(_)) => {
+            dispatch_recovery(client, recovery, global).await
+        }
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
         branch => dispatch_branch(client, branch, global).await,
+    }
+}
+
+async fn dispatch_recovery(
+    client: &Client,
+    command: SessionsCmd,
+    global: &GlobalArgs,
+) -> Result<(), CliError> {
+    match command {
+        SessionsCmd::Recovery(args) => super::recovery::run(client, args, global).await,
+        SessionsCmd::RecoveryRequest(args) => super::recovery::request(client, args, global).await,
+        SessionsCmd::RecoveryPreparation(args) => {
+            super::preparation_recovery::run(client, args, global).await
+        }
+        SessionsCmd::RecoveryPreparationRequest(args) => {
+            super::preparation_recovery::request(client, args, global).await
+        }
+        _ => unreachable!("only recovery commands are dispatched here"),
     }
 }
 
@@ -406,7 +438,7 @@ async fn import(
     Ok(())
 }
 
-async fn session_id(client: &Client, wanted: &str) -> Result<String, CliError> {
+pub(super) async fn session_id(client: &Client, wanted: &str) -> Result<String, CliError> {
     let found = resolve(client, wanted).await?;
     Ok(found["id"].as_str().unwrap_or_default().to_owned())
 }

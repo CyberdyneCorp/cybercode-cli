@@ -10,3 +10,105 @@
 #### Scenario: Inspection of an untrusted source
 - **WHEN** an owner inspects context while project sources are withheld by trust policy
 - **THEN** inspection reports their withheld state without loading their content or treating their estimated bytes as active context
+
+#### Scenario: Instruction file changed since it was read
+- **GIVEN** a source whose files were read at the last request boundary, with each file's size and modification time recorded from the handle it was read through
+- **WHEN** one of those files is edited or removed and an owner inspects context
+- **THEN** inspection marks that source as changed on disk and counts it, comparing only file metadata, without opening the file, starting inference or appending events
+- **AND** a source without recorded stamps for all of its listed files, or beyond the inspection's bounded check budget, reports the answer as unknown rather than unchanged
+- **AND** after the next request boundary reads the file again, the source is no longer marked changed
+
+#### Scenario: Next-request estimate states its assumptions
+- **GIVEN** a Session with a prepared request
+- **WHEN** an owner inspects context
+- **THEN** inspection estimates the next request as the stored projection plus the last prepared request's tool schemas
+- **AND** it lists each assumption that can make the estimate differ: tool schemas taken from the last request, a changed model, a pending Epoch rebuild, sources changed on disk, and excluded turn-only instructions
+- **AND** before any request is prepared the next-request estimate is absent rather than omitting tool schemas silently
+
+#### Scenario: Delivered rules with changed or revoked approval
+- **GIVEN** scoped rules delivered in the current Context Epoch
+- **WHEN** one rule's checkout approval is withdrawn and an owner inspects context
+- **THEN** inspection lists up to 128 delivered rules with definition path, root, digest prefix, approval generation and an approval state of current, changed, revoked or unknown, with a count of omitted rules
+- **AND** the state comes from the trust approval record and definition file metadata only, without reading definition bytes or returning rule bodies
+- **AND** a changed or revoked rule is counted and the next-request estimate states that the next Context Epoch will differ
+
+## MODIFIED Requirements
+
+### Requirement: Path-scoped rules and overrides
+(P1) The system SHALL load rule files from `.cyber/rules/*.md` and, unless `compat.claude` is false, `.claude/rules/*.md` in each config directory. A rule file without frontmatter `paths` SHALL join `core/instructions` in the baseline. A rule file with `paths: [globs]` (relative to its project root) SHALL be attached through the nested-instruction mechanism the first time per Context Epoch that a matching file is read, edited or patched, labelled with its path. An `AGENTS.override.md` in a directory SHALL take the `AGENTS.md` position and replace that directory's `AGENTS.md`, `CLAUDE.md` and `CYBER.md` instead of being appended; that directory's `CONTEXT.md` still loads. Each instruction or rule file, including `CYBER.md`, SHALL be truncated at `instruction_limits.max_file_bytes` (default 32768) with a notice, and `cyber doctor` SHALL warn about truncated files. The baseline instruction text as a whole, imports included, SHALL be bounded by `instruction_limits.max_total_bytes` (default 131072 bytes): the file that crosses the bound SHALL be cut with a notice, later files and imports SHALL be left out with a warning.
+
+#### Scenario: Migration rules only for migrations
+- **WHEN** `.cyber/rules/migrations.md` has `paths: ["db/migrations/**"]` and the model edits `db/migrations/0042.sql`
+- **THEN** the edit result includes the rule file in a `<system-reminder>` block, once for the epoch, and unrelated edits never load it
+
+#### Scenario: Override file replaces
+- **WHEN** `/repo/packages/api/` contains both `AGENTS.md` and `AGENTS.override.md`
+- **THEN** only `AGENTS.override.md` is loaded for that directory
+
+#### Scenario: Override file replaces CYBER.md
+- **WHEN** `/repo/packages/api/` contains `AGENTS.override.md`, `CYBER.md` and `CONTEXT.md`
+- **THEN** `AGENTS.override.md` and then `CONTEXT.md` are loaded for that directory, and `CYBER.md` is not
+
+#### Scenario: Oversized CYBER.md
+- **WHEN** `/repo/CYBER.md` is larger than `instruction_limits.max_file_bytes`
+- **THEN** its content is cut at that size with a truncation notice naming the file, and `cyber doctor` warns about it
+
+#### Scenario: Many imports
+- **WHEN** `/repo/CYBER.md` imports enough files to exceed the total instruction budget
+- **THEN** the baseline stops at the budget with a truncation notice, and a warning names each file left out
+
+#### Scenario: Complete instruction assembly is bounded
+- **WHEN** instruction files, imports, labels or omitted-file lists exceed the configured total
+- **THEN** the complete rendered instruction-file baseline (`core/instructions`) and each nested reminder SHALL fit their respective byte budgets, including labels, notices, separators and wrappers
+- **AND** only complete file labels actually delivered SHALL consume reminder identity; unlisted imports SHALL remain discoverable after their importer is labelled
+- **AND** a truncated import declaration SHALL NOT load the file named by its partial path
+
+#### Scenario: Rule review and byte identity
+- **WHEN** project rule files are discovered
+- **THEN** their exact bounded definition bytes SHALL enter the checkout trust inventory, and held or read-denied definitions SHALL NOT enter privileged model context
+- **AND** invalid frontmatter/globs SHALL NOT fall back to unscoped guidance
+- **WHEN** a definition changes and is reviewed again
+- **THEN** its new content/approval identity SHALL remain independently eligible for delivery
+
+#### Scenario: Compatible durable rule bindings
+- **WHEN** a successful matching read delivers a scoped rule
+- **THEN** its settlement SHALL retain typed project-root, definition-path, digest and approval-generation metadata separately from canonical instruction-file path markers
+- **AND** replay of historical settlements without rule bindings SHALL remain compatible
+- **AND** a reviewed definition from another checkout SHALL NOT supply rule context for the parent Session
+
+#### Scenario: Context changes while a successful read is settling
+- **GIVEN** a read started in one Location and Context Epoch
+- **WHEN** that Epoch becomes stale, is replaced or disappears, or the Session changes Location before reminder settlement
+- **THEN** the read result SHALL settle without delivering that operation's nested reminder into the new context
+- **AND** the suppressed reminder SHALL NOT consume once-per-Epoch delivery
+- **AND** nested discovery SHALL resolve current instruction settings after the successful operation instead of retaining pre-effect permission callbacks
+
+#### Scenario: Rule approval changes while a successful read is settling
+- **GIVEN** a successful read discovered a project rule under one checkout approval generation
+- **WHEN** that approval is revoked or re-reviewed, or the definition digest it authorizes changes, before the reminder settles
+- **THEN** the read result SHALL settle without delivering that operation's nested reminder
+- **AND** the suppressed rule SHALL NOT consume once-per-Epoch delivery, so a later matching read after re-approval SHALL deliver it once
+
+#### Scenario: Physical Location replacement during a read
+- **GIVEN** a file read started with a captured physical Location and project root
+- **WHEN** that Location or any native ancestor is replaced, removed or substituted with a link before nested discovery or settlement
+- **THEN** same-path replacement sources SHALL NOT supply reminders for the old operation
+- **AND** the operation result SHALL remain intact and its suppressed reminder SHALL NOT consume delivery in the active Epoch
+- **AND** a later operation captured against the replacement Location SHALL remain independently eligible
+
+#### Scenario: A hook rewrites the authorized read target
+- **GIVEN** a PreToolUse hook rewrites a read of a web file to an authorized database file
+- **WHEN** the built-in tool reads through its native file handle
+- **THEN** scoped rule matching SHALL use the actual physical database target
+- **AND** the settlement SHALL bind any delivered rule to that read's native root/file identities, Location, Context Epoch, operation key and dispatched attempt
+- **AND** a listing, denied operation or successful result without eligible native evidence SHALL NOT consume scoped rule delivery
+- **AND** replay SHALL NOT consume a new rule identity from a receipt mismatched to the dispatch, root, Location or Epoch
+
+
+#### Scenario: A patch fails after a completed file change
+- **GIVEN** a built-in patch, including one intercepted from a shell call, has several authorized file changes
+- **WHEN** the first change completes and a later precondition fails
+- **THEN** the patch SHALL retain its error status
+- **AND** rule discovery SHALL consider the verified completed effects under the shared reminder budget
+- **AND** files whose effects failed or never ran SHALL NOT supply or consume rule reminders
+- **AND** replay SHALL associate each delivered rule with a receipt for its actual operation target, Location, dispatched attempt and Context Epoch

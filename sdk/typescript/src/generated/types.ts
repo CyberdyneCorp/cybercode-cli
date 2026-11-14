@@ -741,6 +741,61 @@ export type Content2 = {
   truncated: boolean;
 };
 
+export type ContextInspection = {
+  /**
+   * Final assembly of the most recently prepared request, including schemas
+   * and turn instructions. Historical events may have no estimate.
+   */
+  last_prepared_request?: PreparedContextEstimate | null;
+  /** Latest recorded source observations, without source content. */
+  effective_sources: EffectiveContextSource[];
+  omitted_sources: number;
+  /** Sources in the stored projection, ordered by estimated size. */
+  sources: ContextSourceEstimate[];
+  /**
+   * Estimate of the epoch system text and projected messages. Tool schemas
+   * and instructions added only while assembling a turn are excluded.
+   */
+  estimated_input_tokens?: number | null;
+  window?: number | null;
+  estimated_input_utilization?: number | null;
+  /** Measured prompt tokens of the last finished request, when available. */
+  last_request_tokens?: number | null;
+  /** The next turn needs to rebuild the epoch. */
+  epoch_pending: boolean;
+  queued_inputs: number;
+  held_inputs: number;
+  delivered_rule_count: number;
+  /**
+   * Rules delivered in this Context Epoch, in delivery order, with their current
+   * approval. Definition bodies are never included or read.
+   */
+  delivered_rules: DeliveredRule[];
+  /**
+   * Delivered rules beyond the listing bound, or recorded without a binding by an
+   * older version.
+   */
+  omitted_delivered_rules: number;
+  /** Listed delivered rules whose approval is `changed` or `revoked`. */
+  changed_delivered_rules: number;
+  /** Listed sources with `changed_on_disk` true. */
+  changed_sources: number;
+  /**
+   * Up to 64 definitions that applied but were withheld (held by trust, refused by
+   * read policy, invalid, disabled compatibility, or past a discovery bound), as
+   * recorded at the last request boundary. Inspection does not open them, and their
+   * sizes count toward no estimate.
+   */
+  withheld_sources: WithheldContextSource[];
+  /** Withheld definitions beyond the listing bound. */
+  omitted_withheld_sources: number;
+  /**
+   * Expected input of the next ordinary request. Absent until a request has been
+   * prepared in this Session, because tool schemas are otherwise unknown.
+   */
+  next_request?: NextRequestEstimate | null;
+};
+
 export type ContextMeter = {
   /** Prompt tokens of the last request: input + cache read + cache write. */
   used_tokens: number;
@@ -760,6 +815,12 @@ export type ContextMeter = {
   measured: boolean;
   /** No step has finished since the last compaction. */
   compacted: boolean;
+};
+
+export type ContextSourceEstimate = {
+  id: string;
+  origin: string;
+  estimated_tokens: number;
 };
 
 export type Contribution = {
@@ -887,6 +948,10 @@ export type Data_Array_of_InboxRow = {
   data: InboxRow[];
 };
 
+export type Data_Array_of_InputJobState = {
+  data: InputJobState[];
+};
+
 export type Data_Array_of_IntegrationBatch = {
   data: IntegrationBatch[];
 };
@@ -907,8 +972,16 @@ export type Data_Array_of_RemoteReach = {
   data: RemoteReach[];
 };
 
+export type Data_Array_of_SnapshotPreparation = {
+  data: SnapshotPreparation[];
+};
+
 export type Data_Array_of_SnapshotRecovery = {
   data: SnapshotRecovery[];
+};
+
+export type Data_Array_of_SnapshotRecoveryConfirmation = {
+  data: SnapshotRecoveryConfirmation[];
 };
 
 export type Data_Array_of_Task = {
@@ -981,6 +1054,10 @@ export type Data_GoalFork = {
 
 export type Data_GoalsView = {
   data: GoalsView;
+};
+
+export type Data_InputInterruptReceipt = {
+  data: InputInterruptReceipt;
 };
 
 export type Data_IntegrationBatch = {
@@ -1111,6 +1188,26 @@ export type Data_SideAnswer = {
   data: SideAnswer;
 };
 
+export type Data_SnapshotPreparationReceipt = {
+  data: SnapshotPreparationReceipt;
+};
+
+export type Data_SnapshotPreparationReview = {
+  data: SnapshotPreparationReview;
+};
+
+export type Data_SnapshotRecoveryResult = {
+  data: SnapshotRecoveryResult;
+};
+
+export type Data_SnapshotRecoveryReview = {
+  data: SnapshotRecoveryReview;
+};
+
+export type Data_SnapshotRestoreReceipt = {
+  data: SnapshotRestoreReceipt;
+};
+
 export type Data_SubtreeReopenReport = {
   data: SubtreeReopenReport;
 };
@@ -1184,6 +1281,17 @@ export type DelegationPhase = "reserved" | "launching";
 
 export type DelegationStatus = "pending" | "cancelling" | "admitted" | "cancelled" | "failed" | "unknown";
 
+/** A rule definition delivered in the current Context Epoch, without its body. */
+export type DeliveredRule = {
+  path: string;
+  root: string;
+  /** The first 12 hex digits of the delivered definition's digest. */
+  digest_prefix: string;
+  /** The checkout approval generation that admitted it, or `owner-global`. */
+  generation: string;
+  approval: RuleApproval;
+};
+
 export type Delivery = "steer" | "queue" | "hold";
 
 /** One Workflow failure: a kind, a message and, for script errors, where it happened. */
@@ -1224,6 +1332,39 @@ export type EditGoal = {
 /** The tool shape the model edits files with. */
 export type EditTool = "freeform_patch" | "json_patch" | "edit";
 
+export type EffectiveContextSource = {
+  id: string;
+  origin: string;
+  status: SourceStatus;
+  pending_update?: boolean;
+  estimated_tokens?: number | null;
+  file_paths: string[];
+  omitted_file_paths: number;
+  /**
+   * Stamps of the listed files taken while they were read. Historical records and
+   * sources that are not read from files have none.
+   */
+  file_stamps?: {
+    [key: string]: FileStamp;
+  };
+  /**
+   * Definitions that applied but were left out at the request boundary, recorded
+   * without opening them further. Inspection reports them as `withheld_sources`.
+   */
+  withheld?: WithheldSource[];
+  /** Withheld definitions beyond the recorded bound. */
+  omitted_withheld?: number;
+  /**
+   * Whether a file this source was read from has changed size or modification time,
+   * or disappeared, since it was read. The change takes effect at the next request
+   * boundary. `null` when the source has no recorded stamps (it is not read from
+   * files, or was recorded by an older version), when some of its files have no
+   * stamp, or when the inspection's check budget is spent. Files added since the read
+   * are not detected.
+   */
+  changed_on_disk?: boolean | null;
+};
+
 /** What happens to a derived effort the model does not list. */
 export type EffortClamp = "nearest_lower" | "fail";
 
@@ -1244,6 +1385,9 @@ export type ErrorBody = {
   service?: string | null;
   [key: string]: unknown;
 };
+
+/** Why a next-request estimate can differ from the request actually sent. */
+export type EstimateAssumption = "tool_schemas_from_last_request" | "model_changed" | "epoch_rebuild_pending" | "sources_changed_on_disk" | "excludes_turn_instructions" | "delivered_rules_changed";
 
 /** `session.goal.evaluated.1`. */
 export type Evaluated = {
@@ -1372,6 +1516,16 @@ export type FileListing = {
 
 export type FileSearch = {
   results: FileHit[];
+};
+
+/**
+ * Size and modification time of a file when it was read. Inspection compares them with
+ * the file's current metadata to report an edit without reading the file again.
+ */
+export type FileStamp = {
+  bytes: number;
+  /** Nanoseconds since the Unix epoch; absent where the platform reports none. */
+  modified_ns?: number | null;
 };
 
 export type FinishReason = "stop" | "tool_calls" | "length" | "content_filter" | {
@@ -2297,6 +2451,64 @@ export type Inflight = {
   started_ms: number;
 };
 
+export type InputClient = {
+  /** A live input-client lease, or null to explicitly request unattended input. */
+  client_id?: string | null;
+};
+
+export type InputInterrupt = {
+  request_id: string;
+  input_message_ids: string[];
+};
+
+export type InputInterruptProblem = "mixed_drain" | "mixed_job" | "unknown_drain" | "drain_timeout" | "descendant_job" | "missing_job_control" | "job_timeout" | "unowned_activity" | "reconciliation_required" | "cleanup_failed";
+
+/** Bounded control evidence. No tool payload, output, or native acknowledgement. */
+export type InputInterruptReceipt = {
+  request_id: string;
+  input_message_ids: string[];
+  generation: string;
+  status: InputInterruptStatus;
+  /** Exact durable receipt revision, populated from the committed event on lookup. */
+  session_seq?: number | null;
+  drain_selected: boolean;
+  /** Original queued/held inputs refused at admission; excludes Job notices. */
+  refused: number;
+  jobs_cancelled: number;
+  problems: InputInterruptProblem[];
+};
+
+export type InputInterruptStatus = "requested" | "acknowledged" | "unknown";
+
+export type InputJobQuery = {
+  session_id: string;
+  input_message_ids: string[];
+};
+
+/**
+ * One small Job record per supplied input; no logs/results/history. Handback
+ * admission is separate from the parent Turn processing that queued input.
+ */
+export type InputJobState = {
+  /** Session revision observed in the same Store snapshot as the Job state. */
+  session_seq: number;
+  message_id: string;
+  running: boolean;
+  /**
+   * An ended Job has not yet admitted its completion notice. False does not
+   * establish that the parent has processed an already admitted handback.
+   */
+  awaiting_handback: boolean;
+  /** An admitted completion notice still has unfinished parent model/tool work. */
+  handback_pending: boolean;
+  /**
+   * Latest admitted notice of these Jobs; the input's answer boundary must
+   * follow this revision before its result can retire.
+   */
+  handback_seq?: number | null;
+  oldest_unnotified_ms?: number | null;
+};
+
 export type InputStatus = "pending" | "held" | "promoted" | "refused";
 
 /** What the shares are shares of. */
@@ -2415,6 +2627,7 @@ export type IterationRecord = {
 export type Job = {
   id: string;
   session_id: string;
+  input_origin?: JobInputOrigin | null;
   /** The child Session of a `subagent` Job; empty for process Jobs. */
   child_id: string;
   name: string;
@@ -2435,6 +2648,15 @@ export type Job = {
   unpriced?: boolean;
   tokens: number;
   notified: boolean;
+};
+
+/** Immutable input provenance from the dispatched parent call. */
+export type JobInputOrigin = {
+  message_id: string;
+  call_id: string;
+  attempt: number;
+  operation_key: string;
+  input_message_ids: string[];
 };
 
 /** The end of a process Job's log (`background-tasks` → Tasks view: open output). */
@@ -3381,6 +3603,16 @@ export type NetworkCapability = {
 };
 
 /**
+ * The stored projection plus the tool schemas of the last prepared request: what the
+ * next ordinary request is expected to send, with every assumption listed.
+ */
+export type NextRequestEstimate = {
+  estimated_input_tokens: number;
+  estimated_input_utilization?: number | null;
+  assumptions: EstimateAssumption[];
+};
+
+/**
  * The effective settings a notice's consequence depends on: the Location's
  * `permissions.untrusted_content` `taint` and `bypass`, which the server reports on a
  * Session so clients state the consequence that applies.
@@ -3625,6 +3857,21 @@ export type PendingRequest = {
   session_id: string;
   call_id: string;
   message_id: string;
+  /**
+   * Complete input cohort driving this exact recorded step/call. Empty means
+   * unknown; clients must not infer ownership from current Session state.
+   */
+  input_message_ids?: string[];
+  /**
+   * Root Session of a descendant (subagent) request whose every ancestor link is a
+   * background subagent Job with one complete, bounded input cohort.
+   */
+  root_session_id?: string | null;
+  /**
+   * That root link's immutable input cohort; scoped attendance uses it instead of
+   * the asker's own inputs. Empty means not a proven descendant.
+   */
+  root_input_message_ids?: string[];
   origin?: RequestOrigin | null;
   routed_to?: RequestRoute[];
 } & ((PermissionAsk & {
@@ -3693,6 +3940,23 @@ export type PrDescriptionRequest = {
   base?: string | null;
 };
 
+/** A discovery response always contains `data`, including an explicit absent receipt. */
+export type PreparationReceiptData = {
+  data: SnapshotPreparationReceipt | null;
+};
+
+/** The complete input estimate captured from a final assembled provider request. */
+export type PreparedContextEstimate = {
+  step_id: string;
+  epoch: number;
+  provider: string;
+  model: string;
+  window?: number | null;
+  estimated_input_tokens: number;
+  estimated_input_utilization?: number | null;
+  sources: ContextSourceEstimate[];
+};
+
 /** Product telemetry is not implemented and always off. */
 export type ProductTelemetry = {
   enabled: boolean;
@@ -3705,6 +3969,8 @@ export type ProjectInfo = {
 
 export type PromptBody = {
   id?: string | null;
+  /** Bind direct request attendance to an input-client lease; null client means unattended. */
+  input_client?: InputClient | null;
   /** Text and media parts; at most 20 media parts. */
   parts: PromptPart[];
   delivery?: Delivery;
@@ -4091,6 +4357,9 @@ export type RewindSelection = {
 
 export type Role = "lead" | "teammate";
 
+/** Whether a delivered rule is still the definition its current approval admits. */
+export type RuleApproval = "current" | "changed" | "revoked" | "unknown";
+
 /** Usage of one Workflow agent: its child Session with descendants. */
 export type RunAgentUsage = {
   /** `agt_` ID. */
@@ -4435,7 +4704,9 @@ export type SessionContext = {
   epoch?: number | null;
   baseline?: string | null;
   summary?: string | null;
+  /** Task text is included only on explicit request. */
   task: TaskState;
+  inspection: ContextInspection;
 };
 
 /** One exported Session. */
@@ -4725,6 +4996,77 @@ export type SkillInfo = {
 /** The scope a skill was discovered in. */
 export type SkillOrigin = "builtin" | "user" | "project" | "config" | "plugin";
 
+export type SnapshotBinding = {
+  directory: string;
+  root_identity: string;
+  namespace_identity: string;
+  journal_id: string;
+  journal_identity: string;
+  /** Exact private lock inode. Legacy origins do not acquire this proof retroactively. */
+  lock_identity?: string | null;
+};
+
+export type SnapshotLifetimeBinding = {
+  version: number;
+  owner: SnapshotLifetimeRequest;
+  root_identity: string;
+  namespace_identity: string;
+  directory_identity: string;
+  file_identity: string;
+  source_phase?: string | null;
+};
+
+export type SnapshotLifetimeRequest = {
+  activity_id: string;
+  session_id: string;
+  session_created_id: string;
+  directory: string;
+  worktree_id?: string | null;
+};
+
+export type SnapshotOrigin = {
+  version: number;
+  session_id: string;
+  session_created_id: string;
+  activity_id: string;
+  worktree_id?: string | null;
+  binding: SnapshotBinding;
+};
+
+export type SnapshotPreparation = {
+  activity_id: string;
+  status: string;
+  lifetime_available: boolean;
+};
+
+export type SnapshotPreparationConfirmation = {
+  confirmation: string;
+  request_id: string;
+};
+
+export type SnapshotPreparationReceipt = {
+  activity_id: string;
+  request_id: string;
+  confirmation: string;
+  lifetime: SnapshotLifetimeBinding;
+  native_sequence: number;
+  session_sequence: number;
+  origin?: SnapshotOrigin | null;
+  source_admitted?: boolean | null;
+  checkout_resources_digest?: string | null;
+};
+
+export type SnapshotPreparationReview = {
+  activity_id: string;
+  lifetime: SnapshotLifetimeBinding;
+  native_sequence: number;
+  session_sequence: number;
+  confirmation: string;
+  warning: string;
+  origin?: SnapshotOrigin | null;
+  checkout_resources_digest?: string | null;
+};
+
 /** Retained filesystem evidence; completion does not acknowledge a Session/native receipt. */
 export type SnapshotRecovery = {
   id: string;
@@ -4733,6 +5075,122 @@ export type SnapshotRecovery = {
   paths: string[];
   /** Durably observed file checkpoints; absence does not prove that no effect occurred. */
   applied: string[];
+};
+
+export type SnapshotRecoveryAction = "keep" | "rollback";
+
+export type SnapshotRecoveryCheckout = {
+  version: number;
+  resolution_origin: SnapshotOrigin;
+  /** None preserves missing legacy proof, rather than claiming an empty set. */
+  original?: SnapshotRestoreCheckout | null;
+  resolution: SnapshotRestoreCheckout;
+};
+
+export type SnapshotRecoveryConfirmation = {
+  journal_id: string;
+  action: SnapshotRecoveryAction;
+  confirmation: string;
+  request_id: string;
+};
+
+export type SnapshotRecoveryImage = {
+  kind?: SnapshotRecoveryImageKind;
+  hash: string;
+  bytes: number;
+  mode: number;
+  uid: number;
+  gid: number;
+  /** Expected images and proposed copies need not identify a live inode. */
+  native_identity?: string | null;
+};
+
+export type SnapshotRecoveryImageKind = "file" | "symlink";
+
+export type SnapshotRecoveryPath = {
+  path: string;
+  /** `applied`, `unapplied`, or `foreign`; foreign files are never rollback targets. */
+  state: string;
+  current?: SnapshotRecoveryImage | null;
+  recorded_before?: SnapshotRecoveryImage | null;
+  recorded_after?: SnapshotRecoveryImage | null;
+  /** Current private slot: staged target or displaced preimage, without inventing ownership. */
+  retained?: SnapshotRecoveryImage | null;
+  proposed?: SnapshotRecoveryImage | null;
+  changes: boolean;
+};
+
+export type SnapshotRecoveryReceipt = {
+  journal_id: string;
+  resolution_id: string;
+  request_id: string;
+  action: SnapshotRecoveryAction;
+  confirmation: string;
+  original: SnapshotOrigin;
+  filesystem_complete: boolean;
+  /**
+   * Immutable native resolution data, excluding acknowledgement/progress.
+   * Missing on older receipts; those cannot authorize new journal writes.
+   */
+  resolution_digest?: string | null;
+  /** Runtime-attested original and resolution resources; absent on legacy receipts. */
+  checkout?: SnapshotRecoveryCheckout | null;
+};
+
+export type SnapshotRecoveryResult = {
+  request: SnapshotRecoveryConfirmation;
+  original: SnapshotOrigin;
+  resolution?: SnapshotOrigin | null;
+  state: SnapshotRecoveryState;
+  receipt?: SnapshotRecoveryReceipt | null;
+  /**
+   * Lookup does not inspect native files. None means journal acknowledgement
+   * has not been observed by this response, even if runtime settlement is durable.
+   */
+  journal_acknowledged?: boolean | null;
+};
+
+export type SnapshotRecoveryReview = {
+  journal_id: string;
+  action: SnapshotRecoveryAction;
+  origin?: SnapshotOrigin | null;
+  filesystem_complete: boolean;
+  acknowledged: boolean;
+  /** Absent when conflicts or unavailable historical evidence prohibit confirmation. */
+  confirmation?: string | null;
+  paths: SnapshotRecoveryPath[];
+  /** None means historical exclusions were not retained; not an empty exclusion set. */
+  exclusions?: string[] | null;
+  /** Recorded created parents remain protected until acknowledged safe cleanup. */
+  recorded_created_parents?: string[] | null;
+  conflicts: string[];
+};
+
+export type SnapshotRecoverySelection = {
+  journal_id: string;
+  action: SnapshotRecoveryAction;
+};
+
+export type SnapshotRecoveryState = "pending" | "unknown" | "acknowledged" | "resolved_by_another_request" | "cancelled_before_origin" | "cancelled_before_effects";
+
+export type SnapshotRestoreCheckout = {
+  version: number;
+  lifetime: SnapshotLifetimeBinding;
+  resources_digest: string;
+};
+
+/**
+ * Exact native intent and Session batch consumed by an ordinary restore.
+ * This is durable acknowledgement evidence, never authority to replay files.
+ */
+export type SnapshotRestoreReceipt = {
+  origin: SnapshotOrigin;
+  intent_digest: string;
+  session_before: number;
+  session_after: number;
+  events_digest: string;
+  /** Missing on historical receipts; absence never authorizes checkout acknowledgement. */
+  checkout?: SnapshotRestoreCheckout | null;
 };
 
 export type SolveCandidateEvidence = {
@@ -4772,6 +5230,8 @@ export type Source = {
 };
 
 export type Source2 = "live" | "draft";
+
+export type SourceStatus = "active" | "absent" | "retained_unavailable" | "unavailable" | "unknown";
 
 /** A user statement with its source, kept outside generated prose. */
 export type Sourced = {
@@ -5391,6 +5851,26 @@ export type WatchStatus = "active" | "fired" | "expired";
  * (rate limits, a 5-hour plan window) are `daily`, longer ones `weekly`.
  */
 export type WindowPeriod = "daily" | "weekly";
+
+/**
+ * A definition withheld from a source at the last request boundary, without its
+ * content or size.
+ */
+export type WithheldContextSource = {
+  /** The context source it would have contributed to. */
+  source: string;
+  path: string;
+  reason: WithheldReason;
+};
+
+/** Why a definition that applies to the Location was left out of context. */
+export type WithheldReason = "trust_held" | "read_denied" | "invalid_frontmatter" | "compat_disabled" | "bound_exceeded";
+
+/** A definition left out of context, without its content or size. */
+export type WithheldSource = {
+  path: string;
+  reason: WithheldReason;
+};
 
 /** One `agent()` call (`workflow.agent.started.1`, then `workflow.agent.settled.1`). */
 export type WorkflowAgent = {

@@ -1149,6 +1149,60 @@ impl ToolHost for BuiltinHost {
         ))
     }
 
+    fn instruction_limits(
+        &self,
+        directory: &str,
+    ) -> Result<cyber_core::config::InstructionLimits, String> {
+        let (config, _) = (self.opts.config)(Path::new(directory))?;
+        cyber_core::config::InstructionLimits::from_config(&config)
+    }
+
+    fn instruction_rule_gate(
+        &self,
+        directory: &str,
+    ) -> Option<cyber_server::runtime::instructions::RuleGate> {
+        use cyber_server::runtime::instructions::{RuleAuthorization, RuleGate};
+        let resolve = self.hook_config.get()?.resolve.clone();
+        let root = cyber_core::config::project_root(Path::new(directory))
+            .canonicalize()
+            .ok()?;
+        // A discovery may contain many files in one config directory. Resolve its
+        // trust inventory once for this observation, never reuse it across calls.
+        let cache = Mutex::new(BTreeMap::<
+            PathBuf,
+            Result<cyber_core::config::TrustReport, String>,
+        >::new());
+        Some(RuleGate::new(move |path, directory| {
+            if !directory.starts_with(&root) || !path.starts_with(&root) {
+                return Ok(None);
+            }
+            let mut cache = cache
+                .lock()
+                .map_err(|_| "rule trust cache unavailable".to_owned())?;
+            let report = cache
+                .entry(directory.into())
+                .or_insert_with(|| resolve(directory).map(|config| config.trust));
+            let report = report.as_ref().map_err(Clone::clone)?;
+            if report.checkout_root != root {
+                return Ok(None);
+            }
+            Ok(RuleAuthorization::from_report(report, path))
+        }))
+    }
+
+    fn rule_approval(&self, root: &Path, generation: &str) -> cyber_server::runtime::RuleApproval {
+        use cyber_server::runtime::RuleApproval;
+        let Some(config) = self.hook_config.get() else {
+            return RuleApproval::Unknown;
+        };
+        match config.trust.approval(root) {
+            Ok(None) => RuleApproval::Revoked,
+            Ok(Some(approval)) if approval.digest == generation => RuleApproval::Current,
+            Ok(Some(_)) => RuleApproval::Changed,
+            Err(_) => RuleApproval::Unknown,
+        }
+    }
+
     fn finalize_skill_output(
         &self,
         directory: &str,
@@ -1379,6 +1433,34 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.claim_binary_worktree_location(info, document, cancel))
     }
 
+    fn claim_snapshot_location<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        activity: &'a str,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        Box::pin(self.claim_snapshot_worktree_location(info, activity, cancel))
+    }
+
+    fn claim_snapshot_location_bound<'a>(
+        &'a self,
+        info: &'a cyber_server::runtime::SessionInfo,
+        activity: &'a str,
+        lifetime: Option<&'a cyber_server::runtime::SnapshotLifetimeBinding>,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'a, Result<cyber_server::runtime::LocationLease, String>> {
+        Box::pin(self.claim_snapshot_worktree_location_bound(info, activity, lifetime, cancel))
+    }
+
+    fn reacquire_snapshot_location(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        lifetime: &cyber_server::runtime::SnapshotLifetimeBinding,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        self.reacquire_snapshot_worktree_location(info, lifetime, bindings)
+    }
+
     fn prepare_child_continuation<'a>(
         &'a self,
         parent: &'a cyber_server::runtime::SessionInfo,
@@ -1545,89 +1627,23 @@ impl ToolHost for BuiltinHost {
     }
 
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
+        self.execute_inner(inv, cancel, Default::default())
+    }
+
+    fn execute_observed(
+        &self,
+        inv: Invocation,
+        cancel: CancellationToken,
+    ) -> BoxFuture<'_, cyber_server::runtime::ObservedExecution> {
         Box::pin(async move {
-            if inv.name.starts_with("mcp__") {
-                return match self.browser_binding(&inv) {
-                    Some(binding) => self.execute_browser(inv, binding, cancel).await,
-                    None => self.execute_mcp(inv, cancel).await,
-                };
+            let read_receipt = FileReceiptSlot::default();
+            let outcome = self.execute_inner(inv, cancel, read_receipt.clone()).await;
+            let files =
+                std::mem::take(&mut *read_receipt.lock().unwrap_or_else(PoisonError::into_inner));
+            cyber_server::runtime::ObservedExecution {
+                outcome,
+                files: Some(files),
             }
-            let mut inv = inv;
-            if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
-                return ToolOutcome::Failed(error.to_string());
-            }
-            let Some(tool) = self.tools.iter().find(|t| t.def().spec.name == inv.name) else {
-                if let Some(offered) = self.plugin_tool(&inv) {
-                    return self.execute_plugin(inv, offered, cancel).await;
-                }
-                return ToolOutcome::Failed(format!("Unknown tool: {}", inv.name));
-            };
-            if let Err(error) = self.check_skill_tool(&inv).await {
-                return ToolOutcome::Failed(error);
-            }
-            if let Err(error) = self.check_agent_tool(&inv) {
-                return ToolOutcome::Failed(error);
-            }
-            if inv.name == "computer" && !crate::tools::computer::valid_input(&inv.input) {
-                return ToolOutcome::Failed("Invalid native computer action".into());
-            }
-            if let Err(message) = crate::schema::validate(&tool.def().spec.input_schema, &inv.input)
-            {
-                return ToolOutcome::Failed(if inv.name == "computer" {
-                    "Invalid native computer action".into()
-                } else {
-                    message
-                });
-            }
-            let hook_decision = match self
-                .pre_tool_hooks(&mut inv, &tool.def().spec.input_schema, cancel.clone())
-                .await
-            {
-                Ok(allowed) => allowed,
-                Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
-                Err(ToolError::Aborted) => return ToolOutcome::Aborted,
-            };
-            let started = std::time::Instant::now();
-            let ctx = match self
-                .call_ctx(&inv, hook_decision, cancel.clone(), DenialHooks::armed())
-                .await
-            {
-                Ok(ctx) => ctx,
-                Err(error) => return ToolOutcome::Failed(error),
-            };
-            let outcome = self.run_builtin(tool.as_ref(), &ctx).await;
-            if ctx.inv.name == "computer" {
-                return self.settle_call(&ctx, outcome, started).await;
-            }
-            let Some(input) = ctx.denial.take_retry(&outcome) else {
-                return self.settle_call(&ctx, outcome, started).await;
-            };
-            // A PermissionDenied retry is re-validated and re-evaluated exactly once;
-            // its denial is final. Changed input passes PreToolUse again first.
-            let schema = &tool.def().spec.input_schema;
-            let retried = self
-                .retried_invocation(&inv, schema, input, hook_decision, cancel.clone())
-                .await;
-            let (retried, decision) = match retried {
-                Ok(retried) => retried,
-                Err(ToolError::Failed(error)) => {
-                    return self
-                        .settle_call(&ctx, ToolOutcome::Failed(error), started)
-                        .await;
-                }
-                Err(ToolError::Aborted) => {
-                    return self.settle_call(&ctx, ToolOutcome::Aborted, started).await;
-                }
-            };
-            let ctx = match self
-                .call_ctx(&retried, decision, cancel, DenialHooks::default())
-                .await
-            {
-                Ok(ctx) => ctx,
-                Err(error) => return ToolOutcome::Failed(error),
-            };
-            let outcome = self.run_builtin(tool.as_ref(), &ctx).await;
-            self.settle_call(&ctx, outcome, started).await
         })
     }
 
@@ -1736,6 +1752,7 @@ impl ToolHost for BuiltinHost {
             self.check_agent_tool(&inv)?;
             let ctx = Ctx {
                 skill_paths: Default::default(),
+                read_receipt: Default::default(),
                 loaded_skill: Default::default(),
                 provenance: Default::default(),
                 compiler_feedback: Default::default(),
@@ -1873,6 +1890,7 @@ impl BuiltinHost {
     ) -> Result<Ctx<'a>, String> {
         Ok(Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -1964,12 +1982,20 @@ impl BuiltinHost {
         hook_decision: Option<HookAction>,
         cancel: CancellationToken,
         denial: DenialHooks,
+        read_receipt: FileReceiptSlot,
     ) -> Result<Ctx<'a>, String> {
         let policy = self.policy(inv).await?;
         if let Some(reason) = policy.skill_tool_denial(&inv.name) {
             return Err(reason);
         }
+        // A hook retry owns a fresh attempt's observation; never carry a prior
+        // read into a directory listing or an uninstrumented retried execution.
+        read_receipt
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
         Ok(Ctx {
+            read_receipt,
             skill_paths: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
@@ -2056,7 +2082,10 @@ impl BuiltinHost {
 }
 
 /// Everything a tool needs for one call.
+pub(crate) type FileReceiptSlot = Arc<Mutex<Vec<Arc<cyber_core::rules::FileReceipt>>>>;
+
 pub(crate) struct Ctx<'a> {
+    pub read_receipt: FileReceiptSlot,
     pub skill_paths: Mutex<Vec<PathBuf>>,
     pub loaded_skill: Mutex<Option<skills::SkillActivation>>,
     /// Set by a tool whose result comes from outside the workspace; the projection
@@ -2884,3 +2913,109 @@ impl BuiltinHost {
 }
 
 mod workflow_verify;
+
+impl BuiltinHost {
+    fn execute_inner(
+        &self,
+        inv: Invocation,
+        cancel: CancellationToken,
+        read_receipt: FileReceiptSlot,
+    ) -> BoxFuture<'_, ToolOutcome> {
+        Box::pin(async move {
+            if inv.name.starts_with("mcp__") {
+                return match self.browser_binding(&inv) {
+                    Some(binding) => self.execute_browser(inv, binding, cancel).await,
+                    None => self.execute_mcp(inv, cancel).await,
+                };
+            }
+            let mut inv = inv;
+            if let Err(error) = inv.asker.validate_auto_override(&inv.name, &inv.input) {
+                return ToolOutcome::Failed(error.to_string());
+            }
+            let Some(tool) = self.tools.iter().find(|t| t.def().spec.name == inv.name) else {
+                if let Some(offered) = self.plugin_tool(&inv) {
+                    return self.execute_plugin(inv, offered, cancel).await;
+                }
+                return ToolOutcome::Failed(format!("Unknown tool: {}", inv.name));
+            };
+            if let Err(error) = self.check_skill_tool(&inv).await {
+                return ToolOutcome::Failed(error);
+            }
+            if let Err(error) = self.check_agent_tool(&inv) {
+                return ToolOutcome::Failed(error);
+            }
+            if inv.name == "computer" && !crate::tools::computer::valid_input(&inv.input) {
+                return ToolOutcome::Failed("Invalid native computer action".into());
+            }
+            if let Err(message) = crate::schema::validate(&tool.def().spec.input_schema, &inv.input)
+            {
+                return ToolOutcome::Failed(if inv.name == "computer" {
+                    "Invalid native computer action".into()
+                } else {
+                    message
+                });
+            }
+            let hook_decision = match self
+                .pre_tool_hooks(&mut inv, &tool.def().spec.input_schema, cancel.clone())
+                .await
+            {
+                Ok(allowed) => allowed,
+                Err(ToolError::Failed(error)) => return ToolOutcome::Failed(error),
+                Err(ToolError::Aborted) => return ToolOutcome::Aborted,
+            };
+            let started = std::time::Instant::now();
+            let ctx = match self
+                .call_ctx(
+                    &inv,
+                    hook_decision,
+                    cancel.clone(),
+                    DenialHooks::armed(),
+                    read_receipt.clone(),
+                )
+                .await
+            {
+                Ok(ctx) => ctx,
+                Err(error) => return ToolOutcome::Failed(error),
+            };
+            let outcome = self.run_builtin(tool.as_ref(), &ctx).await;
+            if ctx.inv.name == "computer" {
+                return self.settle_call(&ctx, outcome, started).await;
+            }
+            let Some(input) = ctx.denial.take_retry(&outcome) else {
+                return self.settle_call(&ctx, outcome, started).await;
+            };
+            // A PermissionDenied retry is re-validated and re-evaluated exactly once;
+            // its denial is final. Changed input passes PreToolUse again first.
+            let schema = &tool.def().spec.input_schema;
+            let retried = self
+                .retried_invocation(&inv, schema, input, hook_decision, cancel.clone())
+                .await;
+            let (retried, decision) = match retried {
+                Ok(retried) => retried,
+                Err(ToolError::Failed(error)) => {
+                    return self
+                        .settle_call(&ctx, ToolOutcome::Failed(error), started)
+                        .await;
+                }
+                Err(ToolError::Aborted) => {
+                    return self.settle_call(&ctx, ToolOutcome::Aborted, started).await;
+                }
+            };
+            let ctx = match self
+                .call_ctx(
+                    &retried,
+                    decision,
+                    cancel,
+                    DenialHooks::default(),
+                    read_receipt.clone(),
+                )
+                .await
+            {
+                Ok(ctx) => ctx,
+                Err(error) => return ToolOutcome::Failed(error),
+            };
+            let outcome = self.run_builtin(tool.as_ref(), &ctx).await;
+            self.settle_call(&ctx, outcome, started).await
+        })
+    }
+}

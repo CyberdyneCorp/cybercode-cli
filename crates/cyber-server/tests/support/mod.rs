@@ -187,6 +187,7 @@ pub enum Behavior {
 }
 
 pub struct Tools {
+    pub instruction_limits: Mutex<Result<cyber_core::config::InstructionLimits, String>>,
     pub inference: Mutex<AgentInference>,
     pub required_failure: Mutex<Option<String>>,
     pub defs: Mutex<Vec<ToolDef>>,
@@ -220,6 +221,9 @@ pub struct Tools {
     pub goal_settings: Mutex<cyber_core::goals::GoalSettings>,
     /// The `usage_limit` settings of every Location.
     pub usage_limit: Mutex<cyber_core::usage_limit::UsageLimitSettings>,
+    /// Trust-inventory answer for each delivered rule's approval generation; unknown
+    /// when absent.
+    pub rule_approvals: Mutex<HashMap<String, cyber_server::runtime::RuleApproval>>,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -252,6 +256,7 @@ impl Tools {
             ("write".to_string(), Behavior::Return("written".into())),
         ]);
         Arc::new(Self {
+            instruction_limits: Mutex::new(Ok(Default::default())),
             inference: Mutex::new(AgentInference::default()),
             required_failure: Mutex::new(None),
             defs: Mutex::new(defs),
@@ -273,6 +278,7 @@ impl Tools {
             goal_check_exits: Mutex::default(),
             goal_settings: Mutex::default(),
             usage_limit: Mutex::default(),
+            rule_approvals: Mutex::default(),
         })
     }
 
@@ -299,6 +305,26 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn rule_approval(
+        &self,
+        _root: &std::path::Path,
+        generation: &str,
+    ) -> cyber_server::runtime::RuleApproval {
+        self.rule_approvals
+            .lock()
+            .unwrap()
+            .get(generation)
+            .copied()
+            .unwrap_or(cyber_server::runtime::RuleApproval::Unknown)
+    }
+
+    fn instruction_limits(
+        &self,
+        _directory: &str,
+    ) -> Result<cyber_core::config::InstructionLimits, String> {
+        self.instruction_limits.lock().unwrap().clone()
+    }
+
     fn redact_model_text(
         &self,
         _directory: &str,

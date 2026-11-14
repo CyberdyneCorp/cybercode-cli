@@ -12,6 +12,7 @@ use support::*;
 #[derive(Default)]
 struct Images {
     fail: AtomicBool,
+    owned: AtomicBool,
     supported: AtomicBool,
     restored: AtomicUsize,
     gate_diff: AtomicBool,
@@ -19,6 +20,38 @@ struct Images {
     release: tokio::sync::Notify,
 }
 impl Snapshots for Images {
+    fn owned_restore_available(&self, _: &str) -> bool {
+        self.owned.load(Ordering::SeqCst)
+    }
+    fn restore_owned(
+        &self,
+        request: SnapshotRestoreRequest,
+        worker: SnapshotWorker,
+    ) -> BoxFuture<'_, Result<SnapshotCompletion, RestoreError>> {
+        Box::pin(async move {
+            self.restored.fetch_add(1, Ordering::SeqCst);
+            let fail_ack = self.fail.load(Ordering::SeqCst);
+            worker
+                .run(move |work| {
+                    let origin = work
+                        .begin(SnapshotBinding {
+                            directory: std::fs::canonicalize(request.directory).unwrap(),
+                            root_identity: "instrumented_root".into(),
+                            namespace_identity: "instrumented_namespace".into(),
+                            journal_id: "restore_instrumented".into(),
+                            journal_identity: "instrumented_journal".into(),
+                            lock_identity: Some("instrumented_lock".into()),
+                        })
+                        .map_err(RestoreError::Failed)?;
+                    work.effect(|| Ok(())).map_err(RestoreError::Failed)?;
+                    Ok(SnapshotNativeResult::new(
+                        vec![],
+                        Box::new(JournalAck { origin, fail_ack }),
+                    ))
+                })
+                .await
+        })
+    }
     fn track(&self, _: &str) -> BoxFuture<'_, Result<Option<Snapshot>, String>> {
         Box::pin(async {
             Ok(Some(Snapshot {
@@ -81,6 +114,27 @@ impl Snapshots for Images {
         })
     }
 }
+struct JournalAck {
+    origin: SnapshotOrigin,
+    fail_ack: bool,
+}
+impl SnapshotNativeGuard for JournalAck {
+    fn verify(&self, origin: Option<&SnapshotOrigin>) -> Result<(), String> {
+        if origin == Some(&self.origin) {
+            Ok(())
+        } else {
+            Err("foreign origin".into())
+        }
+    }
+    fn acknowledge(&mut self, origin: Option<&SnapshotOrigin>) -> Result<(), String> {
+        self.verify(origin)?;
+        if self.fail_ack {
+            Err("injected journal flush failure".into())
+        } else {
+            Ok(())
+        }
+    }
+}
 fn runtime_with_images(h: &Harness, images: Arc<Images>) -> Runtime {
     Runtime::new(RuntimeOptions {
         store: h.store.clone(),
@@ -128,6 +182,59 @@ fn harness() -> Harness {
         scripts: vec![("test/main", vec![text("one"), text("two")])],
         ..Default::default()
     })
+}
+
+#[tokio::test]
+async fn journal_ack_failure_preserves_committed_rewind_without_fabricating_unknown_native_effects()
+{
+    let h = harness();
+    let images = Arc::new(Images::default());
+    images.supported.store(true, Ordering::SeqCst);
+    images.owned.store(true, Ordering::SeqCst);
+    images.fail.store(true, Ordering::SeqCst);
+    let runtime = runtime_with_images(&h, images.clone());
+    let (id, selection) = seed(&h, &runtime).await;
+    let before = runtime.state(&id).await.unwrap();
+    let preview = runtime.rewind_preview(&id, &selection).await.unwrap();
+    let confirmation = RewindConfirmation {
+        selection,
+        confirmation: preview.confirmation,
+    };
+    let error = runtime
+        .rewind_confirm(&id, &confirmation)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("runtime acknowledgement committed"),
+        "{error}"
+    );
+    let after = runtime.state(&id).await.unwrap();
+    assert!(after.last_seq > before.last_seq);
+    assert!(after.entries.is_empty());
+    let source = id.clone();
+    let status: String = h.store.read(move |db| {
+        Ok(db.query_row("SELECT json_extract(data,'$.status') FROM event WHERE type='native.activity.changed.1' AND json_extract(data,'$.session_id')=?1 AND json_extract(data,'$.snapshot_worker')=1 ORDER BY rowid DESC LIMIT 1", [source], |row| row.get(0))?)
+    }).unwrap();
+    assert_eq!(status, "settled");
+    assert!(runtime.rewind_confirm(&id, &confirmation).await.is_err());
+    assert_eq!(images.restored.load(Ordering::SeqCst), 1);
+    runtime
+        .admit(
+            &id,
+            Admission::text("held after durable native acknowledgement", Delivery::Hold),
+        )
+        .await
+        .unwrap();
+    runtime.shutdown().await;
+    let restarted = runtime_with_images(&h, images.clone());
+    restarted
+        .admit(&id, Admission::text("held after reload", Delivery::Hold))
+        .await
+        .unwrap();
+    assert_eq!(images.restored.load(Ordering::SeqCst), 1);
+    restarted.shutdown().await;
 }
 
 #[tokio::test]

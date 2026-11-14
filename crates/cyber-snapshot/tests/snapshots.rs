@@ -32,6 +32,48 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 impl Repo {
+    #[cfg(unix)]
+    fn shadow_directory(&self) -> PathBuf {
+        std::fs::read_dir(self.data.join("snapshot"))
+            .unwrap()
+            .flat_map(|entry| std::fs::read_dir(entry.unwrap().path()).unwrap())
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.join("HEAD").exists())
+            .unwrap()
+    }
+    #[cfg(unix)]
+    fn shadow_object(&self, revision: &str) -> PathBuf {
+        let shadow = self.shadow_directory();
+        // v3 tags peel to a retention envelope. Corrupt the canonical graph
+        // when the fixture names an ordinary snapshot path.
+        let canonical;
+        let revision = if let Some((snapshot, path)) = revision.split_once(':') {
+            let tag = Command::new("git")
+                .arg("--git-dir")
+                .arg(&shadow)
+                .args(["cat-file", "tag", snapshot])
+                .output()
+                .unwrap();
+            assert!(tag.status.success());
+            let tag = String::from_utf8(tag.stdout).unwrap();
+            let (_, body) = tag.split_once("\n\n").unwrap();
+            let record: serde_json::Value = serde_json::from_str(body).unwrap();
+            canonical = format!("{}:{path}", record["tree"].as_str().unwrap());
+            canonical.as_str()
+        } else {
+            revision
+        };
+        let output = Command::new("git")
+            .arg("--git-dir")
+            .arg(&shadow)
+            .args(["rev-parse", revision])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let id = String::from_utf8(output.stdout).unwrap();
+        let id = id.trim();
+        shadow.join("objects").join(&id[..2]).join(&id[2..])
+    }
     fn new() -> Self {
         let tmp = tempfile::tempdir().unwrap();
         let base = std::fs::canonicalize(tmp.path()).unwrap();
@@ -491,4 +533,185 @@ async fn ignored_build_directories_use_one_bounded_exclusion_prefix() {
         .unwrap();
     assert_eq!(evidence.len(), 1);
     assert!(evidence[0].ends_with(": target/"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn git_restore_materializes_literal_unusual_paths_without_touching_the_user_index() {
+    let r = Repo::new();
+    let names = ["[ab].txt", "a.txt", "b.txt", ":(glob)*", "tab\tline\nfile"];
+    for (index, name) in names.iter().enumerate() {
+        std::fs::write(r.root.join(name), format!("before {index}\n")).unwrap();
+    }
+    let index = std::fs::read(r.root.join(".git/index")).unwrap();
+    let target = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    for (item, name) in names.iter().enumerate() {
+        std::fs::write(r.root.join(name), format!("after {item}\n")).unwrap();
+    }
+    let recorded = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    r.snaps
+        .restore_reviewed(
+            &r.dir(),
+            &target.tree,
+            &recorded.tree,
+            &recorded.tree,
+            Arc::new(|| Ok(())),
+        )
+        .await
+        .unwrap();
+    for (item, name) in names.iter().enumerate() {
+        assert_eq!(
+            std::fs::read_to_string(r.root.join(name)).unwrap(),
+            format!("before {item}\n")
+        );
+    }
+    assert_eq!(std::fs::read(r.root.join(".git/index")).unwrap(), index);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn corrupt_git_snapshot_blob_refuses_restore_and_preserves_current_source() {
+    use std::os::unix::fs::PermissionsExt;
+    let r = Repo::new();
+    std::fs::write(r.root.join("a.txt"), "unique original snapshot image").unwrap();
+    let target = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    std::fs::write(r.root.join("a.txt"), "replacement snapshot image").unwrap();
+    let recorded = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+    let object = |snapshot: &str| r.shadow_object(&format!("{snapshot}:a.txt"));
+    let original = object(&target.tree);
+    let replacement = std::fs::read(object(&recorded.tree)).unwrap();
+    std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::write(&original, replacement).unwrap();
+    let index = std::fs::read(r.root.join(".git/index")).unwrap();
+    assert!(
+        r.snaps
+            .restore_reviewed(
+                &r.dir(),
+                &target.tree,
+                &recorded.tree,
+                &recorded.tree,
+                Arc::new(|| Ok(()))
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read_to_string(r.root.join("a.txt")).unwrap(),
+        "replacement snapshot image"
+    );
+    assert_eq!(std::fs::read(r.root.join(".git/index")).unwrap(), index);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn corrupt_git_tag_root_and_nested_tree_cannot_turn_restore_into_a_silent_noop() {
+    use std::os::unix::fs::PermissionsExt;
+    for suffix in ["", "^{tree}", ":nested"] {
+        let r = Repo::new();
+        std::fs::create_dir(r.root.join("nested")).unwrap();
+        std::fs::write(r.root.join("nested/file"), "before graph image").unwrap();
+        let target = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+        std::fs::write(r.root.join("nested/file"), "after graph image").unwrap();
+        let recorded = r.snaps.track(&r.dir()).await.unwrap().unwrap();
+        let original = r.shadow_object(&format!("{}{suffix}", target.tree));
+        let replacement =
+            std::fs::read(r.shadow_object(&format!("{}{suffix}", recorded.tree))).unwrap();
+        std::fs::set_permissions(&original, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::write(original, replacement).unwrap();
+        let index = std::fs::read(r.root.join(".git/index")).unwrap();
+        assert!(
+            r.snaps
+                .restore_reviewed(
+                    &r.dir(),
+                    &target.tree,
+                    &recorded.tree,
+                    &recorded.tree,
+                    Arc::new(|| Ok(()))
+                )
+                .await
+                .is_err(),
+            "{suffix}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(r.root.join("nested/file")).unwrap(),
+            "after graph image"
+        );
+        assert_eq!(std::fs::read(r.root.join(".git/index")).unwrap(), index);
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn git_location_paths_are_literal_and_preserve_backslashes_without_leaking_sibling_files() {
+    let r = Repo::new();
+    for scope in ["[ab]", "back\\slash", "a", "b"] {
+        std::fs::create_dir(r.root.join(scope)).unwrap();
+        std::fs::write(r.root.join(scope).join("file"), "before scoped image").unwrap();
+    }
+    let index = std::fs::read(r.root.join(".git/index")).unwrap();
+    for scope in ["[ab]", "back\\slash"] {
+        let location = r.root.join(scope).to_str().unwrap().to_owned();
+        let target = r.snaps.track(&location).await.unwrap().unwrap();
+        std::fs::write(r.root.join(scope).join("file"), "after scoped image").unwrap();
+        std::fs::write(r.root.join("a/file"), "later sibling owner").unwrap();
+        std::fs::write(r.root.join("b/file"), "later sibling owner").unwrap();
+        let recorded = r.snaps.track(&location).await.unwrap().unwrap();
+        assert_eq!(
+            r.snaps
+                .changed(&location, &target.tree, &recorded.tree)
+                .await
+                .unwrap(),
+            [format!("{scope}/file")]
+        );
+        r.snaps
+            .restore_reviewed(
+                &location,
+                &target.tree,
+                &recorded.tree,
+                &recorded.tree,
+                Arc::new(|| Ok(())),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(r.root.join(scope).join("file")).unwrap(),
+            "before scoped image"
+        );
+        assert_eq!(
+            std::fs::read_to_string(r.root.join("a/file")).unwrap(),
+            "later sibling owner"
+        );
+        assert_eq!(
+            std::fs::read_to_string(r.root.join("b/file")).unwrap(),
+            "later sibling owner"
+        );
+    }
+    assert_eq!(std::fs::read(r.root.join(".git/index")).unwrap(), index);
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "subprocess fixture invoked by pathspec environment test"]
+fn snapshot_pathspec_environment_child() {
+    git_location_paths_are_literal_and_preserve_backslashes_without_leaking_sibling_files();
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_capture_does_not_inherit_glob_pathspec_environment() {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "snapshot_pathspec_environment_child",
+            "--ignored",
+        ])
+        .env("GIT_GLOB_PATHSPECS", "1")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

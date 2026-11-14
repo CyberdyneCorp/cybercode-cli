@@ -34,6 +34,8 @@ impl Tool for Read {
 
     fn run<'a>(&'a self, ctx: &'a Ctx<'a>) -> BoxFuture<'a, Result<String, ToolError>> {
         Box::pin(async move {
+            let declared = ctx.resolve(text(&ctx.inv.input, "path"));
+            let authorized = declared.canonicalize().ok();
             let path = readable(ctx).await?;
             // A managed overflow file is re-read in its original result's frame.
             ctx.frame_overflow_reads(&path);
@@ -48,9 +50,24 @@ impl Tool for Read {
                 .lsp
                 .get()
                 .and_then(|_| crate::lsp::read_origin(&ctx.location, &path).ok());
-            let bytes = tokio::fs::read(&path)
-                .await
-                .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?;
+            let reader = authorized
+                .as_deref()
+                .and_then(|target| observed_reader(ctx, &path, target));
+            let (bytes, receipt) = match reader {
+                Some(reader) => {
+                    let (bytes, receipt) = tokio::task::spawn_blocking(move || reader.read())
+                        .await
+                        .map_err(|_| failed("Observed file read failed"))?
+                        .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?;
+                    (bytes, Some(receipt))
+                }
+                None => (
+                    tokio::fs::read(&path)
+                        .await
+                        .map_err(|e| failed(format!("Could not read {}: {e}", path.display())))?,
+                    None,
+                ),
+            };
             if let Some(kind) = media_kind(&path) {
                 return Err(failed(format!(
                     "{kind} files are returned as media from a later milestone; this build reads text only"
@@ -58,6 +75,9 @@ impl Tool for Read {
             }
             if is_binary(&bytes) {
                 return Err(failed("Binary file: application/octet-stream"));
+            }
+            if let Some(receipt) = receipt {
+                record_file_receipt(ctx, receipt);
             }
             ctx.host.mark_read(&ctx.inv.session_id, &path);
             ctx.note_skill_path(&path);
@@ -84,6 +104,37 @@ impl Tool for Read {
             ))
         })
     }
+}
+
+/// An alias may have a different policy resource from the physical target.
+/// An authorization of the spelling alone cannot attest a denied or unreviewed
+/// canonical target. Withhold the receipt without changing the read contract.
+fn observed_reader(
+    ctx: &Ctx<'_>,
+    path: &Path,
+    authorized: &Path,
+) -> Option<cyber_core::rules::ObservedFile> {
+    let location = ctx.location.canonicalize().ok()?;
+    let physical_resource = authorized.strip_prefix(&location).map_or_else(
+        |_| ctx.resource(authorized),
+        |relative| ctx.resource(&ctx.location.join(relative)),
+    );
+    if physical_resource != ctx.resource(path) {
+        let request = Request {
+            tool: Some("read".into()),
+            action: "read".into(),
+            resources: vec![physical_resource],
+            read_only: true,
+            ..Request::default()
+        };
+        if ctx.policy.decide(&request) != crate::permissions::Decision::Allow
+            || ctx.policy.taint_holds(&request)
+            || ctx.policy.forces_classifier(&request)
+        {
+            return None;
+        }
+    }
+    cyber_core::rules::ObservedFile::open(&ctx.location, path, authorized).ok()
 }
 
 /// A page of the file redacted as a whole first, so a secret that the page boundary
@@ -373,6 +424,10 @@ pub(crate) async fn guarded_write(
         &String::from_utf8_lossy(after),
     )?;
     ctx.check_external_writes(&[path.to_path_buf()]).await?;
+    // Capture the physical spelling before permission can suspend the call.
+    let authorized = (ctx.inv.name == "edit")
+        .then(|| path.canonicalize().ok())
+        .flatten();
     authorize_edit(ctx, path, diff).await?;
     let origin = super::intelligence::capture(ctx, path);
     let workspace = cyber_server::workspace::mutation_lock(&ctx.location)
@@ -391,7 +446,7 @@ pub(crate) async fn guarded_write(
             .await
             .map_err(|e| failed(format!("Could not create {}: {e}", parent.display())))?;
     }
-    tokio::fs::write(path, after)
+    write_observed(ctx, path, after, authorized.as_deref(), false)
         .await
         .map_err(|e| failed(format!("Could not write {}: {e}", path.display())))?;
     ctx.host.mark_read(&ctx.inv.session_id, path);
@@ -399,6 +454,107 @@ pub(crate) async fn guarded_write(
     drop(_guard);
     drop(workspace_guard);
     Ok(super::intelligence::feedback(ctx, path, after, origin).await)
+}
+
+enum WriteObservation {
+    Update(cyber_core::rules::ObservedFile),
+    Create(cyber_core::rules::PendingCreation),
+}
+impl WriteObservation {
+    fn after_write(self, file: &std::fs::File) -> Result<cyber_core::rules::FileReceipt, String> {
+        match self {
+            Self::Update(observation) => observation.after_write(file),
+            Self::Create(observation) => observation.after_write(file),
+        }
+    }
+}
+
+pub(super) async fn write_observed(
+    ctx: &Ctx<'_>,
+    path: &Path,
+    bytes: &[u8],
+    authorized: Option<&Path>,
+    creating: bool,
+) -> std::io::Result<()> {
+    // An edit approval for an alias does not attest a separately named resource.
+    let observation = authorized
+        .filter(|target| workspace_spelling_matches(ctx, path, target))
+        .and_then(|target| {
+            if creating {
+                cyber_core::rules::PendingCreation::capture(&ctx.location, path, target)
+                    .ok()
+                    .map(WriteObservation::Create)
+            } else {
+                cyber_core::rules::ObservedFile::open(&ctx.location, path, target)
+                    .ok()
+                    .map(WriteObservation::Update)
+            }
+        });
+    let Some(observation) = observation else {
+        return tokio::fs::write(path, bytes).await;
+    };
+    use tokio::io::AsyncWriteExt;
+    let mut file = if creating {
+        tokio::fs::File::options()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await?
+    } else {
+        tokio::fs::File::create(path).await?
+    };
+    file.write_all(bytes).await?;
+    file.flush().await?;
+    let file = file.into_std().await;
+    let receipt = tokio::task::spawn_blocking(move || observation.after_write(&file)).await;
+    if let Ok(Ok(receipt)) = receipt {
+        record_file_receipt(ctx, receipt);
+    }
+    Ok(())
+}
+
+pub(super) async fn remove_observed(
+    ctx: &Ctx<'_>,
+    path: &Path,
+    authorized: &Path,
+) -> std::io::Result<()> {
+    let observed = workspace_spelling_matches(ctx, path, authorized)
+        .then(|| cyber_core::rules::PendingRemoval::capture(&ctx.location, path, authorized).ok())
+        .flatten();
+    let Some(observed) = observed else {
+        return tokio::fs::remove_file(path).await;
+    };
+    let receipt = tokio::task::spawn_blocking(move || observed.remove())
+        .await
+        .map_err(std::io::Error::other)??;
+    if let Some(receipt) = receipt {
+        record_file_receipt(ctx, receipt);
+    }
+    Ok(())
+}
+
+fn workspace_spelling_matches(ctx: &Ctx<'_>, path: &Path, target: &Path) -> bool {
+    ctx.location
+        .canonicalize()
+        .ok()
+        .and_then(|location| {
+            target
+                .strip_prefix(location)
+                .ok()
+                .map(|relative| ctx.location.join(relative))
+        })
+        .as_deref()
+        == Some(path)
+}
+
+fn record_file_receipt(ctx: &Ctx<'_>, receipt: cyber_core::rules::FileReceipt) {
+    let mut files = ctx
+        .read_receipt
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if files.len() < cyber_core::rules::MAX_OPERATION_RECEIPTS {
+        files.push(std::sync::Arc::new(receipt));
+    }
 }
 
 pub(crate) async fn authorize_edit(

@@ -37,6 +37,7 @@ mdns-sd = { version = "0.21", default-features = false }
 url = "2"
 
 [dev-dependencies]
+blake3 = "1"
 aws-lc-rs = "1"
 jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["aws_lc_rs"] }
 cyber-client = { path = "../cyber-client" }
@@ -62,3 +63,6 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Syste
 
 [lints]
 workspace = true
+
+[features]
+native-git-acceptance = ["cyber-snapshot/native-git-acceptance"]

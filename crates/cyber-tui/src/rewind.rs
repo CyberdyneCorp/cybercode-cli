@@ -31,6 +31,7 @@ pub enum Phase {
     Review,
     Busy,
     Waiting,
+    Recovery,
 }
 #[derive(Debug, Clone)]
 pub struct Boundary {
@@ -45,6 +46,7 @@ struct Draft {
 
 #[derive(Debug)]
 pub struct View {
+    pub recovery: crate::recovery::View,
     pub generation: u64,
     pub phase: Phase,
     pub intent: Intent,
@@ -63,6 +65,7 @@ pub struct View {
 impl Default for View {
     fn default() -> Self {
         Self {
+            recovery: Default::default(),
             generation: 0,
             phase: Phase::Closed,
             intent: Intent::Menu,
@@ -82,6 +85,7 @@ impl Default for View {
 }
 impl View {
     pub fn invalidate(&mut self) {
+        self.recovery = Default::default();
         self.generation = self.generation.wrapping_add(1);
         self.phase = Phase::Closed;
         self.preview = None;
@@ -97,6 +101,7 @@ impl View {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    Recovery(crate::recovery::Command),
     Load,
     Interrupt,
     Preview(RewindSelection),
@@ -112,6 +117,7 @@ pub struct Request {
 }
 #[derive(Debug, Clone)]
 pub enum Reply {
+    Recovery(Box<crate::recovery::Reply>),
     Loaded(Box<Msg>),
     Interrupted(Box<Session>),
     Preview(Box<RewindPreview>),
@@ -173,7 +179,7 @@ impl App {
             self.rewind_request(Command::Load)
         }
     }
-    fn rewind_request(&mut self, command: Command) -> Vec<Action> {
+    pub(crate) fn rewind_request(&mut self, command: Command) -> Vec<Action> {
         self.rewind.generation = self.rewind.generation.wrapping_add(1);
         self.rewind.phase = Phase::Loading;
         self.rewind.error = None;
@@ -200,6 +206,12 @@ impl App {
         self.rewind_request(Command::Preview(selection))
     }
     pub(crate) fn rewind_key(&mut self, key: KeyEvent) -> Vec<Action> {
+        if self.rewind.phase == Phase::Recovery {
+            return self.recovery_key(key.code);
+        }
+        if key.code == KeyCode::Char('c') && !matches!(self.rewind.phase, Phase::Loading) {
+            return self.open_snapshot_recovery();
+        }
         if key.code == KeyCode::Esc {
             self.rewind.generation = self.rewind.generation.wrapping_add(1);
             self.rewind.preview = None;
@@ -377,7 +389,11 @@ pub(crate) fn apply(
     {
         return vec![];
     }
+    if matches!(&request.command, Command::Recovery(_)) {
+        return crate::recovery::apply(app, &request, result);
+    }
     match result {
+        Ok(Reply::Recovery(_)) => vec![],
         Err(error) => {
             if matches!(&request.command,Command::Preview(s) if s.target.code()) {
                 app.rewind.code_error = Some(error.clone());

@@ -4,6 +4,8 @@
 //! A tool asks through its [`Asker`]; the request is recorded durably and waits until an
 //! attached client replies. Without an interactive client the reply is `Unattended` at once,
 //! so non-interactive Sessions never block.
+pub(super) mod descendant_inputs;
+pub(super) mod input_owners;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, Weak};
@@ -98,6 +100,18 @@ pub struct PendingRequest {
     pub session_id: String,
     pub call_id: String,
     pub message_id: String,
+    /// Complete input cohort driving this exact recorded step/call. Empty means
+    /// unknown; clients must not infer ownership from current Session state.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_message_ids: Vec<String>,
+    /// Root Session of a descendant (subagent) request whose every ancestor link is a
+    /// background subagent Job with one complete, bounded input cohort.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_session_id: Option<String>,
+    /// That root link's immutable input cohort; scoped attendance uses it instead of
+    /// the asker's own inputs. Empty means not a proven descendant.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub root_input_message_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<RequestOrigin>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -179,9 +193,12 @@ impl Asker {
     /// Whether a client can answer requests; when false every request resolves `Unattended`.
     pub fn attended(&self) -> bool {
         self.inner.upgrade().is_some_and(|inner| {
-            inner
-                .presence
-                .session_attended(&self.session_id, inner.options.interactive)
+            super::input_clients::asker_attended(
+                &inner,
+                &self.session_id,
+                &self.message_id,
+                &self.call_id,
+            )
         })
     }
 
@@ -325,6 +342,9 @@ impl Inner {
             session_id: asker.session_id.clone(),
             call_id: asker.call_id.clone(),
             message_id: asker.message_id.clone(),
+            input_message_ids: Vec::new(),
+            root_session_id: None,
+            root_input_message_ids: Vec::new(),
             origin: None,
             routed_to: Vec::new(),
             kind,
@@ -363,6 +383,14 @@ impl Inner {
             QUESTION_ASKED
         };
         let mut state = handle.state.lock().await;
+        if let Err(error) = self.stamp_provenance(&mut request, asker, info.parent_id.is_some()) {
+            self.bus.publish(super::LiveEvent::Error {
+                session_id: asker.session_id.clone(),
+                kind: "storage".into(),
+                message: format!("could not establish request input provenance: {error}"),
+            });
+            return false;
+        }
         let mut asked = event(kind_name, &request);
         if kind_name == PERMISSION_ASKED
             && super::workflow_solve::owns_verification(&asker.session_id)
@@ -373,10 +401,16 @@ impl Inner {
             asked.data["admission_bindings"] =
                 serde_json::to_value(&authority.bindings).expect("authority serializes");
         }
+        let authority = match super::input_clients::request_attendance(&self.store, &request) {
+            Ok(authority) => authority,
+            Err(_) => return false,
+        };
         let scopes = interactive_scopes(&request, &info.directory);
-        let stored = self
-            .presence
-            .with_attendance(&scopes, self.options.interactive, |attended| {
+        let stored = self.presence.with_request_attendance(
+            &scopes,
+            self.options.interactive,
+            &authority,
+            |attended| {
                 if !attended {
                     return None;
                 }
@@ -399,7 +433,8 @@ impl Inner {
                         reply,
                     });
                 Some(stored)
-            });
+            },
+        );
         let Some(stored) = stored else {
             return false;
         };
@@ -411,6 +446,36 @@ impl Inner {
         self.request_status_changed(&request).await;
         runtime.watch_unattended_ask(&request);
         true
+    }
+
+    /// The exact step/call input cohort and, for a child Session, the root cohort its
+    /// proven subagent lineage inherits. Unknown provenance stays empty.
+    fn stamp_provenance(
+        &self,
+        request: &mut PendingRequest,
+        asker: &Asker,
+        descendant: bool,
+    ) -> Result<(), cyber_store::StoreError> {
+        let (session, message, call) = (
+            asker.session_id.clone(),
+            asker.message_id.clone(),
+            asker.call_id.clone(),
+        );
+        request.input_message_ids = self
+            .store
+            .read(move |db| input_owners::recorded(db, &session, &message, &call))?;
+        if !descendant {
+            return Ok(());
+        }
+        let session = asker.session_id.clone();
+        if let Some(root) = self
+            .store
+            .read(move |db| descendant_inputs::recorded(db, &session))?
+        {
+            request.root_session_id = Some(root.session_id);
+            request.root_input_message_ids = root.input_message_ids;
+        }
+        Ok(())
     }
 
     /// The Sessions a request is routed to: the asking Session's ancestors and, for a
@@ -456,15 +521,19 @@ impl Inner {
             let handle = self.handle(&request.session_id).await?;
             let directory = handle.state.lock().await.info.directory.clone();
             let scopes = interactive_scopes(&request, &directory);
-            let waiter =
-                self.presence
-                    .with_attendance(&scopes, self.options.interactive, |attended| {
-                        if attended {
-                            None
-                        } else {
-                            self.take_waiter(&request.id)
-                        }
-                    });
+            let authority = super::input_clients::request_attendance(&self.store, &request)?;
+            let waiter = self.presence.with_request_attendance(
+                &scopes,
+                self.options.interactive,
+                &authority,
+                |attended| {
+                    if attended {
+                        None
+                    } else {
+                        self.take_waiter(&request.id)
+                    }
+                },
+            );
             let Some(waiter) = waiter else {
                 continue;
             };
@@ -504,6 +573,46 @@ impl Inner {
         Ok(())
     }
 
+    /// Direct requests only, with complete recorded input ownership. Take one
+    /// waiter at a time instead of retaining every pending request payload.
+    pub(crate) async fn abandon_input_requests(
+        &self,
+        session: &str,
+        inputs: &[String],
+    ) -> Result<(), RuntimeError> {
+        loop {
+            let waiter = {
+                let mut waiters = self.waiters.lock().unwrap_or_else(PoisonError::into_inner);
+                let index = waiters.iter().position(|waiter| {
+                    let request = &waiter.request;
+                    request.session_id == session
+                        && !request.input_message_ids.is_empty()
+                        && request.input_message_ids.len() <= 32
+                        && request
+                            .input_message_ids
+                            .iter()
+                            .all(|id| inputs.contains(id))
+                });
+                index.map(|index| waiters.remove(index))
+            };
+            let Some(waiter) = waiter else {
+                return Ok(());
+            };
+            match waiter.reply {
+                Reply::Permission(sender) => {
+                    let reply = PermissionReply::Reject { message: None };
+                    self.record_withdrawal(&waiter.request, &reply).await?;
+                    let _ = sender.send(reply);
+                }
+                Reply::Question(sender) => {
+                    self.record_question_reply(&waiter.request, &QuestionReply::Dismissed)
+                        .await?;
+                    let _ = sender.send(QuestionReply::Dismissed);
+                }
+            }
+        }
+    }
+
     pub(crate) fn pending(&self, session_id: Option<&str>) -> Vec<PendingRequest> {
         self.waiters
             .lock()
@@ -539,6 +648,90 @@ impl Inner {
         Some(waiters.remove(index))
     }
 
+    async fn take_live_waiter(
+        &self,
+        id: &str,
+        question: bool,
+    ) -> Result<(Waiter, super::input_clients::Attendance), RuntimeError> {
+        let request = self
+            .waiters
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|waiter| waiter.request.id == id)
+            .map(|waiter| waiter.request.clone())
+            .ok_or_else(|| RuntimeError::Invalid(format!("no pending request {id}")))?;
+        if matches!(&request.kind, PendingKind::Question { .. }) != question {
+            return Err(RuntimeError::Invalid("Request type mismatch".into()));
+        }
+        let authority = super::input_clients::request_attendance(&self.store, &request)?;
+        let waiter = if matches!(&authority, super::input_clients::Attendance::Legacy) {
+            self.take_waiter(id)
+        } else {
+            let handle = self.handle(&request.session_id).await?;
+            let directory = handle.state.lock().await.info.directory.clone();
+            self.presence.with_request_attendance(
+                &interactive_scopes(&request, &directory),
+                self.options.interactive,
+                &authority,
+                |live| live.then(|| self.take_waiter(id)).flatten(),
+            )
+        }
+        .ok_or_else(|| {
+            RuntimeError::Invalid("Request no longer has its own live input client".into())
+        })?;
+        Ok((waiter, authority))
+    }
+    async fn stop_request_drain(
+        &self,
+        request: &PendingRequest,
+        authority: &super::input_clients::Attendance,
+    ) {
+        if matches!(authority, super::input_clients::Attendance::Legacy) {
+            self.halt(&request.session_id).await;
+            return;
+        }
+        let Ok(handle) = self.handle(&request.session_id).await else {
+            return;
+        };
+        let state = handle.state.lock().await;
+        let (session, before, raw) = (
+            request.session_id.clone(),
+            state.last_seq + 1,
+            input_owners::capture(&state),
+        );
+        let Ok(cohort) = self
+            .store
+            .read(move |db| input_owners::resolve(db, &session, raw, before))
+        else {
+            return;
+        };
+        if !cohort.is_empty()
+            && cohort
+                .iter()
+                .all(|id| request.input_message_ids.contains(id))
+        {
+            let cancel = self
+                .drains
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&request.session_id)
+                .map(|entry| entry.cancel.clone());
+            if let Some(cancel) = cancel {
+                cancel.cancel();
+            }
+        }
+    }
+    fn same_request_client(
+        &self,
+        request: &PendingRequest,
+        authority: &super::input_clients::Attendance,
+    ) -> bool {
+        super::input_clients::request_attendance(&self.store, request).is_ok_and(|target| {
+            &target == authority && !matches!(target, super::input_clients::Attendance::Unknown)
+        })
+    }
+
     /// Apply a permission reply and its cascades.
     pub(crate) async fn reply_permission(
         &self,
@@ -551,15 +744,16 @@ impl Inner {
                 self.require_computer_stopped()?;
             }
         }
-        let waiter = self
-            .take_waiter(id)
-            .ok_or_else(|| RuntimeError::Invalid(format!("no pending request {id}")))?;
+        let (waiter, authority) = self.take_live_waiter(id, false).await?;
         let PendingKind::Permission(ask) = &waiter.request.kind else {
             return Err(RuntimeError::Invalid(format!("{id} is a question")));
         };
         let session_id = waiter.request.session_id.clone();
         let ask = ask.clone();
         self.record_reply(&waiter.request, &reply).await?;
+        if matches!(&reply, PermissionReply::Reject { message: None }) {
+            self.stop_request_drain(&waiter.request, &authority).await;
+        }
         if let Reply::Permission(tx) = waiter.reply {
             let _ = tx.send(reply.clone());
         }
@@ -567,13 +761,10 @@ impl Inner {
             // Refusing an attach concerns the peer only, not the Session's own work.
             PermissionReply::Reject { .. } if ask.action == super::peers::attach::REMOTE_ATTACH => {
             }
-            PermissionReply::Reject { message } => {
-                if message.is_none() {
-                    self.halt(&session_id).await;
-                }
-                self.decline_all(&session_id).await?;
+            PermissionReply::Reject { .. } => {
+                self.decline_all(&session_id, &authority).await?;
             }
-            PermissionReply::Always => self.approve_covered(&session_id, &ask).await?,
+            PermissionReply::Always => self.approve_covered(&session_id, &ask, &authority).await?,
             _ => {}
         }
         Ok(())
@@ -587,13 +778,11 @@ impl Inner {
         if !matches!(reply, QuestionReply::Dismissed) {
             self.require_computer_stopped()?;
         }
-        let waiter = self
-            .take_waiter(id)
-            .ok_or_else(|| RuntimeError::Invalid(format!("no pending request {id}")))?;
-        if matches!(reply, QuestionReply::Dismissed) {
-            self.halt(&waiter.request.session_id).await;
-        }
+        let (waiter, authority) = self.take_live_waiter(id, true).await?;
         self.record_question_reply(&waiter.request, &reply).await?;
+        if matches!(reply, QuestionReply::Dismissed) {
+            self.stop_request_drain(&waiter.request, &authority).await;
+        }
         match waiter.reply {
             Reply::Question(tx) => {
                 let _ = tx.send(reply);
@@ -698,10 +887,15 @@ impl Inner {
     }
 
     /// Any reject declines every other pending request of the Session.
-    async fn decline_all(&self, session_id: &str) -> Result<(), RuntimeError> {
+    async fn decline_all(
+        &self,
+        session_id: &str,
+        authority: &super::input_clients::Attendance,
+    ) -> Result<(), RuntimeError> {
         let ids: Vec<String> = self
             .owned_pending(session_id)
             .into_iter()
+            .filter(|request| self.same_request_client(request, authority))
             .map(|r| r.id)
             .collect();
         for id in ids {
@@ -731,10 +925,12 @@ impl Inner {
         &self,
         session_id: &str,
         approved: &PermissionAsk,
+        authority: &super::input_clients::Attendance,
     ) -> Result<(), RuntimeError> {
         let covered: Vec<String> = self
             .owned_pending(session_id)
             .into_iter()
+            .filter(|request| self.same_request_client(request, authority))
             .filter(|r| match &r.kind {
                 // A taint ask is answered on its own: an "always" never approves another
                 // tainted call (`permissions-modes` → Taint-aware approvals).

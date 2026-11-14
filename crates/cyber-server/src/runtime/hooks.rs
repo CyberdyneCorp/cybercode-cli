@@ -345,7 +345,7 @@ impl Runtime {
         }
         let native_observation = self.validate_native_file_hook(event)?;
         let activity = super::activity::Scope::reserve(&self.inner, &handle).await?;
-        let authority = activity.authority();
+        let authority = activity.authority()?;
         authority.verify(self, &event.identity().session_id)?;
         let mut record = admission_record(event, definition, log_io);
         let observation = super::file_observation_hooks::prepare(event, definition, &mut record)?;

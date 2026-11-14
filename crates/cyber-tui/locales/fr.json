@@ -115,6 +115,7 @@
   "insert literal bytes": "insérer des octets littéraux",
   "inspect exact bytes: /hex <path>": "inspecter les octets exacts : /hex <path>",
   "inspect or cancel pending delegation": "inspecter ou annuler la délégation en attente",
+  "inspect the current Session context": "inspecter le contexte de la session actuelle",
   "interface and reply language, saved as your default": "langue de l'interface et des réponses, enregistrée par défaut",
   "interface and reply language; /language <auto|en|pt-BR|es|fr> sets it": "langue de l'interface et des réponses ; /language <auto|en|pt-BR|es|fr> la définit",
   "interrupt": "interrompre",

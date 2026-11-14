@@ -2501,6 +2501,16 @@
           "session_id": {
             "type": "string"
           },
+          "input_origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobInputOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "child_id": {
             "type": "string",
             "description": "The child Session of a `subagent` Job; empty for process Jobs."
@@ -2587,6 +2597,39 @@
           "notified"
         ]
       },
+      "JobInputOrigin": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "call_id": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "operation_key": {
+            "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "message_id",
+          "call_id",
+          "attempt",
+          "operation_key",
+          "input_message_ids"
+        ],
+        "description": "Immutable input provenance from the dispatched parent call."
+      },
       "JobStatus": {
         "type": "string",
         "enum": [
@@ -2613,6 +2656,213 @@
             ]
           }
         }
+      },
+      "InputJobQuery": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "session_id",
+          "input_message_ids"
+        ]
+      },
+      "Data_Array_of_InputJobState": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputJobState"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "InputJobState": {
+        "type": "object",
+        "properties": {
+          "session_seq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Session revision observed in the same Store snapshot as the Job state."
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "awaiting_handback": {
+            "type": "boolean",
+            "description": "An ended Job has not yet admitted its completion notice. False does not\nestablish that the parent has processed an already admitted handback."
+          },
+          "handback_pending": {
+            "type": "boolean",
+            "description": "An admitted completion notice still has unfinished parent model/tool work."
+          },
+          "handback_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Latest admitted notice of these Jobs; the input's answer boundary must\nfollow this revision before its result can retire."
+          },
+          "oldest_unnotified_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        },
+        "required": [
+          "session_seq",
+          "message_id",
+          "running",
+          "awaiting_handback",
+          "handback_pending"
+        ],
+        "description": "One small Job record per supplied input; no logs/results/history. Handback\nadmission is separate from the parent Turn processing that queued input."
+      },
+      "InputInterrupt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "request_id",
+          "input_message_ids"
+        ]
+      },
+      "Data_InputInterruptReceipt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/InputInterruptReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "InputInterruptReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "generation": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InputInterruptStatus"
+          },
+          "session_seq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Exact durable receipt revision, populated from the committed event on lookup."
+          },
+          "drain_selected": {
+            "type": "boolean"
+          },
+          "refused": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Original queued/held inputs refused at admission; excludes Job notices."
+          },
+          "jobs_cancelled": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputInterruptProblem"
+            }
+          }
+        },
+        "required": [
+          "request_id",
+          "input_message_ids",
+          "generation",
+          "status",
+          "drain_selected",
+          "refused",
+          "jobs_cancelled",
+          "problems"
+        ],
+        "description": "Bounded control evidence. No tool payload, output, or native acknowledgement."
+      },
+      "InputInterruptStatus": {
+        "type": "string",
+        "enum": [
+          "requested",
+          "acknowledged",
+          "unknown"
+        ]
+      },
+      "InputInterruptProblem": {
+        "type": "string",
+        "enum": [
+          "mixed_drain",
+          "mixed_job",
+          "unknown_drain",
+          "drain_timeout",
+          "descendant_job",
+          "missing_job_control",
+          "job_timeout",
+          "unowned_activity",
+          "reconciliation_required",
+          "cleanup_failed"
+        ]
+      },
+      "Data_Array_of_string": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
       },
       "Data_Job": {
         "type": "object",
@@ -6540,6 +6790,17 @@
               "null"
             ]
           },
+          "input_client": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputClient"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Bind direct request attendance to an input-client lease; null client means unattended."
+          },
           "parts": {
             "type": "array",
             "items": {
@@ -6577,6 +6838,19 @@
         "required": [
           "parts"
         ]
+      },
+      "InputClient": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A live input-client lease, or null to explicitly request unattended input."
+          }
+        }
       },
       "Delivery": {
         "oneOf": [
@@ -7141,6 +7415,840 @@
           "applied"
         ],
         "description": "Retained filesystem evidence; completion does not acknowledge a Session/native receipt."
+      },
+      "SnapshotRecoverySelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "journal_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/SnapshotRecoveryAction"
+          }
+        },
+        "required": [
+          "journal_id",
+          "action"
+        ]
+      },
+      "SnapshotRecoveryAction": {
+        "type": "string",
+        "enum": [
+          "keep",
+          "rollback"
+        ]
+      },
+      "Data_SnapshotRecoveryReview": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotRecoveryReview"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotRecoveryReview": {
+        "type": "object",
+        "properties": {
+          "journal_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/SnapshotRecoveryAction"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "filesystem_complete": {
+            "type": "boolean"
+          },
+          "acknowledged": {
+            "type": "boolean"
+          },
+          "confirmation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent when conflicts or unavailable historical evidence prohibit confirmation."
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotRecoveryPath"
+            }
+          },
+          "exclusions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "None means historical exclusions were not retained; not an empty exclusion set."
+          },
+          "recorded_created_parents": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Recorded created parents remain protected until acknowledged safe cleanup."
+          },
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "journal_id",
+          "action",
+          "filesystem_complete",
+          "acknowledged",
+          "paths",
+          "conflicts"
+        ]
+      },
+      "SnapshotOrigin": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "session_created_id": {
+            "type": "string"
+          },
+          "activity_id": {
+            "type": "string"
+          },
+          "worktree_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "binding": {
+            "$ref": "#/components/schemas/SnapshotBinding"
+          }
+        },
+        "required": [
+          "version",
+          "session_id",
+          "session_created_id",
+          "activity_id",
+          "binding"
+        ]
+      },
+      "SnapshotBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "directory": {
+            "type": "string"
+          },
+          "root_identity": {
+            "type": "string"
+          },
+          "namespace_identity": {
+            "type": "string"
+          },
+          "journal_id": {
+            "type": "string"
+          },
+          "journal_identity": {
+            "type": "string"
+          },
+          "lock_identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Exact private lock inode. Legacy origins do not acquire this proof retroactively."
+          }
+        },
+        "required": [
+          "directory",
+          "root_identity",
+          "namespace_identity",
+          "journal_id",
+          "journal_identity"
+        ]
+      },
+      "SnapshotRecoveryPath": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "`applied`, `unapplied`, or `foreign`; foreign files are never rollback targets."
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recorded_before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "recorded_after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retained": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current private slot: staged target or displaced preimage, without inventing ownership."
+          },
+          "proposed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryImage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changes": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "state",
+          "changes"
+        ]
+      },
+      "SnapshotRecoveryImage": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/SnapshotRecoveryImageKind"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "uid": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "gid": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "native_identity": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Expected images and proposed copies need not identify a live inode."
+          }
+        },
+        "required": [
+          "hash",
+          "bytes",
+          "mode",
+          "uid",
+          "gid"
+        ]
+      },
+      "SnapshotRecoveryImageKind": {
+        "type": "string",
+        "enum": [
+          "file",
+          "symlink"
+        ]
+      },
+      "SnapshotRecoveryConfirmation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "journal_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/SnapshotRecoveryAction"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "journal_id",
+          "action",
+          "confirmation",
+          "request_id"
+        ]
+      },
+      "Data_SnapshotRecoveryResult": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotRecoveryResult"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotRecoveryResult": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/SnapshotRecoveryConfirmation"
+          },
+          "original": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/SnapshotRecoveryState"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "journal_acknowledged": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Lookup does not inspect native files. None means journal acknowledgement\nhas not been observed by this response, even if runtime settlement is durable."
+          }
+        },
+        "required": [
+          "request",
+          "original",
+          "state"
+        ]
+      },
+      "SnapshotRecoveryState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "unknown",
+          "acknowledged",
+          "resolved_by_another_request",
+          "cancelled_before_origin",
+          "cancelled_before_effects"
+        ]
+      },
+      "SnapshotRecoveryReceipt": {
+        "type": "object",
+        "properties": {
+          "journal_id": {
+            "type": "string"
+          },
+          "resolution_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "action": {
+            "$ref": "#/components/schemas/SnapshotRecoveryAction"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "original": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "filesystem_complete": {
+            "type": "boolean"
+          },
+          "resolution_digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Immutable native resolution data, excluding acknowledgement/progress.\nMissing on older receipts; those cannot authorize new journal writes."
+          },
+          "checkout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRecoveryCheckout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Runtime-attested original and resolution resources; absent on legacy receipts."
+          }
+        },
+        "required": [
+          "journal_id",
+          "resolution_id",
+          "request_id",
+          "action",
+          "confirmation",
+          "original",
+          "filesystem_complete"
+        ]
+      },
+      "SnapshotRecoveryCheckout": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "resolution_origin": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "original": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRestoreCheckout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "None preserves missing legacy proof, rather than claiming an empty set."
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/SnapshotRestoreCheckout"
+          }
+        },
+        "required": [
+          "version",
+          "resolution_origin",
+          "resolution"
+        ]
+      },
+      "SnapshotRestoreCheckout": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "lifetime": {
+            "$ref": "#/components/schemas/SnapshotLifetimeBinding"
+          },
+          "resources_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "lifetime",
+          "resources_digest"
+        ]
+      },
+      "SnapshotLifetimeBinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "owner": {
+            "$ref": "#/components/schemas/SnapshotLifetimeRequest"
+          },
+          "root_identity": {
+            "type": "string"
+          },
+          "namespace_identity": {
+            "type": "string"
+          },
+          "directory_identity": {
+            "type": "string"
+          },
+          "file_identity": {
+            "type": "string"
+          },
+          "source_phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "owner",
+          "root_identity",
+          "namespace_identity",
+          "directory_identity",
+          "file_identity"
+        ]
+      },
+      "SnapshotLifetimeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "activity_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "session_created_id": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "worktree_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "activity_id",
+          "session_id",
+          "session_created_id",
+          "directory"
+        ]
+      },
+      "Data_Array_of_SnapshotRecoveryConfirmation": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotRecoveryConfirmation"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Data_SnapshotRestoreReceipt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotRestoreReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotRestoreReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "$ref": "#/components/schemas/SnapshotOrigin"
+          },
+          "intent_digest": {
+            "type": "string"
+          },
+          "session_before": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_after": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "events_digest": {
+            "type": "string"
+          },
+          "checkout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotRestoreCheckout"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Missing on historical receipts; absence never authorizes checkout acknowledgement."
+          }
+        },
+        "required": [
+          "origin",
+          "intent_digest",
+          "session_before",
+          "session_after",
+          "events_digest"
+        ],
+        "description": "Exact native intent and Session batch consumed by an ordinary restore.\nThis is durable acknowledgement evidence, never authority to replay files."
+      },
+      "Data_Array_of_SnapshotPreparation": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SnapshotPreparation"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotPreparation": {
+        "type": "object",
+        "properties": {
+          "activity_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "lifetime_available": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "activity_id",
+          "status",
+          "lifetime_available"
+        ]
+      },
+      "PreparationReceiptData": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotPreparationReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "A discovery response always contains `data`, including an explicit absent receipt.",
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotPreparationReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "activity_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "lifetime": {
+            "$ref": "#/components/schemas/SnapshotLifetimeBinding"
+          },
+          "native_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_admitted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "checkout_resources_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "activity_id",
+          "request_id",
+          "confirmation",
+          "lifetime",
+          "native_sequence",
+          "session_sequence"
+        ]
+      },
+      "Data_SnapshotPreparationReview": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotPreparationReview"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "SnapshotPreparationReview": {
+        "type": "object",
+        "properties": {
+          "activity_id": {
+            "type": "string"
+          },
+          "lifetime": {
+            "$ref": "#/components/schemas/SnapshotLifetimeBinding"
+          },
+          "native_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "session_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "warning": {
+            "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "checkout_resources_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "activity_id",
+          "lifetime",
+          "native_sequence",
+          "session_sequence",
+          "confirmation",
+          "warning"
+        ]
+      },
+      "SnapshotPreparationConfirmation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "confirmation": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation",
+          "request_id"
+        ]
+      },
+      "Data_SnapshotPreparationReceipt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SnapshotPreparationReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ]
       },
       "RewindSelection": {
         "type": "object",
@@ -8898,11 +10006,16 @@
             ]
           },
           "task": {
-            "$ref": "#/components/schemas/TaskState"
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Task text is included only on explicit request."
+          },
+          "inspection": {
+            "$ref": "#/components/schemas/ContextInspection"
           }
         },
         "required": [
-          "task"
+          "task",
+          "inspection"
         ]
       },
       "TaskState": {
@@ -8952,6 +10065,529 @@
           "text"
         ],
         "description": "A user statement with its source, kept outside generated prose."
+      },
+      "ContextInspection": {
+        "type": "object",
+        "properties": {
+          "last_prepared_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreparedContextEstimate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Final assembly of the most recently prepared request, including schemas\nand turn instructions. Historical events may have no estimate."
+          },
+          "effective_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EffectiveContextSource"
+            },
+            "description": "Latest recorded source observations, without source content."
+          },
+          "omitted_sources": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextSourceEstimate"
+            },
+            "description": "Sources in the stored projection, ordered by estimated size."
+          },
+          "estimated_input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Estimate of the epoch system text and projected messages. Tool schemas\nand instructions added only while assembling a turn are excluded."
+          },
+          "window": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "estimated_input_utilization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "last_request_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Measured prompt tokens of the last finished request, when available."
+          },
+          "epoch_pending": {
+            "type": "boolean",
+            "description": "The next turn needs to rebuild the epoch."
+          },
+          "queued_inputs": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "held_inputs": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "delivered_rule_count": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "delivered_rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeliveredRule"
+            },
+            "description": "Rules delivered in this Context Epoch, in delivery order, with their current\napproval. Definition bodies are never included or read."
+          },
+          "omitted_delivered_rules": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Delivered rules beyond the listing bound, or recorded without a binding by an\nolder version."
+          },
+          "changed_delivered_rules": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Listed delivered rules whose approval is `changed` or `revoked`."
+          },
+          "changed_sources": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Listed sources with `changed_on_disk` true."
+          },
+          "withheld_sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WithheldContextSource"
+            },
+            "description": "Up to 64 definitions that applied but were withheld (held by trust, refused by\nread policy, invalid, disabled compatibility, or past a discovery bound), as\nrecorded at the last request boundary. Inspection does not open them, and their\nsizes count toward no estimate."
+          },
+          "omitted_withheld_sources": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Withheld definitions beyond the listing bound."
+          },
+          "next_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NextRequestEstimate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Expected input of the next ordinary request. Absent until a request has been\nprepared in this Session, because tool schemas are otherwise unknown."
+          }
+        },
+        "required": [
+          "effective_sources",
+          "omitted_sources",
+          "sources",
+          "epoch_pending",
+          "queued_inputs",
+          "held_inputs",
+          "delivered_rule_count",
+          "delivered_rules",
+          "omitted_delivered_rules",
+          "changed_delivered_rules",
+          "changed_sources",
+          "withheld_sources",
+          "omitted_withheld_sources"
+        ]
+      },
+      "PreparedContextEstimate": {
+        "type": "object",
+        "properties": {
+          "step_id": {
+            "type": "string"
+          },
+          "epoch": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "window": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "estimated_input_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "estimated_input_utilization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextSourceEstimate"
+            }
+          }
+        },
+        "required": [
+          "step_id",
+          "epoch",
+          "provider",
+          "model",
+          "estimated_input_tokens",
+          "sources"
+        ],
+        "description": "The complete input estimate captured from a final assembled provider request."
+      },
+      "ContextSourceEstimate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "estimated_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "estimated_tokens"
+        ]
+      },
+      "EffectiveContextSource": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SourceStatus"
+          },
+          "pending_update": {
+            "type": "boolean",
+            "default": false
+          },
+          "estimated_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0
+          },
+          "file_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "omitted_file_paths": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "file_stamps": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FileStamp"
+            },
+            "description": "Stamps of the listed files taken while they were read. Historical records and\nsources that are not read from files have none."
+          },
+          "withheld": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WithheldSource"
+            },
+            "description": "Definitions that applied but were left out at the request boundary, recorded\nwithout opening them further. Inspection reports them as `withheld_sources`."
+          },
+          "omitted_withheld": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Withheld definitions beyond the recorded bound."
+          },
+          "changed_on_disk": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether a file this source was read from has changed size or modification time,\nor disappeared, since it was read. The change takes effect at the next request\nboundary. `null` when the source has no recorded stamps (it is not read from\nfiles, or was recorded by an older version), when some of its files have no\nstamp, or when the inspection's check budget is spent. Files added since the read\nare not detected."
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "status",
+          "file_paths",
+          "omitted_file_paths"
+        ]
+      },
+      "SourceStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "active",
+              "absent",
+              "retained_unavailable",
+              "unavailable"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "unknown",
+            "description": "No observation metadata was recorded by the historical writer."
+          }
+        ]
+      },
+      "FileStamp": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "modified_ns": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Nanoseconds since the Unix epoch; absent where the platform reports none."
+          }
+        },
+        "required": [
+          "bytes"
+        ],
+        "description": "Size and modification time of a file when it was read. Inspection compares them with\nthe file's current metadata to report an edit without reading the file again."
+      },
+      "WithheldSource": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/WithheldReason"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "description": "A definition left out of context, without its content or size."
+      },
+      "WithheldReason": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "trust_held",
+            "description": "A project definition is not approved, or differs from its approval."
+          },
+          {
+            "type": "string",
+            "const": "read_denied",
+            "description": "Read permission rules refuse it, or its file could not be read safely."
+          },
+          {
+            "type": "string",
+            "const": "invalid_frontmatter",
+            "description": "Its frontmatter or path globs are not valid."
+          },
+          {
+            "type": "string",
+            "const": "compat_disabled",
+            "description": "It is a Claude-compatible definition and that compatibility is disabled."
+          },
+          {
+            "type": "string",
+            "const": "bound_exceeded",
+            "description": "Rule discovery reached its file or byte bound before it."
+          }
+        ],
+        "description": "Why a definition that applies to the Location was left out of context."
+      },
+      "DeliveredRule": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "root": {
+            "type": "string"
+          },
+          "digest_prefix": {
+            "type": "string",
+            "description": "The first 12 hex digits of the delivered definition's digest."
+          },
+          "generation": {
+            "type": "string",
+            "description": "The checkout approval generation that admitted it, or `owner-global`."
+          },
+          "approval": {
+            "$ref": "#/components/schemas/RuleApproval"
+          }
+        },
+        "required": [
+          "path",
+          "root",
+          "digest_prefix",
+          "generation",
+          "approval"
+        ],
+        "description": "A rule definition delivered in the current Context Epoch, without its body."
+      },
+      "RuleApproval": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "current",
+            "description": "The approval that admitted it is still current and the file is unchanged."
+          },
+          {
+            "type": "string",
+            "const": "changed",
+            "description": "The definition file was edited or removed, or its checkout was re-approved under\nanother generation, since it was delivered."
+          },
+          {
+            "type": "string",
+            "const": "revoked",
+            "description": "The checkout approval that admitted it has been withdrawn."
+          },
+          {
+            "type": "string",
+            "const": "unknown",
+            "description": "No trust inventory or file stamp is available to decide."
+          }
+        ],
+        "description": "Whether a delivered rule is still the definition its current approval admits."
+      },
+      "WithheldContextSource": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "The context source it would have contributed to."
+          },
+          "path": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/WithheldReason"
+          }
+        },
+        "required": [
+          "source",
+          "path",
+          "reason"
+        ],
+        "description": "A definition withheld from a source at the last request boundary, without its\ncontent or size."
+      },
+      "NextRequestEstimate": {
+        "type": "object",
+        "properties": {
+          "estimated_input_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "estimated_input_utilization": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EstimateAssumption"
+            }
+          }
+        },
+        "required": [
+          "estimated_input_tokens",
+          "assumptions"
+        ],
+        "description": "The stored projection plus the tool schemas of the last prepared request: what the\nnext ordinary request is expected to send, with every assumption listed."
+      },
+      "EstimateAssumption": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "tool_schemas_from_last_request",
+            "description": "Tool schemas are sized as in the last prepared request; tool visibility or\nconfiguration may have changed since."
+          },
+          {
+            "type": "string",
+            "const": "model_changed",
+            "description": "The last prepared request used another provider or model."
+          },
+          {
+            "type": "string",
+            "const": "epoch_rebuild_pending",
+            "description": "The next turn rebuilds the Context Epoch from fresh observations."
+          },
+          {
+            "type": "string",
+            "const": "sources_changed_on_disk",
+            "description": "Files behind a source changed on disk and are read again at the next request."
+          },
+          {
+            "type": "string",
+            "const": "excludes_turn_instructions",
+            "description": "Instructions added only while a turn is assembled (attachments, structured\noutput) are not included."
+          },
+          {
+            "type": "string",
+            "const": "delivered_rules_changed",
+            "description": "A rule delivered in this Context Epoch was changed or its approval revoked; the\nnext Context Epoch will not deliver that definition again."
+          }
+        ],
+        "description": "Why a next-request estimate can differ from the request actually sent."
       },
       "Data_Array_of_FileDiff": {
         "type": "object",
@@ -9114,6 +10750,27 @@
           },
           "message_id": {
             "type": "string"
+          },
+          "input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Complete input cohort driving this exact recorded step/call. Empty means\nunknown; clients must not infer ownership from current Session state."
+          },
+          "root_session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Root Session of a descendant (subagent) request whose every ancestor link is a\nbackground subagent Job with one complete, bounded input cohort."
+          },
+          "root_input_message_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "That root link's immutable input cohort; scoped attendance uses it instead of\nthe asker's own inputs. Empty means not a proven descendant."
           },
           "origin": {
             "anyOf": [
@@ -13367,20 +15024,6 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/LoopState"
-          }
-        },
-        "required": [
-          "data"
-        ]
-      },
-      "Data_Array_of_string": {
-        "type": "object",
-        "properties": {
-          "data": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           }
         },
         "required": [
@@ -20415,6 +22058,214 @@
         }
       }
     },
+    "/api/v1/jobs/input-state": {
+      "post": {
+        "operationId": "v1.job.inputState",
+        "summary": "Read bounded background settlement for a complete input cohort",
+        "tags": [
+          "job"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_InputJobState"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputJobQuery"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/interrupt-inputs": {
+      "post": {
+        "operationId": "v1.session.interruptInputs",
+        "summary": "Retain input-scoped interruption without targeting unrelated execution",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InputInterruptReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputInterrupt"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/interrupt-inputs/{request_id}": {
+      "get": {
+        "operationId": "v1.session.inputInterruption",
+        "summary": "Look up the original interruption receipt without targeting replacement execution",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InputInterruptReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/steps/{message_id}/input-origin": {
+      "get": {
+        "operationId": "v1.session.stepInputOrigin",
+        "summary": "Read the bounded original input cohort of an exact recorded step",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_string"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{id}": {
       "get": {
         "operationId": "v1.job.get",
@@ -23055,6 +24906,160 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionID}/input-clients": {
+      "post": {
+        "operationId": "v1.session.inputClientAttach",
+        "summary": "Create a 45-second input-only request attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InteractiveClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/input-clients/{clientID}": {
+      "put": {
+        "operationId": "v1.session.inputClientRenew",
+        "summary": "Renew a live input-only attachment",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_InteractiveClient"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.session.inputClientRelease",
+        "summary": "Release input-only attendance and settle its unattended requests",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "clientID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK"
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionID}/interactive-clients": {
       "post": {
         "operationId": "v1.session.interactiveAttach",
@@ -24067,6 +26072,729 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_Array_of_SnapshotRecovery"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/review": {
+      "post": {
+        "operationId": "v1.session.snapshotRecoveryReview",
+        "summary": "Review retained snapshot effects without restoring, acknowledging native activity or starting inference",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRecoveryReview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotRecoverySelection"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/confirm": {
+      "post": {
+        "operationId": "v1.session.snapshotRecoveryConfirm",
+        "summary": "Resolve fingerprint-confirmed native snapshot effects with an exact durable request; repeated IDs are lookup-only",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRecoveryResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotRecoveryConfirmation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/requests": {
+      "get": {
+        "operationId": "v1.session.snapshotRecoveryRequests",
+        "summary": "Discover up to 4096 retained request identities for this Session creation and exact journal without native access, acknowledgement or replay",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "journal_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_SnapshotRecoveryConfirmation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}": {
+      "get": {
+        "operationId": "v1.session.snapshotRecoveryLookup",
+        "summary": "Look up a durable recovery request without native access, acknowledgement reconciliation, replay or inference",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRecoveryResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/recovery/requests/{requestID}/acknowledge": {
+      "post": {
+        "operationId": "v1.session.snapshotRecoveryAcknowledge",
+        "summary": "Reconcile journal acknowledgement for the exact committed native pair without replaying source changes or starting inference",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRecoveryResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/restores/{activityID}": {
+      "get": {
+        "operationId": "v1.session.snapshotRestoreLookup",
+        "summary": "Read the exact committed ordinary restore receipt without native access or replay",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRestoreReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preparations": {
+      "get": {
+        "operationId": "v1.session.snapshotPreparations",
+        "summary": "List retained preparation candidates without native access; review checks eligibility",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_cancelled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_SnapshotPreparation"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/receipt": {
+      "get": {
+        "operationId": "v1.session.snapshotPreparationReceipt",
+        "summary": "Discover the exact committed preparation cancellation receipt without source access or native acknowledgement; absence is not pre-effect proof",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparationReceiptData"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/review": {
+      "post": {
+        "operationId": "v1.session.snapshotPreparationReview",
+        "summary": "Review cancellation of an exited preparation using its exact native lifetime proof",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotPreparationReview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/confirm": {
+      "post": {
+        "operationId": "v1.session.snapshotPreparationConfirm",
+        "summary": "Cancel only a fingerprint-confirmed pre-effect snapshot preparation without moving files or transcript",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotPreparationReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SnapshotPreparationConfirmation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}": {
+      "get": {
+        "operationId": "v1.session.snapshotPreparationLookup",
+        "summary": "Look up the original durable preparation cancellation pair without native access or replay",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotPreparationReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}/acknowledge": {
+      "post": {
+        "operationId": "v1.session.snapshotPreparationAcknowledge",
+        "summary": "Reconcile native metadata acknowledgement of an exact committed pre-effect cancellation without source changes",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotPreparationReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge": {
+      "post": {
+        "operationId": "v1.session.snapshotRestoreAcknowledge",
+        "summary": "Acknowledge the immutable ordinary restore intent after its paired Session commit without replaying source files",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "activityID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_SnapshotRestoreReceipt"
                 }
               }
             }
@@ -25187,7 +27915,7 @@
     "/api/v1/sessions/{sessionID}/context": {
       "get": {
         "operationId": "v1.session.context",
-        "summary": "Context baseline, summary and task state",
+        "summary": "Inspect recorded context and estimates. Use include_content to return baseline, summary and task text.",
         "tags": [
           "session"
         ],
@@ -25196,6 +27924,14 @@
             "name": "sessionID",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_content",
+            "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -25349,6 +28085,22 @@
           },
           {
             "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "live",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "presence",
             "in": "query",
             "required": false,
             "schema": {

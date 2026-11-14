@@ -698,6 +698,7 @@ fn wheel_moves(overlay: &Overlay) -> bool {
             | Overlay::Themes(_)
             | Overlay::Workflows
             | Overlay::TaskLog { .. }
+            | Overlay::Context { .. }
             | Overlay::Messages
             | Overlay::Team
             | Overlay::Collaboration

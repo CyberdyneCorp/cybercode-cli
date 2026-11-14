@@ -15,7 +15,8 @@ pub struct ContextInputs {
     pub directory: PathBuf,
     pub global_config_dir: PathBuf,
     pub shell: String,
-    pub instructions: super::instructions::InstructionSettings,
+    /// A configuration failure withholds instruction reads, independently of date/env.
+    pub instructions: Result<super::instructions::InstructionSettings, String>,
     pub today: Option<String>,
 }
 
@@ -31,8 +32,14 @@ pub enum Observed {
 #[derive(Debug, Default)]
 pub struct Observation {
     pub sources: BTreeMap<String, Observed>,
+    pub origins: BTreeMap<String, String>,
+    pub pending: std::collections::BTreeSet<String>,
     /// Recorded while reading, never parsed back out of rendered (untrusted) text.
     pub files: BTreeMap<String, Vec<String>>,
+    /// Per source, the stamp of each file taken from the handle it was read through.
+    pub stamps: BTreeMap<String, BTreeMap<String, super::context_sources::FileStamp>>,
+    /// Per source, definitions that applied but were left out, without their content.
+    pub withheld: BTreeMap<String, super::context_sources::Withheld>,
 }
 
 pub fn observe(inputs: &ContextInputs) -> Observation {
@@ -42,10 +49,24 @@ pub fn observe(inputs: &ContextInputs) -> Observation {
         "core/environment".to_string(),
         Observed::Value(environment(inputs)),
     );
-    let (instructions, read) = instructions(inputs);
+    let (instructions, read, stamps, withheld) = instructions(inputs);
     sources.insert("core/instructions".to_string(), instructions);
     let files = BTreeMap::from([("core/instructions".to_string(), read)]);
-    Observation { sources, files }
+    let stamps = BTreeMap::from([("core/instructions".to_string(), stamps)]);
+    let withheld = BTreeMap::from([("core/instructions".to_string(), withheld)]);
+    let origins = BTreeMap::from([
+        ("core/date".into(), "runtime".into()),
+        ("core/environment".into(), "runtime".into()),
+        ("core/instructions".into(), "instruction_files".into()),
+    ]);
+    Observation {
+        sources,
+        origins,
+        files,
+        stamps,
+        withheld,
+        pending: Default::default(),
+    }
 }
 
 /// Values of available sources, or the keys of unavailable ones.
@@ -67,6 +88,26 @@ pub fn snapshot(
             _ => None,
         })
         .collect())
+}
+
+/// Persisted system text shared by request assembly and context inspection.
+pub(super) fn request_system(epoch: &super::model::Epoch, family: ModelFamily) -> [String; 2] {
+    [
+        epoch
+            .system_prefix
+            .clone()
+            .unwrap_or_else(|| base_prompt(family)),
+        epoch.baseline.clone(),
+    ]
+}
+
+pub(super) fn epoch_pending(state: &super::SessionState, model: &super::ResolvedModel) -> bool {
+    let version = cyber_core::prompts::base_prompt_version();
+    state.epoch_stale
+        || state
+            .epoch
+            .as_ref()
+            .is_none_or(|epoch| !epoch.serves(&model.provider, model.family.as_str(), version))
 }
 
 /// The snapshot of a new epoch. After the first one an unavailable source keeps its
@@ -197,23 +238,46 @@ fn environment(inputs: &ContextInputs) -> String {
 }
 
 /// `core/instructions` (see [`super::instructions::load_baseline`]), plus the files read,
-/// in load order.
-fn instructions(inputs: &ContextInputs) -> (Observed, Vec<String>) {
-    let loaded = super::instructions::load_baseline(
-        &inputs.global_config_dir,
-        &inputs.directory,
-        &inputs.instructions,
-    );
+/// in load order, and their stamps.
+fn instructions(
+    inputs: &ContextInputs,
+) -> (
+    Observed,
+    Vec<String>,
+    BTreeMap<String, super::context_sources::FileStamp>,
+    super::context_sources::Withheld,
+) {
+    let loaded = inputs
+        .instructions
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|settings| {
+            super::instructions::load_baseline(
+                &inputs.global_config_dir,
+                &inputs.directory,
+                settings,
+            )
+        });
     match loaded {
-        Err(reason) => (Observed::Unavailable(reason), Vec::new()),
+        Err(reason) => (
+            Observed::Unavailable(reason),
+            Vec::new(),
+            BTreeMap::new(),
+            Default::default(),
+        ),
         Ok(loaded) => {
             let read = loaded
                 .files
                 .iter()
                 .map(|file| file.path.display().to_string())
                 .collect();
+            let stamps = loaded
+                .files
+                .iter()
+                .filter_map(|file| Some((file.path.display().to_string(), file.stamp?)))
+                .collect();
             let text = loaded.text().map_or(Observed::Absent, Observed::Value);
-            (text, read)
+            (text, read, stamps, loaded.withheld)
         }
     }
 }
@@ -247,14 +311,17 @@ mod tests {
             directory: dir.to_path_buf(),
             global_config_dir: dir.join("no-global"),
             shell: "zsh".into(),
-            instructions: super::super::instructions::InstructionSettings {
+            instructions: Ok(super::super::instructions::InstructionSettings {
                 claude_md: true,
                 project: true,
                 max_bytes: super::super::instructions::DEFAULT_MAX_BYTES,
                 max_total_bytes: super::super::instructions::DEFAULT_MAX_TOTAL_BYTES,
                 home: None,
                 read_gate: None,
-            },
+                rule_gate: None,
+                scoped_rules: true,
+                native_root: None,
+            }),
             today: Some("2026-10-03".into()),
         }
     }
@@ -265,10 +332,32 @@ mod tests {
         std::fs::create_dir(dir.path().join(".git")).unwrap();
         std::fs::write(dir.path().join("AGENTS.md"), "use pnpm").unwrap();
         std::fs::write(dir.path().join("CLAUDE.md"), "use npm").unwrap();
-        let (Observed::Value(text), _) = instructions(&inputs(dir.path())) else {
+        let (Observed::Value(text), _, _, _) = instructions(&inputs(dir.path())) else {
             panic!()
         };
         assert!(text.contains("use pnpm") && !text.contains("use npm"));
+    }
+
+    #[test]
+    fn unavailable_limits_withhold_files_without_hiding_date_or_environment() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("AGENTS.md")).unwrap();
+        let mut inputs = inputs(dir.path());
+        inputs.instructions = Err("instruction_limits unavailable".into());
+        let observed = observe(&inputs);
+        assert_eq!(
+            observed.sources["core/instructions"],
+            Observed::Unavailable("instruction_limits unavailable".into())
+        );
+        assert_eq!(
+            observed.sources["core/date"],
+            Observed::Value("Today's date: 2026-10-03".into())
+        );
+        assert!(matches!(
+            observed.sources["core/environment"],
+            Observed::Value(_)
+        ));
+        assert!(observed.files["core/instructions"].is_empty());
     }
 
     /// Regression: InstructionsLoaded `file_paths` came from parsing rendered text,

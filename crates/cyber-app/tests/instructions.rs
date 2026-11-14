@@ -28,17 +28,652 @@ fn reply(body: &Value) -> Value {
         return json!({"content": "done"});
     }
     let text = last.to_string();
+    // A compaction summary request quotes the earlier prompts; answer it with text.
+    if text.contains("Conversation to summarize") {
+        return json!({"content": "Summary of the earlier conversation."});
+    }
+    if text.contains("patch the app") {
+        let mut patch =
+            "*** Begin Patch\n*** Update File: web/a.txt\n@@\n-before-a\n+after-a\n".to_string();
+        if text.contains("partially") {
+            patch.push_str("*** Update File: web/a.txt\n@@\n-before-a\n+second-a\n");
+        }
+        patch.push_str("*** Update File: db/b.txt\n@@\n-before-b\n+after-b\n");
+        patch.push_str(
+            "*** Add File: assets/new/c.txt\n+created-c\n*** Delete File: old/d.txt\n*** End Patch",
+        );
+        let (name, input) = if text.contains("via shell") {
+            (
+                "bash",
+                json!({"command":format!("apply_patch <<'PATCH'\n{patch}\nPATCH\n")}),
+            )
+        } else {
+            ("apply_patch", json!({"patch":patch}))
+        };
+        let arguments = input.to_string();
+        return json!({"tool_calls":[{"index":0,"id":"call_patch","type":"function",
+            "function":{"name":name,"arguments":arguments}}]});
+    }
+    if text.contains("edit the app") {
+        let arguments = json!({"path":"web/src/app.ts","old_string":"const version = 1","new_string":"const version = 2"}).to_string();
+        return json!({"tool_calls":[{"index":0,"id":"call_edit","type":"function",
+            "function":{"name":"edit","arguments":arguments}}]});
+    }
+    if text.contains("enter the worktree") {
+        let arguments = json!({"name": "moved"}).to_string();
+        return json!({"tool_calls":[{"index":0,"id":"call_enter","type":"function",
+            "function":{"name":"enter_worktree","arguments":arguments}}]});
+    }
+    if let Some(path) = last["content"]
+        .as_str()
+        .and_then(|content| content.strip_prefix("read the file at "))
+    {
+        let arguments = json!({"path": path}).to_string();
+        return json!({"tool_calls":[{"index":0,"id":"call_path","type":"function",
+            "function":{"name":"read","arguments":arguments}}]});
+    }
     for (prompt, id) in [
         ("read the app first", "call_first"),
         ("read the app again", "call_again"),
     ] {
         if text.contains(prompt) {
             let arguments = json!({"path": "web/src/app.ts"}).to_string();
+            let id = format!("{id}_{}", body["messages"].as_array().unwrap().len());
             return json!({"tool_calls":[{"index":0,"id":id,"type":"function",
                 "function":{"name":"read","arguments":arguments}}]});
         }
     }
     json!({"content": "ok"})
+}
+
+#[tokio::test]
+async fn configured_instruction_limits_bound_baseline_and_nested_provider_text() {
+    let f = Fixture::start_with(
+        json!({"instruction_limits":{"max_file_bytes":3000,"max_total_bytes":4096}}),
+    )
+    .await;
+    f.write("AGENTS.md", &"λ".repeat(5000));
+    f.write("web/AGENTS.md", &"Ψ".repeat(5000));
+    f.write("web/CYBER.md", &"Ω".repeat(5000));
+    f.write("web/src/app.ts", "export const app = true;");
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let body = f.last_request();
+    let state = f.app.runtime.state(&session).await.unwrap();
+    let epoch = state.epoch.unwrap();
+    let instructions = &epoch.snapshot["core/instructions"];
+    assert!(instructions.len() <= 4096);
+    assert!(instructions.contains(&"λ".repeat(1500)));
+    assert!(!instructions.contains(&"λ".repeat(1501)));
+    assert!(system_prompt(&body).contains(instructions));
+    let nested = last_tool_result(&body);
+    let start = nested.find("\n\n<system-reminder>").unwrap();
+    let reminder = &nested[start..];
+    assert!(reminder.len() <= 4096, "{} bytes", reminder.len());
+    assert!(reminder.ends_with("</system-reminder>"));
+    assert!(reminder.contains("Ψ"));
+    assert!(!reminder.contains(&"Ψ".repeat(1501)));
+    assert!(!reminder.contains(&"Ω".repeat(1501)));
+    assert!(reminder.contains("total budget") || reminder.contains("instruction budget"));
+
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn bounded_lists_record_only_labelled_files_and_retry_unlisted_imports() {
+    let f = Fixture::start_with(
+        json!({"instruction_limits":{"max_file_bytes":512,"max_total_bytes":512}}),
+    )
+    .await;
+    let refs: Vec<_> = (0..20).map(|i| format!("@r/{i:02}.md")).collect();
+    f.write("web/CYBER.md", &refs.join("\n"));
+    for i in 0..20 {
+        f.write(&format!("web/r/{i:02}.md"), "x");
+    }
+    f.write("web/src/app.ts", "export const app = true;");
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let first = f
+        .app
+        .runtime
+        .state(&session)
+        .await
+        .unwrap()
+        .epoch
+        .unwrap()
+        .reminded_instructions;
+    let output = last_tool_result(&f.last_request());
+    let reminder = &output[output.find("\n\n<system-reminder>").unwrap()..];
+    assert!(reminder.len() <= 512);
+    assert!(!first.is_empty() && first.len() < 21);
+    for id in &first {
+        assert!(
+            reminder.contains(id),
+            "unlabelled identity {id}: {reminder}"
+        );
+    }
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let second = f
+        .app
+        .runtime
+        .state(&session)
+        .await
+        .unwrap()
+        .epoch
+        .unwrap()
+        .reminded_instructions;
+    let output = last_tool_result(&f.last_request());
+    let reminder = &output[output.find("\n\n<system-reminder>").unwrap()..];
+    assert!(reminder.len() <= 512);
+    assert!(second.len() > first.len());
+    for id in second.difference(&first) {
+        assert!(
+            reminder.contains(id),
+            "unlabelled identity {id}: {reminder}"
+        );
+    }
+    for id in &first {
+        assert!(
+            !reminder.contains(id),
+            "duplicate identity {id}: {reminder}"
+        );
+    }
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn project_rules_require_review_then_separate_baseline_from_matching_reads() {
+    let f = Fixture::start().await;
+    f.write(".cyber/rules/base.md", "ROOT_RULE_GUIDANCE");
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    let held = f.session(&f.repo).await;
+    f.prompt(&held, &f.repo, "read the app first", 2).await;
+    assert!(!every_request(&f).contains("ROOT_RULE_GUIDANCE"));
+    assert!(!every_request(&f).contains("WEB_RULE_GUIDANCE"));
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let request = f.last_request();
+    assert!(system_prompt(&request).contains("ROOT_RULE_GUIDANCE"));
+    assert!(!system_prompt(&request).contains("WEB_RULE_GUIDANCE"));
+    let result = last_tool_result(&request);
+    assert!(result.contains("WEB_RULE_GUIDANCE"));
+    assert!(!result.contains("paths:"));
+    let state = f.app.runtime.state(&session).await.unwrap();
+    let ids = state.epoch.unwrap().reminded_rules;
+    assert_eq!(ids.len(), 1, "{ids:?}");
+    assert!(ids.iter().all(|id| id.starts_with("rule:sha256:")));
+    let events = f.app.store.read_events(&session, -1, 500).unwrap().events;
+    let settled = events
+        .iter()
+        .find(|event| {
+            event.kind == "session.tool.settled.1"
+                && event.data["rule_reminders"]
+                    .as_array()
+                    .is_some_and(|rules| !rules.is_empty())
+        })
+        .unwrap();
+    assert!(
+        settled.data.get("instruction_reminders").is_none(),
+        "legacy path field is preserved"
+    );
+    let binding = &settled.data["rule_reminders"][0];
+    assert_eq!(binding["root"], f.repo.to_str().unwrap());
+    assert_eq!(
+        binding["path"],
+        f.repo.join(".cyber/rules/web.md").to_str().unwrap()
+    );
+    assert!(binding["digest"].as_str().unwrap().starts_with("sha256:"));
+    assert!(
+        binding["generation"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    let proof = &settled.data["rule_read"];
+    assert_eq!(
+        proof["evidence"]["path"],
+        f.repo.join("web/src/app.ts").to_str().unwrap()
+    );
+    assert_eq!(proof["evidence"]["root_identity"], binding["native_root"]);
+    assert!(
+        proof["evidence"]["file_identity"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert_eq!(
+        proof["operation_key"],
+        format!("{session}:{}", settled.data["call_id"].as_str().unwrap())
+    );
+    assert_eq!(proof["attempt"], 1);
+    assert_eq!(proof["location"], f.repo.to_str().unwrap());
+    for field in ["epoch", "attempt", "operation_key", "location"] {
+        let mut changed = events.clone();
+        let event = changed
+            .iter_mut()
+            .find(|event| event.id == settled.id)
+            .unwrap();
+        event.data["rule_read"][field] = if matches!(field, "operation_key" | "location") {
+            json!("other-call")
+        } else {
+            json!(999)
+        };
+        let replayed = cyber_server::runtime::SessionState::replay(&changed).unwrap();
+        assert!(replayed.epoch.unwrap().reminded_rules.is_empty(), "{field}");
+    }
+    let replayed = cyber_server::runtime::SessionState::replay(&events).unwrap();
+    assert_eq!(replayed.epoch.unwrap().reminded_rules, ids);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
+/// `system-context` → Scope-aware rule inspection and loading: once-per-Epoch delivery is
+/// scoped to the Epoch. After compaction starts a new Epoch the summary may have lost the
+/// rule, so the next matching read delivers it again, once.
+#[tokio::test]
+async fn a_scoped_rule_is_delivered_again_in_the_epoch_after_compaction() {
+    let f = Fixture::start_with(json!({"compaction": {"keep": {"turns": 1}}})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let epoch = |state: cyber_server::runtime::SessionState| state.epoch.unwrap();
+    let first = epoch(f.app.runtime.state(&session).await.unwrap());
+    assert_eq!(first.reminded_rules.len(), 1);
+
+    // The newest turn stays verbatim, so the rule's turn is the one summarized.
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    f.app.runtime.compact(&session, None).await.unwrap();
+    let compacted = f.app.runtime.state(&session).await.unwrap();
+    assert!(
+        compacted.compacted.is_some(),
+        "the first turn is summarized"
+    );
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let second = epoch(f.app.runtime.state(&session).await.unwrap());
+    assert!(
+        second.number > first.number,
+        "compaction starts a new Epoch"
+    );
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    assert_eq!(second.reminded_rules, first.reminded_rules);
+
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
+/// Regression: settlement rechecked only the Location and Epoch, so a trust revocation
+/// between a read's rule discovery and its commit still delivered and consumed the rule.
+#[tokio::test]
+async fn a_rule_revoked_while_its_read_settles_is_neither_delivered_nor_consumed() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let f = Fixture::start().await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let revoke = Arc::new(AtomicBool::new(false));
+    let (flag, trust, root) = (
+        Arc::clone(&revoke),
+        f.app.paths.trust_file(),
+        f.repo.clone(),
+    );
+    f.app.runtime.configure_settlement_probe(Arc::new(move || {
+        if flag.swap(false, Ordering::SeqCst) {
+            assert!(
+                cyber_core::trust::TrustStore::new(&trust)
+                    .revoke(&root)
+                    .unwrap()
+            );
+        }
+    }));
+    let session = f.session(&f.repo).await;
+    revoke.store(true, Ordering::SeqCst);
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(
+        !revoke.load(Ordering::SeqCst),
+        "revoked after discovery, before commit"
+    );
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("export const app = true;"), "{result}");
+    assert!(!result.contains("WEB_RULE_GUIDANCE"), "{result}");
+    let reminded = |state: cyber_server::runtime::SessionState| state.epoch.unwrap().reminded_rules;
+    assert!(reminded(f.app.runtime.state(&session).await.unwrap()).is_empty());
+    let events = f.app.store.read_events(&session, -1, 500).unwrap().events;
+    assert!(!events.iter().any(|event| {
+        event.data["rule_reminders"]
+            .as_array()
+            .is_some_and(|rules| !rules.is_empty())
+    }));
+
+    f.approve(&f.repo);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    assert_eq!(
+        reminded(f.app.runtime.state(&session).await.unwrap()).len(),
+        1
+    );
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
+/// A delivered rule is listed by inspection with its live approval: current while the
+/// checkout approval stands, revoked once it is withdrawn, and never with its body.
+#[tokio::test]
+async fn inspection_reports_a_delivered_rule_as_revoked_after_its_approval_is_withdrawn() {
+    let f = Fixture::start().await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let inspect = || async {
+        let state = f.app.runtime.state(&session).await.unwrap();
+        serde_json::to_value(f.app.runtime.inspect_context(&state)).unwrap()
+    };
+    let inspection = inspect().await;
+    let rule = &inspection["delivered_rules"][0];
+    assert!(
+        rule["path"].as_str().unwrap().ends_with("web.md"),
+        "{inspection:#}"
+    );
+    assert_eq!(rule["approval"], "current", "{inspection:#}");
+    assert_eq!(inspection["changed_delivered_rules"], 0);
+    assert!(
+        cyber_core::trust::TrustStore::new(f.app.paths.trust_file())
+            .revoke(&f.repo)
+            .unwrap()
+    );
+    let inspection = inspect().await;
+    assert_eq!(inspection["delivered_rules"][0]["approval"], "revoked");
+    assert_eq!(inspection["changed_delivered_rules"], 1);
+    assert!(!inspection.to_string().contains("WEB_RULE_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn changed_rule_bytes_stay_held_until_the_new_definition_is_reviewed() {
+    let f = Fixture::start().await;
+    let path = ".cyber/rules/web.md";
+    f.write(path, "---\npaths: ['web/**']\n---\nRULE_VERSION_A");
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("RULE_VERSION_A"));
+    f.write(path, "---\npaths: ['web/**']\n---\nRULE_VERSION_B");
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("RULE_VERSION_B"));
+    f.approve(&f.repo);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("RULE_VERSION_B"));
+    assert_eq!(
+        f.app
+            .runtime
+            .state(&session)
+            .await
+            .unwrap()
+            .epoch
+            .unwrap()
+            .reminded_rules
+            .len(),
+        2
+    );
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn rule_imports_keep_read_and_scope_gates_and_claude_compatibility() {
+    let f = Fixture::start_with(
+        json!({"compat":{"claude":false},"permissions":{"read":{".cyber/rules/secret.md":"deny"}}}),
+    )
+    .await;
+    f.write(
+        ".cyber/rules/a.md",
+        "CYBER_GUIDANCE\n@../../docs/extra.md\n@../../../private.md\n@db.md",
+    );
+    f.write(
+        ".cyber/rules/db.md",
+        "---\npaths: ['db/**']\n---\nDB_GUIDANCE",
+    );
+    f.write(".cyber/rules/secret.md", "SECRET_GUIDANCE");
+    f.write(".claude/rules/a.md", "CLAUDE_GUIDANCE");
+    f.write("docs/extra.md", "EXTRA_GUIDANCE");
+    std::fs::write(
+        f.repo.parent().unwrap().join("private.md"),
+        "OUTSIDE_GUIDANCE",
+    )
+    .unwrap();
+    std::fs::create_dir_all(f.config.join("rules")).unwrap();
+    std::fs::write(f.config.join("rules/global.md"), "GLOBAL_GUIDANCE").unwrap();
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "hello", 1).await;
+    let system = system_prompt(&f.last_request());
+    for present in ["GLOBAL_GUIDANCE", "CYBER_GUIDANCE", "EXTRA_GUIDANCE"] {
+        assert!(system.contains(present), "{present}: {system}");
+    }
+    for absent in [
+        "DB_GUIDANCE",
+        "SECRET_GUIDANCE",
+        "CLAUDE_GUIDANCE",
+        "OUTSIDE_GUIDANCE",
+    ] {
+        assert!(!system.contains(absent), "{absent}: {system}");
+    }
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn nested_rules_use_the_reviewed_operation_directory_in_the_same_checkout() {
+    let f = Fixture::start().await;
+    f.write(
+        "web/.cyber/rules/local.md",
+        "---\npaths: ['web/src/**']\n---\nLOCAL_NESTED_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo.join("web"));
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(!system_prompt(&f.last_request()).contains("LOCAL_NESTED_GUIDANCE"));
+    assert!(last_tool_result(&f.last_request()).contains("LOCAL_NESTED_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_nested_checkout_cannot_supply_rules_for_its_parent_session() {
+    let f = Fixture::start().await;
+    f.write("web/.git/marker", "");
+    f.write(
+        "web/.cyber/rules/local.md",
+        "---\npaths: ['web/src/**']\n---\nFOREIGN_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo.join("web"));
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("export const app"));
+    assert!(!every_request(&f).contains("FOREIGN_RULE_GUIDANCE"));
+    assert!(
+        f.app
+            .runtime
+            .state(&session)
+            .await
+            .unwrap()
+            .epoch
+            .unwrap()
+            .reminded_rules
+            .is_empty()
+    );
+    f.app.runtime.shutdown().await;
+}
+
+/// `system-context` → Scope-aware rule inspection and loading across a restart: the
+/// Epoch's delivered-rule set is rebuilt from the durable settlements, so the restarted
+/// server keeps the same Epoch and a matching read gets no second reminder.
+#[tokio::test]
+async fn a_delivered_scoped_rule_is_not_redelivered_after_server_restart() {
+    let f = Fixture::start_restartable(json!({})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let before = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+    assert_eq!(before.reminded_rules.len(), 1);
+
+    let f = f.restart().await;
+    let after = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+    assert_eq!(after.number, before.number, "a restart keeps the Epoch");
+    assert_eq!(after.reminded_rules, before.reminded_rules);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("export const app = true;"), "{result}");
+    assert!(!result.contains("WEB_RULE_GUIDANCE"), "{result}");
+    let epoch = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+    assert_eq!(epoch.number, before.number);
+    assert_eq!(epoch.reminded_rules, before.reminded_rules);
+    f.app.runtime.shutdown().await;
+}
+
+/// A read cut off by a restart is recovered as `interrupted`: it never consumes the rule,
+/// even if its settlement were to carry a rule binding, so the next matching read in the
+/// same Epoch delivers it.
+#[tokio::test]
+async fn a_read_interrupted_by_restart_does_not_consume_its_rule() {
+    let f = Fixture::start_restartable(json!({"permissions": {"read": "ask"}})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session_in(&f.repo, "default").await;
+    f.call(
+        Method::POST,
+        &format!("/sessions/{session}/prompt"),
+        &f.repo,
+        Some(json!({"parts": [{"type": "text", "text": "read the app first"}]})),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while f.app.runtime.pending_requests(Some(&session)).is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the read asks");
+    let before = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+
+    // The restarted server no longer asks, so the next read runs.
+    std::fs::write(f.config.join("cyber.json"), f.model.config().to_string()).unwrap();
+    let f = f.restart().await;
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let events = f.app.store.read_events(&session, -1, 500).unwrap().events;
+    let settled: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "session.tool.settled.1")
+        .collect();
+    assert_eq!(settled.len(), 2, "{settled:?}");
+    let (cut, read) = (settled[0], settled[1]);
+    assert_eq!(cut.data["status"], "interrupted");
+    assert!(
+        cut.data["rule_reminders"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
+    assert_eq!(read.data["status"], "ok");
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let epoch = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+    assert_eq!(epoch.number, before.number, "delivered in the same Epoch");
+    assert_eq!(epoch.reminded_rules.len(), 1);
+
+    // An interrupted settlement carrying the read's binding and proof still consumes
+    // nothing on replay.
+    let mut forged: Vec<_> = events
+        .iter()
+        .take_while(|event| event.id != cut.id)
+        .cloned()
+        .collect();
+    let mut interrupted = cut.clone();
+    for field in ["rule_reminders", "rule_read"] {
+        interrupted.data[field] = read.data[field].clone();
+    }
+    interrupted.data["rule_read"]["operation_key"] = json!(format!(
+        "{session}:{}",
+        cut.data["call_id"].as_str().unwrap()
+    ));
+    forged.push(interrupted.clone());
+    let replayed = cyber_server::runtime::SessionState::replay(&forged).unwrap();
+    assert!(replayed.epoch.unwrap().reminded_rules.is_empty());
+    // Control: the same settlement as `ok` would have consumed it.
+    let last = forged.last_mut().unwrap();
+    last.data["status"] = json!("ok");
+    let replayed = cyber_server::runtime::SessionState::replay(&forged).unwrap();
+    assert_eq!(replayed.epoch.unwrap().reminded_rules.len(), 1);
+    f.app.runtime.shutdown().await;
+}
+
+/// A checkout approval withdrawn while the server was down is honoured after restart: the
+/// matching read gets no rule until the checkout is approved again.
+#[tokio::test]
+async fn a_rule_revoked_while_the_server_was_down_is_not_delivered_after_restart() {
+    let f = Fixture::start_restartable(json!({})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    f.app.runtime.shutdown().await;
+    assert!(
+        cyber_core::trust::TrustStore::new(f.app.paths.trust_file())
+            .revoke(&f.repo)
+            .unwrap()
+    );
+
+    let f = f.restart().await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("export const app = true;"), "{result}");
+    assert!(!every_request(&f).contains("WEB_RULE_GUIDANCE"));
+    let reminded = |state: cyber_server::runtime::SessionState| state.epoch.unwrap().reminded_rules;
+    assert!(reminded(f.app.runtime.state(&session).await.unwrap()).is_empty());
+
+    f.approve(&f.repo);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    assert_eq!(
+        reminded(f.app.runtime.state(&session).await.unwrap()).len(),
+        1
+    );
+    f.app.runtime.shutdown().await;
 }
 
 struct Fixture {
@@ -49,17 +684,90 @@ struct Fixture {
     app: App,
     url: String,
     client: Client,
+    /// The file database a [`Fixture::restart`] reopens; in memory when unset.
+    database: Option<PathBuf>,
 }
 
 impl Fixture {
+    fn approve(&self, directory: &Path) {
+        let env = std::collections::HashMap::<String, String>::new();
+        let home = self._temp.path().join("home");
+        let report = cyber_core::config::trust_report(&cyber_core::config::LoadRequest {
+            location: directory,
+            paths: &self.app.paths,
+            env: &env,
+            home: &home,
+            profile: None,
+            overrides: &[],
+            flags: json!({}),
+        })
+        .unwrap();
+        cyber_core::trust::TrustStore::new(self.app.paths.trust_file())
+            .approve(&report.checkout_root, report.digest.as_deref().unwrap())
+            .unwrap();
+    }
     async fn start() -> Self {
         Self::start_with(json!({})).await
     }
 
     /// Start with `extra` top-level keys added to the global configuration.
     async fn start_with(extra: Value) -> Self {
+        Self::start_with_model(extra, false).await
+    }
+
+    async fn start_with_model(extra: Value, prefers_patch: bool) -> Self {
+        Self::open(extra, prefers_patch, false).await
+    }
+
+    /// Start over a file database, so [`Fixture::restart`] keeps the Sessions.
+    async fn start_restartable(extra: Value) -> Self {
+        Self::open(extra, false, true).await
+    }
+
+    async fn open(extra: Value, prefers_patch: bool, file_database: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
+        let model = ScriptedModel::start(reply);
+        let mut global = model.config();
+        if prefers_patch {
+            global["providers"]["test"]["models"]["main"] =
+                json!({"capabilities":{"prefers_apply_patch":true}});
+        }
+        for (key, value) in extra.as_object().unwrap() {
+            global[key] = value.clone();
+        }
+        let database = file_database.then(|| root.join("events.db"));
+        let app = Self::build(&root, &global, database.clone()).await;
+        let url = Self::serve(&app).await;
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        Self {
+            _temp: temp,
+            repo,
+            config: root.join("config"),
+            model,
+            app,
+            url,
+            client: Client::builder().no_proxy().build().unwrap(),
+            database,
+        }
+    }
+
+    /// Stop this server and serve a new App over the same database, configuration,
+    /// trust store, checkout and model, as a process restart would.
+    async fn restart(self) -> Self {
+        let database = self.database.clone().expect("started restartable");
+        self.app.runtime.shutdown().await;
+        let root = self._temp.path().canonicalize().unwrap();
+        let global: Value =
+            serde_json::from_str(&std::fs::read_to_string(self.config.join("cyber.json")).unwrap())
+                .unwrap();
+        let app = Self::build(&root, &global, Some(database)).await;
+        let url = Self::serve(&app).await;
+        Self { app, url, ..self }
+    }
+
+    async fn build(root: &Path, global: &Value, database: Option<PathBuf>) -> App {
         let paths = Paths {
             data: root.join("data"),
             config: root.join("config"),
@@ -68,18 +776,12 @@ impl Fixture {
             tmp: root.join("tmp"),
         };
         paths.ensure().unwrap();
-        let model = ScriptedModel::start(reply);
-        let mut global = model.config();
-        for (key, value) in extra.as_object().unwrap() {
-            global[key] = value.clone();
-        }
         std::fs::write(paths.config.join("cyber.json"), global.to_string()).unwrap();
-        let config = paths.config.clone();
-        let app = App::build(AppOptions {
+        App::build(AppOptions {
             paths,
             home: root.join("home"),
-            database: DatabaseLocation::Memory,
-            default_directory: root.clone(),
+            database: database.map_or(DatabaseLocation::Memory, DatabaseLocation::File),
+            default_directory: root.to_path_buf(),
             sandbox_policy: None,
             snapshots: false,
             interactive: true,
@@ -90,7 +792,10 @@ impl Fixture {
             isolation: None,
         })
         .await
-        .unwrap();
+        .unwrap()
+    }
+
+    async fn serve(app: &App) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/api/v1", listener.local_addr().unwrap());
         tokio::spawn(cyber_server::http::serve_tcp(
@@ -98,17 +803,7 @@ impl Fixture {
             listener,
             std::future::pending::<()>(),
         ));
-        let repo = root.join("repo");
-        std::fs::create_dir_all(repo.join(".git")).unwrap();
-        Self {
-            _temp: temp,
-            repo,
-            config,
-            model,
-            app,
-            url,
-            client: Client::builder().no_proxy().build().unwrap(),
-        }
+        url
     }
 
     fn write(&self, relative: &str, text: &str) -> PathBuf {
@@ -141,12 +836,16 @@ impl Fixture {
     }
 
     async fn session(&self, directory: &Path) -> String {
+        self.session_in(directory, "bypass").await
+    }
+
+    async fn session_in(&self, directory: &Path, mode: &str) -> String {
         let created = self
             .call(
                 Method::POST,
                 "/sessions",
                 directory,
-                Some(json!({"model": "test/main", "mode": "bypass"})),
+                Some(json!({"model": "test/main", "mode": mode})),
             )
             .await;
         created["data"]["id"].as_str().unwrap().to_owned()
@@ -270,11 +969,27 @@ async fn cyber_md_reaches_the_model_after_agents_md_nested_and_after_edits() {
     let context = f
         .call(
             Method::GET,
+            &format!("/sessions/{session}/context?include_content=true"),
+            &repo,
+            None,
+        )
+        .await;
+    let safe = f
+        .call(
+            Method::GET,
             &format!("/sessions/{session}/context"),
             &repo,
             None,
         )
         .await;
+    assert!(safe["data"]["baseline"].is_null());
+    assert!(!safe.to_string().contains("Root cyber rule."));
+    assert!(
+        safe["data"]["inspection"]["estimated_input_tokens"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
     let baseline = context["data"]["baseline"].as_str().unwrap();
     let source = format!("Instructions from: {}", repo.join("CYBER.md").display());
     assert!(baseline.contains(&source), "{baseline}");
@@ -356,7 +1071,10 @@ async fn two_full_size_nested_files_still_give_a_successful_read() {
         &result[..result.len().min(400)]
     );
     assert!(result.contains("export const app"));
-    assert!(result.contains(&"a".repeat(32 * 1024)));
+    assert!(result.contains(&"a".repeat(1024)));
+    assert!(!result.contains(&"a".repeat(32 * 1024)));
+    let reminder = &result[result.find("\n\n<system-reminder>").unwrap()..];
+    assert!(reminder.len() <= 32 * 1024);
     assert!(result.contains(&format!("- {}", cyber.display())));
     assert!(!result.contains("cccc"));
     f.prompt(&session, &repo, "read the app again", 2).await;
@@ -526,4 +1244,696 @@ async fn instruction_files_never_import_a_file_a_read_deny_rule_covers() {
     let f = Fixture::start_with(json!({"permissions": deny})).await;
     assert_secret_stays_out(&f, "config/secrets.json").await;
     f.app.runtime.shutdown().await;
+}
+
+/// The provider's input is not operation evidence: PreToolUse can rewrite it.
+#[cfg(unix)]
+#[tokio::test]
+async fn rewritten_reads_deliver_only_rules_for_the_file_actually_opened() {
+    let rewrite = json!({"updated_input":{"path":"db/schema.sql"}});
+    let command = format!("cat >/dev/null; printf '%s' '{rewrite}'");
+    let f = Fixture::start_with(json!({"hooks":{"PreToolUse":[{"matcher":"read","hooks":[{
+        "type":"command","id":"redirect-read","command":command
+    }]}]}}))
+    .await;
+    f.write("web/src/app.ts", "ORIGINAL_WEB_BYTES");
+    f.write("db/schema.sql", "ACTUAL_DATABASE_BYTES");
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWRONG_WEB_RULE",
+    );
+    f.write(
+        ".cyber/rules/db.md",
+        "---\npaths: ['db/**']\n---\nACTUAL_DB_RULE",
+    );
+    f.approve(&f.repo);
+    let id = f.session(&f.repo).await;
+    f.prompt(&id, &f.repo, "read the app first", 2).await;
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("ACTUAL_DATABASE_BYTES"), "{result}");
+    assert!(result.contains("ACTUAL_DB_RULE"), "{result}");
+    assert!(!result.contains("ORIGINAL_WEB_BYTES"), "{result}");
+    assert!(!result.contains("WRONG_WEB_RULE"), "{result}");
+    let events = f.app.store.read_events(&id, -1, 500).unwrap().events;
+    let settled = events
+        .iter()
+        .find(|event| event.data["rule_read"].is_object())
+        .unwrap();
+    assert_eq!(
+        settled.data["rule_read"]["evidence"]["path"],
+        f.repo.join("db/schema.sql").to_str().unwrap()
+    );
+    let state = f.app.runtime.state(&id).await.unwrap();
+    let call = &state.calls[settled.data["call_id"].as_str().unwrap()];
+    assert_eq!(call.input.as_ref().unwrap()["path"], "web/src/app.ts");
+    assert_eq!(state.epoch.unwrap().reminded_rules.len(), 1);
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn denied_read_leaves_rule_available_for_a_successful_edit() {
+    let f = Fixture::start_with(json!({"permissions":{"read":{"web/src/app.ts":"deny"}}})).await;
+    f.write("web/src/app.ts", "const version = 1");
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nEDIT_RULE_GUIDANCE",
+    );
+    f.approve(&f.repo);
+    let id = f.session(&f.repo).await;
+    f.prompt(&id, &f.repo, "read the app first", 2).await;
+    let before = f.app.runtime.state(&id).await.unwrap();
+    assert!(
+        before
+            .calls
+            .values()
+            .any(|call| call.name == "read"
+                && call.status == cyber_server::runtime::CallStatus::Error)
+    );
+    assert!(before.epoch.as_ref().unwrap().reminded_rules.is_empty());
+    assert!(!last_tool_result(&f.last_request()).contains("EDIT_RULE_GUIDANCE"));
+
+    f.prompt(&id, &f.repo, "edit the app", 2).await;
+    assert_eq!(
+        std::fs::read_to_string(f.repo.join("web/src/app.ts")).unwrap(),
+        "const version = 2"
+    );
+    assert!(last_tool_result(&f.last_request()).contains("EDIT_RULE_GUIDANCE"));
+    let state = f.app.runtime.state(&id).await.unwrap();
+    let epoch = state.epoch.unwrap();
+    assert_eq!(epoch.number, before.epoch.unwrap().number);
+    assert_eq!(epoch.reminded_rules.len(), 1);
+    let events = f.app.store.read_events(&id, -1, 500).unwrap().events;
+    let settled = events
+        .iter()
+        .find(|event| event.data["rule_edit"].is_object())
+        .unwrap();
+    assert!(settled.data.get("rule_read").is_none());
+    assert_eq!(
+        settled.data["rule_edit"]["evidence"]["path"],
+        f.repo.join("web/src/app.ts").to_str().unwrap()
+    );
+    let replay = cyber_server::runtime::SessionState::replay(&events).unwrap();
+    assert_eq!(replay.epoch.unwrap().reminded_rules, epoch.reminded_rules);
+    f.app.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn patch_rules_follow_completed_files_even_after_a_later_failure() {
+    use cyber_server::runtime::CallStatus;
+    for (shell, partial) in [(false, true), (false, false), (true, true), (true, false)] {
+        if shell && !cfg!(unix) {
+            continue; // PowerShell interception has its own host test.
+        }
+        let config = if shell {
+            json!({"sandbox":{"policy":"workspace-write","env":{"set":{"PATH":"/usr/bin:/bin"}}}})
+        } else {
+            json!({})
+        };
+        let f = Fixture::start_with_model(config, !shell).await;
+        f.write("web/a.txt", "before-a\n");
+        f.write("db/b.txt", "before-b\n");
+        f.write(
+            ".cyber/rules/web.md",
+            "---\npaths: ['web/**']\n---\nPATCH_WEB_RULE",
+        );
+        f.write(
+            ".cyber/rules/db.md",
+            "---\npaths: ['db/**']\n---\nPATCH_DB_RULE",
+        );
+        f.write(
+            ".cyber/rules/assets.md",
+            "---\npaths: ['assets/**']\n---\nPATCH_ASSET_RULE",
+        );
+        f.write("old/d.txt", "delete me\n");
+        f.write(
+            ".cyber/rules/old.md",
+            "---\npaths: ['old/**']\n---\nPATCH_REMOVED_RULE",
+        );
+        f.approve(&f.repo);
+        let id = f.session(&f.repo).await;
+        let mut prompt = if partial {
+            "patch the app partially"
+        } else {
+            "patch the app"
+        }
+        .to_owned();
+        if shell {
+            prompt.push_str(" via shell");
+        }
+        f.prompt(&id, &f.repo, &prompt, 2).await;
+
+        let result = last_tool_result(&f.last_request());
+        assert!(result.contains("PATCH_WEB_RULE"), "{result}");
+        assert_eq!(result.contains("PATCH_DB_RULE"), !partial, "{result}");
+        assert_eq!(result.contains("PATCH_ASSET_RULE"), !partial, "{result}");
+        assert_eq!(result.contains("PATCH_REMOVED_RULE"), !partial, "{result}");
+        assert_eq!(f.repo.join("old/d.txt").exists(), partial);
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join("assets/new/c.txt"))
+                .ok()
+                .as_deref(),
+            (!partial).then_some("created-c\n")
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join("web/a.txt")).unwrap(),
+            "after-a\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join("db/b.txt")).unwrap(),
+            if partial { "before-b\n" } else { "after-b\n" }
+        );
+        let state = f.app.runtime.state(&id).await.unwrap();
+        assert_eq!(
+            state.calls["call_patch"].status,
+            if partial {
+                CallStatus::Error
+            } else {
+                CallStatus::Ok
+            }
+        );
+        let ids = state.epoch.unwrap().reminded_rules;
+        assert_eq!(ids.len(), if partial { 1 } else { 4 });
+        let events = f.app.store.read_events(&id, -1, 500).unwrap().events;
+        let settled = events
+            .iter()
+            .find(|event| event.data["rule_patch"].is_array())
+            .unwrap();
+        if shell {
+            assert_eq!(settled.data["metadata"]["intercepted"], "apply_patch");
+            let mut unmarked = events.clone();
+            let event = unmarked
+                .iter_mut()
+                .find(|event| event.id == settled.id)
+                .unwrap();
+            event.data.as_object_mut().unwrap().remove("metadata");
+            let replay = cyber_server::runtime::SessionState::replay(&unmarked).unwrap();
+            assert!(replay.epoch.unwrap().reminded_rules.is_empty());
+        }
+        let proof = settled.data["rule_patch"].as_array().unwrap();
+        assert_eq!(proof.len(), ids.len());
+        if !partial {
+            assert!(proof[3]["evidence"]["removed_parent_identity"].is_string());
+            assert_eq!(
+                proof[3]["evidence"]["path"],
+                f.repo.join("old/d.txt").to_str().unwrap()
+            );
+        }
+        assert_eq!(
+            proof[0]["evidence"]["path"],
+            f.repo.join("web/a.txt").to_str().unwrap()
+        );
+        let mut wrong_target = events.clone();
+        let event = wrong_target
+            .iter_mut()
+            .find(|event| event.id == settled.id)
+            .unwrap();
+        event.data["rule_patch"][0]["evidence"]["path"] = json!(f.repo.join("web/wrong.txt"));
+        let replay = cyber_server::runtime::SessionState::replay(&wrong_target).unwrap();
+        assert_eq!(replay.epoch.unwrap().reminded_rules.len(), ids.len() - 1);
+        let replay = cyber_server::runtime::SessionState::replay(&events).unwrap();
+        assert_eq!(replay.epoch.unwrap().reminded_rules, ids);
+        f.app.runtime.shutdown().await;
+    }
+}
+
+/// `system-context` → Path-scoped rules: unscoped rule text follows each directory's
+/// ordinary instruction files, sorted `.claude/rules` before sorted `.cyber/rules`, with
+/// the checkout root before the more specific Location; `compat.claude: false` leaves
+/// every `.claude/rules` definition out.
+#[tokio::test]
+async fn rule_directories_load_claude_then_cyber_rules_root_before_nested() {
+    async fn baseline(extra: Value) -> String {
+        let f = Fixture::start_with(extra).await;
+        for (path, text) in [
+            ("AGENTS.md", "ROOT_AGENTS_TEXT"),
+            (".claude/rules/b.md", "ROOT_CLAUDE_B_TEXT"),
+            (".claude/rules/a.md", "ROOT_CLAUDE_A_TEXT"),
+            (".cyber/rules/b.md", "ROOT_CYBER_B_TEXT"),
+            (".cyber/rules/a.md", "ROOT_CYBER_A_TEXT"),
+            ("web/AGENTS.md", "WEB_AGENTS_TEXT"),
+            ("web/.claude/rules/z.md", "WEB_CLAUDE_Z_TEXT"),
+            ("web/.cyber/rules/a.md", "WEB_CYBER_A_TEXT"),
+        ] {
+            f.write(path, text);
+        }
+        let web = f.repo.join("web");
+        f.approve(&web);
+        let session = f.session(&web).await;
+        f.prompt(&session, &web, "say hello", 1).await;
+        let system = system_prompt(&f.last_request());
+        f.app.runtime.shutdown().await;
+        system
+    }
+
+    let system = baseline(json!({})).await;
+    assert_in_order(
+        &system,
+        &[
+            "ROOT_AGENTS_TEXT",
+            "ROOT_CLAUDE_A_TEXT",
+            "ROOT_CLAUDE_B_TEXT",
+            "ROOT_CYBER_A_TEXT",
+            "ROOT_CYBER_B_TEXT",
+            "WEB_AGENTS_TEXT",
+            "WEB_CLAUDE_Z_TEXT",
+            "WEB_CYBER_A_TEXT",
+        ],
+    );
+
+    let system = baseline(json!({"compat": {"claude": false}})).await;
+    assert!(!system.contains("CLAUDE_"), "{system}");
+    assert_in_order(
+        &system,
+        &[
+            "ROOT_AGENTS_TEXT",
+            "ROOT_CYBER_A_TEXT",
+            "ROOT_CYBER_B_TEXT",
+            "WEB_AGENTS_TEXT",
+            "WEB_CYBER_A_TEXT",
+        ],
+    );
+}
+
+fn git(directory: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .current_dir(directory)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+}
+
+/// No leakage across Locations: a rule delivered in the origin checkout neither
+/// satisfies nor supplies delivery after the Session enters a worktree. The worktree's
+/// own copy of the rule is a separate definition, held until that checkout is approved
+/// and then delivered once, and an origin-only rule never reaches the moved Session.
+#[tokio::test]
+async fn a_rule_delivered_in_one_location_is_not_reused_after_the_session_moves() {
+    let f = Fixture::start().await;
+    std::fs::remove_dir_all(f.repo.join(".git")).unwrap();
+    git(&f.repo, &["init", "--quiet"]);
+    git(&f.repo, &["config", "user.name", "Rules"]);
+    git(&f.repo, &["config", "user.email", "rules@example.invalid"]);
+    git(&f.repo, &["config", "commit.gpgsign", "false"]);
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    git(&f.repo, &["add", "."]);
+    git(&f.repo, &["commit", "--quiet", "-m", "base"]);
+    // Untracked, so only the origin checkout has it.
+    f.write(
+        ".cyber/rules/db.md",
+        "---\npaths: ['db/**']\n---\nORIGIN_DB_RULE",
+    );
+    f.write("db/schema.sql", "create table origin;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let epoch = |state: cyber_server::runtime::SessionState| state.epoch.unwrap();
+    let origin = epoch(f.app.runtime.state(&session).await.unwrap());
+    assert_eq!(origin.delivered_rules.len(), 1);
+
+    f.prompt(&session, &f.repo, "enter the worktree", 2).await;
+    let moved = PathBuf::from(f.app.runtime.state(&session).await.unwrap().info.directory);
+    assert_eq!(moved.file_name().unwrap(), "moved");
+    assert!(moved.join(".cyber/rules/web.md").exists());
+
+    // The origin's approval and delivery do not carry over to the worktree's definition.
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("export const app = true;"), "{result}");
+    assert!(!result.contains("WEB_RULE_GUIDANCE"), "{result}");
+    let held = epoch(f.app.runtime.state(&session).await.unwrap());
+    assert_eq!(held.reminded_rules, origin.reminded_rules);
+
+    // Once approved, the worktree's own rule is eligible and delivered once.
+    f.approve(&moved);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let after = epoch(f.app.runtime.state(&session).await.unwrap());
+    assert_eq!(after.reminded_rules.len(), 2, "{:?}", after.delivered_rules);
+    let binding = after.delivered_rules.last().unwrap();
+    let moved_root = std::fs::canonicalize(&moved).unwrap();
+    assert_eq!(
+        std::fs::canonicalize(&binding.root).unwrap(),
+        moved_root,
+        "{binding:?}"
+    );
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+
+    // A file left behind in the origin checkout does not bring its rule along.
+    let origin_file = f.repo.join("db/schema.sql");
+    let prompt = format!("read the file at {}", origin_file.display());
+    f.prompt(&session, &f.repo, &prompt, 2).await;
+    assert!(!every_request(&f).contains("ORIGIN_DB_RULE"));
+    assert_eq!(
+        epoch(f.app.runtime.state(&session).await.unwrap()).reminded_rules,
+        after.reminded_rules
+    );
+    f.app.runtime.shutdown().await;
+}
+
+/// Epoch isolation between Sessions: a child Session and a fork cut before the delivering
+/// read start without the parent's delivered rules, deliver the rule once in their own
+/// Epoch, and leave the parent's delivery record unchanged.
+#[tokio::test]
+async fn a_child_or_forked_session_does_not_inherit_parent_rule_delivery() {
+    let f = Fixture::start().await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let parent = f.session(&f.repo).await;
+    f.prompt(&parent, &f.repo, "say hello", 1).await;
+    f.prompt(&parent, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let reminded = |state: cyber_server::runtime::SessionState| state.epoch.unwrap().reminded_rules;
+    let delivered = reminded(f.app.runtime.state(&parent).await.unwrap());
+    assert_eq!(delivered.len(), 1);
+
+    let created = f
+        .call(
+            Method::POST,
+            "/sessions",
+            &f.repo,
+            Some(json!({"model": "test/main", "mode": "bypass", "parent_id": parent})),
+        )
+        .await;
+    let child = created["data"]["id"].as_str().unwrap().to_owned();
+    assert!(
+        f.app
+            .runtime
+            .state(&child)
+            .await
+            .unwrap()
+            .epoch
+            .is_none_or(|epoch| epoch.reminded_rules.is_empty())
+    );
+    f.prompt(&child, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    assert_eq!(
+        reminded(f.app.runtime.state(&child).await.unwrap()),
+        delivered,
+        "the same definition, delivered in the child's own Epoch"
+    );
+
+    let state = f.app.runtime.state(&parent).await.unwrap();
+    let read_prompt = state
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            cyber_server::runtime::Entry::User { id, parts, .. }
+                if parts.iter().any(|part| {
+                    matches!(part, cyber_llm::Content::Text { text }
+                        if text.contains("read the app first"))
+                }) =>
+            {
+                Some(id.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
+    let fork = f
+        .app
+        .runtime
+        .fork(&parent, Some(&read_prompt))
+        .await
+        .unwrap()
+        .id;
+    assert!(reminded(f.app.runtime.state(&fork).await.unwrap()).is_empty());
+    f.prompt(&fork, &f.repo, "read the app again", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    assert_eq!(
+        reminded(f.app.runtime.state(&fork).await.unwrap()),
+        delivered
+    );
+    f.prompt(&fork, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+
+    // Neither the child nor the fork changed the parent's record.
+    let parent_epoch = f.app.runtime.state(&parent).await.unwrap().epoch.unwrap();
+    assert_eq!(parent_epoch.reminded_rules, delivered);
+    assert_eq!(parent_epoch.delivered_rules.len(), 1);
+    f.app.runtime.shutdown().await;
+}
+
+/// A reminder cut by the instruction budget consumes only the rules it labels, as a
+/// delivered body or as a whole entry of its bounded "read them" list: rules it leaves
+/// unlisted stay eligible, later matching reads label each of them once, and every
+/// recorded binding names a rule its own reminder labelled.
+#[tokio::test]
+async fn a_truncated_rule_reminder_records_only_labelled_bindings() {
+    let f = Fixture::start_with(
+        json!({"instruction_limits":{"max_file_bytes":512,"max_total_bytes":512}}),
+    )
+    .await;
+    let names: Vec<_> = (0..20).map(|i| format!("r{i:02}.md")).collect();
+    for name in &names {
+        f.write(
+            &format!(".cyber/rules/{name}"),
+            &format!(
+                "---\npaths: ['web/**']\n---\nRULE_{name} {}",
+                "x".repeat(200)
+            ),
+        );
+    }
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    let labelled = |output: &str| {
+        let reminder = output
+            .find("\n\n<system-reminder>")
+            .map_or("", |start| &output[start..]);
+        assert!(reminder.len() <= 512, "{} bytes", reminder.len());
+        names
+            .iter()
+            .filter(|name| {
+                let path = f.repo.join(".cyber/rules").join(name).display().to_string();
+                reminder.contains(&format!("Instructions from: {path}\n"))
+                    || reminder.contains(&format!("- {path}\n"))
+            })
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let bound = |state: cyber_server::runtime::SessionState| {
+        state
+            .epoch
+            .unwrap()
+            .delivered_rules
+            .iter()
+            .map(|binding| binding.path.rsplit('/').next().unwrap().to_owned())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    let recorded = || {
+        let events = f.app.store.read_events(&session, -1, 500).unwrap().events;
+        let settled = events
+            .iter()
+            .rev()
+            .find(|event| event.kind == "session.tool.settled.1")
+            .unwrap()
+            .clone();
+        settled.data["rule_reminders"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|binding| {
+                let path = binding["path"].as_str().unwrap();
+                path.rsplit('/').next().unwrap().to_owned()
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let first = labelled(&last_tool_result(&f.last_request()));
+    assert!(!first.is_empty() && first.len() < names.len(), "{first:?}");
+    assert_eq!(recorded(), first);
+    assert_eq!(bound(f.app.runtime.state(&session).await.unwrap()), first);
+
+    let mut seen = first;
+    for _ in 0..names.len() {
+        if seen.len() == names.len() {
+            break;
+        }
+        f.prompt(&session, &f.repo, "read the app again", 2).await;
+        let next = labelled(&last_tool_result(&f.last_request()));
+        assert!(!next.is_empty(), "an eligible rule is labelled");
+        assert!(next.is_disjoint(&seen), "relabelled {next:?}");
+        assert_eq!(recorded(), next);
+        seen.extend(next);
+        assert_eq!(bound(f.app.runtime.state(&session).await.unwrap()), seen);
+    }
+    assert_eq!(seen.len(), names.len());
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(labelled(&last_tool_result(&f.last_request())).is_empty());
+    assert!(recorded().is_empty());
+    f.app.runtime.shutdown().await;
+}
+
+/// The provider-neutral request an OpenAI-compatible body was built from: the joined
+/// system text, the messages and the tool definitions. Each provider message maps back
+/// to exactly one request message in these single-call flows.
+fn assembled_request(body: &Value) -> (String, Vec<cyber_llm::Message>, Vec<cyber_llm::ToolSpec>) {
+    use cyber_llm::{Content, Message, Role};
+    let wire = body["messages"].as_array().unwrap();
+    assert_eq!(wire[0]["role"], "system");
+    let system = wire[0]["content"].as_str().unwrap().to_owned();
+    let mut messages = Vec::new();
+    for message in &wire[1..] {
+        let (role, content) = match message["role"].as_str().unwrap() {
+            "user" => {
+                let parts = match &message["content"] {
+                    Value::String(text) => vec![Content::Text { text: text.clone() }],
+                    other => panic!("unexpected user content {other}"),
+                };
+                (Role::User, parts)
+            }
+            "tool" => {
+                let part = Content::ToolResult {
+                    call_id: message["tool_call_id"].as_str().unwrap().to_owned(),
+                    output: message["content"].as_str().unwrap().to_owned(),
+                    is_error: false,
+                };
+                (Role::User, vec![part])
+            }
+            "assistant" => {
+                let mut parts = Vec::new();
+                if let Some(text) = message["content"].as_str() {
+                    parts.push(Content::Text { text: text.into() });
+                }
+                for call in message["tool_calls"].as_array().into_iter().flatten() {
+                    let function = &call["function"];
+                    parts.push(Content::ToolCall {
+                        id: call["id"].as_str().unwrap().to_owned(),
+                        name: function["name"].as_str().unwrap().to_owned(),
+                        input: serde_json::from_str(function["arguments"].as_str().unwrap())
+                            .unwrap(),
+                        opaque: None,
+                    });
+                }
+                (Role::Assistant, parts)
+            }
+            other => panic!("unexpected role {other}"),
+        };
+        messages.push(Message { role, content });
+    }
+    let tools = body["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| cyber_llm::ToolSpec {
+            name: tool["function"]["name"].as_str().unwrap().to_owned(),
+            description: tool["function"]["description"].as_str().unwrap().to_owned(),
+            input_schema: tool["function"]["parameters"].clone(),
+        })
+        .collect();
+    (system, messages, tools)
+}
+
+fn json_len<T: serde::Serialize>(value: &T) -> usize {
+    serde_json::to_string(value).unwrap().len()
+}
+
+/// Token-count consistency with actual request assembly: the last prepared request's
+/// estimate equals the size of the request the provider received, rule reminder
+/// included, and the next-request estimate taken at idle equals the following request
+/// without its new prompt.
+#[tokio::test]
+async fn inspection_estimate_matches_the_assembled_request_with_rule_reminders() {
+    let f = Fixture::start().await;
+    f.write("CYBER.md", "Baseline project guidance.");
+    f.write(
+        ".cyber/rules/web.md",
+        &format!(
+            "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE {}",
+            "r".repeat(2000)
+        ),
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let body = f.last_request();
+    let (system, messages, tools) = assembled_request(&body);
+    let reminder = messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .any(|part| {
+            matches!(part, cyber_llm::Content::ToolResult { output, .. }
+                if output.contains("WEB_RULE_GUIDANCE"))
+        });
+    assert!(reminder, "{body}");
+    let state = f.app.runtime.state(&session).await.unwrap();
+    let epoch = state.epoch.clone().unwrap();
+    let prefix = format!(
+        "{}\n\n{}",
+        epoch.system_prefix.as_deref().unwrap(),
+        epoch.baseline
+    );
+    assert_eq!(system, prefix, "no turn instructions in this flow");
+    // The joined system text has one separator the request's two system parts lack.
+    let system_bytes = system.len() - 2;
+    let inspection = f.app.runtime.inspect_context(&state);
+    let prepared = inspection.last_prepared_request.clone().unwrap();
+    assert_eq!(
+        prepared.estimated_input_tokens,
+        ((system_bytes + json_len(&messages) + json_len(&tools)) / 4) as u64,
+        "{prepared:#?}"
+    );
+    let schemas = prepared
+        .sources
+        .iter()
+        .find(|source| source.id == "tool_schemas")
+        .unwrap();
+    assert_eq!(schemas.estimated_tokens, (json_len(&tools) / 4) as u64);
+    let next = inspection
+        .next_request
+        .as_ref()
+        .unwrap()
+        .estimated_input_tokens;
+
+    // The next request is the stored projection plus the new prompt.
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    let body = f.last_request();
+    let (system, mut messages, next_tools) = assembled_request(&body);
+    assert_eq!(system, prefix);
+    assert_eq!(next_tools, tools);
+    let state = f.app.runtime.state(&session).await.unwrap();
+    let prepared = f
+        .app
+        .runtime
+        .inspect_context(&state)
+        .last_prepared_request
+        .unwrap();
+    assert_eq!(
+        prepared.estimated_input_tokens,
+        ((system_bytes + json_len(&messages) + json_len(&tools)) / 4) as u64
+    );
+    let prompt = messages.pop().unwrap();
+    assert_eq!(text_of_parts(&prompt), "say hello");
+    // The stored projection is sized like a request with no tools (`[]`), and the last
+    // request's schema estimate is added to it: the same bytes as the request that was
+    // sent, rounded in two parts.
+    let stored =
+        (system_bytes + json_len(&messages) + json_len(&Vec::<cyber_llm::ToolSpec>::new())) / 4;
+    assert_eq!(next, (stored + json_len(&tools) / 4) as u64);
+    let sent = (system_bytes + json_len(&messages) + json_len(&tools)) / 4;
+    assert!(next.abs_diff(sent as u64) <= 1, "{next} vs {sent}");
+    f.app.runtime.shutdown().await;
+}
+
+fn text_of_parts(message: &cyber_llm::Message) -> String {
+    message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            cyber_llm::Content::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
 }
