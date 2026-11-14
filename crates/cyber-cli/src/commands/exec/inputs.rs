@@ -88,21 +88,33 @@ impl Inputs {
 
     /// Only a complete server-recorded cohort can authorize a driver reply.
     /// Current Session activity and assistant history are not ownership proof.
+    #[cfg(test)]
     pub fn owns_request(&self, session: &str, data: &Value) -> bool {
-        if data["session_id"].as_str() != Some(session)
-            || data["message_id"].as_str().is_none_or(str::is_empty)
+        self.request_cohort(session, data).is_some()
+    }
+
+    /// The owned cohort of a request: its own step cohort when `session` asked it, or,
+    /// for a descendant (subagent) request routed here, the root cohort its lineage
+    /// inherited from `session`. Every identity must be a pending input of this driver.
+    pub fn request_cohort(&self, session: &str, data: &Value) -> Option<Vec<String>> {
+        if data["message_id"].as_str().is_none_or(str::is_empty)
             || data["call_id"].as_str().is_none_or(str::is_empty)
         {
-            return false;
+            return None;
         }
-        let Some(inputs) = data["input_message_ids"].as_array() else {
-            return false;
+        let ids = if data["session_id"].as_str() == Some(session) {
+            &data["input_message_ids"]
+        } else if data["root_session_id"].as_str() == Some(session) {
+            &data["root_input_message_ids"]
+        } else {
+            return None;
         };
-        !inputs.is_empty()
-            && inputs.len() <= MAX_PENDING
-            && inputs
-                .iter()
-                .all(|input| input.as_str().is_some_and(|id| self.contains(id)))
+        let ids: Vec<String> = ids
+            .as_array()?
+            .iter()
+            .map(|id| id.as_str().map(str::to_owned))
+            .collect::<Option<_>>()?;
+        self.owns_cohort(&ids).then_some(ids)
     }
 
     pub fn get(&self, message_id: &str) -> Option<&Input> {
@@ -188,6 +200,42 @@ mod tests {
         }
         inputs.complete("msg_0").unwrap();
         assert!(!inputs.owns_request("session", &owned));
+    }
+
+    #[test]
+    fn a_descendant_request_is_owned_only_through_its_complete_root_cohort() {
+        let mut inputs = Inputs::default();
+        inputs.admit(input(0)).unwrap();
+        inputs.admit(input(1)).unwrap();
+        let child = serde_json::json!({"session_id":"child","message_id":"assistant","call_id":"call",
+            "input_message_ids":["child_input"],"root_session_id":"session","root_input_message_ids":["msg_1"]});
+        assert_eq!(
+            inputs.request_cohort("session", &child),
+            Some(vec!["msg_1".to_owned()])
+        );
+        // The child's own cohort never stands in for the root cohort.
+        assert!(!inputs.owns_request("child", &child));
+        for (field, value) in [
+            ("root_session_id", serde_json::json!("other")),
+            ("root_session_id", Value::Null),
+            ("root_input_message_ids", serde_json::json!([])),
+            (
+                "root_input_message_ids",
+                serde_json::json!(["msg_1", "foreign"]),
+            ),
+            (
+                "root_input_message_ids",
+                serde_json::json!(["msg_1", "msg_1"]),
+            ),
+            ("root_input_message_ids", serde_json::json!(["msg_1", 3])),
+            ("call_id", Value::Null),
+        ] {
+            let mut unknown = child.clone();
+            unknown[field] = value;
+            assert!(!inputs.owns_request("session", &unknown), "{unknown}");
+        }
+        inputs.complete("msg_1").unwrap();
+        assert!(!inputs.owns_request("session", &child));
     }
 
     #[test]

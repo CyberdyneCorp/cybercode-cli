@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 
 /// Answers each Turn request with the next scripted reply: `text:<answer>`, a tool
 /// call `<tool> <json arguments>` or `fail:<body>`, an HTTP 400 with that body. Title requests (no tools) get a title.
+/// A subagent's Turns (its first user message names [`CHILD_TASK`]) take the separate
+/// child script, so parent and child order cannot race.
 struct Provider {
     url: String,
     turns: Arc<Mutex<Vec<Value>>>,
@@ -33,11 +35,17 @@ struct Gate {
 
 impl Provider {
     fn start(script: &[&str]) -> Self {
+        Self::start_split(script, &[])
+    }
+
+    fn start_split(script: &[&str], child: &[&str]) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/v1", listener.local_addr().unwrap());
         listener.set_nonblocking(true).unwrap();
-        let script: Arc<Mutex<VecDeque<String>>> =
-            Arc::new(Mutex::new(script.iter().map(|s| (*s).to_owned()).collect()));
+        let queue = |script: &[&str]| -> Arc<Mutex<VecDeque<String>>> {
+            Arc::new(Mutex::new(script.iter().map(|s| (*s).to_owned()).collect()))
+        };
+        let scripts = [queue(script), queue(child)];
         let turns = Arc::new(Mutex::new(Vec::new()));
         let done = Arc::new(AtomicBool::new(false));
         let gate = Arc::new(Gate::default());
@@ -46,7 +54,7 @@ impl Provider {
         let server = thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
-                    Ok((stream, _)) => answer(stream, &seen, &script, &held, &stop),
+                    Ok((stream, _)) => answer(stream, &seen, &scripts, &held, &stop),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
                     }
@@ -92,10 +100,20 @@ impl Drop for Provider {
     }
 }
 
+/// Marks the prompt of a delegated subagent in a test script.
+const CHILD_TASK: &str = "CHILD_TASK";
+
+fn is_child(body: &Value) -> bool {
+    body["messages"]
+        .as_array()
+        .and_then(|messages| messages.iter().find(|message| message["role"] == "user"))
+        .is_some_and(|message| message.to_string().contains(CHILD_TASK))
+}
+
 fn answer(
     mut stream: TcpStream,
     turns: &Mutex<Vec<Value>>,
-    script: &Mutex<VecDeque<String>>,
+    scripts: &[Arc<Mutex<VecDeque<String>>>; 2],
     gate: &Gate,
     done: &AtomicBool,
 ) {
@@ -107,6 +125,7 @@ fn answer(
         return;
     };
     let chunk = if body["tools"].is_array() {
+        let script = &scripts[usize::from(is_child(&body))];
         let n = {
             let mut turns = turns.lock().unwrap();
             turns.push(body);
@@ -192,6 +211,17 @@ impl Driven {
         Self::start_reading(provider, flags, Arc::new(AtomicBool::new(true)), None)
     }
 
+    /// Like `start`, with extra top-level configuration (hooks, permissions).
+    fn start_configured(provider: &Provider, flags: &[&str], extra: Value) -> Self {
+        Self::launch(
+            provider,
+            flags,
+            Arc::new(AtomicBool::new(true)),
+            None,
+            extra,
+        )
+    }
+
     /// Like `start`, but working in another driver's repository, so both share one
     /// Location.
     fn start_beside(provider: &Provider, flags: &[&str], other: &Driven) -> Self {
@@ -207,11 +237,24 @@ impl Driven {
         reading: Arc<AtomicBool>,
         repo: Option<PathBuf>,
     ) -> Self {
+        Self::launch(provider, flags, reading, repo, json!({}))
+    }
+
+    fn launch(
+        provider: &Provider,
+        flags: &[&str],
+        reading: Arc<AtomicBool>,
+        repo: Option<PathBuf>,
+        extra: Value,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("repo/.git")).unwrap();
         std::fs::create_dir_all(root.join("cyber/config")).unwrap();
-        let config = json!({"providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}});
+        let mut config = json!({"providers":{"corp":{"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}}});
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            config[key] = value.clone();
+        }
         std::fs::write(root.join("cyber/config/cyber.jsonc"), config.to_string()).unwrap();
         std::fs::write(root.join("models.json"), "{}").unwrap();
         let helper =
@@ -1513,4 +1556,219 @@ fn a_second_driver_cannot_reply_to_the_first_drivers_request() {
     let turns = provider.turns();
     assert_eq!(turns.len(), 2, "the tool ran once: {turns:#?}");
     assert!(turns[1].to_string().contains("driven"), "{:#}", turns[1]);
+}
+
+/// The parent delegates [`CHILD_TASK`] to a background subagent, then answers the
+/// completion handback.
+const DELEGATE: [&str; 3] = [
+    r#"gate:agent {"prompt":"CHILD_TASK: run it","description":"Run the child task","background":true}"#,
+    "text:delegated",
+    "text:handback answer",
+];
+
+/// Approve the parent's `agent` call, which the parent Session itself asks.
+fn approve_delegation(run: &mut Driven, input: &Value, seen: &mut Vec<Value>) {
+    let asked = run.until("permission_request", seen);
+    assert_eq!(asked["session_id"], input["session_id"], "{seen:#?}");
+    assert_eq!(asked["action"], "agent", "{seen:#?}");
+    run.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+}
+
+/// The child Session's request, routed to the driver through its root input cohort.
+fn assert_descendant(asked: &Value, input: &Value) {
+    assert_eq!(asked["session_id"], input["session_id"], "{asked:#}");
+    let child = asked["request_session_id"].as_str().unwrap_or_default();
+    assert!(
+        child.starts_with("ses_") && asked["session_id"] != child,
+        "{asked:#}"
+    );
+    assert_eq!(asked["root_session_id"], input["session_id"], "{asked:#}");
+    assert_eq!(
+        asked["root_input_message_ids"],
+        json!([input["message_id"]]),
+        "{asked:#}"
+    );
+}
+
+fn child_turns(provider: &Provider) -> Vec<Value> {
+    provider.turns().into_iter().filter(is_child).collect()
+}
+
+#[test]
+fn a_subagent_permission_is_answered_over_stdin() {
+    let provider = Provider::start_split(
+        &DELEGATE,
+        &[r#"bash {"command":"echo from-child"}"#, "text:child done"],
+    );
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
+    let input = run.until("input", &mut seen);
+    provider.release();
+    approve_delegation(&mut run, &input, &mut seen);
+    let asked = run.until("permission_request", &mut seen);
+    assert_descendant(&asked, &input);
+    assert!(
+        !seen.iter().any(|l| l["type"] == "result"),
+        "the input retired while its subagent waited: {seen:#?}"
+    );
+    run.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["message_id"], input["message_id"], "{seen:#?}");
+    assert_eq!(result["result"], "handback answer", "{seen:#?}");
+    assert_eq!(result["exit_code"], 0, "{seen:#?}");
+    run.send(r#"{"type":"end"}"#);
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.exit(), Some(0));
+    let child = child_turns(&provider);
+    assert_eq!(child.len(), 2, "{child:#?}");
+    assert!(
+        child[1].to_string().contains("from-child"),
+        "{:#}",
+        child[1]
+    );
+    assert!(
+        !seen.iter().any(|l| l["type"] == "permission_denied"),
+        "{seen:#?}"
+    );
+}
+
+#[test]
+fn eof_declines_a_subagent_question_and_settles_the_input() {
+    let provider = Provider::start_split(
+        &DELEGATE,
+        &[
+            r#"question {"questions":[{"question":"Choose","header":"Choice","options":[{"label":"yes"},{"label":"no"}]}]}"#,
+            "text:child saw no answer",
+        ],
+    );
+    // A subagent may not ask questions by default; configuration lets it.
+    let mut run =
+        Driven::start_configured(&provider, &[], json!({"permissions":{"question":"allow"}}));
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
+    let input = run.until("input", &mut seen);
+    provider.release();
+    approve_delegation(&mut run, &input, &mut seen);
+    let asked = run.until("question", &mut seen);
+    assert_descendant(&asked, &input);
+    run.close();
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["message_id"], input["message_id"], "{seen:#?}");
+    assert_eq!(result["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.exit(), Some(0));
+    let child = child_turns(&provider);
+    assert_eq!(child.len(), 2, "the child went on unanswered: {child:#?}");
+    let declined = child[1].to_string();
+    assert!(
+        declined.contains("No interactive user is attached"),
+        "{declined}"
+    );
+}
+
+#[test]
+fn a_hook_ask_is_owned_by_the_driver() {
+    let provider = Provider::start(&[r#"bash {"command":"echo hooked"}"#, "text:ran it"]);
+    let ask = json!({"decision":"ask"});
+    let hooks = json!({"PreToolUse":[{"matcher":"bash","hooks":[{"type":"command","id":"gate","command":format!(
+        "cat >/dev/null; printf '%s' '{ask}'"
+    )}]}]});
+    let mut run =
+        Driven::start_configured(&provider, &[], json!({"permissions":"allow","hooks":hooks}));
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"hooked","text":"run it"}"#);
+    let input = run.until("input", &mut seen);
+    let asked = run.until("permission_request", &mut seen);
+    assert_eq!(
+        asked["request_session_id"], input["session_id"],
+        "{asked:#}"
+    );
+    assert_eq!(asked["input_message_ids"], json!([input["message_id"]]));
+    run.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["id"], "hooked", "{seen:#?}");
+    assert_eq!(result["result"], "ran it", "{seen:#?}");
+    assert_eq!(run.exit(), Some(0));
+    let turns = provider.turns();
+    assert!(turns[1].to_string().contains("hooked"), "{:#}", turns[1]);
+}
+
+/// Two drivers on one Session: the first driver's subagent request is never shown to
+/// the second, which cannot answer it either.
+#[test]
+fn a_second_driver_neither_sees_nor_answers_the_first_drivers_subagent_request() {
+    let provider = Provider::start_split(
+        &DELEGATE,
+        &[r#"bash {"command":"echo from-child"}"#, "text:child done"],
+    );
+    let server = Server::start(&provider);
+    let url = format!("http://127.0.0.1:{}", server.port);
+    let attach = [
+        "--attach",
+        url.as_str(),
+        "--password",
+        server.password.as_str(),
+    ];
+    let mut first = Driven::start(&provider, &attach);
+    let mut seen = Vec::new();
+    first.send(r#"{"type":"user","text":"delegate it","id":"first"}"#);
+    let input = first.until("input", &mut seen);
+    assert_eq!(input["status"], "admitted", "{seen:#?}");
+    let session = input["session_id"].as_str().unwrap().to_owned();
+    provider.wait_for_gate();
+
+    // The second driver attaches before the child exists, so the routed request
+    // reaches its stream too.
+    let mut flags = attach.to_vec();
+    flags.extend(["--session", session.as_str()]);
+    let mut second = Driven::start_beside(&provider, &flags, &first);
+    let mut other = Vec::new();
+    second.until("system", &mut other);
+    provider.release();
+    approve_delegation(&mut first, &input, &mut seen);
+
+    let asked = first.until("permission_request", &mut seen);
+    assert_descendant(&asked, &input);
+    second.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let refused = second.until("error", &mut other);
+    assert_eq!(refused["code"], "protocol", "{refused}");
+    first.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let result = first.until("result", &mut seen);
+    assert_eq!(
+        (result["id"].as_str(), result["result"].as_str()),
+        (Some("first"), Some("handback answer")),
+        "{seen:#?}"
+    );
+    first.send(r#"{"type":"end"}"#);
+    assert_eq!(first.until("end", &mut seen)["exit_code"], 0, "{seen:#?}");
+    assert_eq!(first.exit(), Some(0));
+
+    second.send(r#"{"type":"end"}"#);
+    let end = second.until("end", &mut other);
+    assert_eq!(end["exit_code"], 0, "{other:#?}");
+    assert!(
+        other
+            .iter()
+            .all(|l| l["type"] != "permission_request" && l["type"] != "result"),
+        "{other:#?}"
+    );
+    assert_eq!(second.exit(), Some(0));
+    let child = child_turns(&provider);
+    assert_eq!(child.len(), 2, "the child's tool ran once: {child:#?}");
+    assert!(
+        child[1].to_string().contains("from-child"),
+        "{:#}",
+        child[1]
+    );
 }

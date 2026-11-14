@@ -622,3 +622,66 @@ async fn overlapping_interrupts_keep_each_original_scope_and_release_all_pending
     assert!(driver.done().await);
     f.app.runtime.shutdown().await;
 }
+
+/// A request answered outside this driver (another route or a server cascade) is
+/// dropped from its asks, so it neither holds the input slot nor gets declined again.
+/// Durable `permission.replied` names the request as `request_id`.
+#[tokio::test]
+async fn a_request_answered_elsewhere_leaves_the_drivers_asks() {
+    let f = Fixture::new().await;
+    let args = ExecArgs::default();
+    let session = json!({"id":f.session});
+    let mut out = Out::new(Format::Text, &args, &session);
+    let mut driver = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut out,
+        Run::new(&args, Instant::now()),
+    );
+    driver.attach().await;
+    driver
+        .admit(
+            Some("asked".into()),
+            vec![json!({"type":"text","text":"PERMISSION_CASE"})],
+            "queue",
+        )
+        .await;
+    let request = f.request().await;
+    let (base, data) = event(&request);
+    driver.asked(base, &data).await;
+    assert_eq!(driver.asks.len(), 1);
+    f.client
+        .post(
+            &format!("/sessions/{}/permissions/{}/reply", f.session, request.id),
+            reply(false),
+        )
+        .await
+        .unwrap();
+    let history = f
+        .client
+        .get(&format!(
+            "/sessions/{}/history?after=-1&limit=500",
+            f.session
+        ))
+        .await
+        .unwrap();
+    let replied = history["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|stored| stored["type"] == "permission.replied.1")
+        .expect("durable reply")
+        .clone();
+    driver
+        .apply(&Event {
+            kind: "permission.replied.1".into(),
+            data: replied["data"].clone(),
+            seq: replied["durable"]["seq"].as_i64(),
+            session_id: Some(f.session.clone()),
+        })
+        .await;
+    assert!(driver.asks.is_empty(), "{replied:#}");
+    driver.close().await;
+    f.app.runtime.shutdown().await;
+}

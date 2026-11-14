@@ -49,7 +49,9 @@ enum Wake {
     Interrupt,
 }
 
-/// A live permission/question request bound to this driver's exact admitted inputs.
+/// A live permission/question request bound to this driver's exact admitted inputs:
+/// asked by the driven Session itself, or by a descendant (subagent) Session whose
+/// root cohort is this driver's, in which case `session_id` is that child Session.
 struct Ask {
     session_id: String,
     question: bool,
@@ -409,7 +411,9 @@ impl<'a> Driver<'a> {
     }
 
     /// No more input: the lease goes and unanswered requests are declined, so nothing
-    /// waits on a driver that is gone.
+    /// waits on a driver that is gone. Releasing first settles requests bound to the
+    /// lease (a descendant's included) as unattended, which lets their Turn go on; the
+    /// declines that follow cover the rest.
     async fn close(&mut self) {
         self.closed = true;
         if self.fatal.is_some() {
@@ -434,6 +438,9 @@ impl<'a> Driver<'a> {
     }
 
     async fn event(&mut self, event: Event) {
+        if self.routed_here(&event) {
+            return self.descendant(&event).await;
+        }
         if !self.accept_sequence(&event).await {
             return;
         }
@@ -460,11 +467,7 @@ impl<'a> Driver<'a> {
             }
             "session.structured_output.settled" => self.structured(&event.data),
             "permission.asked" | "question.asked" => self.asked(base, &event.data).await,
-            "permission.replied" | "question.replied" => {
-                if let Some(id) = event.data["id"].as_str() {
-                    self.asks.remove(id);
-                }
-            }
+            "permission.replied" | "question.replied" => self.replied(&event.data),
             "session.text.delta" | "session.reasoning.delta" => self.partial(base, &event.data),
             "session.error" if event.data["kind"] == "snapshot" => {
                 eprintln!(
@@ -483,6 +486,35 @@ impl<'a> Driver<'a> {
                 self.out.durable(&mut self.run, kind, &event.data)
             }
             _ => {}
+        }
+    }
+
+    /// A descendant Session's request (or its reply) routed to this Session's stream:
+    /// live only, so it has no sequence of this Session.
+    fn routed_here(&self, event: &Event) -> bool {
+        event.seq.is_none()
+            && event.session_id.as_deref() != Some(self.id)
+            && event.data["routed_to"]
+                .as_array()
+                .is_some_and(|routes| routes.iter().any(|route| route["session_id"] == self.id))
+    }
+
+    /// Only requests whose root cohort is this driver's are claimed; anything else
+    /// routed here belongs to another client.
+    async fn descendant(&mut self, event: &Event) {
+        let base = event_base(&event.kind);
+        match base {
+            "permission.asked" | "question.asked" => self.asked(base, &event.data).await,
+            "permission.replied" | "question.replied" => self.replied(&event.data),
+            _ => {}
+        }
+    }
+
+    /// A request answered elsewhere (a cascade, another client or the server) is no
+    /// longer this driver's to answer or decline.
+    fn replied(&mut self, data: &Value) {
+        if let Some(id) = data["request_id"].as_str().or(data["id"].as_str()) {
+            self.asks.remove(id);
         }
     }
 
@@ -663,9 +695,9 @@ impl<'a> Driver<'a> {
     }
 
     async fn asked(&mut self, base: &str, data: &Value) {
-        if !self.inputs.owns_request(self.id, data) {
+        let Some(inputs) = self.inputs.request_cohort(self.id, data) else {
             return;
-        }
+        };
         let (Some(request_id), Some(session_id)) =
             (data["id"].as_str(), data["session_id"].as_str())
         else {
@@ -681,12 +713,7 @@ impl<'a> Driver<'a> {
             Ask {
                 session_id: session_id.to_owned(),
                 question,
-                inputs: data["input_message_ids"]
-                    .as_array()
-                    .expect("validated ownership")
-                    .iter()
-                    .filter_map(|id| id.as_str().map(str::to_owned))
-                    .collect(),
+                inputs,
             },
         );
         let line = if question {
@@ -694,7 +721,11 @@ impl<'a> Driver<'a> {
         } else {
             "permission_request"
         };
-        self.out.stream_line(line, data.clone());
+        // Every line's `session_id` is the driven Session; a descendant's request
+        // keeps its asking Session, which the reply is posted to.
+        let mut payload = data.clone();
+        payload["request_session_id"] = json!(session_id);
+        self.out.stream_line(line, payload);
         if self.closed {
             // Nobody will answer: decline at once.
             self.close().await;
@@ -827,6 +858,16 @@ impl<'a> Driver<'a> {
         for state in states {
             settled &= !(state.running || state.awaiting_handback || state.handback_pending);
             if self.stopping_input(&state.message_id) {
+                continue;
+            }
+            // An input stays pending while a request it owns (a descendant's
+            // included) still waits for this driver.
+            if self
+                .asks
+                .values()
+                .any(|ask| ask.inputs.contains(&state.message_id))
+            {
+                settled = false;
                 continue;
             }
             let Some(input) = self.inputs.get_mut(&state.message_id) else {

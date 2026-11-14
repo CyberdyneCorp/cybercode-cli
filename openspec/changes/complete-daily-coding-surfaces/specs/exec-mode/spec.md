@@ -41,6 +41,17 @@
 - **WHEN** the server restarts
 - **THEN** the root cohort SHALL remain derivable from durable Job provenance and recorded requests, but SHALL NOT recreate the bound client's live attendance, and the interrupted Job SHALL NOT stamp new requests
 
+#### Scenario: The driver owns descendant and hook-originated requests
+- **WHEN** a request routed to the driven Session carries `root_session_id` equal to that Session and every `root_input_message_ids` identity is a pending input of the driver
+- **THEN** the driver SHALL emit it with the asking child Session as `request_session_id`, accept a reply only for that request kind, and post the reply to the child Session
+- **AND** the owning inputs SHALL stay pending while the request waits; EOF/end SHALL settle it (lease release, then decline) instead of leaving it pending
+- **WHEN** another driver of the same Session sees that request
+- **THEN** it SHALL neither emit nor answer it, and its reply SHALL be a protocol error
+- **WHEN** a `PreToolUse` hook decision of `ask` opens a permission request
+- **THEN** that request SHALL carry its step's input cohort and be owned like a direct request
+- **WHEN** a tracked request is answered elsewhere
+- **THEN** the driver SHALL stop tracking it
+
 #### Scenario: Input presence survives as provenance rather than live authority
 - **WHEN** an already admitted input is retried after expiry or restart
 - **THEN** the original admission receipt SHALL remain retrievable without renewing its lease, and a different client under that input identity SHALL conflict
