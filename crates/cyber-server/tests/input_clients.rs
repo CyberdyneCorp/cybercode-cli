@@ -334,6 +334,13 @@ async fn wrong_reply_type_preserves_the_original_owned_request() {
 /// A background subagent Job dispatched from the root's pending `c1` call, carrying
 /// that call's complete input cohort.
 async fn subagent(h: &Harness, root: &str) -> String {
+    subagent_until(h, root, Box::pin(futures::future::pending())).await
+}
+async fn subagent_until(
+    h: &Harness,
+    root: &str,
+    work: futures::future::BoxFuture<'static, Result<serde_json::Value, String>>,
+) -> String {
     let invocation = h.tools.executed.lock().unwrap()[0].clone();
     let reservation = h
         .runtime
@@ -349,7 +356,7 @@ async fn subagent(h: &Harness, root: &str) -> String {
             "scan".into(),
             "Inspect sources".into(),
             Some(reservation),
-            Box::pin(futures::future::pending()),
+            work,
         )
         .await
         .unwrap();
@@ -572,6 +579,67 @@ async fn mixed_or_detached_descendant_requests_grant_no_ownership() {
 }
 
 #[tokio::test]
+async fn a_foreground_resume_after_the_background_job_settled_inherits_no_cohort() {
+    let h = setup();
+    let root = h.session().await;
+    let directory = h.repo.display().to_string();
+    let client = attach(&h, &root).await;
+    let _browser = h
+        .runtime
+        .add_interactive_client(&root, &directory)
+        .await
+        .unwrap();
+    h.runtime
+        .admit(&root, bound("delegate", Some(&client), Delivery::Queue))
+        .await
+        .unwrap();
+    pending(&h.runtime, &root, 1).await;
+    let (finish, finished) = tokio::sync::oneshot::channel::<()>();
+    let child = subagent_until(
+        &h,
+        &root,
+        Box::pin(async move {
+            let _ = finished.await;
+            Ok(serde_json::json!({"text": "scanned"}))
+        }),
+    )
+    .await;
+    finish.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while h.runtime.jobs(Some(&root)).unwrap().iter().any(|job| {
+            job.child_id == child && job.status == cyber_server::runtime::JobStatus::Running
+        }) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the background Job did not settle");
+    // A later foreground resume of the child creates no Job: the settled Job's cohort
+    // no longer describes the run asking, so the request keeps its own attendance.
+    let resumed = child_ask(&h.runtime, &child).await;
+    let request = owned(&h.runtime, &child, 1).await.remove(0);
+    assert!(
+        request.root_session_id.is_none() && request.root_input_message_ids.is_empty(),
+        "a settled Job's stale cohort stamped a later resume"
+    );
+    h.runtime
+        .release_input_client(&root, &directory, &client)
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        !resumed.is_finished(),
+        "the stale cohort's client release settled the resumed request"
+    );
+    h.runtime
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    assert_eq!(resumed.await.unwrap(), PermissionReply::Once);
+    h.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn descendant_cohort_survives_restart_as_provenance_not_attendance() {
     let h = setup();
     let root = h.session().await;
@@ -584,7 +652,16 @@ async fn descendant_cohort_survives_restart_as_provenance_not_attendance() {
         .unwrap();
     pending(&h.runtime, &root, 1).await;
     let child = subagent(&h, &root).await;
+    let before = child_ask(&h.runtime, &child).await;
+    let stamped = owned(&h.runtime, &child, 1).await.remove(0);
+    h.runtime
+        .reply_permission(&stamped.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    assert_eq!(before.await.unwrap(), PermissionReply::Once);
     let restarted = h.restart();
+    // As the server does at construction: running Jobs from before are interrupted.
+    restarted.recover_jobs().await.unwrap();
     restarted
         .add_interactive_client(&root, &directory)
         .await
@@ -596,20 +673,36 @@ async fn descendant_cohort_survives_restart_as_provenance_not_attendance() {
         .into_iter()
         .find(|job| job.child_id == child)
         .unwrap();
+    assert_eq!(job.status, cyber_server::runtime::JobStatus::Interrupted);
     assert_eq!(
         job.input_origin.unwrap().input_message_ids,
-        vec![input.message_id]
+        vec![input.message_id.clone()]
     );
-    let asked = child_ask(&restarted, &child).await;
+    let durable = h
+        .store
+        .read_events(&child, -1, 500)
+        .unwrap()
+        .events
+        .into_iter()
+        .find(|event| event.kind == "permission.asked.1")
+        .unwrap();
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(10), asked)
-            .await
-            .unwrap()
-            .unwrap(),
-        PermissionReply::Unattended,
-        "restart recreated the bound client's authority"
+        durable.data["root_input_message_ids"],
+        serde_json::json!([input.message_id])
     );
-    assert!(restarted.pending_requests(Some(&child)).is_empty());
+    // The interrupted Job no longer drives the child, so a later ask neither inherits
+    // its cohort nor recreates the old client's authority: it keeps legacy attendance.
+    let asked = child_ask(&restarted, &child).await;
+    let request = owned(&restarted, &child, 1).await.remove(0);
+    assert!(
+        request.root_session_id.is_none() && request.root_input_message_ids.is_empty(),
+        "restart kept stamping an interrupted Job's cohort"
+    );
+    restarted
+        .reply_permission(&request.id, PermissionReply::Once)
+        .await
+        .unwrap();
+    assert_eq!(asked.await.unwrap(), PermissionReply::Once);
     restarted.shutdown().await;
     h.runtime.shutdown().await;
 }

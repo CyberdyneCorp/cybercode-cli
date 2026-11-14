@@ -729,13 +729,15 @@ stream; JSONL uses this setting while retaining its separate input lease.
 
 A request from a background subagent's child Session (at any depth) also carries
 `root_session_id` and `root_input_message_ids` when every link up to the root is
-a subagent Job with one complete, bounded input origin. If that root cohort is
+a running subagent Job with one complete, bounded input origin. If that root cohort is
 bound to an input client, only that live client at the root's Location keeps the
 request waiting and can answer it; its release or expiry settles the request
 unattended even while a browser or another client stays attached. Foreground or
-detached children, and mixed, malformed or oversized origins, carry no root
-cohort and keep their previous attendance. After a restart the root cohort is
-still derived from durable Job provenance, but the old client's live attendance
+detached children, children whose background Job has settled (for example a later
+foreground resume), and mixed, malformed or oversized origins carry no root cohort
+and keep their previous attendance. After a restart, requests already recorded keep
+their root cohort and the Job keeps its durable input origin, but the interrupted
+Job no longer lends its cohort to new requests and the old client's live attendance
 is not recreated. The JSONL driver does not yet claim these descendant requests.
 
 ## Budgets and deferred input

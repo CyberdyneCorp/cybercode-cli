@@ -1,10 +1,13 @@
 //! Root input provenance of descendant (subagent) requests: complete or nothing.
 //!
 //! A child Session's request inherits its root input cohort only when every link from
-//! the asker up to the root Session is a background subagent Job whose immutable
-//! `input_origin` is complete, bounded and identical across that link's Jobs. A missing
-//! link (a foreground or detached child), a cycle, a mixed or malformed origin, or an
-//! over-deep chain stamps nothing; this is provenance, never live attendance.
+//! the asker up to the root Session is a *running* background subagent Job whose
+//! immutable `input_origin` is complete, bounded and identical across that link's running
+//! Jobs. Only a running Job is driving the child: once it has settled (or a restart
+//! interrupted it) a later foreground resume or other activity in the child is not that
+//! Job's work, so it inherits nothing. A missing link (a foreground, detached or settled
+//! child), a cycle, a mixed or malformed origin, or an over-deep chain stamps nothing;
+//! this is provenance, never live attendance.
 use super::super::jobs::JobInputOrigin;
 use cyber_store::StoreError;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -68,7 +71,7 @@ fn link_cohort(
     let mut statement = db.prepare(
         "SELECT CASE WHEN length(CAST(json_extract(data,'$.input_origin') AS BLOB))<=?3
             THEN json_extract(data,'$.input_origin') ELSE NULL END
-        FROM job WHERE session_id=?1 AND child_id=?2
+        FROM job WHERE session_id=?1 AND child_id=?2 AND status='running'
         AND json_extract(data,'$.kind')='subagent' ORDER BY id LIMIT ?4",
     )?;
     let origins = statement
@@ -118,7 +121,8 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(
             "CREATE TABLE session(id TEXT PRIMARY KEY,parent_id TEXT);
-            CREATE TABLE job(id TEXT PRIMARY KEY,session_id TEXT,child_id TEXT,data TEXT)",
+            CREATE TABLE job(id TEXT PRIMARY KEY,session_id TEXT,child_id TEXT,status TEXT,
+                data TEXT)",
         )
         .unwrap();
         db
@@ -132,9 +136,9 @@ mod tests {
             "operation_key":"session:background","input_message_ids":ids})
     }
     fn job(db: &Connection, id: &str, parent: &str, child: &str, origin: Value) {
-        let data = json!({"kind":"subagent","input_origin":origin});
+        let data = json!({"kind":"subagent","status":"running","input_origin":origin});
         db.execute(
-            "INSERT INTO job VALUES(?1,?2,?3,?4)",
+            "INSERT INTO job VALUES(?1,?2,?3,'running',?4)",
             params![id, parent, child, data.to_string()],
         )
         .unwrap();
@@ -208,5 +212,34 @@ mod tests {
         .unwrap();
         job(&db, "j0", "grandchild", "root", origin(json!(["one"])));
         assert_eq!(recorded(&db, "child").unwrap(), None, "cycle");
+    }
+
+    #[test]
+    fn only_the_running_job_driving_a_child_lends_its_cohort() {
+        let settle = |db: &Connection, id: &str, status: &str| {
+            db.execute("UPDATE job SET status=?2 WHERE id=?1", params![id, status])
+                .unwrap();
+        };
+        for status in ["completed", "error", "cancelled", "interrupted"] {
+            let db = chain();
+            settle(&db, "j1", status);
+            assert_eq!(
+                recorded(&db, "child").unwrap(),
+                None,
+                "a {status} Job kept stamping a later resume"
+            );
+            assert_eq!(recorded(&db, "grandchild").unwrap(), None, "{status}");
+        }
+        // A background resume: the settled Job's old cohort yields to the running one.
+        let db = chain();
+        settle(&db, "j1", "completed");
+        job(&db, "j3", "root", "child", origin(json!(["resumed"])));
+        assert_eq!(
+            recorded(&db, "grandchild").unwrap(),
+            Some(RootCohort {
+                session_id: "root".into(),
+                input_message_ids: vec!["resumed".into()],
+            })
+        );
     }
 }
