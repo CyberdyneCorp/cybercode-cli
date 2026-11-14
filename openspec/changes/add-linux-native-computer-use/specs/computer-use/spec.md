@@ -18,7 +18,7 @@
 ## ADDED Requirements
 
 ### Requirement: Platform-neutral computer health
-(P2) Computer health SHALL keep its existing fields and SHALL add the backend name, session type, diagnostic desktop name, probed interface names and versions, whether capture and input can be offered now, the input-assurance state and a list of stable snake_case refusal codes. Input readiness SHALL be derived from a platform-neutral `input_control` fact; on macOS it SHALL equal Accessibility trust. Linux health SHALL NOT report fictional OS permissions: `accessibility` SHALL be false and `minimum_version` SHALL name the Linux prerequisite. The desktop name SHALL be diagnostic only and SHALL NOT enable any capability. Read-only status and setup SHALL NOT create a portal session or show a chooser. Probes SHALL be bounded in time.
+(P2) Computer health SHALL keep its existing fields and SHALL add the backend name, session type, diagnostic desktop name, probed interface names and versions, whether capture and input can be offered now, the input-assurance state and a list of stable snake_case refusal codes. Input readiness SHALL be derived from a platform-neutral `input_control` fact; on macOS it SHALL equal Accessibility trust. Linux health SHALL NOT report fictional OS permissions: `accessibility` SHALL be false, `minimum_version` SHALL name the Linux prerequisite, and `screen_capture` SHALL equal the capture result (the capture probe passes and, while a scope is armed, that scope is live). Admission SHALL require `screen_capture` for every action and additionally `input_control` for input actions. Admission SHALL NOT wait on D-Bus probes: while a scope is armed, health SHALL be answered from in-memory scope state and a cached probe result, and a transient probe failure SHALL NOT by itself revoke a live grant; only that scope's revocation events end it. The desktop name SHALL be diagnostic only and SHALL NOT enable any capability. Read-only status and setup SHALL NOT create a portal session or show a chooser. Probes SHALL be bounded in time.
 
 #### Scenario: Status on a GNOME Wayland session
 - **WHEN** the owner runs read-only status on a Wayland session whose ScreenCast portal and PipeWire library probes pass
@@ -28,12 +28,16 @@
 - **WHEN** `XDG_CURRENT_DESKTOP` names a supported desktop but the ScreenCast portal is missing
 - **THEN** health reports `capture: false` with `screencast_unavailable` regardless of the desktop name
 
+#### Scenario: Transient probe timeout during a live grant
+- **WHEN** a health refresh times out on the session bus while the armed portal session and stream are still live
+- **THEN** `screen_capture` stays true, the grant stays armed and screenshots are admitted without waiting on the bus
+
 #### Scenario: Older client reads extended health
 - **WHEN** a client generated before this change reads computer health
 - **THEN** the legacy fields keep their meaning and the client ignores the added fields
 
 ### Requirement: Owner-picked capture source
-(P2) The computer selector SHALL accept exactly one of an application, a display or an owner-picked source kind (`window` or `output`). On Linux, application and display selectors SHALL be refused with `selector_unsupported_on_platform`, and Linux target strings SHALL NOT be interpreted as macOS bundle IDs. An owner-picked source SHALL be chosen only in the platform's own picker, started only from the authenticated owner review path. A CLI or API selector SHALL constrain only the offered source kind with a single selection, and SHALL NOT pre-select, widen or add sources. The review SHALL present the actual selected source (kind, logical size, position for outputs and a private review frame visible only to the owner) before arming. Output scope SHALL show that all content visible on that output reaches the model. A response with no stream, several streams or a source kind other than the one requested SHALL be closed and refused. Portal persistence SHALL NOT be requested and restore tokens SHALL NOT be stored or used; every grant SHALL require a fresh portal selection and a fresh owner review.
+(P2) The computer selector SHALL accept exactly one of an application, a display or an owner-picked source kind (`window` or `output`). On Linux, application and display selectors SHALL be refused with `selector_unsupported_on_platform`, and Linux target strings SHALL NOT be interpreted as macOS bundle IDs. An owner-picked source SHALL be chosen only in the platform's own picker, started only from the authenticated owner review path. A CLI or API selector SHALL constrain only the offered source kind with a single selection, and SHALL NOT pre-select, widen or add sources. The review SHALL present the actual selected source (kind, logical size, position for outputs and a private review frame visible only to the owner) before arming. Output scope SHALL show that all content visible on that output reaches the model. A pick-scope grant SHALL be armed only by confirming the identifier of the review whose source was shown, before that review's deadline; arming SHALL NOT start a new review, and an unconfirmed review SHALL be closed at its deadline. A response with no stream, several streams or a source kind other than the one requested SHALL be closed and refused. An output stream without a logical position or size SHALL be closed and refused with `output_geometry_unavailable`. Portal persistence SHALL NOT be requested and restore tokens SHALL NOT be stored or used; every grant SHALL require a fresh portal selection and a fresh owner review.
 
 #### Scenario: Owner picks a window
 - **WHEN** the owner reviews `pick: window`, chooses one window in the portal dialog and confirms the shown review frame
@@ -42,6 +46,14 @@
 #### Scenario: Portal returns a different source kind
 - **WHEN** a `pick: window` review receives a monitor stream from the portal
 - **THEN** the portal session is closed, no grant is armed and the review fails with `portal_selection_mismatch`
+
+#### Scenario: Confirmation names a different review
+- **WHEN** an owner confirmation names an expired, superseded or other Session's review identifier
+- **THEN** nothing is armed, no portal dialog is opened, and the pending portal session of any expired review has been closed
+
+#### Scenario: Output stream without a position
+- **WHEN** a `pick: output` review receives a monitor stream that has a size but no position
+- **THEN** the portal session is closed, no grant is armed and the review fails with `output_geometry_unavailable`
 
 #### Scenario: Model or screen content requests a wider source
 - **WHEN** model output or captured text asks to switch from a window to a whole output
@@ -67,7 +79,7 @@
 - **THEN** the grant is revoked with `stream_removed` and the new node is never captured
 
 ### Requirement: Linux target assurance gate
-(P2) Linux input SHALL be admitted only when an owner-approved assurance provider proves, for the exact target generation, after the frame and immediately before dispatch, that the focused surface and pointer-hit surface belong to the granted target, that no secure text field, permission, authentication, lock or system dialog is involved, and that the target is not a Cyber approval surface. Accepting a portal capture or remote-desktop dialog SHALL NOT count as assurance. Missing, stale or unknown observations SHALL refuse. Self-reported signals such as accessibility roles and the session lock hint MAY only refuse and SHALL never prove safety. XWayland targets SHALL be refused until they are separately accepted. Adding a provider SHALL require its own reviewed change with a named compositor version, access model, stated race window and real-desktop evidence.
+(P2) Linux input SHALL be admitted only when an owner-approved assurance provider proves, for the exact target generation, after the frame and immediately before dispatch, that the focused surface and pointer-hit surface belong to the granted target, that no secure text field, permission, authentication, lock or system dialog is involved, and that the target is not a Cyber approval surface. Accepting a portal capture or remote-desktop dialog SHALL NOT count as assurance. Missing, stale or unknown observations SHALL refuse. Self-reported signals such as accessibility roles and the session lock hint MAY only refuse and SHALL never prove safety. XWayland targets SHALL be refused until they are separately accepted. Adding a provider, and any Linux input transport, SHALL require its own reviewed change with a named compositor version, access model, stated race window and real-desktop evidence.
 
 #### Scenario: Owner accepted a remote-desktop portal dialog
 - **WHEN** the portal grants keyboard and pointer devices but no approved assurance provider is configured
@@ -77,31 +89,24 @@
 - **WHEN** an approved provider proves focus and hit target but the accessibility bus reports a password role at the focused element
 - **THEN** the input is refused
 
-### Requirement: Linux negotiated input transport
-(P2) When input is enabled by an approved assurance provider, Linux input SHALL use a RemoteDesktop portal session of version 2 or newer, request only keyboard and pointer devices without persistence, and connect through `ConnectToEIS` exactly once. It SHALL NOT use the D-Bus `Notify*` methods or downgrade to them after any failure. Events SHALL be sent only to resumed devices. Pointer targets SHALL be mapped to the single absolute region whose `mapping_id` matches the captured stream, and points outside that region SHALL be refused. Device pause or removal, seat removal, disconnect, region change or keymap change SHALL revoke the grant. Keys SHALL be resolved through the negotiated keymap. Unicode text SHALL use the EIS text capability when offered, and otherwise only keymap-reachable characters. Unreachable characters SHALL fail closed, and the clipboard SHALL NOT be used. An action SHALL settle `posted` only after an EIS round trip following its last event. Transport loss after an event was queued SHALL settle `unknown` without replay. Cancellation SHALL release pressed buttons and keys and report uncertainty if release is not confirmed.
-
-#### Scenario: EIS connection fails
-- **WHEN** `ConnectToEIS` fails or the EIS connection closes during negotiation
-- **THEN** input is refused with `eis_unavailable` or `eis_disconnected`, and no `Notify*` method is called
-
-#### Scenario: Device paused mid-drag
-- **WHEN** the EIS device is paused after a button press was sent
-- **THEN** the grant is revoked, the action settles `unknown`, and it is not replayed
-
-#### Scenario: No matching region
-- **WHEN** the captured stream has no `mapping_id` or no absolute region matches it
-- **THEN** pointer input is refused before any event is sent
-
 ### Requirement: Linux portal lifecycle and revocation
-(P2) A Linux grant SHALL be revoked through the existing controller fence, before any teardown completes, when any of the following occurs: owner Stop, Session interrupt, presence loss, expiry, the portal session `Closed` signal, loss of the D-Bus connection or the portal frontend's bus name, PipeWire stream error or removal, source renegotiation (size, format, scale or output change), the server's login session being locked, EIS disconnect or device loss, or server restart. Teardown SHALL close the portal session and release its streams and file descriptors without delaying Stop. Late portal replies from an earlier review or grant generation SHALL be closed and never adopted. Unlock, reconnect, portal restart or compositor restart SHALL NOT restore a grant; each SHALL require a fresh portal selection and a fresh owner review. Waiting for the portal dialog SHALL be bounded and cancellable by Stop.
+(P2) A Linux grant SHALL be revoked through the existing controller fence, before any teardown completes, when any of the following occurs: owner Stop, Session interrupt, presence loss, expiry, the portal session `Closed` signal, loss of the D-Bus connection or the portal frontend's bus name, PipeWire stream error or removal, source renegotiation (size, format, scale or output change), the watched graphical session being locked or becoming inactive, loss of the watch on that session, or server restart. The watched session SHALL be the user's graphical Wayland login session, identified independently of whether the server process itself runs inside it. If no such session can be identified, or its lock and activity state cannot be watched, review and arming SHALL be refused with `session_watch_unavailable`. Teardown SHALL close the portal session and release its streams and file descriptors without delaying Stop. Late portal replies from an earlier review or grant generation SHALL be closed and never adopted. Unlock, reactivation, reconnect, portal restart or compositor restart SHALL NOT restore a grant; each SHALL require a fresh portal selection and a fresh owner review. Waiting for the portal dialog SHALL be bounded and cancellable by Stop.
 
 #### Scenario: User ends sharing from the desktop indicator
 - **WHEN** the portal emits `Closed` for the bound session
 - **THEN** the grant is revoked with `portal_session_closed`, and later screenshots report the Session unarmed
 
 #### Scenario: Screen locks while armed
-- **WHEN** the server's login session is locked and later unlocked
+- **WHEN** the watched graphical session is locked and later unlocked
 - **THEN** the grant was revoked at lock with `session_locked` and is not restored after unlock
+
+#### Scenario: User switches away from the graphical session
+- **WHEN** the watched graphical session becomes inactive through a VT or user switch and later becomes active again
+- **THEN** the grant was revoked with `session_inactive` and is not restored
+
+#### Scenario: Server runs outside the graphical session
+- **WHEN** the server runs as a user service with no login session of its own and no graphical Wayland session of the user can be identified or watched
+- **THEN** review and arming are refused with `session_watch_unavailable` and no portal dialog is opened
 
 #### Scenario: Stop while the portal dialog is open
 - **WHEN** the owner issues Stop while a review waits for the portal dialog
@@ -119,7 +124,7 @@
 - **THEN** the grant is revoked with `source_changed` and the earlier frame cannot be used
 
 ### Requirement: Native worker resource isolation
-(P2) Portal, PipeWire and EIS file descriptors and native objects SHALL be owned only by the native worker. Every such descriptor SHALL be close-on-exec from the moment Cyber receives it, and the worker SHALL NOT spawn children. On Linux the worker SHALL be non-dumpable so that same-UID tool and plugin children cannot read its descriptors through `/proc`. It SHALL terminate when the server exits. The host lease SHALL be released only after the worker has provably stopped dispatching. Stop SHALL be able to terminate a worker blocked in a native call. Full-access owner shells, or processes with ptrace capability, are outside this guarantee and SHALL be documented as such.
+(P2) Portal, PipeWire and EIS file descriptors and native objects SHALL be owned only by the native worker. Every such descriptor SHALL be close-on-exec from the moment Cyber receives it, and the worker SHALL NOT spawn children. On Linux the worker SHALL be non-dumpable so that same-UID tool and plugin children cannot read its descriptors through `/proc`. It SHALL terminate when the server exits, independently of the lifetime of the server thread that started it, including when the server exits before the worker has finished starting. The host lease SHALL be released only after the worker has provably stopped dispatching. Stop SHALL be able to terminate a worker blocked in a native call. Full-access owner shells, or processes with ptrace capability, are outside this guarantee and SHALL be documented as such.
 
 #### Scenario: Sandboxed tool inspects the server's descriptors
 - **WHEN** a sandboxed tool child lists or opens the native worker's `/proc/<pid>/fd` entries during an active grant
@@ -129,8 +134,23 @@
 - **WHEN** Stop is issued while the worker is blocked waiting for a PipeWire buffer
 - **THEN** the grant is fenced immediately, the worker is terminated, and another grant can acquire the host lease only after the worker has exited
 
+### Requirement: Linux session-bus trust
+(P2) The Linux backend SHALL treat other clients of the user's D-Bus session bus as untrusted. It SHALL pin the unique bus name that owns the portal at review start, and SHALL act on a portal request response or session close only when the bus-stamped sender is that pinned name and the object path is the exact request or session handle Cyber created. Messages from any other sender or path SHALL be ignored. A change of the portal name's owner SHALL revoke the live scope, and the new owner SHALL NOT be trusted for it. A file descriptor returned by the portal SHALL be refused unless it is a Unix stream socket, and frames received through it SHALL be validated as untrusted input. A pick made in another program's portal dialog SHALL NOT arm a Cyber grant. When native computer use is enabled, Linux sandboxed tool and plugin children SHALL NOT be given access to the session bus.
+
+#### Scenario: Spoofed portal response
+- **WHEN** another session-bus client sends a `Response` signal on Cyber's request path while the portal dialog is open
+- **THEN** the signal is ignored, the review keeps waiting for the pinned portal, and nothing is armed from the spoofed results
+
+#### Scenario: Portal name taken over after a crash
+- **WHEN** the portal's bus name changes owner while a scope is armed
+- **THEN** the grant is revoked with `session_bus_lost` and the new owner is not used for that scope
+
+#### Scenario: Sandboxed tool looks for the session bus
+- **WHEN** a sandboxed tool child runs while native computer use is enabled on Linux
+- **THEN** its environment has no session-bus address and the bus socket is not reachable inside the sandbox
+
 ### Requirement: Linux platform evidence
-(P2) Documentation and the acceptance record SHALL state separately, for each Linux desktop and version, whether it is implemented, fixture-tested, accepted on a real desktop, or unsupported. Linux capture or input SHALL NOT be advertised for a configuration without recorded real-desktop evidence (distribution, kernel, compositor, portal frontend and backend, PipeWire and, for input, libei versions). wlroots, Xorg, XWayland, SSH/headless and musl-build outcomes SHALL be recorded as capability or refusal results. Headless CI with mock services SHALL NOT be described as desktop acceptance.
+(P2) Documentation and the acceptance record SHALL state separately, for each Linux desktop and version, whether it is implemented, fixture-tested, accepted on a real desktop, or unsupported. Linux capture or input SHALL NOT be advertised for a configuration without recorded real-desktop evidence (distribution, kernel, compositor, portal frontend and backend, and PipeWire versions). wlroots, Xorg, XWayland, SSH/headless and musl-build outcomes SHALL be recorded as capability or refusal results. Headless CI with mock services SHALL NOT be described as desktop acceptance.
 
 #### Scenario: Only mock tests have run
 - **WHEN** Linux capture has passed mock D-Bus/PipeWire tests but no real desktop run is recorded
