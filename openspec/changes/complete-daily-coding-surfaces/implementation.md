@@ -3948,3 +3948,58 @@ Externally blocked:
 - Product decision: enabling default managed Git source admission.
 - Native platform CI (macOS Intel/ARM, Linux x64/ARM, Windows host) on the final
   pushed source for 4.1–4.4, 5.4, 6.2–6.4 and the managed-recovery tasks.
+
+## M8 process-death cut matrix for file-copy restore (2026-11-14, local)
+
+One row per cut named in M8, mapped to the tests that kill a real process there.
+"Real service" means the CLI fixture SIGKILLs the registered server; "storage" or
+"App" means a separate test executable running the production native/App code is
+SIGKILLed. In-process error injection and metadata resets are listed only as
+"simulated" and are not counted as process-death evidence. All results are local
+macOS arm64; no Linux, macOS Intel or Windows result is claimed.
+
+| Cut | Process-death evidence | Gap |
+| --- | --- | --- |
+| Before intent (reservation/lifetime before origin) | storage: `real_process_death_before_publication_retains_stage_without_poisoning_the_owner_name`, `real_process_death_releases_only_the_exact_worker_lifetime_lock`; real service: `exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_restart` | none locally for file-copy |
+| After intent (origin published, before source admission) | real service: `exited_origin_preparation_before_source_admission_is_cancelled_after_real_kill` | the real-service cut does not assert that intent publication was absent |
+| Stage preparation | storage: `process_kill_at_parent_and_file_cuts_recovers_ownership_without_progress_or_replay` (parent cuts); real service: `fully_prepared_pre_effect_cancellation_reclaims_only_persisted_target_inodes`, `copy_cancelled_deletion_preparation_retires_zero_payload` | partial target-image construction is not cut by a real service kill |
+| Every exchange | storage: `process_kill_at_parent_and_file_cuts_recovers_ownership_without_progress_or_replay`, `process_kill_at_link_parent_and_exchange_cuts_preserves_typed_inode_evidence` (each exchange of a small fixture); real service: `managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay` (one sampled partial exchange, keep and rollback) | real-service kills sample one partial window; they are not placed at each exchange |
+| Progress | none | **gap**: storage cuts write no progress record and the sampled real kill does not assert which progress record existed; no cut directly after a progress write |
+| Filesystem completion (completed intent, before writer commit) | real service: `copy_kept_creation_after_completed_source_kill_retires_zero_payload` (writer held off by a SQLite write lock) | **gap**: covered for a zero-payload creation only, not for displaced payload images |
+| Writer commit (committed Session writer, unacknowledged journal) | real service: `ordinary_restore_killed_after_writer_commit_before_journal_ack_reconciles_without_replay` (new; debug-only `ordinary-restore-writer-commit` fixture point) | **gap**: the paired keep/rollback recovery commit is only simulated by resetting acknowledgement metadata (`managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay`) |
+| Journal acknowledgement | storage: `process_death_during_spare_write_preserves_active_intent_and_reopens_without_replay` (the intent-slot write the acknowledgement uses); managed checkout claim: `killed_acknowledgement_resumes_without_rewriting_claim_or_deleting_partial_stage`, `killed_construction_keeps_locked_complete_stage_and_never_creates_or_replays_stable_claim` | **gap**: no real-service SIGKILL after the ordinary journal acknowledgement and before the HTTP reply; only service stop/restart lookups |
+| Reclaim | real service fixture + separate maintenance process: `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan` (new; after the durable plan and the first unlink, inside the deletion transaction); App: `actual_process_death_preserves_plan_and_resumes_without_source_replay` (before deletion and after all deletions); collection: `process_death_after_last_manifest_unlink_resumes_from_durable_policy_provenance` | **gap**: paired keep/rollback cleanup and metadata retirement are interrupted in-process only (`managed_native_recovery_after_partial_kill`, `native_retirement_resumes_before_and_after_deletion_without_rewriting_acknowledgement`) |
+
+New in this increment (`crates/cyber-cli/tests/support/ordinary_cuts.rs`, part of
+the `branches_cli` test binary):
+
+- `ordinary_restore_killed_after_writer_commit_before_journal_ack_reconciles_without_replay`:
+  the reviewed `sessions rewind --confirm` runs on a service started with
+  `CYBER_TEST_PROCESS_CUT=ordinary-restore-writer-commit`. The test waits for the
+  marker and SIGKILLs the registered service. The native activity's latest record
+  is `snapshot_restore_committed` with the receipt, and the completed journal is
+  unacknowledged. Later owner edits (a file replaced by a symlink and a rewritten
+  file) are made while no service runs. On a fresh service the rewind is visible,
+  the restore receipt lookup returns the receipt without acknowledging, and two
+  metadata acknowledgements return the same receipt and acknowledge the journal.
+  The owner edits survive, nothing is restored again, and the transcript and
+  inference count do not change.
+- `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan`: after a
+  real acknowledged restore that displaced four payload images, the service is
+  stopped and the receipt aged. A separate test process
+  (`ordinary_cuts::ordinary_reclaim_cut_worker`, inert without its environment)
+  runs production reclamation; its retention view blocks once `stage_0` is
+  unlinked, inside the open deletion transaction. The parent SIGKILLs it (signal 9)
+  and sees `stage_0` gone, the other payloads present and an uncompleted durable
+  plan of four files. After owner edits, a fresh owner resumes that exact frozen
+  plan, completes it once (a second pass reclaims nothing), keeps the intent bytes,
+  and a restarted service still answers lookup and acknowledgement with the same
+  receipt, with no source replay, transcript movement or inference.
+
+The only production change is the debug-build fixture point in
+`cyber-server/src/runtime/process_cut.rs`, called between `commit_snapshot` and the
+native acknowledgement in `snapshot_work.rs`; release builds compile it out.
+No defect was found at either cut. Both tests passed three consecutive runs under
+nextest `ci` (`-p cyber-cli --test branches_cli`), and the full 26-case
+`branches_cli` binary passed. The rows marked as gaps keep M8 open together with
+the platform matrix, shared Git/binary regressions and the review it requires.

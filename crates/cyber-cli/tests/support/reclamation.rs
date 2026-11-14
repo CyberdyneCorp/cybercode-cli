@@ -80,9 +80,20 @@ impl Maintenance {
         }
     }
     fn snapshots(root: &Path, policy: Arc<dyn Policy>) -> Arc<cyber_snapshot::GitSnapshots> {
+        Self::configured(
+            root,
+            policy,
+            Arc::new(|_| serde_json::json!({"snapshots":{"retention_days":7}})),
+        )
+    }
+    fn configured(
+        root: &Path,
+        policy: Arc<dyn Policy>,
+        config: Arc<cyber_snapshot::ConfigFn>,
+    ) -> Arc<cyber_snapshot::GitSnapshots> {
         cyber_snapshot::GitSnapshots::with_reclamation(
             root.join("data"),
-            Arc::new(|_| serde_json::json!({"snapshots":{"retention_days":7}})),
+            config,
             vec![root.join("config"), root.join("state"), root.join("cache")],
             None,
             Some(policy),
@@ -102,6 +113,23 @@ impl Maintenance {
             Arc::new(Planned(self.policy.clone(), Arc::new(Mutex::new(None)))),
         );
         self.runtime.block_on(cut.reclaim(source.to_str().unwrap()))
+    }
+    /// Run real reclamation until `first` has been unlinked, then block this process
+    /// forever. The next per-payload retention check runs inside the open deletion
+    /// transaction, after the durable plan and before its completion commit.
+    pub fn reclaim_until_killed(&self, source: &Path, first: PathBuf, ready: PathBuf) -> String {
+        let config = Arc::new(move |_: &Path| {
+            if std::fs::symlink_metadata(&first).is_ok() {
+                return serde_json::json!({"snapshots":{"retention_days":7}});
+            }
+            std::fs::write(&ready, b"payload deletion in progress").unwrap();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            }
+        });
+        let cut = Self::configured(&self.root, self.policy.clone(), config);
+        let result = self.runtime.block_on(cut.reclaim(source.to_str().unwrap()));
+        format!("{result:?}")
     }
     pub fn age(&self, activity: String) {
         self.store

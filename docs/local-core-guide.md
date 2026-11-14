@@ -309,6 +309,8 @@ When you rebuild or upgrade `cyber`, the next client sees that the registered se
 
 `cyber service status` reports `stale: true` in that case. A server started before build identities existed is always kept with the warning. One `cyber service restart` moves you to the build that detects later rebuilds by itself.
 
+For crash-recovery tests only, a debug-build server started with `CYBER_TEST_PROCESS_CUT=<point>` blocks at that named point and writes the point name to `CYBER_TEST_PROCESS_CUT_MARKER=<file>`, so a test can kill it there. The only point is `ordinary-restore-writer-commit`: after a reviewed file-copy restore's Session writer commit and before its native journal acknowledgement. Release builds ignore both variables.
+
 ## Install, upgrade and uninstall
 
 ### Install script

@@ -11,6 +11,9 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "support/ordinary_cuts.rs"]
+mod ordinary_cuts;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "support/reclamation.rs"]
 mod reclamation_support;
 #[path = "../../cyber-app/tests/support/scripted_model.rs"]

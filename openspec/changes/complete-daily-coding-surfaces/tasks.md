@@ -34,7 +34,9 @@ eligible. Past retention, collection keeps the staged-undo baseline and
 inactive-branch roots, removes an unreferenced manifest only once no journal
 remains, and the staged undo still clears afterwards. 3.3 stays open: crash cuts
 at the writer/journal/reclaim boundaries (M6) and platform results are not
-evidenced here.
+evidenced here. Ordinary file-copy restore now has real process-death cuts after
+the writer commit and during payload reclamation (see the M8 note); paired
+recovery and metadata-retirement cuts and platform results remain open.
 
 3.4 progress (2026-11-14, local macOS arm64 only): `file_copy.rs` now covers a
 non-Git rename restored as delete plus create (the new name is removed only when its
@@ -117,6 +119,7 @@ proof; missing records alone do not license acknowledgement.
 - [ ] M6 Publish journal acknowledgement only after observed durable Store settlement. Add reference/reader/lease-aware eligibility and durable two-phase reclamation with retained retry receipts. Test cap pressure, disabled/zero retention, incomplete reference views and crashes at writer/journal/reclaim boundaries without deleting unresolved evidence.
 - [ ] M7 Add owner recovery review/confirm/lookup HTTP routes, typed CLI and SDK operations, and TUI recovery entry from rewind unavailability. Regenerate OpenAPI/SDK/command artifacts; exercise the real clients with no inference or transcript movement and with stale/foreign request refusal.
 - [ ] M8 Run process-kill cuts before/after intent, stage preparation, every exchange, progress, filesystem completion, writer commit, journal acknowledgement and reclaim. Obtain Linux x64/ARM and macOS Intel/ARM positives/denials, explicit Windows results/limits and shared Git/binary regressions; update evidence and perform substantive code/security review before accepting parent tasks.
+  - Note (2026-11-14, local macOS arm64 only): implementation.md "M8 process-death cut matrix for file-copy restore" maps every named cut to the tests that kill a real process there and marks the gaps. New real-binary cases: `ordinary_restore_killed_after_writer_commit_before_journal_ack_reconciles_without_replay` (service killed at a debug-only fixture point between the Session writer commit and the native journal acknowledgement; receipt-only lookup and metadata acknowledgement on restart, owner edits kept, no transcript movement or inference) and `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan` (maintenance process killed inside the deletion transaction after the first unlink; a fresh owner completes the same frozen plan once). Open gaps from the table: no cut directly after a progress write; filesystem completion only for a zero-payload creation; the paired recovery writer-commit cut is simulated; no real kill after the ordinary journal acknowledgement and before the reply; paired cleanup and metadata retirement are interrupted in-process only. Platform results, shared Git/binary regressions and the review also remain, so M8 stays open.
 
 Lifetime continuation: new file-copy runtime reservations now retain an exact
 worker-specific private lock acquired before reservation and checkout admission.

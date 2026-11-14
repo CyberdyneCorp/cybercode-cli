@@ -118,6 +118,7 @@ mod mcp_depth;
 pub mod messaging;
 pub mod peers;
 pub mod presence;
+mod process_cut;
 mod snapshot_acknowledgement;
 mod snapshot_recovery_authority;
 pub use snapshot_acknowledgement::{SnapshotAcknowledgementWork, SnapshotAcknowledgementWorker};

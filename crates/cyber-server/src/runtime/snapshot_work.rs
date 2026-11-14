@@ -674,6 +674,8 @@ impl SnapshotCompletion {
             self.native.guard.intent_digest(),
             location,
         )?);
+        // Fixture point: the Store writer committed; the native journal is unacknowledged.
+        super::process_cut::pause("ordinary-restore-writer-commit");
         self.native
             .guard
             .acknowledge(self.worker.scope.snapshot_origin())
