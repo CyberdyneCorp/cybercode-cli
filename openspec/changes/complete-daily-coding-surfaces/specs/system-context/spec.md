@@ -76,6 +76,12 @@
 - **AND** the suppressed reminder SHALL NOT consume once-per-Epoch delivery
 - **AND** nested discovery SHALL resolve current instruction settings after the successful operation instead of retaining pre-effect permission callbacks
 
+#### Scenario: Rule approval changes while a successful read is settling
+- **GIVEN** a successful read discovered a project rule under one checkout approval generation
+- **WHEN** that approval is revoked or re-reviewed, or the definition digest it authorizes changes, before the reminder settles
+- **THEN** the read result SHALL settle without delivering that operation's nested reminder
+- **AND** the suppressed rule SHALL NOT consume once-per-Epoch delivery, so a later matching read after re-approval SHALL deliver it once
+
 #### Scenario: Physical Location replacement during a read
 - **GIVEN** a file read started with a captured physical Location and project root
 - **WHEN** that Location or any native ancestor is replaced, removed or substituted with a link before nested discovery or settlement

@@ -967,6 +967,9 @@ pub(crate) struct Inner {
     /// The clock usage limit waits read and sleep on; the system clock unless a test
     /// configures one.
     wait_clock: std::sync::OnceLock<Arc<dyn usage_wait::WaitClock>>,
+    /// Runs after nested instruction discovery and before its settlement lock; unset
+    /// unless a test configures one (`Runtime::configure_settlement_probe`).
+    settlement_probe: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
     pub(crate) me: std::sync::Weak<Inner>,
 }
 
@@ -1066,9 +1069,19 @@ impl Runtime {
             workflow_progress: std::sync::OnceLock::new(),
             waiters: StdMutex::default(),
             wait_clock: std::sync::OnceLock::new(),
+            settlement_probe: std::sync::OnceLock::new(),
             me: me.clone(),
         });
         Self { inner }
+    }
+
+    /// Test seam: `probe` runs once per settling tool group, after its nested
+    /// instruction files were discovered and before the Session lock is taken to
+    /// commit them, so a test can change project approval inside that window. Only the
+    /// first configuration takes effect.
+    #[doc(hidden)]
+    pub fn configure_settlement_probe(&self, probe: Arc<dyn Fn() + Send + Sync>) {
+        let _ = self.inner.settlement_probe.set(probe);
     }
 
     /// Requests waiting for a client, optionally owned by or routed to one Session.

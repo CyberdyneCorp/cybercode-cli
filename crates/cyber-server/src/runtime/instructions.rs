@@ -36,6 +36,8 @@ pub const DEFAULT_MAX_TOTAL_BYTES: usize = cyber_core::config::DEFAULT_MAX_TOTAL
 pub const NESTED_MAX_TOTAL_BYTES: usize = DEFAULT_MAX_BYTES;
 const MAX_IMPORT_DEPTH: usize = 5;
 pub const INSTRUCTIONS_FROM: &str = "Instructions from: ";
+/// The generation of a global rule binding: the owner's own files need no approval.
+const OWNER_GLOBAL: &str = "owner-global";
 
 /// What the environment and config allow to load.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +131,20 @@ impl RuleGate {
     fn authorize(&self, path: &Path, scope: &Path) -> Result<Option<RuleAuthorization>, String> {
         (self.0)(path, scope)
     }
+    /// Whether the approval that admitted `binding` from `scope` is still the current one:
+    /// the same checkout root, approval generation and definition digest. Global bindings
+    /// need no approval and always pass.
+    pub fn still_authorizes(&self, binding: &RuleBinding, scope: &Path) -> bool {
+        if binding.generation == OWNER_GLOBAL {
+            return true;
+        }
+        let Ok(Some(current)) = self.authorize(Path::new(&binding.path), scope) else {
+            return false;
+        };
+        current.root.to_str() == Some(binding.root.as_str())
+            && current.generation == binding.generation
+            && current.digest == binding.digest
+    }
 }
 impl std::fmt::Debug for RuleGate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -214,6 +230,8 @@ pub struct InstructionFile {
     pub canonical: PathBuf,
     pub truncated: bool,
     pub(crate) rule_binding: Option<RuleBinding>,
+    /// The directory a project rule's approval was checked from, rechecked at settlement.
+    pub(crate) rule_scope: Option<PathBuf>,
     /// Size and modification time when the delivered bytes were read.
     pub stamp: Option<super::context_sources::FileStamp>,
 }
@@ -321,6 +339,26 @@ impl Instructions {
     }
 
     /// Canonical identities actually labelled by the default bounded delivery.
+    /// Whether every project rule this discovery may deliver is still approved with the
+    /// generation and digest it was discovered under. `gate` is resolved only when a
+    /// project rule is present; without one no project rule is authorized.
+    pub(crate) fn rules_still_authorized(&self, gate: impl FnOnce() -> Option<RuleGate>) -> bool {
+        let mut project = self
+            .files
+            .iter()
+            .chain(&self.omitted)
+            .filter_map(|file| Some((file.rule_binding.as_ref()?, file.rule_scope.as_deref()?)))
+            .filter(|(binding, _)| binding.generation != OWNER_GLOBAL)
+            .peekable();
+        if project.peek().is_none() {
+            return true;
+        }
+        let Some(gate) = gate() else {
+            return false;
+        };
+        project.all(|(binding, scope)| gate.still_authorizes(binding, scope))
+    }
+
     pub fn attached(&self) -> Vec<String> {
         self.reminder_delivery(&BTreeSet::new())
             .map_or_else(Vec::new, |delivery| {
@@ -641,7 +679,7 @@ impl<'a> Loader<'a> {
         }
         let generation = authorization
             .as_ref()
-            .map_or("owner-global", |auth| auth.generation.as_str());
+            .map_or(OWNER_GLOBAL, |auth| auth.generation.as_str());
         let binding = RuleBinding {
             root: root.to_str().ok_or("rule root must be UTF-8")?.into(),
             path: path.to_str().ok_or("rule path must be UTF-8")?.into(),
@@ -668,6 +706,7 @@ impl<'a> Loader<'a> {
             canonical: path.into(),
             truncated: false,
             rule_binding: Some(binding),
+            rule_scope: authorization.is_some().then(|| self.rule_scope.clone()),
             stamp: None,
         };
         let label = format!("{INSTRUCTIONS_FROM}{}\n", path.display());
@@ -749,6 +788,7 @@ impl<'a> Loader<'a> {
             path: path.to_path_buf(),
             canonical: key.clone(),
             rule_binding: None,
+            rule_scope: None,
             truncated: false,
             stamp: None,
         };
@@ -1555,6 +1595,52 @@ mod tests {
         let text = nested.reminder().unwrap();
         assert!(text.contains("GLOBAL_SCOPED_RULE"));
         assert!(!text.contains("PROJECT_RULE"));
+    }
+
+    /// A binding records the approval generation it was discovered under. Revoking or
+    /// re-reviewing the checkout changes that generation, so settlement must not deliver
+    /// or consume the binding; owner-global bindings need no approval.
+    #[test]
+    fn a_binding_from_a_revoked_generation_is_not_authorized() {
+        let repo = Repo::new();
+        let path = repo.write(".cyber/rules/a.md", "RULE");
+        let digest = cyber_core::rules::trust_subset(&repo.root).digests[&path].clone();
+        let generation = std::sync::Arc::new(std::sync::Mutex::new(Some("first".to_owned())));
+        let (root, current) = (repo.root.clone(), generation.clone());
+        let gate = RuleGate::new(move |_, _| {
+            Ok(current
+                .lock()
+                .unwrap()
+                .clone()
+                .map(|generation| RuleAuthorization {
+                    root: root.clone(),
+                    digest: digest.clone(),
+                    generation,
+                }))
+        });
+        let binding = RuleBinding {
+            root: repo.root.to_str().unwrap().into(),
+            path: path.to_str().unwrap().into(),
+            digest: cyber_core::rules::trust_subset(&repo.root).digests[&path].clone(),
+            generation: "first".into(),
+            native_root: None,
+            operation_path: None,
+        };
+        assert!(gate.still_authorizes(&binding, &repo.root));
+        let changed_digest = RuleBinding {
+            digest: "sha256:other".into(),
+            ..binding.clone()
+        };
+        assert!(!gate.still_authorizes(&changed_digest, &repo.root));
+        *generation.lock().unwrap() = Some("second".into());
+        assert!(!gate.still_authorizes(&binding, &repo.root));
+        *generation.lock().unwrap() = None;
+        assert!(!gate.still_authorizes(&binding, &repo.root));
+        let global = RuleBinding {
+            generation: OWNER_GLOBAL.into(),
+            ..binding
+        };
+        assert!(gate.still_authorizes(&global, &repo.root));
     }
 
     #[test]

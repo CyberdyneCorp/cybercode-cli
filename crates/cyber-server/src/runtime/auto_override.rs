@@ -473,7 +473,9 @@ impl Inner {
             .await;
         let nested = nested.pop().unwrap_or_default();
         let mut state = handle.state.lock().await;
-        let nested = run.current_nested(&state, nested);
+        let nested = run.current_nested(&state, nested, |directory| {
+            self.tools.instruction_rule_gate(directory)
+        });
         let proof = run.operation_proof();
         let mut seen = super::drain::Reminded::of(&state);
         let (settled, loaded) = super::drain::settlement_with_reminders(

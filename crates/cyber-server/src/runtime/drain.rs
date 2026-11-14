@@ -1858,7 +1858,9 @@ impl Inner {
         let mut edited = Vec::new();
         let mut patched = Vec::new();
         for (run, nested) in outcomes.into_iter().zip(nested) {
-            let nested = run.current_nested(&state, nested);
+            let nested = run.current_nested(&state, nested, |directory| {
+                self.tools.instruction_rule_gate(directory)
+            });
             let proof = run.operation_proof();
             let (settled, instructions) = settlement_with_reminders(
                 &run.call_id,
@@ -2209,9 +2211,13 @@ impl Inner {
             }
             loaded
         };
-        tokio::task::spawn_blocking(load)
+        let loaded = tokio::task::spawn_blocking(load)
             .await
-            .unwrap_or_else(|_| empty())
+            .unwrap_or_else(|_| empty());
+        if let Some(probe) = self.settlement_probe.get() {
+            probe();
+        }
+        loaded
     }
 
     /// Settle what a previous process left unfinished (`session-runtime` → Drain loop).
@@ -2449,17 +2455,19 @@ impl ToolRun {
             .collect()
     }
     /// Recheck under the settlement lock, after filesystem discovery. A Location
-    /// switch or Epoch replacement during discovery must not consume new identities.
+    /// switch, Epoch replacement, or a trust revocation or re-review that changes a
+    /// project rule's approval generation or digest during discovery must not deliver or
+    /// consume new identities. `rule_gate` resolves the current approval for a Location.
     pub(super) fn current_nested(
         &self,
         state: &SessionState,
         nested: super::instructions::Instructions,
+        rule_gate: impl FnOnce(&str) -> Option<super::instructions::RuleGate>,
     ) -> super::instructions::Instructions {
-        if self
-            .read
-            .as_ref()
-            .is_some_and(|read| read.is_current(state))
-        {
+        let Some(read) = self.read.as_ref().filter(|read| read.is_current(state)) else {
+            return Default::default();
+        };
+        if nested.rules_still_authorized(|| rule_gate(&read.scope.directory)) {
             nested
         } else {
             Default::default()
@@ -3058,7 +3066,7 @@ mod skill_reminder_tests {
                 _ => state.epoch = None,
             }
             let (_temp, candidate) = nested(&[("CYBER.md", "nested delivery".into())]);
-            let held = run.current_nested(&state, candidate);
+            let held = run.current_nested(&state, candidate, |_| None);
             assert!(held.is_empty(), "{changed}");
             let mut seen = Reminded::of(&state);
             let (settled, loaded) = settle(&held, &mut seen, default_budget);
@@ -3082,7 +3090,7 @@ mod skill_reminder_tests {
                     ..run
                 };
                 let (_temp, candidate) = nested(&[("CYBER.md", "nested delivery".into())]);
-                let current = fresh.current_nested(&state, candidate);
+                let current = fresh.current_nested(&state, candidate, |_| None);
                 let (settled, loaded) = settle(&current, &mut seen, default_budget);
                 assert!(loaded.is_some());
                 assert_eq!(settled.instruction_reminders.len(), 1);

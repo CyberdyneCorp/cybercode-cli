@@ -169,6 +169,7 @@ mod tests {
                 path,
                 truncated: false,
                 rule_binding: None,
+                rule_scope: None,
                 stamp: None,
             });
         }

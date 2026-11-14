@@ -301,6 +301,65 @@ async fn a_scoped_rule_is_delivered_again_in_the_epoch_after_compaction() {
     f.app.runtime.shutdown().await;
 }
 
+/// Regression: settlement rechecked only the Location and Epoch, so a trust revocation
+/// between a read's rule discovery and its commit still delivered and consumed the rule.
+#[tokio::test]
+async fn a_rule_revoked_while_its_read_settles_is_neither_delivered_nor_consumed() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let f = Fixture::start().await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let revoke = Arc::new(AtomicBool::new(false));
+    let (flag, trust, root) = (
+        Arc::clone(&revoke),
+        f.app.paths.trust_file(),
+        f.repo.clone(),
+    );
+    f.app.runtime.configure_settlement_probe(Arc::new(move || {
+        if flag.swap(false, Ordering::SeqCst) {
+            assert!(
+                cyber_core::trust::TrustStore::new(&trust)
+                    .revoke(&root)
+                    .unwrap()
+            );
+        }
+    }));
+    let session = f.session(&f.repo).await;
+    revoke.store(true, Ordering::SeqCst);
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(
+        !revoke.load(Ordering::SeqCst),
+        "revoked after discovery, before commit"
+    );
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("export const app = true;"), "{result}");
+    assert!(!result.contains("WEB_RULE_GUIDANCE"), "{result}");
+    let reminded = |state: cyber_server::runtime::SessionState| state.epoch.unwrap().reminded_rules;
+    assert!(reminded(f.app.runtime.state(&session).await.unwrap()).is_empty());
+    let events = f.app.store.read_events(&session, -1, 500).unwrap().events;
+    assert!(!events.iter().any(|event| {
+        event.data["rule_reminders"]
+            .as_array()
+            .is_some_and(|rules| !rules.is_empty())
+    }));
+
+    f.approve(&f.repo);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    assert_eq!(
+        reminded(f.app.runtime.state(&session).await.unwrap()).len(),
+        1
+    );
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(!last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    f.app.runtime.shutdown().await;
+}
+
 #[tokio::test]
 async fn changed_rule_bytes_stay_held_until_the_new_definition_is_reviewed() {
     let f = Fixture::start().await;

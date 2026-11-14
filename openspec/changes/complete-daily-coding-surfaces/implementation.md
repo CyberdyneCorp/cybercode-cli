@@ -3782,3 +3782,26 @@ keep/rollback/process cuts, partial construction/reclamation and native platform
 acceptance remain open. No full workspace, CLI/TUI acceptance rerun, SDK execution,
 source-bound CI, other-platform execution, push/PR/merge or parent/issue acceptance
 is claimed by this increment.
+
+## Rule approval fencing at settlement (2026-11-14, local)
+
+Nested rule discovery resolves the rule gate after the successful effect, but the
+settlement only rechecked the Location, Context Epoch and native receipts. A trust
+revocation or re-review between discovery and commit still delivered and consumed
+the rule. Each discovered project rule now keeps the directory its approval was
+checked from; under the Session settlement lock (group settlement and exact
+`/approve` replay) the runtime re-resolves the Location's rule gate and keeps the
+nested reminder only when every project binding still authorizes with the same
+checkout root, approval generation and definition digest. Otherwise the tool
+result settles without the reminder and no rule identity is recorded.
+Owner-global bindings need no approval. `Runtime::configure_settlement_probe` is a
+hidden test seam that runs after discovery and before the settlement lock.
+
+Evidence: `a_binding_from_a_revoked_generation_is_not_authorized` (unit) and
+`a_rule_revoked_while_its_read_settles_is_neither_delivered_nor_consumed` (real App,
+scripted provider), which revokes trust in that window, then re-approves and sees a
+later read deliver the rule once. With the recheck disabled the integration test
+fails at the delivery assertion. `cyber-server` library (474) and `auto` (12) tests,
+`cyber-app --test instructions` (20), Clippy with warnings denied, strict OpenSpec
+and spec lint passed. Withdrawal of rules already delivered in the Epoch,
+revocation/restart acceptance and platform acceptance remain open.
