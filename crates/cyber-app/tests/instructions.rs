@@ -515,6 +515,154 @@ async fn a_nested_checkout_cannot_supply_rules_for_its_parent_session() {
     f.app.runtime.shutdown().await;
 }
 
+/// `system-context` → Scope-aware rule inspection and loading across a restart: the
+/// Epoch's delivered-rule set is rebuilt from the durable settlements, so the restarted
+/// server keeps the same Epoch and a matching read gets no second reminder.
+#[tokio::test]
+async fn a_delivered_scoped_rule_is_not_redelivered_after_server_restart() {
+    let f = Fixture::start_restartable(json!({})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let before = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+    assert_eq!(before.reminded_rules.len(), 1);
+
+    let f = f.restart().await;
+    let after = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+    assert_eq!(after.number, before.number, "a restart keeps the Epoch");
+    assert_eq!(after.reminded_rules, before.reminded_rules);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("export const app = true;"), "{result}");
+    assert!(!result.contains("WEB_RULE_GUIDANCE"), "{result}");
+    let epoch = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+    assert_eq!(epoch.number, before.number);
+    assert_eq!(epoch.reminded_rules, before.reminded_rules);
+    f.app.runtime.shutdown().await;
+}
+
+/// A read cut off by a restart is recovered as `interrupted`: it never consumes the rule,
+/// even if its settlement were to carry a rule binding, so the next matching read in the
+/// same Epoch delivers it.
+#[tokio::test]
+async fn a_read_interrupted_by_restart_does_not_consume_its_rule() {
+    let f = Fixture::start_restartable(json!({"permissions": {"read": "ask"}})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session_in(&f.repo, "default").await;
+    f.call(
+        Method::POST,
+        &format!("/sessions/{session}/prompt"),
+        &f.repo,
+        Some(json!({"parts": [{"type": "text", "text": "read the app first"}]})),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while f.app.runtime.pending_requests(Some(&session)).is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the read asks");
+    let before = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+
+    // The restarted server no longer asks, so the next read runs.
+    std::fs::write(f.config.join("cyber.json"), f.model.config().to_string()).unwrap();
+    let f = f.restart().await;
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    let events = f.app.store.read_events(&session, -1, 500).unwrap().events;
+    let settled: Vec<_> = events
+        .iter()
+        .filter(|event| event.kind == "session.tool.settled.1")
+        .collect();
+    assert_eq!(settled.len(), 2, "{settled:?}");
+    let (cut, read) = (settled[0], settled[1]);
+    assert_eq!(cut.data["status"], "interrupted");
+    assert!(
+        cut.data["rule_reminders"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
+    assert_eq!(read.data["status"], "ok");
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let epoch = f.app.runtime.state(&session).await.unwrap().epoch.unwrap();
+    assert_eq!(epoch.number, before.number, "delivered in the same Epoch");
+    assert_eq!(epoch.reminded_rules.len(), 1);
+
+    // An interrupted settlement carrying the read's binding and proof still consumes
+    // nothing on replay.
+    let mut forged: Vec<_> = events
+        .iter()
+        .take_while(|event| event.id != cut.id)
+        .cloned()
+        .collect();
+    let mut interrupted = cut.clone();
+    for field in ["rule_reminders", "rule_read"] {
+        interrupted.data[field] = read.data[field].clone();
+    }
+    interrupted.data["rule_read"]["operation_key"] = json!(format!(
+        "{session}:{}",
+        cut.data["call_id"].as_str().unwrap()
+    ));
+    forged.push(interrupted.clone());
+    let replayed = cyber_server::runtime::SessionState::replay(&forged).unwrap();
+    assert!(replayed.epoch.unwrap().reminded_rules.is_empty());
+    // Control: the same settlement as `ok` would have consumed it.
+    let last = forged.last_mut().unwrap();
+    last.data["status"] = json!("ok");
+    let replayed = cyber_server::runtime::SessionState::replay(&forged).unwrap();
+    assert_eq!(replayed.epoch.unwrap().reminded_rules.len(), 1);
+    f.app.runtime.shutdown().await;
+}
+
+/// A checkout approval withdrawn while the server was down is honoured after restart: the
+/// matching read gets no rule until the checkout is approved again.
+#[tokio::test]
+async fn a_rule_revoked_while_the_server_was_down_is_not_delivered_after_restart() {
+    let f = Fixture::start_restartable(json!({})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    f.app.runtime.shutdown().await;
+    assert!(
+        cyber_core::trust::TrustStore::new(f.app.paths.trust_file())
+            .revoke(&f.repo)
+            .unwrap()
+    );
+
+    let f = f.restart().await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    let result = last_tool_result(&f.last_request());
+    assert!(result.contains("export const app = true;"), "{result}");
+    assert!(!every_request(&f).contains("WEB_RULE_GUIDANCE"));
+    let reminded = |state: cyber_server::runtime::SessionState| state.epoch.unwrap().reminded_rules;
+    assert!(reminded(f.app.runtime.state(&session).await.unwrap()).is_empty());
+
+    f.approve(&f.repo);
+    f.prompt(&session, &f.repo, "read the app again", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    assert_eq!(
+        reminded(f.app.runtime.state(&session).await.unwrap()).len(),
+        1
+    );
+    f.app.runtime.shutdown().await;
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     repo: PathBuf,
@@ -523,6 +671,8 @@ struct Fixture {
     app: App,
     url: String,
     client: Client,
+    /// The file database a [`Fixture::restart`] reopens; in memory when unset.
+    database: Option<PathBuf>,
 }
 
 impl Fixture {
@@ -553,16 +703,17 @@ impl Fixture {
     }
 
     async fn start_with_model(extra: Value, prefers_patch: bool) -> Self {
+        Self::open(extra, prefers_patch, false).await
+    }
+
+    /// Start over a file database, so [`Fixture::restart`] keeps the Sessions.
+    async fn start_restartable(extra: Value) -> Self {
+        Self::open(extra, false, true).await
+    }
+
+    async fn open(extra: Value, prefers_patch: bool, file_database: bool) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
-        let paths = Paths {
-            data: root.join("data"),
-            config: root.join("config"),
-            state: root.join("state"),
-            cache: root.join("cache"),
-            tmp: root.join("tmp"),
-        };
-        paths.ensure().unwrap();
         let model = ScriptedModel::start(reply);
         let mut global = model.config();
         if prefers_patch {
@@ -572,13 +723,52 @@ impl Fixture {
         for (key, value) in extra.as_object().unwrap() {
             global[key] = value.clone();
         }
+        let database = file_database.then(|| root.join("events.db"));
+        let app = Self::build(&root, &global, database.clone()).await;
+        let url = Self::serve(&app).await;
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        Self {
+            _temp: temp,
+            repo,
+            config: root.join("config"),
+            model,
+            app,
+            url,
+            client: Client::builder().no_proxy().build().unwrap(),
+            database,
+        }
+    }
+
+    /// Stop this server and serve a new App over the same database, configuration,
+    /// trust store, checkout and model, as a process restart would.
+    async fn restart(self) -> Self {
+        let database = self.database.clone().expect("started restartable");
+        self.app.runtime.shutdown().await;
+        let root = self._temp.path().canonicalize().unwrap();
+        let global: Value =
+            serde_json::from_str(&std::fs::read_to_string(self.config.join("cyber.json")).unwrap())
+                .unwrap();
+        let app = Self::build(&root, &global, Some(database)).await;
+        let url = Self::serve(&app).await;
+        Self { app, url, ..self }
+    }
+
+    async fn build(root: &Path, global: &Value, database: Option<PathBuf>) -> App {
+        let paths = Paths {
+            data: root.join("data"),
+            config: root.join("config"),
+            state: root.join("state"),
+            cache: root.join("cache"),
+            tmp: root.join("tmp"),
+        };
+        paths.ensure().unwrap();
         std::fs::write(paths.config.join("cyber.json"), global.to_string()).unwrap();
-        let config = paths.config.clone();
-        let app = App::build(AppOptions {
+        App::build(AppOptions {
             paths,
             home: root.join("home"),
-            database: DatabaseLocation::Memory,
-            default_directory: root.clone(),
+            database: database.map_or(DatabaseLocation::Memory, DatabaseLocation::File),
+            default_directory: root.to_path_buf(),
             sandbox_policy: None,
             snapshots: false,
             interactive: true,
@@ -589,7 +779,10 @@ impl Fixture {
             isolation: None,
         })
         .await
-        .unwrap();
+        .unwrap()
+    }
+
+    async fn serve(app: &App) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/api/v1", listener.local_addr().unwrap());
         tokio::spawn(cyber_server::http::serve_tcp(
@@ -597,17 +790,7 @@ impl Fixture {
             listener,
             std::future::pending::<()>(),
         ));
-        let repo = root.join("repo");
-        std::fs::create_dir_all(repo.join(".git")).unwrap();
-        Self {
-            _temp: temp,
-            repo,
-            config,
-            model,
-            app,
-            url,
-            client: Client::builder().no_proxy().build().unwrap(),
-        }
+        url
     }
 
     fn write(&self, relative: &str, text: &str) -> PathBuf {
@@ -640,12 +823,16 @@ impl Fixture {
     }
 
     async fn session(&self, directory: &Path) -> String {
+        self.session_in(directory, "bypass").await
+    }
+
+    async fn session_in(&self, directory: &Path, mode: &str) -> String {
         let created = self
             .call(
                 Method::POST,
                 "/sessions",
                 directory,
-                Some(json!({"model": "test/main", "mode": "bypass"})),
+                Some(json!({"model": "test/main", "mode": mode})),
             )
             .await;
         created["data"]["id"].as_str().unwrap().to_owned()
