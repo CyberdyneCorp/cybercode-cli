@@ -181,12 +181,24 @@ struct Driven {
 
 impl Driven {
     fn start(provider: &Provider, flags: &[&str]) -> Self {
-        Self::start_reading(provider, flags, Arc::new(AtomicBool::new(true)))
+        Self::start_reading(provider, flags, Arc::new(AtomicBool::new(true)), None)
+    }
+
+    /// Like `start`, but working in another driver's repository, so both share one
+    /// Location.
+    fn start_beside(provider: &Provider, flags: &[&str], other: &Driven) -> Self {
+        let repo = other._root.join("repo");
+        Self::start_reading(provider, flags, Arc::new(AtomicBool::new(true)), Some(repo))
     }
 
     /// Like `start`, but stdout is not read until `reading` becomes true, so the driver's
     /// writes block once the pipe fills.
-    fn start_reading(provider: &Provider, flags: &[&str], reading: Arc<AtomicBool>) -> Self {
+    fn start_reading(
+        provider: &Provider,
+        flags: &[&str],
+        reading: Arc<AtomicBool>,
+        repo: Option<PathBuf>,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(root.join("repo/.git")).unwrap();
@@ -197,7 +209,8 @@ impl Driven {
         let helper =
             PathBuf::from(env!("CARGO_BIN_EXE_cyber")).with_file_name("cyber-sandbox-exec");
         let mut child = Command::new(env!("CARGO_BIN_EXE_cyber"))
-            .args(["--cwd", root.join("repo").to_str().unwrap()])
+            .arg("--cwd")
+            .arg(repo.unwrap_or_else(|| root.join("repo")))
             .arg("exec")
             .args((!flags.contains(&"--attach")).then_some("--embedded"))
             .args(["--model", "corp/main", "--format", "stream-json"])
@@ -560,6 +573,57 @@ fn a_permission_is_answered_over_stdin_and_others_are_refused() {
 }
 
 #[test]
+fn a_second_reply_to_an_answered_request_is_a_protocol_error() {
+    let provider = Provider::start(&[r#"bash {"command":"echo driven"}"#, "text:ran it"]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"run it"}"#);
+    let asked = run.until("permission_request", &mut seen);
+    let reply = json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"});
+    run.send(&reply.to_string());
+    run.send(&reply.to_string());
+    let refused = run.until("error", &mut seen);
+    assert_eq!(refused["code"], "protocol", "{refused}");
+    let message = refused["message"].as_str().unwrap_or_default();
+    assert!(message.contains(asked["id"].as_str().unwrap()), "{refused}");
+    run.send(r#"{"type":"end"}"#);
+    let end = run.until("end", &mut seen);
+    assert_eq!(end["exit_code"], 0, "{seen:#?}");
+    let results: Vec<_> = seen.iter().filter(|l| l["type"] == "result").collect();
+    assert_eq!(results.len(), 1, "{seen:#?}");
+    assert_eq!(results[0]["result"], "ran it");
+    assert_eq!(provider.turns().len(), 2, "the tool ran once");
+    assert_eq!(run.exit(), Some(0));
+}
+
+#[test]
+fn a_question_reply_naming_a_permission_does_not_consume_it() {
+    let provider = Provider::start(&[r#"bash {"command":"echo driven"}"#, "text:ran it"]);
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","text":"run it"}"#);
+    let asked = run.until("permission_request", &mut seen);
+    run.send(
+        &json!({"type":"question_reply","request_id":asked["id"],"answers":[["yes"]]}).to_string(),
+    );
+    let refused = run.until("error", &mut seen);
+    assert_eq!(refused["code"], "protocol", "{refused}");
+    run.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["result"], "ran it", "{seen:#?}");
+    assert!(
+        !seen.iter().any(|l| l["type"] == "permission_denied"),
+        "{seen:#?}"
+    );
+    let turns = provider.turns();
+    assert_eq!(turns.len(), 2, "the tool ran once: {turns:#?}");
+    assert!(turns[1].to_string().contains("driven"), "{:#}", turns[1]);
+    assert_eq!(run.exit(), Some(0));
+}
+
+#[test]
 fn eof_while_a_request_waits_declines_it_instead_of_hanging() {
     let provider = Provider::start(&[r#"bash {"command":"echo never"}"#, "text:declined"]);
     let mut run = Driven::start(&provider, &[]);
@@ -889,7 +953,7 @@ fn a_stalled_stdout_reader_delays_but_never_loses_or_reorders_results() {
     let script: Vec<&str> = script.iter().map(String::as_str).collect();
     let provider = Provider::start(&script);
     let reading = Arc::new(AtomicBool::new(false));
-    let mut run = Driven::start_reading(&provider, &[], reading.clone());
+    let mut run = Driven::start_reading(&provider, &[], reading.clone(), None);
     for index in 0..answers.len() {
         run.send(&json!({"type":"user","text":"next","id":format!("input-{index}")}).to_string());
     }
@@ -1305,4 +1369,73 @@ fn a_server_crash_ends_the_run_explicitly_and_the_restarted_server_keeps_the_inp
         .find(|row| row["message_id"] == input["message_id"]);
     assert!(row.is_some(), "{inbox:#}");
     provider.release();
+}
+
+/// Two drivers attached to one Session: a request bound to the first driver's input is
+/// never shown to the second, and the second cannot answer it.
+#[test]
+fn a_second_driver_cannot_reply_to_the_first_drivers_request() {
+    let provider = Provider::start(&[r#"gate:bash {"command":"echo driven"}"#, "text:ran it"]);
+    let server = Server::start(&provider);
+    let url = format!("http://127.0.0.1:{}", server.port);
+    let attach = [
+        "--attach",
+        url.as_str(),
+        "--password",
+        server.password.as_str(),
+    ];
+    let mut first = Driven::start(&provider, &attach);
+    let mut seen = Vec::new();
+    first.send(r#"{"type":"user","text":"run it","id":"first"}"#);
+    let input = first.until("input", &mut seen);
+    assert_eq!(input["status"], "admitted", "{seen:#?}");
+    let session = input["session_id"].as_str().unwrap().to_owned();
+    provider.wait_for_gate();
+
+    // The second driver takes its baseline before the request is asked, so the
+    // request event reaches it too.
+    let mut flags = attach.to_vec();
+    flags.extend(["--session", session.as_str()]);
+    let mut second = Driven::start_beside(&provider, &flags, &first);
+    let mut other = Vec::new();
+    second.until("system", &mut other);
+    provider.release();
+
+    let asked = first.until("permission_request", &mut seen);
+    assert_eq!(asked["input_message_ids"], json!([input["message_id"]]));
+    second.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let refused = second.until("error", &mut other);
+    assert_eq!(refused["code"], "protocol", "{refused}");
+    first.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let result = first.until("result", &mut seen);
+    assert_eq!(
+        (result["id"].as_str(), result["result"].as_str()),
+        (Some("first"), Some("ran it")),
+        "{seen:#?}"
+    );
+    assert!(
+        !seen.iter().any(|l| l["type"] == "permission_denied"),
+        "{seen:#?}"
+    );
+    first.send(r#"{"type":"end"}"#);
+    assert_eq!(first.until("end", &mut seen)["exit_code"], 0, "{seen:#?}");
+    assert_eq!(first.exit(), Some(0));
+
+    second.send(r#"{"type":"end"}"#);
+    let end = second.until("end", &mut other);
+    assert_eq!(end["exit_code"], 0, "{other:#?}");
+    assert!(
+        other
+            .iter()
+            .all(|l| l["type"] != "permission_request" && l["type"] != "result"),
+        "{other:#?}"
+    );
+    assert_eq!(second.exit(), Some(0));
+    let turns = provider.turns();
+    assert_eq!(turns.len(), 2, "the tool ran once: {turns:#?}");
+    assert!(turns[1].to_string().contains("driven"), "{:#}", turns[1]);
 }
