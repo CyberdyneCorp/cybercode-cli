@@ -681,7 +681,22 @@ cyber exec --output-schema findings.schema.json --format json "audit the depende
 - **Ending:** after `end` or EOF nothing new is admitted, requests still waiting are declined (`reject` for permissions, dismissed questions), and the process exits once every admitted prompt has its result and the Session is idle.
 - **Limits and errors:** a line is at most 1 MiB and at most 32 prompts may wait for an answer. A line that is not a valid envelope, an over-long line or a 33rd waiting prompt is a fatal protocol error: an `error` line, no more input, the Session interrupted, and exit 2.
 - **Exit code:** 130 after SIGINT, 2 after a fatal protocol error, otherwise the first failed prompt's code in admission order (1), else 0. `--output-schema` applies to every prompt, whose `result` is then the validated object.
-- **Not combined with:** a prompt argument, `--command`, `--goal`, `--timeout`, `--max-cost` or `--max-tokens` (exit 2 before any Session). `--include-hook-events` is not available yet.
+- **Not combined with:** a prompt argument, `--command`, `--goal`, `--timeout`, `--max-cost` or `--max-tokens` (exit 2 before any Session). `--include-hook-events` works here too ([Hook events in exec](#hook-events-in-exec)).
+
+## Hook events in exec
+
+`cyber exec --format stream-json --include-hook-events` adds one `hook_event` line for each hook that ran for the run's Session, once it finished. It works for a single prompt and for `--input-format stream-json`:
+
+```json
+{"type":"hook_event","receipt_id":"hke_…","hook_id":"guard","event":"PreToolUse","scope":"project","outcome":"blocked","decision":"deny","duration_ms":14,"started_ms":1794660285453,"tool_name":"bash","call_id":"call_2","ts":…,"session_id":"ses_…"}
+```
+
+- **Fields:** `hook_id` is the handler's `id`, or its definition digest when it has none. `outcome` is `ok`, `blocked`, `error`, `timeout` or `skipped` (an untrusted or policy-refused handler). `decision` is the decision kind (`allow`, `ask`, `deny`, `block`, `retry`) or `null`. `tool_name` and `call_id` appear for tool events. `hook_id` and `tool_name` go through credential redaction.
+- **Never included:** the hook's stdin, stdout or stderr, its decision reason, rewritten input, added context and environment, even with `telemetry.log_hook_io` on. Use `cyber hooks history` or `GET /api/v1/sessions/{id}/hook-executions` to review recorded IO. A blocking hook's message still reaches the model, so it shows in that call's `tool_result` line (redacted like any tool output), and hook notices still go to stderr.
+- **Order:** lines follow the server's live receipts, so a hook's line comes before the line of what it gated: a `PreToolUse` line before that call's `tool_result`, a `Stop` line before `result`. Before each `result` (and `end`) exec also reads the durable receipt list and adds, once each, the receipts the live stream missed, such as a `SessionStart` hook that finished before exec subscribed or a line dropped while the stream lagged. Those lines arrive late but still before the `result`.
+- **Scope:** only the run's own Session. A reused Session (`--session`, `--continue`) reports only hooks admitted after the run attached. Subagents, delegated `@agent` prompts and Workflow agents run in other Sessions and get no lines, nor does an `async` hook still running when the run ends.
+- **Errors:** with `--format text` or `json`, or with `--workflow`, exec exits 2 before any Session exists. Without the flag the output is unchanged.
+- **API:** exec reads `GET /api/v1/event?scope=all&include=hook_receipts`, which adds `session.hook.receipt` events (`{session_id, receipt}`, one at admission and one at settlement) to the instance stream. No other stream carries them.
 
 ## Budgets and deferred input
 

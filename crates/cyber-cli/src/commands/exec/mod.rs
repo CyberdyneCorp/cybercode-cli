@@ -5,6 +5,7 @@ mod delegation;
 mod driver;
 mod frames;
 pub(crate) mod goals;
+mod hook_lines;
 pub(crate) mod report;
 mod review_run;
 mod schema;
@@ -24,6 +25,7 @@ use crate::cli::{Format, GlobalArgs};
 use crate::context::Context;
 use crate::error::CliError;
 use background::{Owned, Settle};
+use hook_lines::HookLines;
 use report::{Out, Run};
 
 #[derive(Debug, Default, Args)]
@@ -110,6 +112,11 @@ pub struct ExecArgs {
     /// atomically, when the run ends.
     #[arg(long, value_name = "FILE")]
     pub output_last_message: Option<PathBuf>,
+    /// With --format stream-json: add a `hook_event` line for each settled hook
+    /// execution of this run's Session (identity, event, outcome and decision; never
+    /// hook input, output or environment).
+    #[arg(long)]
+    pub include_hook_events: bool,
     /// The parsed `--output-schema` (filled by `run`).
     #[arg(skip)]
     pub schema: Option<serde_json::Value>,
@@ -204,6 +211,7 @@ pub fn run(mut args: ExecArgs, ctx: &Context, global: &GlobalArgs) -> Result<(),
     } else if !args.goal_check.is_empty() {
         return Err(CliError::usage("--goal-check needs a --goal before it"));
     }
+    check_hook_events(&args, global)?;
     if args.workflow.is_some() {
         return launch(args, ctx, global, String::new(), None);
     }
@@ -252,6 +260,25 @@ fn check_driven(args: &ExecArgs, global: &GlobalArgs) -> Result<(), CliError> {
         ))),
         None => Ok(()),
     }
+}
+
+/// `--include-hook-events` adds lines to `stream-json` only, and a Workflow's hooks run in
+/// its agents' Sessions, which the lines do not cover.
+fn check_hook_events(args: &ExecArgs, global: &GlobalArgs) -> Result<(), CliError> {
+    if !args.include_hook_events {
+        return Ok(());
+    }
+    if global.format != Some(Format::StreamJson) {
+        return Err(CliError::usage(
+            "--include-hook-events needs --format stream-json",
+        ));
+    }
+    if args.workflow.is_some() {
+        return Err(CliError::usage(
+            "--include-hook-events cannot be combined with --workflow",
+        ));
+    }
+    Ok(())
 }
 
 /// `cyber review`: the `review` command over the normalized target, reported as findings.
@@ -359,17 +386,22 @@ async fn execute_session(
         run.stop_reason = Some("budget_exceeded".into());
         return Ok(out.finish(&run, args, session));
     }
-    let mut events =
-        Box::pin(
-            client.events(true).await.map_err(api)?.filter(move |e| {
-                futures::future::ready(e.session_id.as_deref() == Some(id.as_str()))
-            }),
-        );
+    let mut events = Box::pin(
+        client
+            .all_events(args.include_hook_events)
+            .await
+            .map_err(api)?
+            .filter(move |e| futures::future::ready(e.session_id.as_deref() == Some(id.as_str()))),
+    );
     let id = session["id"].as_str().unwrap_or_default();
+    let mut hooks = HookLines::start(client, args, id, &out).await;
     let mut owned = Owned::capture(client, id).await?;
     let (message, goal_ids) = match goals::submit(client, id, args, prompt).await? {
         Ok(sent) => sent,
-        Err(error) => return out.refused(error, &run, args, session),
+        Err(error) => {
+            hooks.reconcile(client, &out).await;
+            return out.refused(error, &run, args, session);
+        }
     };
     if let (Some(_), Some(message)) = (&args.command, &message) {
         owned.command(message)?;
@@ -380,10 +412,18 @@ async fn execute_session(
         run: &mut run,
         out: &mut out,
         owned: &mut owned,
+        hooks: &mut hooks,
         goals: !goal_ids.is_empty(),
     };
     follow.run(&mut events, timeout).await;
     goals::settle(client, id, &goal_ids, &mut run).await;
+    conclude(client, id, &mut run, &mut out, &owned).await;
+    hooks.reconcile(client, &out).await;
+    Ok(out.finish(&run, args, session))
+}
+
+/// After the Session settled: a review's fork Job, then the final usage read.
+async fn conclude(client: &Client, id: &str, run: &mut Run, out: &mut Out, owned: &Owned) {
     if out.is_review() {
         match owned.fork_job(client).await {
             Ok(job) => out.review_job(owned.fork_id(), job),
@@ -392,13 +432,12 @@ async fn execute_session(
             }
         }
     }
-    if let Err(error) = refresh_usage(client, id, &mut run, FINAL_REFRESH).await {
+    if let Err(error) = refresh_usage(client, id, run, FINAL_REFRESH).await {
         run.error.get_or_insert(error.message);
     } else if run.over_budget() {
         run.stop_reason
             .get_or_insert_with(|| "budget_exceeded".into());
     }
-    Ok(out.finish(&run, args, session))
 }
 
 /// What one event means for the run.
@@ -415,6 +454,7 @@ struct Follow<'a> {
     run: &'a mut Run,
     out: &'a mut Out,
     owned: &'a mut Owned,
+    hooks: &'a mut HookLines,
     /// `--goal`: idle is final only once no Goal is active.
     goals: bool,
 }
@@ -467,6 +507,7 @@ impl Follow<'_> {
     /// Apply one event; true when the run is over.
     async fn event(&mut self, event: Event, waiting: &mut bool) -> bool {
         self.owned.observe(&event);
+        self.hooks.live(&event, self.out);
         match handle(self.run, self.out, self.client, self.id, self.owned, event).await {
             Step::Continue => false,
             Step::End => true,
