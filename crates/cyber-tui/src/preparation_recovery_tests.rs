@@ -72,6 +72,7 @@ fn open(app: &mut App) {
             activity_id: "op_one".into(),
             status: "unknown".into(),
             lifetime_available: true,
+            checkout_constructions: vec![],
         }]),
     );
 }
@@ -252,4 +253,45 @@ async fn actual_transport_reads_history_and_absence_still_requires_positive_revi
             .unwrap()["data"]
             .is_null()
     );
+}
+#[test]
+fn interrupted_checkout_construction_is_listed_as_unresolved_fenced_evidence() {
+    let mut app = app();
+    let req = request(app.open_snapshot_recovery());
+    rewind::apply(
+        &mut app,
+        &mut Default::default(),
+        req,
+        Ok(rewind::Reply::Recovery(Box::new(
+            recovery::Reply::Journals(vec![]),
+        ))),
+    );
+    let journals = recovery::lines(&app);
+    assert!(journals.iter().any(|line| {
+        let line = line.to_string();
+        line.contains("P lists unresolved preparations") && line.contains("checkout construction")
+    }));
+    let stage = format!("preparing_6_op_one_{}", "0".repeat(26));
+    let req = request(app.recovery_key(KeyCode::Char('p')));
+    deliver(
+        &mut app,
+        req,
+        Reply::Candidates(vec![Candidate {
+            activity_id: "op_one".into(),
+            status: "pending".into(),
+            lifetime_available: true,
+            checkout_constructions: vec![stage.clone()],
+        }]),
+    );
+    let shown = lines(&app)
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    assert!(
+        shown.iter().any(|line| line.contains(&stage)
+            && line.contains("Unresolved checkout construction evidence")
+            && line.contains("worktree removal refuses")),
+        "{shown:#?}"
+    );
+    assert_eq!(app.composer.text(), "owner draft");
 }

@@ -273,9 +273,11 @@ impl Claim {
                 .iter()
                 .any(|prefix| name.to_string_lossy().starts_with(prefix))
             {
-                return Err(invalid(
-                    "Checkout retirement retains unknown same-owner construction evidence",
-                ));
+                return Err(invalid(format!(
+                    "Checkout retirement refuses: {:?} is same-owner unknown constructor \
+                     evidence; construction recovery is required before retirement",
+                    name.to_string_lossy()
+                )));
             }
         }
         Ok(())

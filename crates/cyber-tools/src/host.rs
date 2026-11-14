@@ -1452,6 +1452,19 @@ impl ToolHost for BuiltinHost {
         Box::pin(self.claim_snapshot_worktree_location_bound(info, activity, lifetime, cancel))
     }
 
+    fn snapshot_checkout_constructions(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+    ) -> Result<Vec<cyber_core::worktrees::SnapshotConstruction>, String> {
+        if info.worktree_id.is_none() {
+            return Ok(vec![]);
+        }
+        cyber_core::worktrees::Repository::snapshot_constructions_at(std::path::Path::new(
+            &info.directory,
+        ))
+        .map_err(|error| error.to_string())
+    }
+
     fn reacquire_snapshot_location(
         &self,
         info: &cyber_server::runtime::SessionInfo,

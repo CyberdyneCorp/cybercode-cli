@@ -258,6 +258,37 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_cancellation_record_construction_is_retained_and_never_adopted() {
+        let (_temp, store, _lifetime, receipt) = setup();
+        let dir = store
+            .journals
+            .open_dir_nofollow("restore_preparation")
+            .unwrap();
+        // The exact cut state of `storage::atomic`: a complete, flushed private
+        // stage whose rename to the stable record never happened.
+        let stage = format!("tmp_{}", ulid::Ulid::new());
+        let bytes = serde_json::to_vec(&receipt).unwrap();
+        storage::create(&dir, &stage, &bytes).unwrap();
+        assert_eq!(
+            store
+                .preparation_cancellation("restore_preparation")
+                .unwrap(),
+            None,
+            "a construction stage is not a cancellation record"
+        );
+        assert!(dir.symlink_metadata(FILE).is_err());
+        // Retrying the committed receipt publishes in a fresh stage; the cut
+        // stage stays unadopted evidence that payload cleanup must refuse.
+        store.acknowledge_preparation(&receipt).unwrap();
+        assert_eq!(
+            store
+                .preparation_cancellation("restore_preparation")
+                .unwrap(),
+            Some(receipt)
+        );
+        assert_eq!(storage::read(&dir, &stage, LIMIT).unwrap(), bytes);
+    }
+    #[test]
     fn contradictory_intent_and_admitted_receipt_never_publish_cancellation_metadata() {
         let (_temp, store, _lifetime, mut receipt) = setup();
         receipt.source_admitted = Some(true);

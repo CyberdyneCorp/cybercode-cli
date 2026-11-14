@@ -45,28 +45,7 @@ fn stage_prefix(owner: &str) -> String {
     format!("ack_preparing_{}_{owner}_", owner.len())
 }
 fn stage_owner(name: &str) -> io::Result<&str> {
-    let tail = name
-        .strip_prefix("ack_preparing_")
-        .ok_or_else(|| invalid("Invalid acknowledgement stage"))?;
-    let (length, tail) = tail
-        .split_once('_')
-        .ok_or_else(|| invalid("Invalid acknowledgement stage length"))?;
-    let length: usize = length.parse().map_err(invalid)?;
-    let owner = tail
-        .get(..length)
-        .ok_or_else(|| invalid("Invalid acknowledgement stage owner"))?;
-    super::super::safe_id(owner, "op")?;
-    let nonce = tail
-        .get(length..)
-        .and_then(|tail| tail.strip_prefix('_'))
-        .ok_or_else(|| invalid("Invalid acknowledgement stage nonce"))?;
-    if nonce.len() != 26
-        || !nonce.bytes().all(|byte| byte.is_ascii_alphanumeric())
-        || name != format!("{}{nonce}", stage_prefix(owner))
-    {
-        return Err(invalid("Invalid acknowledgement construction name"));
-    }
-    Ok(owner)
+    super::constructions::stage_owner(name, "ack_preparing_")
 }
 impl Acknowledged {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -175,7 +154,7 @@ impl CheckoutAcknowledgement {
     pub fn publish(&self, claim: &mut SnapshotClaim) -> io::Result<()> {
         self.publish_before(claim, || Ok(()))
     }
-    fn publish_before(
+    pub(super) fn publish_before(
         &self,
         claim: &mut SnapshotClaim,
         before: impl FnOnce() -> io::Result<()>,
@@ -386,9 +365,11 @@ impl Inventory {
                 super::super::safe_id(owner, "op")?;
                 inventory.markers.insert(owner.into());
             } else if name.starts_with("ack_preparing_") {
-                inventory
-                    .stages
-                    .push((stage_owner(name)?.into(), name.into()));
+                let owner = stage_owner(name).map_err(|_| super::constructions::fenced(name))?;
+                inventory.stages.push((owner.into(), name.into()));
+            } else if name.starts_with("preparing_") {
+                // Never a valid claim: publication failed before its stable name.
+                return Err(super::constructions::fenced(name));
             } else {
                 claims.push(path);
             }
@@ -411,7 +392,7 @@ impl Inventory {
         for (owner, stage) in self.stages {
             let binding = acknowledged
                 .get(&owner)
-                .ok_or_else(|| invalid("Unacknowledged checkout construction remains"))?;
+                .ok_or_else(|| super::constructions::fenced(&stage))?;
             let pins = Pins::open_for_removal(&managed.common_dir, &managed.id, &managed.name)?;
             pins.matches(binding)?;
             let file = open_file(&pins.directory, &stage)?;

@@ -5037,6 +5037,12 @@ export type SnapshotPreparation = {
   activity_id: string;
   status: string;
   lifetime_available: boolean;
+  /**
+   * Retained private checkout construction stages named for this activity.
+   * Same-owner unknown constructor evidence: cancellation does not clear it,
+   * and it fences worktree removal until construction recovery exists.
+   */
+  checkout_constructions?: string[];
 };
 
 export type SnapshotPreparationConfirmation = {

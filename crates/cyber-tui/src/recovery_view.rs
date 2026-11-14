@@ -38,7 +38,7 @@ fn journals(view: &View, lines: &mut Vec<Line<'static>>) {
     ));
     if view.journals.is_empty() {
         lines.push(Line::from(
-            "No retained journals. P opens preparation recovery; no fence is cleared.",
+            "No retained journals. P lists unresolved preparations, including interrupted checkout construction; no fence is cleared.",
         ));
     }
     for (index, journal) in view

@@ -1676,12 +1676,22 @@ fn assert_prepared_interrupted_plan(
     assert!(!pending.completed);
     assert_eq!(pending.plan.version, 3);
     assert!(pending.plan.intent_digest.is_some());
-    let unknown = journal.join("foreign-evidence");
-    std::fs::write(&unknown, b"owner bytes").unwrap();
-    assert!(maintenance.reclaim(source).is_err());
+    // A foreign leaf and the exact private stage left by a cut cancellation-record
+    // construction (complete flushed bytes, never renamed) both refuse cleanup.
+    let cancellation = std::fs::read(journal.join("preparation.json")).unwrap();
+    for (name, bytes) in [
+        ("foreign-evidence", &b"owner bytes"[..]),
+        ("tmp_01ARZ3NDEKTSV4RRFFQ69G5FAV", &cancellation[..]),
+    ] {
+        let unknown = journal.join(name);
+        std::fs::write(&unknown, bytes).unwrap();
+        let refused = maintenance.reclaim(source).unwrap_err();
+        assert!(refused.contains("Unknown journal"), "{name}: {refused}");
+        assert_eq!(std::fs::read(&unknown).unwrap(), bytes);
+        std::fs::remove_file(unknown).unwrap();
+    }
     let first = journal.join(&pending.plan.files[0].name);
     assert!(std::fs::symlink_metadata(&first).is_ok());
-    std::fs::remove_file(unknown).unwrap();
     // Synthetic progress of one planned private unlink, following a real kill.
     std::fs::remove_file(first).unwrap();
     std::fs::File::open(journal).unwrap().sync_all().unwrap();
@@ -3283,4 +3293,190 @@ fn managed_git_fixture_panic_retains_its_private_evidence() {
     // This probe created no Session/native work or unknown evidence. Only its
     // own empty fixture is removed; failed recovery fixtures stay retained.
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A real SIGKILL after the private checkout claim stage is flushed and before
+/// its no-replace publication. The stage is same-owner unknown constructor
+/// evidence: it blocks prompt admission until the pre-effect preparation is
+/// cancelled, is listed by every recovery client, and stays fenced afterwards.
+#[test]
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn checkout_claim_construction_kill_retains_unknown_evidence_and_blocks_prompt_admission() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let (env, id) = managed_git_fixture(&model);
+    std::fs::write(env.directory.join("tracked"), "before").unwrap();
+    env.exec(Some(&id), "before snapshot");
+    let first = env.user_ids(&id)[0].clone();
+    std::fs::write(env.directory.join("tracked"), "after").unwrap();
+    env.exec(Some(&id), "after snapshot");
+    let messages = env.messages(&id);
+    kill_at_claim_stage(&env, &id, &first);
+    let requests = model.requests().len();
+    let (stage, activity) = retained_claim_stage(&env);
+    let bytes = std::fs::read(&stage).unwrap();
+    let name = stage.file_name().unwrap().to_str().unwrap().to_owned();
+    assert_eq!(env.file("tracked").as_deref(), Some("after"));
+    let refused = env.cyber(&["exec", "--format", "json", "--session", &id, "refused"]);
+    let text = exits(&refused, 1);
+    assert!(
+        text.contains("requires owned recovery before new input"),
+        "{text}"
+    );
+    assert_construction_listed(&env, &id, &activity, &name);
+    assert_removal_fenced(&env, &name);
+    let review = json(&env.cyber(&[
+        "sessions",
+        "recovery-preparation",
+        &id,
+        &activity,
+        "--format",
+        "json",
+    ]));
+    let receipt = json(&env.cyber(&[
+        "sessions",
+        "recovery-preparation",
+        &id,
+        &activity,
+        "--confirm",
+        review["confirmation"].as_str().unwrap(),
+        "--request-id",
+        "claim-construction-cut",
+        "--format",
+        "json",
+    ]));
+    assert_eq!(receipt["activity_id"], activity.as_str());
+    assert!(receipt["origin"].is_null());
+    assert_eq!(env.messages(&id), messages);
+    assert_eq!(model.requests().len(), requests);
+    // Cancelling the preparation restores admission; the stage gains nothing.
+    env.exec(Some(&id), "after cancellation");
+    assert_eq!(std::fs::read(&stage).unwrap(), bytes);
+    assert!(!stage.with_file_name(format!("{activity}.lock")).exists());
+    assert_removal_fenced(&env, &name);
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn kill_at_claim_stage(env: &Env, id: &str, first: &str) {
+    let preview = rewind_preview(env, id, first, "both");
+    // The fixture point is read by the service process, so start a fresh one with it.
+    exits(&env.cyber(&["service", "stop"]), 0);
+    let marker = env.root.join("claim-construction-cut");
+    let log = env.root.join("claim-construction-confirm.log");
+    let output = std::fs::File::create(&log).unwrap();
+    let mut confirm = env
+        .command(&[
+            "sessions",
+            "rewind",
+            id,
+            "--to",
+            first,
+            "--target",
+            "both",
+            "--confirm",
+            preview["confirmation"].as_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .env("CYBER_TEST_PROCESS_CUT", "checkout-claim-stage-flushed")
+        .env("CYBER_TEST_PROCESS_CUT_MARKER", &marker)
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    while !marker.exists() {
+        if confirm.try_wait().unwrap().is_some() || std::time::Instant::now() >= deadline {
+            let _ = confirm.kill();
+            panic!(
+                "claim construction cut was never reached: {}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    kill_registered_service(env);
+    assert!(!confirm.wait().unwrap().success());
+}
+
+/// The single retained claim stage and the activity it names.
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn retained_claim_stage(env: &Env) -> (PathBuf, String) {
+    let common = PathBuf::from(git_fixture(
+        &env.directory,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ));
+    let worktrees = std::fs::read_dir(common.join("cyber-worktree-activity"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(worktrees.len(), 1);
+    let stages = std::fs::read_dir(&worktrees[0])
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("preparing_")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(stages.len(), 1, "{stages:?}");
+    let name = stages[0].file_name().unwrap().to_str().unwrap();
+    let (length, tail) = name["preparing_".len()..].split_once('_').unwrap();
+    let activity = tail[..length.parse::<usize>().unwrap()].to_owned();
+    assert!(activity.starts_with("op_"));
+    assert!(!worktrees[0].join(format!("{activity}.lock")).exists());
+    (stages[0].clone(), activity)
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn assert_construction_listed(env: &Env, id: &str, activity: &str, stage: &str) {
+    let list = json(&env.cyber(&["sessions", "recovery-preparation", id, "--format", "json"]));
+    assert_eq!(list[0]["activity_id"], activity);
+    assert_eq!(list[0]["checkout_constructions"], json!([stage]));
+    let text = exits(&env.cyber(&["sessions", "recovery-preparation", id]), 0);
+    assert!(
+        text.contains(&format!(
+            "unresolved checkout construction evidence {stage}"
+        )),
+        "{text}"
+    );
+    let text = exits(&env.cyber(&["sessions", "recovery", id]), 0);
+    assert!(
+        text.contains("Unresolved snapshot preparations: 1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("cyber sessions recovery-preparation"),
+        "{text}"
+    );
+    assert!(text.contains(stage), "{text}");
+    assert_eq!(
+        json(&env.cyber(&["sessions", "recovery", id, "--format", "json"])),
+        json!([])
+    );
+}
+
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+fn assert_removal_fenced(env: &Env, stage: &str) {
+    let refused = env.cyber(&["api", "DELETE", "/worktrees/managed"]);
+    let text = exits(&refused, 1);
+    assert!(text.contains("same-owner unknown constructor"), "{text}");
+    assert!(text.contains(stage), "{text}");
+    assert!(env.directory.exists());
 }

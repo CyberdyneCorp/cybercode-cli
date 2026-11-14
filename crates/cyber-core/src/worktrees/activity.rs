@@ -12,6 +12,7 @@ mod snapshot;
 pub use snapshot::CheckoutRetirementGuard;
 pub use snapshot::{CheckoutAcknowledgement, CheckoutBinding, CheckoutOwner, SnapshotClaim};
 pub use snapshot::{CheckoutRetirementFile, CheckoutRetirementPlan};
+pub use snapshot::{SnapshotConstruction, SnapshotConstructionKind};
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct UseRecord {
@@ -157,6 +158,16 @@ impl RemovalActivity for CheckoutActivity {
 }
 
 impl Repository {
+    /// Read-only names of retained snapshot checkout construction stages in every
+    /// managed checkout enclosing this Location. Nothing is opened, locked or
+    /// removed; listing grants no recovery, acknowledgement or cleanup authority.
+    pub fn snapshot_constructions_at(directory: &Path) -> io::Result<Vec<SnapshotConstruction>> {
+        let mut found = vec![];
+        for (_, managed) in Self::managed_locations_at(directory)? {
+            found.extend(snapshot::constructions::inventory(&managed)?);
+        }
+        Ok(found)
+    }
     /// Reacquire exact existing evidence, without creating or settling a claim.
     /// Caller must separately retain the matching snapshot lifetime proof.
     pub fn reacquire_snapshot(

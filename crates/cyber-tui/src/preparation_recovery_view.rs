@@ -51,6 +51,11 @@ fn candidates(view: &View, lines: &mut Vec<Line<'static>>) {
             candidate.status,
             candidate.lifetime_available
         )));
+        for stage in &candidate.checkout_constructions {
+            lines.push(Line::from(format!(
+                "    Unresolved checkout construction evidence {stage:?}: cancelling restores prompt admission; the stage stays fenced and worktree removal refuses until construction recovery exists."
+            )));
+        }
     }
 }
 fn review(view: &View, lines: &mut Vec<Line<'static>>) {

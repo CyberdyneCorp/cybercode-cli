@@ -19,6 +19,20 @@ acknowledgement. Partial/corrupt constructor cuts, post-effect/owned Git integra
 reclamation, complete clients and the platform matrix remain unfinished. Parent
 tasks are open; the complete recovery delivery is not merge-ready.
 
+Construction checkpoint (2026-11-14, local macOS arm64 only): real process death
+after the private stage flush and before no-replace publication is now exercised
+for checkout claim and acknowledgement construction (native tests and one real
+service kill through the CLI), and an interrupted cancellation-record stage is
+covered at the storage and cleanup level. In every case the stage stays
+byte-identical, no stable claim or acknowledgement appears, and reuse, retirement
+and removal refuse it as `same-owner unknown constructor` evidence. Recovery
+clients list the stage by read-only name inventory, and cancelling the pre-effect
+preparation restores prompt admission without adopting it. This fencing is the
+approved behavior, not a missing cleanup: this protocol gives construction
+evidence no cleanup authority. Removing it requires a separate construction-recovery
+protocol extension with its own approval. Until then, a managed worktree with such
+a stage cannot be removed.
+
 ## Owner-visible contract
 
 The owner selects a retained restore by Session/Location and journal ID, requests a

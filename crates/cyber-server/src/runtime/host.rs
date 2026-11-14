@@ -1049,6 +1049,16 @@ pub trait ToolHost: Send + Sync {
         }
     }
 
+    /// Read-only names of retained snapshot checkout construction stages for this
+    /// Session's managed Location. Inventory only: it grants no recovery,
+    /// acknowledgement or cleanup authority. Hosts without managed checkouts have none.
+    fn snapshot_checkout_constructions(
+        &self,
+        _info: &SessionInfo,
+    ) -> Result<Vec<cyber_core::worktrees::SnapshotConstruction>, String> {
+        Ok(vec![])
+    }
+
     /// Reacquire only original snapshot evidence, without creating or settling claims.
     /// The caller retains the matching lifetime lock independently.
     fn reacquire_snapshot_location(

@@ -316,6 +316,13 @@ impl ToolHost for AppHost {
             .claim_snapshot_location_bound(info, activity, lifetime, cancel)
     }
 
+    fn snapshot_checkout_constructions(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+    ) -> Result<Vec<cyber_core::worktrees::SnapshotConstruction>, String> {
+        self.builtin.snapshot_checkout_constructions(info)
+    }
+
     fn reacquire_snapshot_location(
         &self,
         info: &cyber_server::runtime::SessionInfo,

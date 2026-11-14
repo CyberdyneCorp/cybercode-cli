@@ -20,6 +20,11 @@ pub struct SnapshotPreparation {
     pub activity_id: String,
     pub status: String,
     pub lifetime_available: bool,
+    /// Retained private checkout construction stages named for this activity.
+    /// Same-owner unknown constructor evidence: cancellation does not clear it,
+    /// and it fences worktree removal until construction recovery exists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checkout_constructions: Vec<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SnapshotPreparationReview {
@@ -577,7 +582,12 @@ impl Runtime {
         session: &str,
         include_cancelled: bool,
     ) -> Result<Vec<SnapshotPreparation>, RuntimeError> {
-        self.session_info(session).await?;
+        let info = self.session_info(session).await?;
+        let constructions = self
+            .inner
+            .tools
+            .snapshot_checkout_constructions(&info)
+            .map_err(RuntimeError::Conflict)?;
         let created = self
             .inner
             .store
@@ -597,7 +607,8 @@ impl Runtime {
             for row in rows {
                 let (activity_id, data) = row?;
                 let record: activity::Record = serde_json::from_str(&data).map_err(|_| invalid("Invalid snapshot preparation"))?;
-                result.push(SnapshotPreparation { activity_id, status: record.status, lifetime_available: record.snapshot_lifetime.is_some() });
+                let checkout_constructions = constructions.iter().filter(|stage| stage.owner_id.as_deref() == Some(activity_id.as_str())).map(|stage| stage.name.clone()).collect();
+                result.push(SnapshotPreparation { activity_id, status: record.status, lifetime_available: record.snapshot_lifetime.is_some(), checkout_constructions });
             }
             if result.len() > 4096 { return Err(invalid("Snapshot preparation limit exceeded")); }
             Ok(result)

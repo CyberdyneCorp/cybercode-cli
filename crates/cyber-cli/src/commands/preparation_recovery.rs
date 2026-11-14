@@ -204,10 +204,38 @@ fn list_output(list: &[SnapshotPreparation], global: &GlobalArgs) -> Result<(), 
             clean(&item.status),
             item.lifetime_available
         );
+        for stage in &item.checkout_constructions {
+            println!("  {}", construction_line(stage));
+        }
     }
     println!(
         "Listing is not cancellation authority. Review an exact activity; live workers and unavailable historical proof refuse."
     );
+    Ok(())
+}
+/// One unresolved checkout construction stage, with what the operator can do.
+pub(super) fn construction_line(stage: &str) -> String {
+    format!(
+        "unresolved checkout construction evidence {}: the worker died before publishing its claim or acknowledgement. Cancelling this preparation restores prompt admission; the stage stays fenced (worktree removal refuses) until construction recovery is available.",
+        clean(stage)
+    )
+}
+/// Text-only pointer from journal recovery to unresolved preparations, which
+/// include interrupted checkout construction that has no journal yet.
+pub(super) async fn unresolved_hint(client: &Client, session: &str) -> Result<(), CliError> {
+    let path = format!("/sessions/{}/rewind/preparations", encode(session));
+    let list: Vec<SnapshotPreparation> = data(client.get(&path).await.map_err(api)?)?;
+    if list.is_empty() {
+        return Ok(());
+    }
+    println!(
+        "Unresolved snapshot preparations: {}. Review them with cyber sessions recovery-preparation {}",
+        list.len(),
+        shell_words::quote(session)
+    );
+    for stage in list.iter().flat_map(|item| &item.checkout_constructions) {
+        println!("  {}", construction_line(stage));
+    }
     Ok(())
 }
 fn review_output(review: &SnapshotPreparationReview, global: &GlobalArgs) -> Result<(), CliError> {

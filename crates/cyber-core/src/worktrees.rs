@@ -12,7 +12,7 @@ mod setup;
 pub use activity::CheckoutRetirementGuard;
 pub use activity::{
     CheckoutAcknowledgement, CheckoutActivity, CheckoutBinding, CheckoutLease, CheckoutOwner,
-    SnapshotClaim,
+    SnapshotClaim, SnapshotConstruction, SnapshotConstructionKind,
 };
 pub use activity::{CheckoutRetirementFile, CheckoutRetirementPlan};
 pub use changes::{ChangedFile, Changes};

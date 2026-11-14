@@ -24,6 +24,7 @@ pub mod model_fallback;
 pub mod output_styles;
 pub mod paths;
 pub mod plugins;
+pub mod process_cut;
 pub mod project;
 pub mod prompts;
 pub mod redact;

@@ -1,11 +1,13 @@
 //! Exact checkout metadata pins. A binding alone never grants acknowledgement.
 use super::{Managed, UseRecord, invalid};
 pub(super) mod acknowledgement;
+pub(super) mod constructions;
 mod publication;
 mod retirement;
 pub use acknowledgement::CheckoutAcknowledgement;
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
+pub use constructions::{SnapshotConstruction, SnapshotConstructionKind};
 pub(super) use publication::publish;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use retirement::CheckoutRetirementGuard;
@@ -463,3 +465,6 @@ mod windows {
         ))
     }
 }
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests;

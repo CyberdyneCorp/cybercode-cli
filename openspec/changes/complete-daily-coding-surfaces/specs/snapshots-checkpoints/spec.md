@@ -105,6 +105,13 @@
 - **AND** runtime admission SHALL refuse returned resources with foreign or missing lifetime context
 - **AND** a construction crash SHALL preserve private evidence without granting an incomplete stable record or legacy claim new acknowledgement authority
 
+#### Scenario: Interrupted checkout construction stays fenced and visible
+- **GIVEN** a snapshot worker died after flushing a private checkout claim or acknowledgement stage and before its no-replace publication
+- **WHEN** the owner inspects recovery or attempts admission, retirement or removal
+- **THEN** the stage SHALL remain byte-identical private evidence and no stable claim or acknowledgement SHALL appear
+- **AND** the Session SHALL refuse new input until its pre-effect preparation is resolved, and preparation listing, `sessions recovery` and the TUI recovery panel SHALL name the stage as unresolved construction evidence by read-only name inventory only
+- **AND** cancelling the preparation SHALL NOT adopt or delete the stage; reuse of the same activity, metadata retirement and worktree removal SHALL refuse it as same-owner unknown constructor evidence until a separately approved construction-recovery protocol exists
+
 #### Scenario: Exact exited claim reacquisition is read-only
 - **WHEN** recovery reacquires an exited checkout claim under the exact stored version-2 binding and lifetime context
 - **THEN** it SHALL retain the existing native lock and metadata pins without creating or resetting any claim or acknowledgement

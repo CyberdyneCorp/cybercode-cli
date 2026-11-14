@@ -10,9 +10,12 @@ pub(in crate::worktrees::activity) fn publish(
     activity: &str,
     lifetime: Option<CheckoutOwner>,
 ) -> io::Result<CheckoutLease> {
-    publish_before(managed, activity, lifetime, |_| Ok(()))
+    publish_before(managed, activity, lifetime, |_| {
+        crate::process_cut::pause("checkout-claim-stage-flushed");
+        Ok(())
+    })
 }
-fn publish_before(
+pub(super) fn publish_before(
     managed: &Managed,
     activity: &str,
     lifetime: Option<CheckoutOwner>,

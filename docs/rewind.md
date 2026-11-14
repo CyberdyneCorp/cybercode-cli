@@ -288,8 +288,10 @@ cyber api GET /sessions/<session-id>/rewind/preparations/<activity-id>/requests/
 
 The SDK exposes `snapshotPreparations`, `snapshotPreparationReview`,
 `snapshotPreparationConfirm`, `snapshotPreparationLookup` and
-`snapshotPreparationAcknowledge` on `client.session`. Listing does not access native
-files; review determines eligibility. Review requires the exact retained lifetime
+`snapshotPreparationAcknowledge` on `client.session`. Listing reads no source files
+or native records; for a managed checkout it adds only the names of retained checkout
+construction stages for that activity (`checkout_constructions`), which grant no
+authority. Review determines eligibility. Review requires the exact retained lifetime
 lock proving that this worker exited and a version-2 native phase record proving
 that source effects were never admitted. A published origin is eligible only when
 the database also positively records no source admission. Missing journal files
@@ -501,6 +503,23 @@ lifetime/checkout evidence and refuses a live worker, missing historical proof,
 stale ownership or possible admitted effects. It shows the published-origin flag,
 versions/sequences, complete checkout-set digest when available and the protocol
 warning. Nothing is cancelled by review.
+
+### Interrupted checkout construction
+
+A managed restore first writes its checkout claim to a private, flushed stage and
+then publishes it under its stable name without replacement. If the process dies
+between the two, the stage stays behind as same-owner unknown constructor evidence:
+no claim exists, and the Session refuses new input ("Snapshot worker outcome
+requires owned recovery before new input"). `cyber sessions recovery <session>`
+points to the unresolved preparation, and `recovery-preparation` lists the stage
+under its activity (JSON `checkout_constructions`); the TUI recovery panel (**C**,
+then **P**) shows the same line. Cancelling that pre-effect preparation restores
+prompt admission. The stage itself is fenced by design: it is never adopted as a
+claim, it is not deleted, and removing the worktree refuses with a
+`same-owner unknown constructor` error naming it. An interrupted acknowledgement
+stage behaves the same way for metadata retirement. Cleaning up construction
+evidence needs a separate recovery protocol that does not exist yet; do not delete
+the stage by hand to force removal.
 
 Confirm only a reviewed fingerprint and retain your stable cancellation ID:
 

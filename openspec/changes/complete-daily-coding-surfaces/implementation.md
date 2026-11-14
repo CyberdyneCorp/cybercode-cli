@@ -4049,3 +4049,78 @@ seven-entry Git App binary passed three consecutive nextest `ci` runs
 Clippy pass with warnings denied. Paired/prepared payload-reclaim process death,
 constructor/zero-payload paired or prepared metadata cuts, removed-Location
 maintenance and current-source platform runs remain open; M6/M8 stay unchecked.
+
+## Partial-construction cuts (2026-11-14, local)
+
+The approved protocol keeps partial constructor evidence independently fenced and
+gives it no cleanup authority. This increment proves that fencing under real
+process death and makes the state visible; it adds no cleanup authority.
+
+Native (`crates/cyber-core/src/worktrees/activity/snapshot/tests.rs`): an ignored
+child test runs the production constructor and parks in its pre-publication
+callback, after the private stage is complete and flushed and before the
+no-replace rename. The parent sees the stage locked by the child, SIGKILLs it and
+then checks the state.
+
+- `killed_checkout_claim_construction_retains_private_evidence_and_fences_reclamation`:
+  the `preparing_*` stage keeps its bytes, no `<activity>.lock` or acknowledgement
+  appears, reacquisition and reuse of the activity refuse, and removal admission
+  refuses with `same-owner unknown constructor`. A later independent worker is
+  still admitted and its acknowledged claim can be prepared for retirement;
+  removal stays fenced by the old stage.
+- `killed_acknowledgement_construction_retains_stage_and_fences_retirement`: the
+  `ack_preparing_*` stage of an exited claim keeps its bytes and no
+  `.snapshot-ack` appears. Maintenance (`require_existing`) refuses without
+  publishing one, and removal refuses the unacknowledged claim. Exact receipt
+  reconciliation then publishes from a fresh stage without adopting the killed
+  one, and metadata retirement refuses with `same-owner unknown constructor`.
+  Removal pins, and never deletes, the stage of the now exactly acknowledged owner.
+- `malformed_or_foreign_construction_names_are_listed_and_fence_removal`: claim
+  stages, malformed stage names and acknowledgement stages for another owner are
+  listed and refuse removal with the same message, keeping their bytes.
+
+Cancellation record (`cyber-snapshot`): `preparation.json` is written by
+`storage::atomic` (`tmp_*` stage, then rename). This is a state-level cut, not a
+process kill. `interrupted_cancellation_record_construction_is_retained_and_never_adopted`
+leaves the exact flushed stage: lookup reports no cancellation record, a retried
+receipt publishes the stable record, and the stage keeps its bytes. The real
+prepared-cancellation cleanup case
+(`fully_prepared_pre_effect_cancellation_reclaims_only_persisted_target_inodes`)
+now plants that stage with the committed receipt bytes; payload reclamation refuses
+it as an unknown journal entry and keeps it.
+
+Real service (`branches_cli`, `native-git-acceptance`):
+`checkout_claim_construction_kill_retains_unknown_evidence_and_blocks_prompt_admission`
+starts the service with the debug-only `CYBER_TEST_PROCESS_CUT=checkout-claim-stage-flushed`
+point. That point is reached through the claim constructor's pre-publication
+callback; release builds ignore it. A reviewed managed `sessions rewind --confirm`
+parks there and the registered server is SIGKILLed. After restart: the source is
+unchanged, one claim stage and no stable claim exist, and `exec` refuses with
+"Snapshot worker outcome requires owned recovery before new input".
+`sessions recovery-preparation` lists the stage under its activity (JSON
+`checkout_constructions`, text line naming it), `sessions recovery` text points
+to the unresolved preparation and names the stage (its JSON is unchanged), and
+`DELETE /worktrees/managed` refuses with `same-owner unknown constructor` and the
+stage name. Cancelling the reviewed pre-effect preparation changes no transcript
+or inference count and restores prompt admission. The stage keeps its bytes, no
+claim appears and removal is still refused.
+
+Fixes found by this increment, each with a regression test:
+
+- Removal admission rejected a claim construction stage as "Invalid activity
+  identity" and an unacknowledged acknowledgement stage as "Unacknowledged checkout
+  construction remains". Both now name the stage and its owner as
+  `same-owner unknown constructor` evidence and say that removal stays blocked
+  until construction recovery exists. Metadata retirement uses the same wording.
+- `sessions recovery` said only "No retained restore journals." while new input
+  was refused. The text listing now points to unresolved preparations and names
+  retained construction stages. Preparation listing (API/SDK field
+  `checkout_constructions`, CLI text and the TUI recovery panel under **C**/**P**)
+  names them from a read-only name inventory (`Repository::snapshot_constructions_at`):
+  no file is opened, locked, adopted or removed.
+
+Limits: after the preparation is cancelled the candidate leaves the default
+listing (it is still shown in the TUI's opt-in history), so the retained stage is
+then visible only through the removal refusal. Construction evidence cannot be
+cleaned up: that needs a separate construction-recovery protocol extension. All
+results are local macOS arm64; no Linux, macOS Intel or Windows result is claimed.

@@ -151,7 +151,11 @@ pub async fn run(client: &Client, args: RecoveryArgs, global: &GlobalArgs) -> Re
     let base = format!("/sessions/{}/rewind/recovery", encode(&id));
     let Some(journal_id) = args.journal else {
         let journals: Vec<SnapshotRecovery> = data(client.get(&base).await.map_err(api)?)?;
-        return list(&journals, global);
+        list(&journals, global)?;
+        if !output::is_json(global.format) {
+            super::preparation_recovery::unresolved_hint(client, &id).await?;
+        }
+        return Ok(());
     };
     let action = args
         .action
