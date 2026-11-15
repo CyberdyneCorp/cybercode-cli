@@ -3930,8 +3930,7 @@ background-descendant paragraphs no longer call delivered work open). Generated
 artifacts were checked, not changed: `cyber help-markdown` equals `docs/cli.md`,
 `openapi_document_is_current` passes and `scripts/generate_sdk.py --check` is clean.
 
-Still open in code: withdrawal of a rule already delivered in the current Epoch
-after revocation or change; withheld non-rule instruction files as typed entries;
+Still open in code: withheld non-rule instruction files as typed entries;
 foreground-subagent ownership; acknowledged interruption of a subagent with an
 in-flight tool call; Session-scoped and descendant hook receipts; user-configured
 redaction patterns on JSONL lines and the raw provider message in
@@ -3939,8 +3938,6 @@ redaction patterns on JSONL lines and the raw provider message in
 
 Externally blocked:
 
-- Product decision: how a revoked or changed delivered rule leaves the active
-  context (elide on replay, or force an Epoch rebuild/compaction).
 - Product decision: whether an attached JSONL driver continues across a server
   restart.
 - Product/security decision: the removed-Location maintenance and
@@ -4147,3 +4144,33 @@ metadata retirement refusal, which always names them. An inventory error also
 leaves the listing without names. Construction evidence cannot be
 cleaned up: that needs a separate construction-recovery protocol extension. All
 results are local macOS arm64; no Linux, macOS Intel or Windows result is claimed.
+
+## Owner decisions 2026-11-15
+
+Each decision below was taken by the owner on 2026-11-15 and removed from the
+"Externally blocked" list above. Results are local macOS arm64 only.
+
+### 1. Revoked or changed delivered rule: elide on replay
+
+Implemented in `crates/cyber-server/src/runtime/rule_withdrawal.rs`. Before each model
+request (`prepare_turn`, under the Session lock) the runtime checks every rule in
+`Epoch::delivered_rules` with the inspection check (`rule_approval`). Each `revoked` or
+`changed` rule not yet withdrawn is recorded once in a `session.system.added.1` marker
+with reason `rule_withdrawn` and a typed `withdrawn_rules` list. Delivery now stamps each
+rule binding with its rendered block (`RenderedRule`: label, length, SHA-256). View
+projection replaces the block in every tool result that precedes the marker with
+"[Rule <path> withdrawn: ...]"; stored outputs keep their bytes and the transcript keeps
+the marker. A block altered by redaction, or recorded before blocks were stamped, is
+elided from its label to the next instruction label or the end of its reminder.
+`unknown` rules stay delivered; no Epoch rebuild or compaction is forced. Inspection
+still lists a withdrawn rule as `revoked`/`changed` until the Epoch changes.
+
+Tests: `a_revoked_delivered_rule_is_elided_from_later_requests_and_after_restart`
+(revoke, next request elides and carries the marker, a second request records no second
+marker, the stored output keeps the rule, the Epoch number is unchanged, and a restarted
+server still elides) and `a_changed_delivered_rule_is_elided_from_the_next_request` in
+`crates/cyber-app/tests/instructions.rs`; unit tests in `runtime::rule_withdrawal`
+(exact elision when the body contains delimiter-like text, fallback for redacted and
+unstamped blocks, pointer-only output unchanged). The App test script now answers the
+prompt rather than a trailing withdrawal marker.
+

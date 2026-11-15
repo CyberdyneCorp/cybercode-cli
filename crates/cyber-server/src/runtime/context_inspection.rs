@@ -364,7 +364,7 @@ fn digest_prefix(digest: &str) -> String {
 
 /// A project rule's approval comes from the host's trust inventory; any rule's file is
 /// then compared by metadata with the stamp taken when it was delivered. Nothing is opened.
-fn rule_approval(binding: &RuleBinding, tools: &dyn super::ToolHost) -> RuleApproval {
+pub(super) fn rule_approval(binding: &RuleBinding, tools: &dyn super::ToolHost) -> RuleApproval {
     if binding.is_project() {
         let approval =
             tools.rule_approval(std::path::Path::new(&binding.root), &binding.generation);

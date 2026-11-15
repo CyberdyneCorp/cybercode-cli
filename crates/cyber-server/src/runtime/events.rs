@@ -264,6 +264,9 @@ pub struct SystemAdded {
     pub message_id: String,
     pub text: String,
     pub reason: String,
+    /// Delivered rules this marker withdraws (`reason` `rule_withdrawn`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub withdrawn_rules: Vec<super::rule_withdrawal::WithdrawnRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

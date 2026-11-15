@@ -101,6 +101,7 @@ impl Inner {
                 "Your answer must end with a call to {ROOT_TOOL} whose input matches its schema. Call it now with your final answer."
             ),
             reason: MISSING_REASON.into(),
+            withdrawn_rules: Vec::new(),
         };
         self.commit_locked(&mut state, vec![event(SYSTEM_ADDED, &reminder)])?;
         Ok(TurnEnd::Tools)

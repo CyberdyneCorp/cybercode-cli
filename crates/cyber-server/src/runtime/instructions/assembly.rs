@@ -88,6 +88,7 @@ pub(super) fn blocks<'a>(
             text.push_str(&rendered.text);
             let mut file = source.file.clone();
             file.truncated |= rendered.body.omitted > 0;
+            file.rendered = super::RenderedRule::of(&rendered.text);
             files.push(file);
         }
     }
@@ -171,6 +172,7 @@ mod tests {
                 rule_binding: None,
                 rule_scope: None,
                 stamp: None,
+                rendered: None,
             });
         }
         let mut seen = BTreeSet::new();

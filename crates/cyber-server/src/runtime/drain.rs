@@ -784,6 +784,7 @@ fn system(text: String, reason: &str) -> cyber_store::NewEvent {
             message_id: cyber_core::ids::new_id("msg"),
             text,
             reason: reason.into(),
+            withdrawn_rules: Vec::new(),
         },
     )
 }
@@ -1018,6 +1019,7 @@ impl Inner {
             message_id: cyber_core::ids::new_id("msg"),
             text: CONTINUE_TEXT.into(),
             reason: "auto_continue".into(),
+            withdrawn_rules: Vec::new(),
         };
         self.commit(handle, vec![event(SYSTEM_ADDED, &payload)])
             .await?;
@@ -1220,8 +1222,12 @@ impl Inner {
                 message_id: cyber_core::ids::new_id("msg"),
                 text: STEP_LIMIT_TEXT.into(),
                 reason: "step_limit".into(),
+                withdrawn_rules: Vec::new(),
             };
             self.commit_locked(&mut state, vec![event(SYSTEM_ADDED, &payload)])?;
+        }
+        if let Some(marker) = super::rule_withdrawal::pending(&state, self.tools.as_ref()) {
+            self.commit_locked(&mut state, vec![event(SYSTEM_ADDED, &marker)])?;
         }
         let mode = super::teams::bounded_mode(&state.info.mode, ceiling.as_deref());
         let mut defs = if limited {
@@ -2716,6 +2722,7 @@ pub(super) fn settlement_with_reminders(
             .filter_map(|file| {
                 let mut binding = file.rule_binding.clone()?;
                 binding.stamp = file.stamp;
+                binding.rendered = file.rendered.clone();
                 Some(binding)
             })
             .collect()

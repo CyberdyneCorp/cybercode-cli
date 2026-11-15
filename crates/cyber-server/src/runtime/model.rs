@@ -477,6 +477,9 @@ pub struct StepSnapshot {
 pub struct SessionState {
     #[serde(skip)]
     pub(crate) loaded_tools: BTreeSet<String>,
+    /// Delivered rules withdrawn so far, in marker order (`rule_withdrawal`).
+    #[serde(skip)]
+    pub(crate) rule_withdrawals: Vec<super::rule_withdrawal::RuleWithdrawal>,
     /// Pull requests this Session is linked to (`session.pr.linked.1`).
     #[serde(skip)]
     pub(crate) pull_requests: BTreeSet<u64>,
@@ -794,6 +797,7 @@ impl SessionState {
     pub fn new(info: SessionInfo) -> Self {
         Self {
             loaded_tools: BTreeSet::new(),
+            rule_withdrawals: Vec::new(),
             pull_requests: BTreeSet::new(),
             notifications: Vec::new(),
             sent_files: BTreeMap::new(),
@@ -1483,6 +1487,13 @@ impl SessionState {
     fn on_system(&mut self, s: SystemAdded) {
         if s.reason == super::structured::MISSING_REASON && self.result.root_open() {
             self.result.attempts += 1;
+        }
+        if !s.withdrawn_rules.is_empty() {
+            self.rule_withdrawals
+                .push(super::rule_withdrawal::RuleWithdrawal {
+                    message_id: s.message_id.clone(),
+                    rules: s.withdrawn_rules,
+                });
         }
         self.push_entry(Entry::System {
             id: s.message_id,

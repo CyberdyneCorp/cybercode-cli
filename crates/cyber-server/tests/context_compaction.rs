@@ -1137,6 +1137,7 @@ async fn inspection_lists_delivered_rules_and_marks_revoked_approval_without_rea
             native_root: None,
             operation_path: None,
             stamp: Some(cyber_server::runtime::FileStamp::of(&metadata)),
+            rendered: None,
         }
     };
     let bindings = [

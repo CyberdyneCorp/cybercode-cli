@@ -96,6 +96,36 @@ pub struct RuleBinding {
     /// Inspection compares it with current metadata; it is excluded from identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stamp: Option<super::context_sources::FileStamp>,
+    /// The labelled block this delivery added to the tool result, so a later withdrawal
+    /// can elide exactly it from replayed requests; excluded from identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered: Option<RenderedRule>,
+}
+
+/// One delivered rule's labelled block inside a tool result: its first line, length and
+/// digest. Replay finds the block by its label and elides it only when the bytes match.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RenderedRule {
+    pub label: String,
+    pub bytes: usize,
+    pub sha256: String,
+}
+impl RenderedRule {
+    pub(crate) fn of(text: &str) -> Option<Self> {
+        use sha2::{Digest, Sha256};
+        let label = text.split_inclusive('\n').next()?.to_string();
+        Some(Self {
+            label,
+            bytes: text.len(),
+            sha256: format!("{:x}", Sha256::digest(text.as_bytes())),
+        })
+    }
+
+    /// Whether `text` is exactly the delivered block.
+    pub(crate) fn matches(&self, text: &str) -> bool {
+        use sha2::{Digest, Sha256};
+        text.len() == self.bytes && format!("{:x}", Sha256::digest(text.as_bytes())) == self.sha256
+    }
 }
 impl RuleBinding {
     /// Whether a checkout approval admitted this definition; owner-global ones need none.
@@ -245,6 +275,8 @@ pub struct InstructionFile {
     pub(crate) rule_scope: Option<PathBuf>,
     /// Size and modification time when the delivered bytes were read.
     pub stamp: Option<super::context_sources::FileStamp>,
+    /// The labelled block a delivery rendered for this file, when it carried its body.
+    pub(crate) rendered: Option<RenderedRule>,
 }
 impl InstructionFile {
     pub(crate) fn identity(&self) -> String {
@@ -788,6 +820,7 @@ impl<'a> Loader<'a> {
                 .filter(|_| self.settings.native_root.is_some())
                 .map(Path::to_path_buf),
             stamp: None,
+            rendered: None,
         };
         let identity = binding.identity();
         if !self.seen.insert(identity.clone()) {
@@ -808,6 +841,7 @@ impl<'a> Loader<'a> {
             rule_binding: Some(binding),
             rule_scope: authorization.is_some().then(|| self.rule_scope.clone()),
             stamp: None,
+            rendered: None,
         };
         let label = format!("{INSTRUCTIONS_FROM}{}\n", path.display());
         let available = self
@@ -885,6 +919,7 @@ impl<'a> Loader<'a> {
             rule_scope: None,
             truncated: false,
             stamp: None,
+            rendered: None,
         };
         let separator = if self.out.blocks.is_empty() { 0 } else { 2 };
         let label = format!("{INSTRUCTIONS_FROM}{}\n", path.display());
@@ -1797,6 +1832,7 @@ mod tests {
             native_root: None,
             operation_path: None,
             stamp: None,
+            rendered: None,
         };
         assert!(gate.still_authorizes(&binding, &repo.root));
         let changed_digest = RuleBinding {

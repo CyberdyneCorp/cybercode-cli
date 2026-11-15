@@ -292,6 +292,7 @@ impl Runtime {
                     message_id: cyber_core::ids::new_id("msg"),
                     text: format!("<team_instructions>\n{text}\n</team_instructions>"),
                     reason: INSTRUCTIONS_REASON.into(),
+                    withdrawn_rules: Vec::new(),
                 },
             ));
         }

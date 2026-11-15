@@ -19,9 +19,15 @@ const PASSWORD: &str = "instructions-test";
 
 /// Reads `web/src/app.ts` when asked, answers a tool result with `done`, else `ok`.
 fn reply(body: &Value) -> Value {
+    // A rule withdrawal marker lands after the prompt it precedes; answer the prompt.
     let last = body["messages"]
         .as_array()
-        .and_then(|messages| messages.last())
+        .and_then(|messages| {
+            messages
+                .iter()
+                .rev()
+                .find(|message| !text(message).contains("were withdrawn"))
+        })
         .cloned()
         .unwrap_or_default();
     if last["role"] == "tool" {
@@ -409,6 +415,104 @@ async fn inspection_reports_a_delivered_rule_as_revoked_after_its_approval_is_wi
     assert_eq!(inspection["changed_delivered_rules"], 1);
     assert!(!inspection.to_string().contains("WEB_RULE_GUIDANCE"));
     f.app.runtime.shutdown().await;
+}
+
+/// Owner decision 2026-11-15: a delivered rule whose approval is revoked is elided on
+/// replay. From the next request on its block is gone from the earlier tool result, the
+/// transcript keeps one withdrawal marker, the stored result is unchanged, no Epoch is
+/// rebuilt, and the elision survives a server restart.
+#[tokio::test]
+async fn a_revoked_delivered_rule_is_elided_from_later_requests_and_after_restart() {
+    let f = Fixture::start_restartable(json!({})).await;
+    f.write(
+        ".cyber/rules/web.md",
+        "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE",
+    );
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    let epoch = |state: cyber_server::runtime::SessionState| state.epoch.unwrap().number;
+    let before = epoch(f.app.runtime.state(&session).await.unwrap());
+    assert!(
+        cyber_core::trust::TrustStore::new(f.app.paths.trust_file())
+            .revoke(&f.repo)
+            .unwrap()
+    );
+
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    assert_rule_withdrawn(&f.last_request(), "revoked");
+    assert_eq!(withdrawal_markers(&f, &session), 1);
+    assert_eq!(epoch(f.app.runtime.state(&session).await.unwrap()), before);
+    let stored = f.app.store.read_events(&session, -1, 500).unwrap().events;
+    assert!(stored.iter().any(|event| {
+        event.data["output"]
+            .as_str()
+            .is_some_and(|output| output.contains("WEB_RULE_GUIDANCE"))
+    }));
+
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    assert_rule_withdrawn(&f.last_request(), "revoked");
+    assert_eq!(withdrawal_markers(&f, &session), 1, "withdrawn once");
+
+    let f = f.restart().await;
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    assert_rule_withdrawn(&f.last_request(), "revoked");
+    assert_eq!(withdrawal_markers(&f, &session), 1);
+    f.app.runtime.shutdown().await;
+}
+
+/// A delivered rule whose definition changes on disk is withdrawn the same way.
+#[tokio::test]
+async fn a_changed_delivered_rule_is_elided_from_the_next_request() {
+    let f = Fixture::start().await;
+    let path = ".cyber/rules/web.md";
+    f.write(path, "---\npaths: ['web/**']\n---\nWEB_RULE_GUIDANCE");
+    f.write("web/src/app.ts", "export const app = true;");
+    f.approve(&f.repo);
+    let session = f.session(&f.repo).await;
+    f.prompt(&session, &f.repo, "read the app first", 2).await;
+    assert!(last_tool_result(&f.last_request()).contains("WEB_RULE_GUIDANCE"));
+    f.write(
+        path,
+        "---\npaths: ['web/**']\n---\nWEB_RULE_REWRITTEN_LONGER",
+    );
+    f.prompt(&session, &f.repo, "say hello", 1).await;
+    assert_rule_withdrawn(&f.last_request(), "changed");
+    assert!(!every_request(&f).contains("WEB_RULE_REWRITTEN_LONGER"));
+    f.app.runtime.shutdown().await;
+}
+
+fn assert_rule_withdrawn(request: &Value, approval: &str) {
+    let result = text(messages(request, "tool").last().unwrap());
+    assert!(result.contains("export const app = true;"), "{result}");
+    assert!(!result.contains("WEB_RULE_GUIDANCE"), "{result}");
+    assert!(result.contains("withdrawn"), "{result}");
+    assert!(
+        !request.to_string().contains("WEB_RULE_GUIDANCE"),
+        "{request:#}"
+    );
+    let marker = all_messages(request)
+        .into_iter()
+        .map(text)
+        .find(|text| text.contains("were withdrawn"))
+        .expect("withdrawal marker is projected");
+    assert!(
+        marker.contains("web.md") && marker.contains(&format!("({approval})")),
+        "{marker}"
+    );
+}
+
+fn withdrawal_markers(f: &Fixture, session: &str) -> usize {
+    f.app
+        .store
+        .read_events(session, -1, 500)
+        .unwrap()
+        .events
+        .iter()
+        .filter(|event| event.data["reason"] == "rule_withdrawn")
+        .count()
 }
 
 #[tokio::test]

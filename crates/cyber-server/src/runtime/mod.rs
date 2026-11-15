@@ -23,6 +23,7 @@ mod budget;
 mod bus;
 mod checkout;
 mod reservations;
+mod rule_withdrawal;
 pub use checkout::{BranchCheckout, CheckedOutBranch};
 mod child_ownership;
 mod child_usage;

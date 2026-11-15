@@ -8,6 +8,7 @@ use super::host::ResolvedModel;
 use super::model::{
     AssistantEntry, CallState, CallStatus, Entry, ReasoningBlock, SessionState, TaskState,
 };
+use super::rule_withdrawal::WithdrawnRule;
 
 pub const INTERRUPTED: &str = "[Tool execution was interrupted]";
 pub const UNKNOWN: &str = "[Tool outcome unknown; reconcile before retrying]";
@@ -56,6 +57,7 @@ pub fn messages(state: &SessionState, target: &Replay<'_>) -> Vec<Message> {
     let latest_user = entries
         .iter()
         .rposition(|entry| matches!(entry, Entry::User { .. }));
+    let withdrawals = Withdrawals::of(state, start);
     for (index, entry) in entries.iter().enumerate() {
         match entry {
             Entry::User { parts, .. } => {
@@ -83,6 +85,7 @@ pub fn messages(state: &SessionState, target: &Replay<'_>) -> Vec<Message> {
                 let view = AnswerView {
                     target,
                     treatment: treatment(target.policy, in_loop),
+                    withdrawn: &withdrawals.after(index),
                 };
                 push_assistant(state, a, view, strip_media, &mut out);
             }
@@ -105,6 +108,39 @@ fn treatment(policy: ReasoningReplay, in_loop: bool) -> Treatment {
 struct AnswerView<'a> {
     target: &'a Replay<'a>,
     treatment: Treatment,
+    /// Rules withdrawn after this answer; their blocks are elided from its results.
+    withdrawn: &'a [&'a WithdrawnRule],
+}
+
+/// Each recorded rule withdrawal, at the position of its marker among the projected
+/// entries (`system-context` → Withdrawal of a delivered rule).
+struct Withdrawals<'a> {
+    at: Vec<(usize, &'a WithdrawnRule)>,
+}
+
+impl<'a> Withdrawals<'a> {
+    fn of(state: &'a SessionState, start: usize) -> Self {
+        let mut at = Vec::new();
+        for withdrawal in &state.rule_withdrawals {
+            let position = state.entries.iter().position(
+                |entry| matches!(entry, Entry::System { id, .. } if *id == withdrawal.message_id),
+            );
+            if let Some(position) = position {
+                let position = position.saturating_sub(start);
+                at.extend(withdrawal.rules.iter().map(|rule| (position, rule)));
+            }
+        }
+        Self { at }
+    }
+
+    /// The rules withdrawn by a marker after projected entry `index`.
+    fn after(&self, index: usize) -> Vec<&'a WithdrawnRule> {
+        self.at
+            .iter()
+            .filter(|(position, _)| *position > index)
+            .map(|(_, rule)| *rule)
+            .collect()
+    }
 }
 
 fn push_assistant(
@@ -144,8 +180,8 @@ fn push_assistant(
         .iter()
         .map(|c| {
             let (output, is_error) = match c.status {
-                CallStatus::Ok => (c.output.clone().unwrap_or_default(), false),
-                CallStatus::Error => (c.output.clone().unwrap_or_default(), true),
+                CallStatus::Ok => (settled_output(c, view.withdrawn), false),
+                CallStatus::Error => (settled_output(c, view.withdrawn), true),
                 CallStatus::OutcomeUnknown => (UNKNOWN.to_string(), true),
                 CallStatus::Interrupted | CallStatus::Called | CallStatus::Dispatched => {
                     (INTERRUPTED.to_string(), true)
@@ -191,6 +227,15 @@ fn push_assistant(
             });
         }
     }
+}
+
+/// A settled call's stored output, without the blocks of rules withdrawn since.
+fn settled_output(call: &CallState, withdrawn: &[&WithdrawnRule]) -> String {
+    let output = call.output.as_deref().unwrap_or_default();
+    if withdrawn.is_empty() {
+        return output.to_owned();
+    }
+    super::rule_withdrawal::elide(output, withdrawn)
 }
 
 /// The reasoning items the provider produced after `position` of the answer's calls, in

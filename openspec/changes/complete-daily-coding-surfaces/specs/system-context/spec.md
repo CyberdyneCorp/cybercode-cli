@@ -89,6 +89,14 @@
 - **THEN** the read result SHALL settle without delivering that operation's nested reminder
 - **AND** the suppressed rule SHALL NOT consume once-per-Epoch delivery, so a later matching read after re-approval SHALL deliver it once
 
+#### Scenario: Withdrawal of a delivered rule
+- **GIVEN** a project rule delivered in the current Context Epoch
+- **WHEN** its checkout approval is revoked or re-reviewed, or its definition changes on disk, before the next model request
+- **THEN** at that request boundary the system SHALL record one withdrawal marker in the transcript naming the rule and whether it was revoked or changed
+- **AND** from that request on, replay SHALL elide the rule's delivered block from the tool results that preceded the marker, while the stored results keep their text
+- **AND** the system SHALL NOT force a Context Epoch rebuild or compaction for the withdrawal, and the elision SHALL survive a server restart
+- **AND** a rule whose approval state is unknown SHALL stay delivered
+
 #### Scenario: Physical Location replacement during a read
 - **GIVEN** a file read started with a captured physical Location and project root
 - **WHEN** that Location or any native ancestor is replaced, removed or substituted with a link before nested discovery or settlement
