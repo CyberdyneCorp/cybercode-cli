@@ -314,3 +314,13 @@ These resolve product decisions previously listed as externally blocked in
    deleted. Review, restore and acknowledgement still need the Location and fail; the
    CLI and TUI mark the rows and the TUI starts no request discovery for them. This
    applies to the HTTP route, `cyber sessions recovery` and the TUI recovery panel.
+
+4. **Default managed Git source admission: stays off, opt-in later.** Owned restore for
+   a Git Location is admitted only when `GitSnapshots::owned_restore_available` is
+   true, which a default build never is: the Git branch is compiled in only with the
+   `native-git-acceptance` feature (and even then `snapshots: false` refuses). It stays
+   off until the native CI matrix (macOS Intel/ARM, Linux x64/ARM) is green on the
+   final source. Enabling it is then an explicit opt-in through configuration; that
+   switch is not implemented in this change and needs its own review, because a
+   configuration key would admit the path in release builds.
+

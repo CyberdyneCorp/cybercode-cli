@@ -3940,7 +3940,6 @@ Externally blocked:
 
 - Product/security decision: the removed-Location maintenance and
   construction-evidence cleanup protocol revision (not covered by the 3.0 approval).
-- Product decision: enabling default managed Git source admission.
 - Native platform CI (macOS Intel/ARM, Linux x64/ARM, Windows host) on the final
   pushed source for 4.1–4.4, 5.4, 6.2–6.4 and the managed-recovery tasks.
 
@@ -4208,3 +4207,16 @@ not attributed, a never-tracked path lists nothing);
 service: after a confirmed non-Git rewind the Location is removed; `sessions recovery
 --format json`, the HTTP route and the text listing all succeed and mark the journal,
 and a keep review fails); TUI `a_removed_location_journal_is_listed_read_only`.
+
+### 4. Default managed Git source admission stays off
+
+Verified, not changed: `GitSnapshots::owned_restore_available` admits a Git Location
+only under `cfg!(feature = "native-git-acceptance")`, which no default or release build
+enables; ordinary non-Git file-copy restore is unaffected. The decision keeps it off
+until the native CI matrix is green and makes enablement a later configuration opt-in
+(not implemented here). New pinning test
+`copy::git::tests::managed_git_source_admission_is_off_by_default`: a default build
+refuses for `{}`, `snapshots: true` and a speculative `snapshots.git/managed` object;
+`snapshots: false` refuses in every build. Several older Git tests already assert the
+same `cfg!` equality incidentally. `docs/rewind.md` states the default.
+

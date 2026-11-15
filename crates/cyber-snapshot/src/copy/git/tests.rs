@@ -2853,3 +2853,30 @@ async fn interrupted_mixed_native_replacement_reopens_and_rolls_back_only_retain
         b"owner after resolution"
     );
 }
+
+/// Owner decision 2026-11-15: managed Git source admission stays off by default until
+/// the native CI matrix is green. A default build refuses owned restore for a Git
+/// Location whatever its configuration says; only the explicit acceptance build admits
+/// it, and even there `snapshots: false` refuses.
+#[tokio::test]
+async fn managed_git_source_admission_is_off_by_default() {
+    let repo = Repo::new();
+    let location = repo.root.to_str().unwrap();
+    for config in [
+        serde_json::json!({}),
+        serde_json::json!({"snapshots": true}),
+        serde_json::json!({"snapshots": {"git": true, "managed": true}}),
+    ] {
+        let snapshots =
+            crate::GitSnapshots::new(repo.data.clone(), Arc::new(move |_| config.clone()));
+        assert_eq!(
+            snapshots.owned_restore_available(location),
+            cfg!(feature = "native-git-acceptance")
+        );
+    }
+    let disabled = crate::GitSnapshots::new(
+        repo.data.clone(),
+        Arc::new(|_| serde_json::json!({"snapshots": false})),
+    );
+    assert!(!disabled.owned_restore_available(location));
+}

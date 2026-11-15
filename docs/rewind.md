@@ -440,8 +440,10 @@ establish the requested acknowledgement. Lookup itself can return an unresolved
 state with exit 0 because the read succeeded. Both commands support `--format json`.
 
 These commands expose the implemented managed file-copy recovery path on admitted
-Linux/macOS hosts. Ordinary managed Git source recovery remains disabled pending
-its remaining compatibility and runtime acceptance gates. Reference-aware
+Linux/macOS hosts. Ordinary managed Git source recovery remains disabled by default
+(owner decision 2026-11-15): it stays off until the native CI matrix is green and
+will then be an explicit opt-in. Today only the `native-git-acceptance` test build
+admits it; no configuration key enables it in a release build. Reference-aware
 reclamation and complete native/platform acceptance remain open.
 
 ## Recovery in the terminal panel
