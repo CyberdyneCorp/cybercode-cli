@@ -57,6 +57,9 @@ struct Ask {
     inputs: Vec<String>,
 }
 
+/// The `error` of a run whose server closed the event stream.
+const SERVER_LOST: &str = "the server closed the event stream";
+
 struct Driver<'a> {
     client: &'a Client,
     id: &'a str,
@@ -79,6 +82,9 @@ struct Driver<'a> {
     closed: bool,
     idle: bool,
     fatal: Option<String>,
+    /// The server's event stream closed; the run ends with a resume hint and never
+    /// reconnects (owner decision 2026-11-15).
+    server_lost: bool,
     interrupted: bool,
     last_text: String,
     /// The interactive lease that lets this Session ask the driver (`server-api` →
@@ -175,6 +181,7 @@ impl<'a> Driver<'a> {
             closed: false,
             idle: true,
             fatal: None,
+            server_lost: false,
             interrupted: false,
             last_text: String::new(),
             lease: None,
@@ -234,11 +241,40 @@ impl<'a> Driver<'a> {
                 false
             }
             None => {
-                self.fatal
-                    .get_or_insert_with(|| "the server closed the event stream".into());
+                self.lose_server();
                 true
             }
         }
+    }
+
+    /// The server stopped or restarted under the driver: report it once as a structured
+    /// `server_lost` error with the command that continues the Session, and end the run.
+    fn lose_server(&mut self) {
+        if self.fatal.is_some() {
+            return;
+        }
+        self.fatal = Some(SERVER_LOST.into());
+        self.server_lost = true;
+        self.out.stream_line(
+            "error",
+            json!({
+                "code": "server_lost",
+                "message": format!("{SERVER_LOST}; the driver does not reconnect"),
+                "resume": self.resume(),
+            }),
+        );
+    }
+
+    /// How to continue the driven Session once the server is back: its ID and the
+    /// command line (never the password).
+    fn resume(&self) -> Value {
+        let mut command =
+            String::from("cyber exec --input-format stream-json --format stream-json");
+        if let Some(url) = &self.args.attach {
+            command.push_str(&format!(" --attach {url}"));
+        }
+        command.push_str(&format!(" --session {}", self.id));
+        json!({ "session_id": self.id, "command": command })
     }
 
     async fn line(&mut self, line: Line) {
@@ -859,6 +895,7 @@ impl<'a> Driver<'a> {
                 .or(self.run.error.as_ref().map(|_| EXIT_ERROR))
                 .unwrap_or(0)
         };
+        let resume = self.server_lost.then(|| self.resume());
         let mut final_error = self.fatal.or(self.run.error.clone());
         if let Some(path) = &self.args.output_last_message
             && let Err(error) = super::last_message::write(path, &self.last_text)
@@ -870,17 +907,19 @@ impl<'a> Driver<'a> {
                 code = EXIT_ERROR;
             }
         }
-        self.out.stream_line(
-            "end",
-            json!({
-                "exit_code": code,
-                "error": final_error,
-                "inputs": self.inputs.total(),
-                "usage": { "input": self.run.input_tokens, "output": self.run.output_tokens },
-                "cost_usd": self.run.combined_cost(),
-                "duration_ms": self.run.started.elapsed().as_millis() as u64,
-            }),
-        );
+        let mut end = json!({
+            "exit_code": code,
+            "error": final_error,
+            "inputs": self.inputs.total(),
+            "usage": { "input": self.run.input_tokens, "output": self.run.output_tokens },
+            "cost_usd": self.run.combined_cost(),
+            "duration_ms": self.run.started.elapsed().as_millis() as u64,
+        });
+        if let Some(resume) = resume {
+            end["error_code"] = json!("server_lost");
+            end["resume"] = resume;
+        }
+        self.out.stream_line("end", end);
         code
     }
 }

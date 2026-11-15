@@ -1416,10 +1416,12 @@ fn an_unconfirmable_admission_fails_the_run() {
     assert_eq!(run.exit(), Some(2));
 }
 
-/// A server that dies under an attached driver ends the run explicitly instead of
-/// hanging; the admitted input stays in the Session for the restarted server.
+/// Owner decision 2026-11-15: a JSONL driver attached across a server restart ends with
+/// a structured `server_lost` error carrying the Session to resume, exits 2 and never
+/// reconnects, even when a restarted server is reachable at the same URL. The admitted
+/// input stays in the Session once, and the hint resumes that Session.
 #[test]
-fn a_server_crash_ends_the_run_explicitly_and_the_restarted_server_keeps_the_input() {
+fn a_server_restart_under_an_attached_driver_ends_with_a_resume_hint_and_keeps_the_input() {
     let provider = Provider::start(&["gate:text:never delivered", "gate:text:after restart"]);
     let mut server = Server::start(&provider);
     let upstream = Arc::new(AtomicU16::new(server.port));
@@ -1428,23 +1430,29 @@ fn a_server_crash_ends_the_run_explicitly_and_the_restarted_server_keeps_the_inp
         inbox: false,
     };
     let url = lossy_proxy(upstream.clone(), loss, Arc::new(Mutex::new(0)));
-    let mut run = Driven::start(
-        &provider,
-        &["--attach", &url, "--password", &server.password],
-    );
+    let old_password = server.password.clone();
+    let mut run = Driven::start(&provider, &["--attach", &url, "--password", &old_password]);
     let mut seen = Vec::new();
     run.send(r#"{"type":"user","text":"one","id":"first"}"#);
     let input = run.until("input", &mut seen);
     assert_eq!(input["status"], "admitted", "{seen:#?}");
+    let session = input["session_id"].as_str().unwrap().to_owned();
     provider.wait_for_gate();
-    server.crash();
+    // The restarted server answers at the driver's URL before the driver gives up.
+    server.restart();
+    upstream.store(server.port, Ordering::SeqCst);
 
+    let error = run.until("error", &mut seen);
+    assert_eq!(error["code"], "server_lost", "{seen:#?}");
+    assert_resume_hint(&error["resume"], &url, &session, &old_password);
     let end = run.until("end", &mut seen);
     assert_eq!(end["exit_code"], 2, "{seen:#?}");
     assert_eq!(
         end["error"], "the server closed the event stream",
         "{seen:#?}"
     );
+    assert_eq!(end["error_code"], "server_lost", "{seen:#?}");
+    assert_eq!(end["resume"], error["resume"], "{seen:#?}");
     let result = seen.iter().find(|line| line["type"] == "result");
     assert!(
         result.is_some_and(|result| result["message_id"] == input["message_id"]
@@ -1452,19 +1460,53 @@ fn a_server_crash_ends_the_run_explicitly_and_the_restarted_server_keeps_the_inp
             && result["exit_code"] != 0),
         "{seen:#?}"
     );
+    assert_eq!(
+        seen.iter().filter(|line| line["type"] == "input").count(),
+        1,
+        "no input is resent after the restart: {seen:#?}"
+    );
     assert_eq!(run.exit(), Some(2));
 
-    server.restart();
-    upstream.store(server.port, Ordering::SeqCst);
-    let session = input["session_id"].as_str().unwrap();
     let inbox = server.get(&format!("/sessions/{session}/inbox"));
-    let row = inbox["data"]
+    let rows = inbox["data"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|row| row["message_id"] == input["message_id"]);
-    assert!(row.is_some(), "{inbox:#}");
+        .filter(|row| row["message_id"] == input["message_id"])
+        .count();
+    assert_eq!(rows, 1, "{inbox:#}");
+
+    // The hint resumes the same Session against the restarted server.
+    let direct = format!("http://127.0.0.1:{}", server.port);
+    let resumed = Driven::start(
+        &provider,
+        &[
+            "--attach",
+            &direct,
+            "--password",
+            &server.password,
+            "--session",
+            &session,
+        ],
+    );
+    let mut later = Vec::new();
+    let system = resumed.until("system", &mut later);
+    assert_eq!(system["session_id"], session.as_str(), "{later:#?}");
+    assert_eq!(resumed.exit(), Some(0));
     provider.release();
+}
+
+/// The `resume` hint names the Session and a command that reattaches to it, without
+/// the password.
+fn assert_resume_hint(resume: &Value, url: &str, session: &str, password: &str) {
+    assert_eq!(resume["session_id"], session, "{resume}");
+    let command = resume["command"].as_str().unwrap();
+    assert!(
+        command.contains(&format!("--attach {url}"))
+            && command.ends_with(&format!("--session {session}")),
+        "{command}"
+    );
+    assert!(!command.contains(password), "{command}");
 }
 
 /// Two drivers attached to one Session: a request bound to the first driver's input is

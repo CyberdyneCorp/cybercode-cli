@@ -293,3 +293,12 @@ These resolve product decisions previously listed as externally blocked in
    delivered. No Epoch rebuild or compaction is forced; replay rebuilds withdrawals
    after a restart.
 
+2. **JSONL driver across a server restart: end with a clear structured error, no
+   reconnect.** When the attached driver's event stream closes it writes one `error`
+   line with code `server_lost` and `resume` (`session_id`, and the `cyber exec` command
+   with `--attach <url>` when attached and `--session <id>`, never the password),
+   settles waiting inputs as not answered, and ends with exit 2; the `end` line repeats
+   `error_code` and `resume`. It never resubscribes, resubmits or replies on a restarted
+   server. Reconnection would need restart-safe lease and request ownership, which the
+   runtime does not provide (leases and live request authority do not survive restart).
+

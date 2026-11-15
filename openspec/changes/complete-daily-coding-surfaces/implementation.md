@@ -3938,8 +3938,6 @@ redaction patterns on JSONL lines and the raw provider message in
 
 Externally blocked:
 
-- Product decision: whether an attached JSONL driver continues across a server
-  restart.
 - Product/security decision: the removed-Location maintenance and
   construction-evidence cleanup protocol revision (not covered by the 3.0 approval).
 - Product decision: what journal recovery listing reports for a Session whose
@@ -4173,4 +4171,23 @@ server still elides) and `a_changed_delivered_rule_is_elided_from_the_next_reque
 (exact elision when the body contains delimiter-like text, fallback for redacted and
 unstamped blocks, pointer-only output unchanged). The App test script now answers the
 prompt rather than a trailing withdrawal marker.
+
+### 2. JSONL driver across a server restart: structured error, no reconnect
+
+`crates/cyber-cli/src/commands/exec/driver.rs`: when the event stream closes the driver
+emits `{"type":"error","code":"server_lost","message":"the server closed the event
+stream; the driver does not reconnect","resume":{"session_id":…,"command":…}}` once,
+settles waiting inputs as before and exits 2; `end` keeps its `error` text and adds
+`error_code: "server_lost"` and the same `resume`. The resume command includes
+`--attach <url>` when attached and `--session <id>`, never the password. No reconnect.
+
+Test: `a_server_restart_under_an_attached_driver_ends_with_a_resume_hint_and_keeps_the_input`
+(`crates/cyber-cli/tests/exec_stream_input.rs`, replacing
+`a_server_crash_ends_the_run_explicitly_and_the_restarted_server_keeps_the_input`). The
+real `cyber serve` is SIGKILLed and restarted on the same home while the driver is
+attached through a proxy that is pointed at the restarted server before the driver
+reacts. The driver still ends with `server_lost`, exit 2 and one `input` line; the
+restarted inbox holds the input once; a second driver started with the hinted
+`--session` against the restarted server attaches to the same Session and exits 0.
+The full 34-case binary passes.
 

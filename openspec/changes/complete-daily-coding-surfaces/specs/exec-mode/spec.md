@@ -124,6 +124,13 @@
 - **THEN** it SHALL receive contiguous durable replay plus live idle/delta notices for that Session on the same owned connection
 - **AND** live notices SHALL NOT advance the durable SSE cursor; omitting the option SHALL preserve the existing stream behavior
 
+#### Scenario: The server restarts under an attached driver
+- **GIVEN** a driver attached to a server with an admitted input
+- **WHEN** the server stops or restarts and the driver's event stream closes
+- **THEN** the driver SHALL emit one `error` line with code `server_lost` and a `resume` object naming the driven Session and the command that continues it, without the password
+- **AND** it SHALL settle each waiting input as not answered, end with an `end` line carrying the same `error_code` and `resume`, and exit 2
+- **AND** it SHALL NOT reconnect, resubmit input or reply to requests on the restarted server; the admitted input stays in the Session once
+
 #### Scenario: EOF with a pending approval
 - **WHEN** the driver's input closes while one of its requests awaits a reply
 - **THEN** that request follows the defined disconnected/non-interactive policy and the process does not wait forever or fabricate approval
