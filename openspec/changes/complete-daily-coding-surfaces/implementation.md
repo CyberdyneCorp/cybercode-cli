@@ -3939,8 +3939,9 @@ redaction patterns on JSONL lines and the raw provider message in
 
 Externally blocked:
 
-- Product/security decision: the removed-Location maintenance and
-  construction-evidence cleanup protocol revision (not covered by the 3.0 approval).
+- Owner review of `openspec/changes/add-construction-evidence-discard` (the
+  construction-evidence and removed-Location evidence discard protocol; owner decision
+  2026-11-15: OpenSpec first, no code until approved).
 - Native platform CI (macOS Intel/ARM, Linux x64/ARM, Windows host) on the final
   pushed source for 4.1–4.4, 5.4, 6.2–6.4 and the managed-recovery tasks.
 
@@ -4237,4 +4238,20 @@ their skip behaviour. Both attempts run under a 30 s timeout; the FIFO keeps its
 and type and `b.txt` keeps its later bytes. The managed Git image path (default off)
 does not use this plan and is unchanged. The full `cyber-snapshot` suite (214 cases)
 passes.
+
+### 6. Construction-evidence cleanup: OpenSpec first, no code
+
+Specified in the separate change `openspec/changes/add-construction-evidence-discard`
+(proposal, design, tasks and an ADDED `snapshots-checkpoints` requirement, "Owner-only
+discard of construction evidence"), marked awaiting owner review. It defines a
+two-step owner-only review/confirm command for unpublished checkout-claim,
+acknowledgement and cancellation-record stages, including those of a Session whose
+Location was removed; a durable `session.snapshot.construction_discarded.1` audit
+receipt written before any unlink; fencing (idle Session, exclusive activity lifetime
+lock, no published record, unchanged reviewed identity/digest, local owner only); and
+what still refuses (journals, payload images, published records, malformed names,
+live holders, remote/delegated/model callers; removal and retirement stay fenced until
+the evidence is gone). No code changed; construction evidence keeps no cleanup
+authority until that change is approved and implemented. A separate change validates
+cleanly and keeps the security-relevant protocol revision reviewable on its own.
 

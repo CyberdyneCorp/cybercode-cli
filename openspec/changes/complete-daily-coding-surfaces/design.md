@@ -324,3 +324,9 @@ These resolve product decisions previously listed as externally blocked in
    switch is not implemented in this change and needs its own review, because a
    configuration key would admit the path in release builds.
 
+5. **Construction-evidence cleanup: OpenSpec first, no code.** The discard protocol for
+   half-built checkout construction evidence and the related removed-Location evidence
+   is specified in `openspec/changes/add-construction-evidence-discard` and awaits
+   owner review. Until it is approved and implemented, construction evidence keeps no
+   cleanup authority here, exactly as before.
+

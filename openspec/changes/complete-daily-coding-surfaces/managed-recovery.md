@@ -30,7 +30,8 @@ clients list the stage by read-only name inventory, and cancelling the pre-effec
 preparation restores prompt admission without adopting it. This fencing is the
 approved behavior, not a missing cleanup: this protocol gives construction
 evidence no cleanup authority. Removing it requires a separate construction-recovery
-protocol extension with its own approval. Until then, a managed worktree with such
+protocol extension with its own approval, now drafted as
+`openspec/changes/add-construction-evidence-discard` (awaiting owner review). Until then, a managed worktree with such
 a stage cannot be removed.
 
 ## Owner-visible contract
