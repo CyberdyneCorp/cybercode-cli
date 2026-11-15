@@ -3,27 +3,20 @@
 - [x] 0.1 Read issue #43, the macOS design and specs, the backend/controller/geometry/runtime/HTTP seams, user docs and the acceptance record. Collect official portal, PipeWire and libei documentation.
 - [x] 0.2 Draft the proposal, the design (including threat model, dependency matrix and open decisions), spec deltas and this task list. Validate OpenSpec.
 - [ ] 0.3 Owner review of proposal, design and tasks. Record answers to decisions D1–D11, the target-assurance decision (D1) and the initial desktop/version targets (D9) in `design.md`.
-- [ ] 0.4 Agree the shared schema (D2: `Selector.pick`, `NativeTarget.source`, `Health` capability fields and refusal-code naming) with the Windows owners of #44. Record the agreement in both issues.
+- [x] 0.4 Agree the shared schema with the Windows owners of #44. Done through #134 (`add-computer-use-platform-foundation`), whose decisions F1–F12 the owner approved on 2026-11-15; this change was rebased on it.
 
-## 1. Shared foundation PR (backwards-compatible, platform-neutral)
+## 1. Linux on the foundation (after #134 lands)
 
-- [ ] 1.1 Add `Selector.pick` with exactly-one validation. Add the `NativeTarget.source` and `Health` capability fields. Make `Error::UnsupportedPlatform` text platform-neutral and add a refusal-code carrier. Tests: serde round trips, old JSON still deserializes, validation matrix, schema snapshot.
-- [ ] 1.2 Add Backend default methods `review`, `end_scope` and `set_revocation_sink`. Tests: the macOS and fake adapters behave unchanged, and the full existing `cyber-computer` and server computer suites pass.
-- [ ] 1.3 Runtime changes:
-  - Owner preview calls `review` on the blocking pool, bounded and cancellable by Stop through `preview_generation`.
-  - The review deadline starts after the picker response.
-  - `selector_for_identity` handles `pick:`.
-  - The revocation sink calls `stop(session)`.
-  - The admission fact is `screen_capture && (action_is_screenshot || input_control)`.
-  - A pick-scope `allow` arms only the named `preview_id` before its deadline, never starts a review, and an unconfirmed pick review gets `end_scope` at its deadline.
+The shared types, Backend default methods, review-bound arming, `--preview <id> --yes`, chord evaluator, receipt fields, evidence table and OpenAPI/SDK regeneration are #134's tasks 2–4. This section covers only what Linux adds on top.
 
-  Tests (fake backend): Stop during a blocked review arms nothing, a late review reply is discarded, a revocation push fences an in-flight permit, input on a capture-only backend writes no intent and dispatches nothing, `allow` with an expired, superseded or other-Session `preview_id` arms nothing and opens no review, and an unconfirmed pick review is closed at its deadline.
-- [ ] 1.4 Regenerate OpenAPI and the TypeScript SDK. Add TUI/dashboard review card fields (source kind, size, position, review frame, output exposure warning, "exactly one dialog should appear" notice) with a confirm action bound to the card's `preview_id`, and the "input unavailable on this platform" state. Tests: SDK compatibility, TUI snapshot, dashboard module test. macOS behavior is unchanged.
-- [ ] 1.5 CLI pick flow (design §4.4.1): `--pick` requires a terminal on stdin and stdout; `--pick --yes` and non-terminal `--pick` fail with `interactive_review_required` before any request; the prompt arms the printed `preview_id` only; `--preview <id> --yes` confirms an existing review without a new preview; the CLI prints the dashboard route but no credential and never writes the frame to disk. Tests: CLI parse/refusal matrix, a fake server that records exactly one preview and one allow carrying the same `preview_id`, and unchanged macOS `--app`/`--display` behavior.
+- [ ] 1.1 Register the Linux-only reason codes (design §6.2) in the foundation registry under their categories, with remedy text. Tests: serialization, category membership, no reuse of a shared code.
+- [ ] 1.2 Linux `review` on the blocking pool, bounded and cancellable by Stop through `preview_generation`, with the review deadline starting after the portal response. `selector_for_identity` handles `pick:`. Tests (fake backend): Stop during a blocked review arms nothing, a late review reply is discarded, a revocation push from the Linux backend fences an in-flight permit.
+- [ ] 1.3 TUI/dashboard review card for pick reviews: source kind, size, position, review frame, output exposure warning and the "exactly one dialog should appear" notice, with a confirm action bound to the card's `preview_id`. Tests: TUI snapshot, dashboard module test. macOS behavior is unchanged.
+- [ ] 1.4 CLI pick flow (design §4.4.1): `--pick` requires a terminal on stdin and stdout; `--pick --yes` and non-terminal `--pick` fail with `interactive_review_required` before any request; the prompt arms the printed `preview_id` only; the CLI prints the dashboard route but no credential and never writes the frame to disk. Tests: CLI parse/refusal matrix, a fake server that records exactly one preview and one allow carrying the same `preview_id`, and unchanged macOS `--app`/`--display` behavior.
 
 ## 2. Linux probing and health (no portal session)
 
-- [ ] 2.1 Probe build kind, session type, session bus, portal frontend and ScreenCast/RemoteDesktop versions and properties, and whether `libpipewire-0.3.so.0` loads, all with bounded timeouts. Produce health and refusal codes, with `screen_capture` equal to `capture`. Cache the probe for 5 s without a scope and answer from in-memory scope state while one is armed. Tests: mock bus fixtures for every refusal code, desktop name never enabling capture, no `CreateSession` call during status or setup, no D-Bus round trip during admission with an armed scope, and a probe timeout during a live scope not revoking the grant.
+- [ ] 2.1 Probe build kind, session type, session bus, portal frontend and ScreenCast/RemoteDesktop versions and properties, and whether `libpipewire-0.3.so.0` loads, all with bounded timeouts. Fill in the foundation capability report (design §4.3): authority `platform_picker`, selectors `["pick"]`, input unavailable with `target_assurance_unavailable`, legacy `screen_capture` equal to `capture.available`. Cache the probe for 5 s without a scope and answer from in-memory scope state while one is armed. Tests: mock bus fixtures for every refusal code, desktop name never enabling capture, no `CreateSession` call during status or setup, no D-Bus round trip during admission with an armed scope, and a probe timeout during a live scope not revoking the grant.
 - [ ] 2.2 musl builds report `unsupported_build`, and Linux GNU builds without libpipewire start normally. CI: build and run status on both targets in a container without PipeWire.
 - [ ] 2.3 Linux per-user host lease using `flock` on `$XDG_RUNTIME_DIR/cyber-computer.lock`, falling back to the private state directory when `XDG_RUNTIME_DIR` is unset. Tests: cross-process exclusion, lease held until worker exit.
 - [ ] 2.4 Graphical session watch (design §9): choose the session from `XDG_SESSION_ID` or the logind user's `Display` session, require type `wayland`, `Active` and not locked at review and at `allow`, and subscribe to its property changes and `Lock` signal. Tests with a fake logind on a private system bus: server outside any session with a usable `Display` session, no identifiable session (`session_watch_unavailable`), subscription failure (refused), lock (`session_locked`), `Active=false` (`session_inactive`), session object removal or logind restart (`session_watch_unavailable`), and no restore on unlock or reactivation.
@@ -43,7 +36,7 @@
 - [ ] 4.4 Frame validation and conversion: shared-memory buffers only, format allow-list, stride/size checks, corrupted and transform flags, bounded downscale, PNG ≤ 8 MiB. Tests: unit tables, a fuzz target for the converter, DMA-BUF-only refusal.
 - [ ] 4.5 Geometry: output bounds from stream position and size, window scope as observation-only, orientation mismatch refusal, generation advance on renegotiation, refusal of output streams missing position or size. Tests: fractional scale, negative origin, rotated-dimension refusal, resize revocation, missing position refusal.
 - [ ] 4.6 Revocation sources: portal `Closed`, NameOwnerChanged/bus loss, stream error, and the session-watch events from 2.4. Tests with fake services for each code. Unlock, reactivation and reconnect never restore a grant.
-- [ ] 4.7 Linux input entry point returns `target_assurance_unavailable` at admission. Tests: zero journal intents, zero helper input messages, health `input_control: false`.
+- [ ] 4.7 Linux input entry point returns `target_assurance_unavailable` at admission. Tests: zero journal intents, zero helper input messages, health input unavailable with `target_assurance_unavailable`.
 
 ## 5. Input (milestone B): not part of this change
 
@@ -72,14 +65,14 @@ Input transport, the assurance provider and their acceptance runs belong to a se
 
 | Requirement | Deterministic/unit | Mock integration (CI Linux) | Real desktop |
 |---|---|---|---|
-| Native computer capability and consent (modified) | 1.1, 1.3, 4.7 | 7.2 | 8.2, 8.4 |
-| Platform-neutral computer health | 1.1, 2.1 | 2.1, 2.2 | 8.1, 8.4 (status on each) |
-| Owner-picked capture source | 1.1, 1.3 | 4.1, 4.2 | 8.2 (picker, confirmation) |
+| Native computer capability and consent (modified) | 1.1, 4.7 | 7.2 | 8.2, 8.4 |
+| Linux capability probing | 1.1, 2.1 | 2.1, 2.2 | 8.1, 8.4 (status on each) |
+| Owner-picked capture source | 1.2 | 4.1, 4.2 | 8.2 (picker, confirmation) |
 | Linux portal capture | 4.4 | 4.3, 4.4 | 8.2 |
 | Linux target assurance gate | 4.7 | 4.7 | 8.4 |
-| Linux portal lifecycle and revocation | 1.3 | 2.4, 4.2, 4.6 | 8.2 (indicator, lock, session switch, restarts, crash, Stop) |
+| Linux portal lifecycle and revocation | 1.2 | 2.4, 4.2, 4.6 | 8.2 (indicator, lock, session switch, restarts, crash, Stop) |
 | Linux session-bus trust | 2.5 | 4.2, 2.5 | 8.3 |
 | Linux coordinate mapping | 4.5 | 4.3 | 8.2 (scales, origins, rotation, hotplug) |
-| Native worker resource isolation | 3.1 | 3.1, 3.2, 3.3 | 8.3 |
-| Linux platform evidence | — | — | 6.2 reflects 8.x exactly |
-| Computer use owner commands (modified) | 1.5 | 1.5, 7.2 | 8.2 (CLI prompt and `--preview` flow) |
+| Linux native helper process | 3.1 | 3.1, 3.2, 3.3 | 8.3 |
+| Linux evidence rows | — | — | 6.2 and the compiled table reflect 8.x exactly |
+| Computer use owner commands (modified) | 1.4 | 1.4, 7.2 | 8.2 (CLI prompt and `--preview` flow) |
