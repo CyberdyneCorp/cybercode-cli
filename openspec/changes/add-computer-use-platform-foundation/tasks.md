@@ -2,7 +2,7 @@
 
 - [x] 1.1 Read the macOS contract and code seams, and the Linux (#130) and Windows (#131) drafts; list the shared decisions.
 - [x] 1.2 Draft proposal, design (F1–F12), tasks and contract deltas for `computer-use`, `cli-commands` and `sandbox`.
-- [ ] 1.3 Owner reviews this change and answers the owner-review decisions (F1, F4, F6b, F7, F8a–c, F9, F12).
+- [x] 1.3 Owner reviews this change and answers the owner-review decisions (F1, F4, F6b, F7, F8a–c, F9, F12). Approved 2026-11-15: the recommended option for each.
 - [ ] 1.4 Rebase #130 and #131 onto this change: drop their duplicated shared requirements and reference the registry, selector, lifecycle, chord, worker and receipt requirements here.
 
 ## 2. Types and schema (after approval)

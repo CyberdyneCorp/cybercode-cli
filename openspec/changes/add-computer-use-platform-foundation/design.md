@@ -1,6 +1,6 @@
 # Design: platform-neutral computer-use foundation
 
-Status: **proposal for owner review, 2026-11-15.** Nothing here is implemented. This change defines public types and shared policy only. It adds no platform mechanism, and it keeps macOS behavior as shipped except where a decision below says otherwise and is marked **owner review**.
+Status: **decisions approved by the owner, 2026-11-15 (all recommended options).** Nothing here is implemented. This change defines public types and shared policy only. It adds no platform mechanism, and it keeps macOS behavior as shipped except where a decision below says otherwise and is marked **owner review**.
 
 ## 1. Context
 
@@ -173,7 +173,7 @@ The chord policy moves from the macOS native shim into one platform-neutral eval
 
 **macOS parity.** For app scope, rules 1, 3 and 5 reproduce the native shim: `control` refused, any modifier only with an edit key. For display scope, rule 4 reproduces "no extra rule". A table-driven test runs every grammar-valid chord through both the Rust evaluator and the native rule set and requires identical decisions.
 
-**One observable macOS change (F8c, owner review).** Today a chord the shim refuses surfaces as a native error after the intent is journaled: the runtime stops the grant and settles the action `unknown`. Under this design the same chord is refused before the intent, with `key_chord_refused`, no journal row and the grant left armed. No chord that macOS allows today becomes refused, and no chord it refuses becomes allowed.
+**One observable macOS change (F8c, approved 2026-11-15).** Today a chord the shim refuses surfaces as a native error after the intent is journaled: the runtime stops the grant and settles the action `unknown`. Under this design the same chord is refused before the intent, with `key_chord_refused`, no journal row and the grant left armed. No chord that macOS allows today becomes refused, and no chord it refuses becomes allowed.
 
 ## 10. Native worker boundary (F9, F11)
 
@@ -248,7 +248,7 @@ Each platform configuration (OS version or desktop, architecture, session kind) 
 | `fixture_tested` | passed mock or fixture tests in CI |
 | `accepted` | passed a recorded run on a real interactive desktop with a disposable fixture |
 
-The level comes from a table compiled into the binary and mirrored in `docs/computer-use.md`. On platforms added after macOS, `input_enabled` mode is possible only for `accepted` configurations; capture may run at `fixture_tested` or `implemented` with the level shown in health and on the review card (F12, owner review). README and feature matrices claim only `accepted` configurations. macOS reports `accepted` only once its own pending acceptance task (`add-native-computer-use` 1.4 and acceptance) is recorded; until then it reports `implemented` and behaves as today.
+The level comes from a table compiled into the binary and mirrored in `docs/computer-use.md`. On platforms added after macOS, `input_enabled` mode is possible only for `accepted` configurations; capture may run at `fixture_tested` or `implemented` with the level shown in health and on the review card (F12, approved 2026-11-15). README and feature matrices claim only `accepted` configurations. macOS reports `accepted` only once its own pending acceptance task (`add-native-computer-use` 1.4 and acceptance) is recorded; until then it reports `implemented` and behaves as today.
 
 ## 12. macOS mapping
 
@@ -275,24 +275,24 @@ Version 1 clients (current CLI, TUI, dashboard, SDK) see the same fields and val
 
 ## 13. Decisions
 
-Each decision lists the recommended option first. **Owner review** marks decisions that change a public contract in a way the owner should confirm.
+Each decision lists the recommended option first. **Owner review** marks decisions that change a public contract; on 2026-11-15 the owner approved the recommended option for every one of them (F1, F4, F6b, F7, F8a–c, F9, F12).
 
-- **F1 – Capability report shape. Owner review.** *Recommended:* additive nested `capture`/`input` objects with `reasons[]`, derived `mode`, legacy fields kept. *Alternatives:* flat booleans plus a top-level `refusals[]` (Linux draft) – loses which capability a reason applies to; a separate `ComputerHealth2` type – forces every client to switch.
+- **F1 – Capability report shape. Approved 2026-11-15.** *Recommended:* additive nested `capture`/`input` objects with `reasons[]`, derived `mode`, legacy fields kept. *Alternatives:* flat booleans plus a top-level `refusals[]` (Linux draft) – loses which capability a reason applies to; a separate `ComputerHealth2` type – forces every client to switch.
 - **F2 – Reason codes.** *Recommended:* one registry, one meaning per code, platform-only codes allowed in fixed categories, unknown codes treated as unavailable. *Alternatives:* free-text errors (today) – not machine-actionable; per-platform enums – clients must special-case each OS.
 - **F3 – Authority kinds.** *Recommended:* `os_permission`, `platform_picker`, `owner_review_only`, with Cyber owner review always required. *Alternative:* keep reporting `accessibility`/`screen_capture` only – reports fictional permissions on Linux and Windows.
-- **F4 – Selectors, identity and deprecation window. Owner review.** *Recommended:* `app | display | window | pick` with per-platform support, opaque `target_id`, typed `source`, legacy numeric fields deprecated for at least one tagged release and removed only in schema version 3. *Alternatives:* reinterpret `app` per platform – ambiguous and unsafe; remove legacy fields now – breaks current clients.
+- **F4 – Selectors, identity and deprecation window. Approved 2026-11-15.** *Recommended:* `app | display | window | pick` with per-platform support, opaque `target_id`, typed `source`, legacy numeric fields deprecated for at least one tagged release and removed only in schema version 3. *Alternatives:* reinterpret `app` per platform – ambiguous and unsafe; remove legacy fields now – breaks current clients.
 - **F5 – Review-bound arming.** *Recommended:* non-re-resolvable selectors arm only by `preview_id`; `--preview <id> --yes` on every platform. *Alternative:* let `allow` start a second review – arms a source nobody saw.
 - **F6 – Lifecycle classes and lease.** *Recommended:* binding loss revokes, topology change only stales frames, one lease per OS user and interactive session, abandoned-lease warning where detectable. *Alternative:* revoke on every display change – simpler, but drops Windows grants on harmless monitor changes.
-  - **F6b – macOS remote/lock detection. Owner review.** *Recommended:* leave macOS unchanged in this change; track adding lock and screen-sharing revocation as a separate macOS hardening change. *Alternative:* add it here – changes shipped macOS behavior.
-- **F7 – Schema versioning and action availability. Owner review.** *Recommended:* integer `schema_version`, additive within a version, one action set on every platform with unsupported actions refused by code before intent. *Alternatives:* hide input actions from the tool schema on capture-only hosts – fewer wasted calls, but the tool schema then varies per host and per moment, which breaks prompt caching and confuses replay; OpenAPI-path versioning – heavier than needed for additive changes.
-- **F8 – Shared chord policy. Owner review** on three points:
+  - **F6b – macOS remote/lock detection. Approved 2026-11-15.** *Recommended:* leave macOS unchanged in this change; track adding lock and screen-sharing revocation as a separate macOS hardening change. *Alternative:* add it here – changes shipped macOS behavior.
+- **F7 – Schema versioning and action availability. Approved 2026-11-15.** *Recommended:* integer `schema_version`, additive within a version, one action set on every platform with unsupported actions refused by code before intent. *Alternatives:* hide input actions from the tool schema on capture-only hosts – fewer wasted calls, but the tool schema then varies per host and per moment, which breaks prompt caching and confuses replay; OpenAPI-path versioning – heavier than needed for additive changes.
+- **F8 – Shared chord policy. Approved 2026-11-15** on all three points:
   - (a) *Recommended:* the shared edit-key list is today's macOS list, including `s` (save) and vertical arrows. *Alternative:* the Windows draft's narrower list without `s` and vertical arrows – would change macOS or need per-platform lists.
   - (b) *Recommended:* the global deny list applies to display/output scope on new platforms only; macOS display scope stays unrestricted until a separate tightening change. *Alternative:* apply it to macOS display scope now – safer, but changes shipped behavior.
   - (c) *Recommended:* refuse chords before the intent is journaled, leaving the grant armed. *Alternative:* keep macOS's current post-intent `unknown` and grant stop for exact parity – keeps a misleading `unknown` for input that was never sent.
-- **F9 – Native worker topology. Owner review.** *Recommended:* one worker contract, topology chosen per platform (Linux helper, Windows in-process, macOS unchanged). *Alternative:* require the same topology everywhere – either forces a helper on Windows, where the draft argues it adds an IPC authentication problem, or drops Linux's force-kill guarantee.
+- **F9 – Native worker topology. Approved 2026-11-15.** *Recommended:* one worker contract, topology chosen per platform (Linux helper, Windows in-process, macOS unchanged). *Alternative:* require the same topology everywhere – either forces a helper on Windows, where the draft argues it adds an IPC authentication problem, or drops Linux's force-kill guarantee.
 - **F10 – Receipt fields.** *Recommended:* add references, reason, event counts, cleanup state, checks and warnings; keep outcome values. *Alternative:* a new receipt type – duplicate journal handling.
 - **F11 – Backend port additions.** *Recommended:* `review`, `end_scope`, `set_revocation_sink` as default methods. *Alternative:* a second trait for picker platforms – splits the runtime's code paths.
-- **F12 – Evidence gate. Owner review.** *Recommended:* compiled evidence table; input on new platforms only for `accepted` configurations; capture allowed below `accepted` with the level shown. *Alternatives:* documentation-only gating (Linux draft) – runtime can enable input on an untested desktop; gate capture too – blocks fixture work on real desktops.
+- **F12 – Evidence gate. Approved 2026-11-15.** *Recommended:* compiled evidence table; input on new platforms only for `accepted` configurations; capture allowed below `accepted` with the level shown. *Alternatives:* documentation-only gating (Linux draft) – runtime can enable input on an untested desktop; gate capture too – blocks fixture work on real desktops.
 
 ## 14. What moves from the platform drafts
 
