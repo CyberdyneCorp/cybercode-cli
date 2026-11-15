@@ -232,6 +232,9 @@ impl GitSnapshots {
             let data = self.data_dir.clone();
             let directory = directory.to_owned();
             tokio::task::spawn_blocking(move || {
+                if copy::location_removed(&directory) {
+                    return copy::orphaned_recovery(&data, &directory);
+                }
                 copy::Store::existing(&data, &directory, options)?
                     .map(|store| store.recovery())
                     .unwrap_or_else(|| Ok(vec![]))

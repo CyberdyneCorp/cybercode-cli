@@ -218,6 +218,7 @@ impl Store {
                 filesystem_complete: record.completed,
                 paths: record.changes.iter().map(|c| c.path.clone()).collect(),
                 applied: record.applied,
+                location_removed: false,
             };
             response_bytes = response_bytes
                 .saturating_add(serde_json::to_vec(&view).map_err(fail)?.len())

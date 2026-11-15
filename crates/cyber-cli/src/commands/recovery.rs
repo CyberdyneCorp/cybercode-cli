@@ -232,14 +232,23 @@ fn list(journals: &[SnapshotRecovery], global: &GlobalArgs) -> Result<(), CliErr
     }
     for journal in journals {
         println!(
-            "{}  filesystem_complete={}  observed_applied={}/{}",
+            "{}  filesystem_complete={}  observed_applied={}/{}{}",
             clean(&journal.id),
             journal.filesystem_complete,
             journal.applied.len(),
-            journal.paths.len()
+            journal.paths.len(),
+            if journal.location_removed {
+                "  Location removed (orphaned, read-only)"
+            } else {
+                ""
+            }
         );
     }
-    if !journals.is_empty() {
+    if journals.iter().any(|journal| journal.location_removed) {
+        println!(
+            "The Session's Location was removed: its retained journals are listed read-only and cannot be reviewed or restored."
+        );
+    } else if !journals.is_empty() {
         println!(
             "Filesystem completion does not establish acknowledgement. Review an exact journal with --action keep or --action rollback."
         );

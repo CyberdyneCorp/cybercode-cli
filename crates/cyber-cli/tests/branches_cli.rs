@@ -561,6 +561,47 @@ fn non_git_rewind_with_rename_and_delete_round_trips_through_cli() {
     assert_eq!(model.requests().len(), requests, "undo starts no inference");
 }
 
+/// Regression (owner decision 2026-11-15): `cyber sessions recovery` and the HTTP route
+/// failed with "No such file or directory" once the Session's Location was removed. The
+/// retained journal is now listed read-only as orphaned ("Location removed") and cannot
+/// be reviewed.
+#[test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn removed_location_recovery_lists_retained_journals_as_orphaned() {
+    let model = scripted_model::ScriptedModel::start(reply);
+    let mut env = Env::new(&model);
+    std::fs::remove_dir_all(env.root.join("repo/.git")).unwrap();
+    let id = env.exec(None, "WRITE-A");
+    env.exec(Some(&id), "WRITE-B");
+    let users = env.user_ids(&id);
+    let preview = rewind_preview(&env, &id, &users[1], "both");
+    json(&confirm_rewind(&env, &id, &users[1], "both", &preview));
+    let live = json(&env.cyber(&["sessions", "recovery", &id, "--format", "json"]));
+    let journal = live[0]["id"]
+        .as_str()
+        .expect("a retained journal")
+        .to_owned();
+    assert!(live[0].get("location_removed").is_none(), "{live:#}");
+
+    std::fs::remove_dir_all(&env.directory).unwrap();
+    env.directory = env.root.clone();
+    let listed = json(&env.cyber(&["sessions", "recovery", &id, "--format", "json"]));
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed:#}");
+    assert_eq!(listed[0]["id"], journal.as_str());
+    assert_eq!(listed[0]["paths"], live[0]["paths"]);
+    assert_eq!(listed[0]["location_removed"], true);
+    let route = json(&env.cyber(&["api", "GET", &format!("/sessions/{id}/rewind/recovery")]));
+    assert_eq!(route["data"], listed);
+    let text = exits(&env.cyber(&["sessions", "recovery", &id]), 0);
+    assert!(
+        text.contains(&journal) && text.contains("Location removed (orphaned, read-only)"),
+        "{text}"
+    );
+    assert!(!text.contains("No such file or directory"), "{text}");
+    let review = env.cyber(&["sessions", "recovery", &id, &journal, "--action", "keep"]);
+    assert!(!review.status.success());
+}
+
 /// Use the same authenticated reviewed actions as the TUI, through the actual CLI.
 fn reviewed_selection(env: &Env, message: &str, target: &str, action: &str) -> Value {
     json!({"message_id":message,"target":target,"action":action,
@@ -3490,7 +3531,7 @@ fn assert_removal_fenced(env: &Env, stage: &str) {
 /// Removing a managed worktree keeps the Sessions started in it. Their
 /// preparation listing (including cancelled history) stays available: the
 /// missing Location has no construction stages (removal refuses while any
-/// remain). Journal listing for a removed Location is a separate, older gap.
+/// remain). Journal listing for a removed Location lists retained journals read-only.
 #[test]
 #[cfg(all(
     feature = "native-git-acceptance",
@@ -3511,4 +3552,6 @@ fn managed_git_removed_location_keeps_preparation_listing() {
         &format!("/sessions/{id}/rewind/preparations?include_cancelled=true"),
     ]));
     assert_eq!(history["data"], json!([]));
+    let journals = json(&env.cyber(&["sessions", "recovery", &id, "--format", "json"]));
+    assert!(journals.is_array(), "{journals}");
 }

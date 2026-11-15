@@ -15,6 +15,7 @@ pub(crate) use collection::gc;
 mod links;
 #[cfg(test)]
 mod managed_tests;
+mod orphaned;
 mod ownership;
 mod preparation;
 pub(crate) mod reclamation;
@@ -26,6 +27,7 @@ use cap_fs_ext::DirExt;
 use cap_std::fs::Dir;
 pub use cyber_server::runtime::SnapshotRecovery as Recovery;
 use cyber_server::runtime::{FileDiff, Snapshot, SnapshotRecoveryImageKind as ImageKind};
+pub(crate) use orphaned::{location_removed, orphaned_recovery};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

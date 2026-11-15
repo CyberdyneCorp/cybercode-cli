@@ -214,6 +214,16 @@ inference. `filesystem_complete` means only that the worker flushed its final
 filesystem record; it does not acknowledge the Session/native receipt. `applied`
 contains durable checkpoints; a missing entry is not proof of no effect.
 
+When the Session's Location directory has been removed, the listing does not fail.
+Each retained journal recorded for that path is listed from its own record with
+`location_removed: true`: it is orphaned and read-only. It cannot be reviewed,
+restored or acknowledged, and listing locks, creates or deletes nothing. A journal
+is attributed to the removed Location only when its recorded path matches and its
+namespace key is the digest of that path and the recorded directory identity.
+`cyber sessions recovery` marks such rows `Location removed (orphaned, read-only)`
+and the TUI recovery panel shows `Location removed: read-only, not restorable` and
+does not open request discovery for them.
+
 Reviewed non-Git restores retain their actual worker ownership after a client
 disconnects. New input is refused while that worker is active or has unresolved
 effects; Stop and read-only inspection remain available between source changes.

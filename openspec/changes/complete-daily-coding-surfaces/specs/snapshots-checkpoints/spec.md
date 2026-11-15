@@ -56,6 +56,13 @@
 - **THEN** the read-only bounded response reports filesystem completion and durable progress without restoring, acknowledging native receipts, creating an absent namespace or starting inference
 - **AND** inspection remains available while a native writer is paused
 
+#### Scenario: Inspect retained evidence after the Location was removed
+- **GIVEN** a Session with retained restore journals whose Location directory was later removed
+- **WHEN** an owner lists its recovery journals through the API, `cyber sessions recovery` or the TUI recovery panel
+- **THEN** the listing SHALL succeed and report each journal recorded for that path as orphaned and read-only (`location_removed`), instead of failing because the directory is missing
+- **AND** a journal SHALL be attributed to the removed Location only when its recorded path matches and its namespace key is the digest of that path and the recorded directory identity
+- **AND** listing SHALL NOT lock, create, adopt or delete storage, and an orphaned journal SHALL NOT be reviewable, restorable or acknowledgeable
+
 #### Scenario: Excluded file is not a deletion
 - **WHEN** an otherwise recorded non-Git path is excluded by a later capture
 - **THEN** its absence does not authorize deletion or synthesize a deletion diff, and retained target/recorded exclusions appear in a rewind review

@@ -126,11 +126,13 @@ impl App {
         match key {
             KeyCode::Char('r') => self.recovery_request(Command::List),
             KeyCode::Enter => {
+                // A journal of a removed Location is listed read-only.
                 let Some(journal) = self
                     .rewind
                     .recovery
                     .journals
                     .get(self.rewind.recovery.selected)
+                    .filter(|journal| !journal.location_removed)
                 else {
                     return vec![];
                 };

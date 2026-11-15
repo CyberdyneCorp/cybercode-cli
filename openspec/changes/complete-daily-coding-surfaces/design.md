@@ -302,3 +302,15 @@ These resolve product decisions previously listed as externally blocked in
    server. Reconnection would need restart-safe lease and request ownership, which the
    runtime does not provide (leases and live request authority do not survive restart).
 
+3. **Recovery listing for a removed Location: orphaned, read-only.** When the Session's
+   Location directory no longer exists, journal listing does not fail. The file-copy
+   namespace key is the digest of the Location path and its directory identity, which
+   can no longer be read, so the listing scans the bounded namespace set (at most 4096)
+   and attributes a journal to the Location only when its recorded `location` equals
+   the path (missing components appended to the nearest canonical ancestor) and the
+   namespace key equals the digest of that path and the recorded `root` identity. Each
+   such journal is returned with `location_removed: true`; cancellation-bound journals
+   stay hidden as in the ordinary listing. Nothing is locked, created, adopted or
+   deleted. Review, restore and acknowledgement still need the Location and fail; the
+   CLI and TUI mark the rows and the TUI starts no request discovery for them. This
+   applies to the HTTP route, `cyber sessions recovery` and the TUI recovery panel.

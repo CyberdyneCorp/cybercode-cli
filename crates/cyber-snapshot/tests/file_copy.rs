@@ -278,6 +278,65 @@ async fn admission_loss_after_a_replacement_retains_journal_and_blocks_replay() 
     assert_eq!(std::fs::read(p.root.join("b.txt")).unwrap(), b"new b");
 }
 
+/// Regression (owner decision 2026-11-15): listing a removed Location failed with "No
+/// such file or directory". Its retained journals are now listed read-only from their own
+/// records, another Location's journals are not, and nothing in the store changes.
+#[tokio::test]
+async fn removed_location_lists_its_retained_journals_read_only() {
+    let p = Project::new();
+    p.write("a.txt", "old a");
+    p.write("b.txt", "old b");
+    let before = p.track().await;
+    p.write("a.txt", "new a");
+    p.write("b.txt", "new b");
+    let after = p.track().await;
+    let first = p.root.join("a.txt");
+    let result = p
+        .snapshots
+        .restore_reviewed(
+            &p.dir(),
+            &before.tree,
+            &after.tree,
+            &after.tree,
+            Arc::new(move || {
+                if std::fs::read(&first).ok().as_deref() == Some(b"old a") {
+                    Err("admission revoked".into())
+                } else {
+                    Ok(())
+                }
+            }),
+        )
+        .await;
+    assert!(result.is_err());
+    let live = p.snapshots.recovery(&p.dir()).await.unwrap();
+    assert_eq!(live.len(), 1);
+    assert!(!live[0].location_removed);
+    let journal = namespace(&p).join("journals").join(&live[0].id);
+    let intent = std::fs::read(journal.join("intent.json")).unwrap();
+    let other = p._temp.path().canonicalize().unwrap().join("other");
+    std::fs::create_dir(&other).unwrap();
+    std::fs::write(other.join("b.txt"), "b").unwrap();
+    p.snapshots
+        .track(&other.display().to_string())
+        .await
+        .unwrap()
+        .unwrap();
+
+    std::fs::remove_dir_all(&p.root).unwrap();
+    let listed = p.snapshots.recovery(&p.dir()).await.unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].id, live[0].id);
+    assert_eq!(listed[0].paths, live[0].paths);
+    assert_eq!(listed[0].applied, live[0].applied);
+    assert!(listed[0].location_removed);
+    let json = serde_json::to_value(&listed[0]).unwrap();
+    assert_eq!(json["location_removed"], true);
+    assert_eq!(std::fs::read(journal.join("intent.json")).unwrap(), intent);
+    assert!(!p.root.exists());
+    let never = p._temp.path().join("never-tracked").display().to_string();
+    assert!(p.snapshots.recovery(&never).await.unwrap().is_empty());
+}
+
 fn namespace(p: &Project) -> PathBuf {
     std::fs::read_dir(p.data.join("snapshot/global"))
         .unwrap()

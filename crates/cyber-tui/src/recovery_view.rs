@@ -49,12 +49,17 @@ fn journals(view: &View, lines: &mut Vec<Line<'static>>) {
         .take(9)
     {
         lines.push(Line::from(format!(
-            "{} {} · filesystem complete={} · recorded progress {}/{} (not acknowledgement)",
+            "{} {} · filesystem complete={} · recorded progress {}/{} (not acknowledgement){}",
             if index == view.selected { ">" } else { " " },
             clean(&journal.id),
             journal.filesystem_complete,
             journal.applied.len(),
-            journal.paths.len()
+            journal.paths.len(),
+            if journal.location_removed {
+                " · Location removed: read-only, not restorable"
+            } else {
+                ""
+            }
         )));
     }
 }

@@ -7406,6 +7406,10 @@
               "type": "string"
             },
             "description": "Durably observed file checkpoints; absence does not prove that no effect occurred."
+          },
+          "location_removed": {
+            "type": "boolean",
+            "description": "The Session's Location directory was removed: the journal is listed read-only from\nits retained record and cannot be reviewed, restored or acknowledged."
           }
         },
         "required": [

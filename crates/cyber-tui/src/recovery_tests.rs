@@ -122,6 +122,7 @@ fn failed_discovery_does_not_license_a_fresh_attempt() {
             filesystem_complete: false,
             paths: vec![],
             applied: vec![],
+            location_removed: false,
         }]),
     );
     let discovery = request(app.recovery_key(KeyCode::Enter));
@@ -451,4 +452,37 @@ fn bulk(directory: &std::path::Path, contents: &str) {
     for index in 0..1280 {
         std::fs::write(directory.join(format!("bulk_{index:04}")), contents).unwrap();
     }
+}
+
+/// Owner decision 2026-11-15: a journal of a removed Location is listed read-only; it
+/// names the removal and Enter starts no discovery or review.
+#[test]
+fn a_removed_location_journal_is_listed_read_only() {
+    let mut app = app();
+    let load = request(app.open_snapshot_recovery());
+    deliver(
+        &mut app,
+        load,
+        Reply::Journals(vec![SnapshotRecovery {
+            id: "restore_one".into(),
+            filesystem_complete: true,
+            paths: vec!["a.txt".into()],
+            applied: vec!["a.txt".into()],
+            location_removed: true,
+        }]),
+    );
+    let shown = lines(&app)
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        shown.contains("restore_one")
+            && shown.contains("Location removed: read-only, not restorable"),
+        "{shown}"
+    );
+    assert!(app.recovery_key(KeyCode::Enter).is_empty());
+    assert!(app.recovery_key(KeyCode::Char('k')).is_empty());
+    assert!(app.recovery_key(KeyCode::Char('b')).is_empty());
+    assert_eq!(app.composer.text(), "owner draft");
 }

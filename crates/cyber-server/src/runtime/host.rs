@@ -1662,6 +1662,10 @@ pub struct SnapshotRecovery {
     pub paths: Vec<String>,
     /// Durably observed file checkpoints; absence does not prove that no effect occurred.
     pub applied: Vec<String>,
+    /// The Session's Location directory was removed: the journal is listed read-only from
+    /// its retained record and cannot be reviewed, restored or acknowledged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub location_removed: bool,
 }
 
 /// Working-tree snapshots for a Location.

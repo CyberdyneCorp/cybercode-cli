@@ -5081,6 +5081,11 @@ export type SnapshotRecovery = {
   paths: string[];
   /** Durably observed file checkpoints; absence does not prove that no effect occurred. */
   applied: string[];
+  /**
+   * The Session's Location directory was removed: the journal is listed read-only from
+   * its retained record and cannot be reviewed, restored or acknowledged.
+   */
+  location_removed?: boolean;
 };
 
 export type SnapshotRecoveryAction = "keep" | "rollback";

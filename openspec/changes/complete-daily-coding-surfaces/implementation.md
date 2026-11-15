@@ -3940,8 +3940,6 @@ Externally blocked:
 
 - Product/security decision: the removed-Location maintenance and
   construction-evidence cleanup protocol revision (not covered by the 3.0 approval).
-- Product decision: what journal recovery listing reports for a Session whose
-  Location was removed (it currently fails with "No such file or directory").
 - Product decision: enabling default managed Git source admission.
 - Native platform CI (macOS Intel/ARM, Linux x64/ARM, Windows host) on the final
   pushed source for 4.1–4.4, 5.4, 6.2–6.4 and the managed-recovery tasks.
@@ -4131,7 +4129,8 @@ removed Location still fails with "No such file or directory" and is not changed
 here. By code reading the route handler and `copy::Store::existing` (which
 canonicalizes the missing Location) behave the same on `main`; this was not
 reproduced by a run on `main`. What journal recovery should report once the
-Location is gone is an open product decision.
+Location is gone was then an open product decision (resolved by owner decision 3 of
+2026-11-15 below).
 
 Limits: a stage is shown by recovery clients only under a listed preparation row
 whose activity is the stage owner. Malformed stage names (no owner),
@@ -4191,3 +4190,21 @@ restarted inbox holds the input once; a second driver started with the hinted
 `--session` against the restarted server attaches to the same Session and exits 0.
 The full 34-case binary passes.
 
+### 3. Recovery listing for a removed Location: orphaned, read-only
+
+`crates/cyber-snapshot/src/copy/orphaned.rs` (`orphaned_recovery`, used by
+`GitSnapshots::recovery` when the Location path is `NotFound`) lists journals from their
+own records as described in design.md, with the new `SnapshotRecovery.location_removed`
+flag (serialized only when true; OpenAPI and SDK regenerated). `cyber sessions recovery`
+text marks such rows `Location removed (orphaned, read-only)` and replaces the review
+hint; the TUI panel shows `Location removed: read-only, not restorable` and Enter starts
+no discovery.
+
+Regression tests: `removed_location_lists_its_retained_journals_read_only`
+(`cyber-snapshot` `file_copy`: a retained journal is listed with the same id/paths/applied
+after `remove_dir_all`, its intent bytes are unchanged, another Location's namespace is
+not attributed, a never-tracked path lists nothing);
+`removed_location_recovery_lists_retained_journals_as_orphaned` (`branches_cli`, real
+service: after a confirmed non-Git rewind the Location is removed; `sessions recovery
+--format json`, the HTTP route and the text listing all succeed and mark the journal,
+and a keep review fails); TUI `a_removed_location_journal_is_listed_read_only`.
