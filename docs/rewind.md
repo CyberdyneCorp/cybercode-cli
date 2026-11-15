@@ -151,7 +151,10 @@ Capture respects `.gitignore`, `.cyberignore` and `snapshots.ignore`; configured
 ignores cannot be undone by a project whitelist. Private owner roots and `.git`,
 `.cyber` and `.claude` directories are excluded. Symlinks, hardlinks, read-only
 files, non-plain ACL/extended metadata and unsupported objects are skipped. Snapshot exclusions are retained in each manifest so omitted
-files are not falsely described as deletions. File modes appear in review. Existing
+files are not falsely described as deletions. When an unsupported object (a FIFO,
+socket, device, link or hard-linked file) now occupies a path the restore would
+change, review and restore report that path as a conflict and refuse the whole
+restore; the object is never opened, deleted or replaced. File modes appear in review. Existing
 ownership is preserved; recreating a deleted file uses its recorded ordinary ownership/mode or refuses before publishing it.
 Missing parents are created privately. Non-plain metadata is excluded until it can
 be retained and recreated safely.

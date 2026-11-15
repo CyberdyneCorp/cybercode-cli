@@ -3794,7 +3794,8 @@ Test-only additions for task 3.4; no product code changed and no defect was foun
     after the rename the whole restore refuses with `Conflict(["b.txt"])`,
     neither name changes and no journal remains. An unrelated owner edit survives
     both cases.
-  - `fifo_socket_and_device_entries_are_disclosed_unsupported_and_never_restored_or_deleted`:
+  - `fifo_and_socket_entries_are_disclosed_unsupported_and_never_restored_or_deleted`
+    (renamed 2026-11-15; device nodes are not exercised):
     FIFOs and a bound Unix socket are reported as `unsupported: <path>` in the
     capture and in `exclusions`, are absent from the preview, and a bounded
     restore neither opens a FIFO, recreates a removed FIFO nor deletes or replaces
@@ -4219,4 +4220,21 @@ until the native CI matrix is green and makes enablement a later configuration o
 refuses for `{}`, `snapshots: true` and a speculative `snapshots.git/managed` object;
 `snapshots: false` refuses in every build. Several older Git tests already assert the
 same `cfg!` equality incidentally. `docs/rewind.md` states the default.
+
+### 5. FIFO review notes (file-copy restore)
+
+The test formerly named `fifo_socket_and_device_entries_are_disclosed_unsupported_and_never_restored_or_deleted`
+is now `fifo_and_socket_entries_are_disclosed_unsupported_and_never_restored_or_deleted`
+(it creates no device node). New `a_captured_file_replaced_by_a_fifo_refuses_restore_and_keeps_the_fifo`:
+`a.txt` and `b.txt` are captured, edited, captured again, and `a.txt` is replaced by a
+FIFO before restore. A review taken before the replacement refuses as stale; a review
+taken after it used to succeed partially: the plan treated the FIFO's `unsupported`
+label like an ignore exclusion, skipped `a.txt` silently and restored only `b.txt`.
+Fix (`copy/restore.rs`, `current_exclusion`): when the current capture marks a changed
+path (or an ancestor) `unsupported`, the plan reports it as a conflict and the whole
+restore refuses; other exclusion kinds (`ignore`, `size`, `private`, `metadata`) keep
+their skip behaviour. Both attempts run under a 30 s timeout; the FIFO keeps its inode
+and type and `b.txt` keeps its later bytes. The managed Git image path (default off)
+does not use this plan and is unchanged. The full `cyber-snapshot` suite (214 cases)
+passes.
 

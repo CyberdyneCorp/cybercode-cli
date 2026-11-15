@@ -1277,7 +1277,7 @@ fn inode(path: &std::path::Path) -> (u64, std::fs::FileType) {
 /// `!is_file()` branch but cannot be created without privilege). An open on a FIFO
 /// without a writer blocks, so a bounded restore also shows it is never opened.
 #[tokio::test]
-async fn fifo_socket_and_device_entries_are_disclosed_unsupported_and_never_restored_or_deleted() {
+async fn fifo_and_socket_entries_are_disclosed_unsupported_and_never_restored_or_deleted() {
     use std::os::unix::fs::FileTypeExt;
     let p = Project::new();
     p.write("a.txt", "before\n");
@@ -1334,6 +1334,52 @@ async fn fifo_socket_and_device_entries_are_disclosed_unsupported_and_never_rest
     assert_eq!(inode(&p.root.join("new-pipe")), pipe);
     assert_eq!(inode(&p.root.join("sock")), sock);
     assert!(pipe.1.is_fifo() && sock.1.is_socket());
+}
+
+/// A captured regular file replaced by a FIFO at the same path before restore: the
+/// restore refuses, whether the review predates the replacement or was taken after it,
+/// and never opens, deletes or replaces the FIFO. An open without a writer would block,
+/// so each attempt is bounded.
+#[tokio::test]
+async fn a_captured_file_replaced_by_a_fifo_refuses_restore_and_keeps_the_fifo() {
+    use std::os::unix::fs::FileTypeExt;
+    let p = Project::new();
+    p.write("a.txt", "before\n");
+    p.write("b.txt", "before b\n");
+    let before = p.track().await;
+    p.write("a.txt", "after\n");
+    p.write("b.txt", "after b\n");
+    let after = p.track().await;
+    std::fs::remove_file(p.root.join("a.txt")).unwrap();
+    mkfifo(&p.root.join("a.txt"));
+    let fifo = inode(&p.root.join("a.txt"));
+    let current = p.track().await;
+    assert!(current.skipped.iter().any(|s| s == "unsupported: a.txt"));
+    for expected in [&after.tree, &current.tree] {
+        let attempt = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            p.snapshots.restore_reviewed(
+                &p.dir(),
+                &before.tree,
+                &after.tree,
+                expected,
+                Arc::new(|| Ok(())),
+            ),
+        )
+        .await
+        .expect("restore must never open a FIFO");
+        assert!(attempt.is_err(), "{attempt:?}");
+        if expected == &current.tree {
+            // Regression: the FIFO was skipped as an exclusion and b.txt restored alone.
+            assert!(
+                matches!(&attempt, Err(RestoreError::Conflict(paths)) if paths == &["a.txt"]),
+                "{attempt:?}"
+            );
+        }
+        assert_eq!(inode(&p.root.join("a.txt")), fifo);
+        assert!(fifo.1.is_fifo());
+        assert_eq!(std::fs::read(p.root.join("b.txt")).unwrap(), b"after b\n");
+    }
 }
 
 /// Parks the in-process restore after its first actual replacement, lets an editor

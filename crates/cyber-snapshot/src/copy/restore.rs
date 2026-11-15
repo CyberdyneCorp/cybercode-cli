@@ -271,13 +271,15 @@ impl Store {
             if paths.is_some_and(|allowed| !allowed.contains(&path)) {
                 continue;
             }
-            if before
-                .skipped
-                .iter()
-                .filter_map(|p| p.split_once(": ").map(|(_, p)| p))
-                .any(|p| path == p || path.starts_with(&format!("{p}/")))
-            {
-                continue;
+            match current_exclusion(&before.skipped, &path) {
+                // A non-regular entry (FIFO, socket, device, link) now occupies a path
+                // the restore would change: never open or replace it, refuse instead.
+                Some("unsupported") => {
+                    conflicts.push(path);
+                    continue;
+                }
+                Some(_) => continue,
+                None => {}
             }
             let current = self.current(&path).map_err(RestoreError::Failed)?;
             let base = recorded.files.get(&path);
@@ -955,6 +957,15 @@ impl Store {
         }
         Ok(())
     }
+}
+
+/// The kind of the current capture's exclusion covering `path` (the path itself or an
+/// ancestor directory), such as `ignore`, `size` or `unsupported`.
+fn current_exclusion<'a>(skipped: &'a [String], path: &str) -> Option<&'a str> {
+    skipped.iter().find_map(|label| {
+        let (kind, excluded) = label.split_once(": ")?;
+        (path == excluded || path.starts_with(&format!("{excluded}/"))).then_some(kind)
+    })
 }
 
 #[cfg(test)]

@@ -67,6 +67,12 @@
 - **WHEN** an otherwise recorded non-Git path is excluded by a later capture
 - **THEN** its absence does not authorize deletion or synthesize a deletion diff, and retained target/recorded exclusions appear in a rewind review
 
+#### Scenario: Unsupported entry replaces a captured file
+- **GIVEN** a captured regular file that is replaced by a FIFO, socket, device, link or hard-linked file at the same path before restore
+- **WHEN** a restore would change that path
+- **THEN** review and restore SHALL report the path as a conflict and refuse the whole restore
+- **AND** the replacing entry SHALL NOT be opened, deleted or replaced, and no other path SHALL be restored
+
 #### Scenario: Snapshot cap does not fail conversation
 - **WHEN** the fallback cap makes file-copy capture unavailable
 - **THEN** a one-time diagnostic leaves conversation execution and conversation-only rewind available, and successful exec exits remain successful
