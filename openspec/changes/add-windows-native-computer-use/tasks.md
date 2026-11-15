@@ -1,8 +1,8 @@
 ## 0. Review gate
 
 - [x] 0.1 Read issue #44, the macOS design/specs, the computer crates, runtime, HTTP routes, guide and acceptance record. Draft proposal, design, threat model, spec deltas and this plan. No code.
-- [ ] 0.2 Owner reviews this change and answers decisions D1–D12 in design §9. Record each answer and its date in this file. Implementation does not start before this.
-- [ ] 0.3 Agree the shared foundation (design §4) with the Linux #43 design owners; record the agreed field names here.
+- [ ] 0.2 Owner reviews this change and answers the remaining decisions in design §9 (D8 and D12 moved to the foundation and were approved there). Record each answer and its date in this file. Implementation does not start before this.
+- [x] 0.3 Agree the shared foundation with the Linux #43 design owners. Done through #134 (`add-computer-use-platform-foundation`), whose decisions F1–F12 the owner approved on 2026-11-15; field names are in design §4 and this change was rebased on it.
 
 ## 1. Spikes (Windows 11 x64 device, disposable fixture only, results recorded in design §10)
 
@@ -11,20 +11,21 @@
 - [ ] 1.3 S3 input mapping: absolute virtual-desktop normalization error and `GetCursorPos` agreement on the same layouts under a PMv2 thread.
 - [ ] 1.4 S4 UIA bounds: response and timeout behavior against a deliberately hung provider fixture. Confirm Stop latency is independent of it.
 
-## 2. Shared foundation PR (portable, all OSes)
+## 2. Windows on the foundation (after #134 lands)
 
-- [ ] 2.1 Health v2 fields and reason codes (additive), with OpenAPI/SDK regeneration. macOS fields unchanged. Test: schema snapshot, and macOS health serialization unchanged.
-- [ ] 2.2 Opaque `target_id` and deprecated numeric fields; `Selector::Window(candidate)`; platform-neutral `UnsupportedPlatform` message with reason. Tests: caller-supplied handle/PID/path rejected; candidate expiry; JS-safe serialization (no 64-bit numbers); macOS selector behavior unchanged.
-- [ ] 2.3 Owner-only `GET /api/v1/tools/computer/targets` and `cyber computer targets`, `allow --window`. `--app`/`--display` give an unsupported-selector error on Windows. Tests: route needs owner credential and is absent from model tool, hub and peer surfaces; output not persisted.
-- [ ] 2.4 Update the cli-commands registry and help text. Update `docs/computer-use.md` for the new fields; no Windows support claim yet.
+Health fields, the reason-code registry, `target_id`, the `window` selector variant, review-bound arming, `--preview <id> --yes`, the chord evaluator, receipt fields, the evidence table and OpenAPI/SDK regeneration are #134's tasks 2–4. This section covers only what Windows adds on top.
+
+- [ ] 2.1 Register the Windows-only reason codes (design §4) under their registry categories, including the `controller_*` detail codes under `controller_privilege_unsupported`. Tests: serialization, category membership, no reuse of a shared code.
+- [ ] 2.2 Owner-only `GET /api/v1/tools/computer/targets` and `cyber computer targets`, `allow --window`; candidate tokens per the foundation's 30 s rule. `--app`/`--display` give `selector_unsupported_on_platform` on Windows. Tests: route needs owner credential and is absent from model tool, hub and peer surfaces; output not persisted; expired candidate refused at preview; `--window --yes` without `--preview` refused.
+- [ ] 2.3 Update the cli-commands registry and help text. Update `docs/computer-use.md` for the Windows values of the capability report; no Windows support claim yet.
 
 ## 3. Windows adapter: portable policy (safe Rust, unit-tested on every OS)
 
 - [ ] 3.1 Integrity/elevation/uiAccess/session/user classification functions. Tests: elevated, uiAccess, AppContainer, low IL, Session 0, unknown IL → refuse; target token user differs from the owner or is unreadable → `target_other_user`.
 - [ ] 3.2 Target-binding comparison (session, desktop, user SID, PID, creation time, HWND, class, unowned, image-path hash). Tests: PID reuse, HWND reuse across processes, same title/new process, class change, different user SID, target gaining an owner.
 - [ ] 3.3 UIA control-type/ancestry allowlist and password/dialog classifier over recorded property tuples (no live UIA). Tests: password at any ancestor depth, dialog, unknown type, mixed PIDs, cycle, depth > 32, timeout; an element hosted in a popup window owned by the target (same or other process) is refused.
-- [ ] 3.4 Chord policy (Win/Alt/clipboard refusal, Control editing allowlist) and UTF-16 chunking with surrogate pairs. Tests: supplementary characters never split across chunks; refused chords produce zero events.
-- [ ] 3.5 Physical-pixel normalization for absolute virtual-desktop input, and topology epoch. Tests: negative origins, multi-monitor extents, rounding bounds, epoch change makes frames stale without revoking the grant.
+- [ ] 3.4 Windows rows of the shared chord table (foundation F8: `control` primary, Windows key system, `alt` refused under window scope) and UTF-16 chunking with surrogate pairs. Tests: the shared evaluator's Windows rows (Ctrl+V and Win+R refused, Ctrl+S allowed); supplementary characters never split across chunks; refused chords produce zero events.
+- [ ] 3.5 Physical-pixel normalization for absolute virtual-desktop input, and the Windows topology-epoch sources (foundation F6). Tests: negative origins, multi-monitor extents, rounding bounds, epoch change makes frames stale without revoking the grant.
 
 ## 4. Windows adapter: native (cfg(windows), behind the existing Backend trait)
 
@@ -34,12 +35,12 @@
 - [ ] 4.4 WGC capture: single frame, `ContentSize` crop, row pitch, BGRA→RGBA, downscale, bounded PNG; refusal table (affinity, minimized, cloaked, HDR, device loss, resize, item closed); release on the owning thread; late-callback safety. Tests: synthetic texture padding never appears in output; late `FrameArrived` after cancel is dropped.
 - [ ] 4.5 Per-event assurance sequence (design §5.3) and `SendInput` dispatch with count checks, cursor verification, text chunk focus rechecks, release tracker and drop guard.
 - [ ] 4.6 Session latch: WTS notifications, desktop-switch WinEvent hook, remote metrics, watcher-loss handling; latch stops all grants and never resurrects.
-- [ ] 4.7 Cross-process lease: `Local\` named mutex with an owner-only DACL on a dedicated lease thread; abandoned-mutex handling (record `previous_holder_abandoned`, owner-visible cleanup-uncertain warning, no access to another home's journal). Tests: two processes with different homes; crash of home A while held, then home B arms (warning shown, A's journal untouched) and A restarts (its intents settle unknown); squatted name → Busy; health does not acquire or wait on the mutex.
+- [ ] 4.7 Cross-process lease: `Local\` named mutex with an owner-only DACL on a dedicated lease thread; abandoned-mutex handling (record `previous_holder_abandoned`, owner-visible cleanup-uncertain warning, no access to another home's journal). Tests: two processes with different homes (`host_lease_busy`); crash of home A while held, then home B arms (warning shown, A's journal untouched) and A restarts (its intents settle unknown); squatted name → `host_lease_busy`; health does not acquire or wait on the mutex.
 - [ ] 4.8 Sandbox regression: a Windows AppContainer child cannot read the capture root; the capability set never includes capture capabilities.
 
 ## 5. Runtime, surfaces and docs
 
-- [ ] 5.1 Runtime `selector_for_identity` Windows branch; journal and receipts carry `target_id`; reason codes in errors. Existing fake-adapter suites run unchanged on Windows CI.
+- [ ] 5.1 Runtime `selector_for_identity` `win:` branch; Windows receipts fill the foundation's fields (`checks`, `events`, `cleanup`). Existing fake-adapter suites run unchanged on Windows CI.
 - [ ] 5.2 TUI/dashboard target review shows the Windows preview fields; health reasons rendered; Stop and banners unchanged.
 - [ ] 5.3 Docs: Windows section in `docs/computer-use.md` (supported matrix, owner-review authority, refusals, residual races, no global hotkey); README known gaps; roadmap; `docs/measurements/windows-computer-acceptance.md` template.
 
@@ -62,15 +63,15 @@ What CI can and cannot prove:
 | Requirement | CI evidence | Controlled real-desktop evidence |
 |---|---|---|
 | Native computer capability and consent | Unsupported-platform/arch/build results with no side effects (all OSes) | Health on the accepted build shows owner-review authority and opens no OS UI |
-| Platform-neutral computer health | Schema snapshot; reason-code unit tests; instrumented `health(false)` | Locked session, elevated-server and remote-session health readings |
-| Pointer-safe native target identity | Serialization and rejection tests; candidate expiry at preview and allow | Candidate listing excludes Cyber/elevated/other-user windows; expired candidate refused |
+| Windows capability report | Windows reason-code unit tests; instrumented `health(false)` | Locked session, elevated-server and remote-session health readings |
+| Windows target candidates | Listing filter and candidate expiry tests | Candidate listing excludes Cyber/elevated/other-user windows; expired candidate refused |
 | Windows target binding | Binding comparison unit tests | `runas` window of another account refused; display topology change makes frames stale without revoking; lock/unlock, logoff, fast-user-switch, disconnect, target restart with the same title, window destroy/recreate |
 | Windows window capture | Readback/crop/encode tests on synthetic textures; late-callback test | Fixture capture at 100/125/150/200 %; capture-excluded fixture window refused; minimized/cloaked refused; HDR monitor refused (if available, else recorded pending); device reset if reproducible, else pending |
 | Windows target assurance before every event | Classifier/allowlist unit tests; fault-injected UIA timeouts | Same-process and other-process topmost and transparent overlays; another process's topmost window owned by the target; the target's own opened menu and drop-down refused; password field; fixture modal dialog; manually prepared elevated fixture (UAC never automated); focus change mid-type; Cyber TUI/terminal and dashboard windows refused |
 | Windows native input dispatch | Normalization, chunking, chord policy; zero events on refusal | Move, left/right/double click, drag, scroll, Unicode type (Greek, CJK, surrogate-pair emoji), named keys and Control chords on two keyboard layouts (one with IME), held-modifier cleanup, Stop during drag/type/wait |
 | Windows cross-process input lease | Two-process and abandoned-mutex tests on Windows CI | Two server homes on one desktop; crash while holding, then the other home arms and sees the cleanup warning |
-| Windows support evidence gate | Health reports unaccepted build without an acceptance record | Acceptance record lists OS build, architecture, GPU, DPI layout, session type, binary SHA-256 and signature status, operation IDs and results; untested rows stay pending |
-| Sandboxed processes hold no native computer authority | AppContainer capability verification; capture-root read denial | — (CI is sufficient; the device run repeats it once) |
+| Windows evidence rows | Health reports `evidence_pending` for a build without an acceptance record | Acceptance record lists OS build, architecture, GPU, DPI layout, session type, binary SHA-256 and signature status, operation IDs and results; untested rows stay pending |
+| Windows AppContainer excludes computer capabilities | AppContainer capability verification; capture-root read denial | — (CI is sufficient; the device run repeats it once) |
 | Computer use owner commands | CLI parsing/help/registry tests | `targets`, `allow --window`, `--display` refusal and Stop on the device |
 
 Controlled acceptance procedure:

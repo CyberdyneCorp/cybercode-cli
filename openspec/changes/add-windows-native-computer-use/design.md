@@ -2,13 +2,15 @@
 
 Status: **proposal for review, 2026-11-14.** Nothing here is implemented. Statements about Windows behavior cite Microsoft documentation. Statements marked *(inference)* are this design's reading of that documentation, or engineering judgment. A spike or acceptance task must confirm them before anyone relies on them. API availability on a Windows build does not mean Cyber supports that build.
 
+> **Depends on #134** ([`add-computer-use-platform-foundation`](../add-computer-use-platform-foundation/design.md), decisions F1–F12, approved 2026-11-15). The platform-neutral contract now lives there: the capability report (F1, F3), the reason-code registry (F2), selectors and target identity (F4), review-bound arming (F5), the grant lifecycle and host lease (F6), schema versioning (F7), the shared chord policy (F8), the native worker boundary (F9), receipts (F10), backend port additions (F11) and the evidence gate (F12). This design keeps only Windows mechanisms and Windows decisions, and references those requirements instead of restating them. It must not merge before #134. What moved is listed in the foundation's §14 and in §4 below.
+
 ## 1. Context
 
 The approved macOS design ([add-native-computer-use](../add-native-computer-use/design.md)) and its implementation define these seams. This design keeps all of them.
 
 | Seam | Where | What Windows reuses |
 |---|---|---|
-| Native port | `crates/cyber-computer/src/backend.rs` (`Backend`: `acquire_lease`, `health(prompt)`, `resolve`, `capture`, `input`) | Unchanged trait shape. A new `windows` module implements it. The non-macOS, non-Windows `Native` stays unsupported. |
+| Native port | `crates/cyber-computer/src/backend.rs` (`Backend`: `acquire_lease`, `health(prompt)`, `resolve`, `capture`, `input`) | The trait as extended by the foundation (F11: default `review`, `end_scope`, `set_revocation_sink`). A new `windows` module implements it: `review` resolves the candidate (no picker), `end_scope` closes any open capture session, and the session latch (§5.7) reports through the revocation sink. Non-macOS, non-Windows, non-Linux `Native` stays unsupported. |
 | Authority | `control.rs` (`Controller`, `Grant`, `Frame`, `CapturePermit`, `InputPermit`, `Admission`) | Unchanged: owner-only arming, presence epochs, generation fencing, 300 s default / 900 s max TTL, 10 inputs/s, 300 per grant, 10 s frame age, 16 fresh frames, supervisor fence for pending human requests. |
 | Actions and geometry | `action.rs`, `geometry.rs` | Unchanged action set and limits. `Geometry` maps image pixels to desktop coordinates. On Windows, desktop coordinates are physical pixels (§5.6). |
 | Runtime | `crates/cyber-server/src/runtime/computer` (journal intent/settlement, unknown outcomes, private artifacts, retention, deletion fence, host lease holder, preview/allow review) | Unchanged. Windows changes only what `Backend` returns. |
@@ -36,27 +38,34 @@ model `computer` tool ──(scoped runtime bridge)──▶ runtime/computer �
                                                              └─ dispatch on the calling worker thread (PMv2 DPI context; SendInput)
 ```
 
-- **In process, no helper (recommended, decision D3).** The adapter runs inside the server process at the owner's medium integrity level, like the macOS adapter. A separate helper would need authenticated IPC, and on Windows the same SID, a pipe name or loopback do not tell an owner apart from a model process (§5.10). Unless the owner decides otherwise, the first release has no helper or broker.
+- **In process, no helper (recommended, decision D3).** The worker contract (owns every handle, nothing inheritable, Stop never waits, lease outlives the native call, late callbacks dropped by generation, pressed keys and buttons released) is the foundation's native worker boundary (F9). Windows chooses the in-process topology that F9 allows: the adapter runs inside the server process at the owner's medium integrity level, like the macOS adapter. A helper would need a channel and process checks (§5.10) for no isolation gain on Windows. Unless the owner decides otherwise, the first release has no helper or broker.
 - **Dedicated threads.** Microsoft advises UI Automation clients not to call UIA from a thread that owns UI, and to use MTA threads ([UIA threading](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading)). The adapter therefore owns one MTA assurance thread with no windows. Capture runs on its own MTA thread with a free-threaded frame pool *(inference: WGC's `Direct3D11CaptureFramePool.CreateFreeThreaded` avoids needing a DispatcherQueue; the spike confirms this)*. Session notifications need an HWND ([WM_WTSSESSION_CHANGE](https://learn.microsoft.com/en-us/windows/win32/termserv/wm-wtssession-change)), so a third thread owns a message-only window. None of these threads hold a Rust permit. They receive owned request messages and return owned results through bounded channels.
 - **Calls are bounded and Stop stays independent.** Each cross-thread request has a deadline no longer than the remaining action budget (5 s), and Stop does not wait for a reply. If a request times out, the worker settles `unknown` (input) or fails (capture) and keeps its `InputPermit`/host lease until the native call returns. This matches the existing "an in-flight cancelled worker retains the lease until it really stops" contract. A hung UIA provider can therefore block only its own worker. It cannot block Stop, and it cannot let a second worker acquire the lease. UIA connection and transaction timeouts are set explicitly ([ConnectionTimeout](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation2-put_connectiontimeout), default 2 s; [TransactionTimeout](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation2-put_transactiontimeout)). Proposed values are 250 ms each, tuned in the spike.
 - **Late callbacks are safe.** WGC `FrameArrived` and `Closed` handlers, and WinEvent hooks, capture only `Arc`/channel senders and a generation number. They never capture borrowed Rust references or permits. A callback that arrives after cancellation finds a closed channel or a stale generation and drops its frame. Each frame pool, capture session, D3D texture and UIA element is closed or released on the thread that created it, in reverse creation order, including on error paths.
 - **Unsafe code is confined.** `#![allow(unsafe_code)]` is used only in the Windows backend module, as in `macos.rs`. Pure policy functions (integrity classification, control-type allowlist, chord allowlist, coordinate normalization, target-binding comparison) stay safe Rust and are unit-tested on every OS.
 
-## 4. Shared foundation changes (agree with Linux #43 first)
+## 4. Shared foundation (#134)
 
-These change public types, so per #44 they land in one reviewed, backwards-compatible foundation PR before either OS adapter. The Linux design may refine names. This design proposes the following.
+This section used to propose the shared types (decision D12). They moved to the foundation and were approved there; Windows now only fills them in.
 
-1. **Health v2** (additive). Keep the existing `supported`, `platform`, `minimum_version`, `screen_capture`, `accessibility`, `binary` fields for current clients, with their current meaning on macOS. Add:
-   - `os_version`, `os_build`, `architecture`;
-   - `observation` and `input`, each `{ available: bool, reason: <code>?, detail: string? }`;
-   - `session` `{ interactive: bool, locked: bool?, remote: bool?, reason: <code>? }`;
-   - `authority` `{ kind: "os_permission" | "owner_review_only" | ..., setup_available: bool }`.
+| Former §4 item | Foundation | Windows value |
+|---|---|---|
+| 1. Health v2 | F1 capability report, F3 authority kinds | `backend: "windows-wgc"`; `authority: { kind: "owner_review_only", setup_available: false }` unless spike S1 finds a real OS access request (§5.1); `os.build` carries the Windows build; `session` from WTS state (§5.7); `selectors: ["window"]`; legacy `accessibility` = `input.available`, `screen_capture` = `capture.available`. The draft's `observation` is now `capture`, and `reason` is now `reasons[]`. |
+| 1. Reason codes | F2 registry | Renames: `unsupported_selector` → `selector_unsupported_on_platform`; `unsupported_os_build` → `unsupported_os_version` (build in `os.build`); `host_lease_unavailable` split into `host_lease_busy` (held by another holder) and `host_lease_unavailable` (cannot be created); `capture_excluded` → `target_capture_excluded`; `capture_unsupported` → `capture_unavailable`. `controller_elevated`, `controller_ui_access` and `controller_integrity_unsupported` stay as Windows detail codes under the shared `controller_privilege_unsupported`. Windows-only codes (below) are registered by this change. |
+| 2. Pointer-safe target identity | F4 | `target_id` and `source: { platform: "windows", kind: "window", backend: "windows-wgc", detail }`, with `detail` holding owner-display strings only (image name, publisher, IL, DPI). Legacy `pid`, `window`, `display` are zero/null. No `HWND` or `HMONITOR` value crosses the HTTP/SDK boundary. |
+| 3. Selector | F4, F5 | `window` (candidate token, 30 s) is the only selector; `app` and `display` are refused with `selector_unsupported_on_platform`. `window` is not re-resolvable, so `allow` arms only by `preview_id` (§6.2). |
+| 4. Error text | F2 | `Error::UnsupportedPlatform` is platform-neutral with a code. |
+| 5. `Target.identity` | F4 | Windows owns the `win:` prefix: `win:<session-id>:<desktop-name-hash>:<user-sid-hash>:<pid>:<process-creation-filetime>:<hwnd-value>:<image-path-hash>`. Server-internal; never parsed from a request. `selector_for_identity` gains a `win:` branch that maps back to the in-memory candidate. |
 
-   Reason codes are machine-readable, for example `unsupported_os_build`, `unsupported_architecture`, `remote_session`, `non_interactive_session`, `session_locked`, `controller_elevated`, `controller_ui_access`, `controller_integrity_unsupported`, `target_other_user`, `capture_unsupported`, `capture_policy_denied`, `gpu_unavailable`, `hdr_display_unsupported`. On Windows `accessibility` has no OS toggle. It is reported as `input.available`, and `authority.kind = "owner_review_only"` says that the OS does not ask for a separate grant on the recommended programmatic path. The design does not invent a manual OS-grant step (§5.1).
-2. **Pointer-safe target identity.** Public `NativeTarget` gains `target_id`, a server-issued opaque string, and `platform` details as strings. Numeric `pid`, `window`, `display` stay for macOS compatibility, are marked deprecated in OpenAPI, and on Windows are omitted or set to 0. Raw `HWND`/`HMONITOR` values never cross the HTTP/SDK boundary. Microsoft documents that 64-bit Windows uses 32-bit-significant window handles for 32/64-bit interop ([IPC between 32/64-bit](https://learn.microsoft.com/en-us/windows/win32/winprog64/interprocess-communication)). The design still does not rely on that, so no handle value is ever trusted from a caller. The server keeps the handle-to-ID map in memory, bound to the grant. The ID is useless after restart, as grants already are.
-3. **Selector.** `Selector` gains a `window` variant that carries a short-lived candidate token from the owner `targets` listing. `app` stays a macOS bundle ID and returns `unsupported_selector` on Windows. `display` returns `unsupported_selector` on Windows until decision D4. Validation still requires exactly one selector.
-4. **Error text.** `Error::UnsupportedPlatform` currently names "macOS 14". It becomes platform-neutral and carries the reason code.
-5. **`Target.identity`.** On Windows it is a canonical string: `win:<session-id>:<desktop-name-hash>:<user-sid-hash>:<pid>:<process-creation-filetime>:<hwnd-value>:<image-path-hash>`. It is used only for server-side equality and journal records, never parsed from a request. `selector_for_identity` in the runtime gains a Windows branch that maps it back to the in-memory candidate.
+Windows-only reason codes, by registry category:
+
+| Category | Codes |
+|---|---|
+| Authority (detail of `controller_privilege_unsupported`) | `controller_elevated`, `controller_ui_access`, `controller_integrity_unsupported` |
+| Backend | `gpu_unavailable`, `hdr_display_unsupported` |
+| Target | `target_minimized`, `target_cloaked`, `target_integrity_unknown` |
+
+Shared codes Windows uses include `unsupported_os_version`, `unsupported_architecture`, `remote_session`, `non_interactive_session`, `session_locked`, `session_watch_unavailable`, `capture_policy_denied`, `target_gone`, `target_elevated`, `target_other_user`, `target_capture_excluded`, `target_not_foreground`, `secure_field`, `frame_stale`, `topology_changed`, `key_chord_refused`, `host_lease_busy`, `host_lease_unavailable` and `previous_holder_abandoned`.
 
 ## 5. Platform mechanisms
 
@@ -86,7 +95,7 @@ These change public types, so per #44 they land in one reviewed, backwards-compa
 
 | State | Detection | Result |
 |---|---|---|
-| Capture-excluded target | `GetWindowDisplayAffinity` returns `WDA_EXCLUDEFROMCAPTURE` or `WDA_MONITOR` ([GetWindowDisplayAffinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowdisplayaffinity)) | `capture_excluded` refusal before capture. Microsoft notes display affinity is not a security or DRM guarantee ([SetWindowDisplayAffinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity)), so Cyber treats it as the owner/app's stated intent and respects it. |
+| Capture-excluded target | `GetWindowDisplayAffinity` returns `WDA_EXCLUDEFROMCAPTURE` or `WDA_MONITOR` ([GetWindowDisplayAffinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowdisplayaffinity)) | `target_capture_excluded` refusal before capture. Microsoft notes display affinity is not a security or DRM guarantee ([SetWindowDisplayAffinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity)), so Cyber treats it as the owner/app's stated intent and respects it. |
 | Minimized | `IsIconic` | `target_minimized` |
 | Cloaked (other virtual desktop, suspended UWP, shell-cloaked) | `DwmGetWindowAttribute(DWMWA_CLOAKED)` ([DWMWINDOWATTRIBUTE](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute)) | `target_cloaked` |
 | Blank or protected content | Frame arrives but the app protects its content *(inference: protected media appears black)* | Cyber cannot detect this reliably. The frame is returned as observed, and the docs say that blank frames may be protected content. No retry through another API. |
@@ -100,8 +109,8 @@ These change public types, so per #44 they land in one reviewed, backwards-compa
 
 **Controller checks** (health and every admission):
 
-- The server token is not elevated (`TokenElevation`). Its IL is exactly medium (`TokenIntegrityLevel`). It has no `TokenUIAccess` and is not an AppContainer token ([GetTokenInformation](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation)). An elevated or `uiAccess` token gives `controller_elevated` or `controller_ui_access`. An elevated Cyber server could drive elevated applications and undermine the UIPI boundary this design relies on, so the server **refuses** rather than taking on that authority.
-- A low-IL or AppContainer controller token is refused as `controller_integrity_unsupported`. UIPI would silently block its input to medium-IL windows, so what it observes would not match what it can act on.
+- The server token is not elevated (`TokenElevation`). Its IL is exactly medium (`TokenIntegrityLevel`). It has no `TokenUIAccess` and is not an AppContainer token ([GetTokenInformation](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-gettokeninformation)). An elevated or `uiAccess` token gives `controller_privilege_unsupported` with detail `controller_elevated` or `controller_ui_access`. An elevated Cyber server could drive elevated applications and undermine the UIPI boundary this design relies on, so the server **refuses** rather than taking on that authority.
+- A low-IL or AppContainer controller token is refused as `controller_privilege_unsupported` with detail `controller_integrity_unsupported`. UIPI would silently block its input to medium-IL windows, so what it observes would not match what it can act on.
 - The process session is not 0 ([ProcessIdToSessionId](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-processidtosessionid)). Session 0 is isolated from interactive desktops ([interactive services](https://learn.microsoft.com/en-us/windows/win32/services/interactive-services)), and Cyber never runs an interactive service or SYSTEM broker.
 
 **Target checks.** The adapter opens the target process with `PROCESS_QUERY_LIMITED_INFORMATION` and its token with `TOKEN_QUERY` ([OpenProcessToken](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-openprocesstoken)). It reads the token IL, elevation and user SID (`TokenUser`). The target is refused when:
@@ -120,18 +129,18 @@ Because UIPI failures are silent, this pre-dispatch check is the only reliable s
 
 **Text.** Unicode text is sent as `KEYEVENTF_UNICODE` key down/up pairs, one per UTF-16 code unit. Supplementary characters therefore become two surrogate units. The system synthesizes `VK_PACKET` and delivers the character to the **foreground thread's** queue ([KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput)). The clipboard is never used. Since delivery follows the foreground thread rather than a window, the focus check (§6.1) is repeated before every chunk of at most 16 UTF-16 units, and the cancellation flag is checked between units. If any check fails mid-string, the action becomes `unknown` and the rest is not sent.
 
-**Symbolic keys.** Named keys map to fixed virtual keys, with `KEYEVENTF_EXTENDEDKEY` for navigation keys. ASCII letters and digits resolve through `VkKeyScanExW` with the target thread's layout from `GetKeyboardLayout(target_thread)` ([VkKeyScanExW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-vkkeyscanexw), [GetKeyboardLayout](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getkeyboardlayout)). If the layout needs a modifier the chord did not name, Cyber refuses, as on macOS.
+**Symbolic keys.** Named keys map to fixed virtual keys, with `KEYEVENTF_EXTENDEDKEY` for navigation keys. ASCII letters and digits resolve through `VkKeyScanExW` with the target thread's layout from `GetKeyboardLayout(target_thread)` ([VkKeyScanExW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-vkkeyscanexw), [GetKeyboardLayout](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getkeyboardlayout)). If the layout needs a modifier the chord did not name, Cyber refuses, as on macOS (the foundation's shared layout-safety rule).
 
-**Modifiers and chords (decision D8).** The existing `Modifier` enum has `shift`, `control`, `alt` and `command`. On Windows:
-- `command` (the Windows key) is always refused, because Win-key chords are shell-global.
+**Modifiers and chords (foundation F8).** Which chords are allowed is decided by the foundation's shared, platform-neutral chord evaluator before admission and before any journal intent (refusal: `key_chord_refused`, grant stays armed). Windows supplies its rows of the shared table and does not keep a separate list:
+- `control` is the primary editing modifier. Under window scope a modified chord is allowed only when its key is in the shared edit-key list: `a`, `z`, `y`, `s`, `left`, `right`, `up`, `down`, `home`, `end`, `backspace`, `delete`. This is the macOS list (F8a), so Ctrl+S and Ctrl+Up/Down are allowed, which this draft first excluded.
+- `command` (the Windows key) is the system modifier and is refused in every scope, because Win-key chords are shell-global.
 - `alt` is refused under window scope: Alt+Tab, Alt+F4, Alt+Space and menu accelerators can leave the window or close it.
-- `control` is allowed only for an editing allowlist: Ctrl+A, Ctrl+Z, Ctrl+Y, Ctrl+Home/End, Ctrl+Left/Right, Ctrl+Backspace/Delete.
-- Ctrl+Esc and Ctrl+Shift+Esc are refused.
-- The clipboard chords Ctrl+C/X/V are refused in the first release. A paste would inject whatever the owner last copied into a model-driven window. That leaks data across the owner/model boundary without the model ever reading the clipboard. This is stricter than macOS. Whether to align macOS is a separate decision.
+- The global deny list (Ctrl+Alt+Del, Ctrl+Shift+Esc, Ctrl+Esc, lock chords, Alt+Tab, application-quit chords) applies in every scope.
+- Clipboard chords Ctrl+C/X/V are refused because `c`, `x` and `v` are not edit keys. A paste would inject whatever the owner last copied into a model-driven window, which leaks data across the owner/model boundary without the model ever reading the clipboard. This is the same as macOS, not stricter: macOS already refuses Command+C/X/V under app grants, because they are not in its edit-key allowlist (`native/macos.m`, `key()`). Under the shared table the platforms match.
 
 Ctrl+Alt+Del is the secure attention sequence and cannot be injected *(inference: SAS is handled by Winlogon and is not produced by `SendInput`)*. The chord is refused anyway.
 
-**Cleanup.** The worker tracks every button and key it has pressed and has not released. On cancel, timeout, check failure or panic unwinding (a drop guard), it sends the matching up events in reverse order. If cleanup's `SendInput` count is short, or the input desktop changed so that cleanup cannot be delivered, the receipt records `cleanup_uncertain`. Cyber does not read global key state to "verify" release, because that comes close to keylogging. The receipt never claims that delivered input was undone.
+**Cleanup.** The worker tracks every button and key it has pressed and has not released. On cancel, timeout, check failure or panic unwinding (a drop guard), it sends the matching up events in reverse order. If cleanup's `SendInput` count is short, or the input desktop changed so that cleanup cannot be delivered, the receipt records `cleanup: "uncertain"` (foundation F10). Cyber does not read global key state to "verify" release, because that comes close to keylogging. The receipt never claims that delivered input was undone.
 
 ### 5.3 Target assurance with Win32 and UI Automation
 
@@ -188,7 +197,7 @@ The Windows sandbox runs commands in invocation-owned AppContainer profiles with
 - **Desktop space** on Windows means physical pixels of the virtual screen, which can have negative origins. `NativeTarget.x/y/width/height` hold the target's DWM extended frame bounds in that space. `GetWindowRect` is DPI-virtualized and may include invisible resize borders; DWM extended frame bounds are not DPI-adjusted ([GetWindowRect](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect)). The PMv2 thread makes both physical. The adapter uses DWM bounds and checks that the WGC `ContentSize` matches them *(inference: WGC window content matches the DWM visible frame; spike S2 measures any border/shadow offset and records a fixed transform or refuses)*.
 - **Image transform.** The existing `Geometry` maps an image pixel to `bounds.origin + p × bounds.size / image.size`. The Windows backend reports `rotation = 0` for window scope, because the window is captured as composed on the desktop *(inference, spike S2 on a rotated monitor)*. Monitor orientation is reported in health metadata only.
 - **Scale factor.** Each frame records the target monitor's DPI from `GetDpiForWindow` ([doc](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getdpiforwindow)) for display only. Coordinates never depend on it, because everything is physical.
-- **Hotplug and topology.** The session-watch window handles `WM_DISPLAYCHANGE` ([doc](https://learn.microsoft.com/en-us/windows/win32/gdi/wm-displaychange)) and monitors `WM_DPICHANGED`/settings changes. Each one bumps a process **topology epoch**. Frames record that epoch. A topology change makes every existing frame stale but does **not** revoke the grant: the target binding (§5.7, §5.3 row 1) is unchanged, so the model must take a new screenshot before the next coordinate action. An action whose per-event check sees a new epoch is refused before its first event, or settled `unknown` if earlier events of that action were already dispatched. The virtual-screen rectangle used for `SendInput` normalization can change while the target's own rectangle stays the same, so a bounds comparison alone is not enough.
+- **Hotplug and topology.** The epoch rule is the foundation's topology-change class (F6): frames with an older epoch are `frame_stale` and the grant stays armed. Windows supplies the event sources. The session-watch window handles `WM_DISPLAYCHANGE` ([doc](https://learn.microsoft.com/en-us/windows/win32/gdi/wm-displaychange)) and monitors `WM_DPICHANGED`/settings changes. Each one bumps a process **topology epoch**. Frames record that epoch. A topology change makes every existing frame stale but does **not** revoke the grant: the target binding (§5.7, §5.3 row 1) is unchanged, so the model must take a new screenshot before the next coordinate action. An action whose per-event check sees a new epoch is refused before its first event, or settled `unknown` if earlier events of that action were already dispatched. The virtual-screen rectangle used for `SendInput` normalization can change while the target's own rectangle stays the same, so a bounds comparison alone is not enough.
 - **A window spanning monitors with different DPI** is allowed, since physical coordinates are continuous. It is part of the acceptance matrix.
 
 ### 5.7 Interactive session and desktop binding
@@ -210,17 +219,17 @@ An `OpenInputDesktop` handle alone is not proof of a connected session: for a di
 
 If notifications are lost (the session-watch thread dies or a hook registration fails), health reports `session_watch_unavailable` and input is refused. Per-event checks still run, but losing the early signal is treated as a failure.
 
-RDP and remote sessions are unsupported in the first release (decision D5). Health detects them with `SM_REMOTESESSION` and refuses.
+RDP and remote sessions are unsupported in the first release (decision D5). Refusing them with `remote_session` is the foundation's rule for platforms added after macOS (F6); Windows detects them with `SM_REMOTESESSION` / `SM_REMOTECONTROL` and the WTS remote events above. Every latch event is binding loss under F6, reported through the revocation sink.
 
 ### 5.8 Cross-process host input lease
 
-The macOS backend uses a per-UID lock file. On Windows, the lease must cover separate server homes in the same interactive desktop. A file inside one home cannot do that.
+The rule (one input holder per OS user and interactive session across homes, health never takes the lease, abandoned-lease warning, each home settles only its own journal) is the foundation's (F6). This section is the Windows mechanism. A file inside one home cannot cover separate server homes on the same desktop, so Windows uses a kernel object.
 
 - **Mechanism:** a named mutex `Local\CyberComputerInput-<owner SID string>`. The `Local\` prefix puts it in the caller's session namespace ([kernel object namespaces](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces), [CreateMutexW](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexw)). It is created with an explicit DACL that grants only the owner SID and denies everyone else, including AppContainer SIDs, by omission. No handle is inheritable. The session-scoped name matches the session/desktop binding: a different session of the same user is a different desktop with its own latch.
-- **Acquire:** `WaitForSingleObject(…, 0)`. `WAIT_OBJECT_0` means acquired. `WAIT_ABANDONED` means a previous holder died; the lease is acquired, with the consequences below. `WAIT_TIMEOUT` means `Busy`.
-- **Abandoned lease.** The lease is shared by every Cyber server home in the logon session, but journals are per home (`runtime/computer/journal.rs` recovers only its own home). A server that acquires an abandoned mutex therefore **cannot** settle the crashed holder's intents and does not try. Instead it records `previous_holder_abandoned` in its own journal, treats the desktop's input state as `cleanup_uncertain` (keys or buttons the crashed holder pressed may still be logically down, T11), and shows that warning in the owner's preview/allow review before the new grant can act. The crashed holder's open intents are settled `unknown` by that home's own startup recovery, which already runs before it can arm again. If the crashed holder was the same home (a restart), its startup recovery has already run by the time it arms.
+- **Acquire:** `WaitForSingleObject(…, 0)`. `WAIT_OBJECT_0` means acquired. `WAIT_ABANDONED` means a previous holder died; the lease is acquired, with the consequences below. `WAIT_TIMEOUT` means `host_lease_busy`; failure to create the object means `host_lease_unavailable`.
+- **Abandoned lease.** `WAIT_ABANDONED` is how Windows detects the foundation's abandoned-lease case. Journals are per home (`runtime/computer/journal.rs` recovers only its own home), so a server that acquires an abandoned mutex **cannot** settle the crashed holder's intents and does not try. Instead it records `previous_holder_abandoned` in its own journal, treats the desktop's input cleanup as uncertain (keys or buttons the crashed holder pressed may still be logically down, T11), and shows that warning in the owner's preview/allow review before the new grant can act. The crashed holder's open intents are settled `unknown` by that home's own startup recovery, which already runs before it can arm again. If the crashed holder was the same home (a restart), its startup recovery has already run by the time it arms.
 - **Hold:** the mutex is owned by a dedicated lease thread, because mutex ownership is per thread. The `HostLease` RAII object releases it by message and joins the thread. A cancelled native worker keeps its `Arc<HostLease>` until it returns, as today.
-- **Squatting:** a same-user process (a full-access model shell, for example) can create the name first and hold it. That only denies service and fails closed as `Busy`. Health reports `host_lease_unavailable`. This cannot be prevented without OS privilege separation (§8).
+- **Squatting:** a same-user process (a full-access model shell, for example) can create the name first and hold it. That only denies service and fails closed as `host_lease_busy` at arming. This cannot be prevented without OS privilege separation (§8).
 
 ### 5.9 Lifecycle and revocation summary
 
@@ -239,12 +248,7 @@ No OS-global emergency hotkey is claimed. A `RegisterHotKey` path could be added
 
 ### 5.10 If a helper or broker becomes necessary
 
-The first release has none. If a spike shows one is needed (for example, the capture authority path requires package identity, decision D2), a later reviewed change must include:
-- a named pipe with an explicit owner-only DACL and `PIPE_REJECT_REMOTE_CLIENTS` ([pipe security](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights));
-- a client process check (image path plus Authenticode via [WinVerifyTrust](https://learn.microsoft.com/en-us/windows/win32/api/wintrust/nf-wintrust-winverifytrust));
-- a per-launch secret passed over an inherited handle, never in arguments or the environment.
-
-Same SID, a pipe name or loopback alone is never treated as owner proof, and owner credentials never appear in model-visible arguments or environment.
+The first release has none. If a spike shows one is needed (for example, the capture authority path requires package identity, decision D2), a later reviewed change must follow the foundation's helper rules (F9, foundation §10.2): the same `cyber` binary re-executed as the same user with no added privilege, talking only over a channel the server created and passed at spawn. On Windows that is an anonymous pipe or inherited pipe handle, not a named pipe the helper listens on. Same SID, a pipe name or loopback alone is never treated as owner proof, and owner credentials never appear in model-visible arguments or environment.
 
 ### 5.11 Health and capability detection
 
@@ -254,7 +258,7 @@ Same SID, a pipe name or loopback alone is never treated as owner proof, and own
 - controller token checks (§5.2);
 - session ID, WTS connect state, remote metrics and input-desktop name;
 - whether the session-watch thread is live;
-- whether **this** server currently holds the host lease, from in-process state only. Health never waits on or opens the mutex for ownership, because `WaitForSingleObject` would acquire it and could make a concurrent arming attempt fail with a spurious `Busy`. Whether another home holds the lease is discovered only when arming;
+- whether **this** server currently holds the host lease, from in-process state only. Health never waits on or opens the mutex for ownership, because `WaitForSingleObject` would acquire it and could make a concurrent arming attempt fail with a spurious `host_lease_busy`. Whether another home holds the lease is discovered only when arming;
 - whether any connected output is in advanced-color mode.
 
 It never captures, never enumerates window titles (that happens only in the owner `targets` route), never sends input and never opens OS UI. `health(prompt=true)` exists only for `setup`. On the recommended path it does nothing extra and says so: Windows needs no separate OS grant on this path, and Cyber's owner review is the authority.
@@ -263,7 +267,7 @@ It never captures, never enumerates window titles (that happens only in the owne
 
 ### 6.1 Model tool
 
-The tool is unchanged: `status`, `screenshot`, `move`, `click`, `drag`, `scroll`, `type`, `key`, `wait`. Windows refusals use the existing error classes with reason codes. Frame metadata carries `target_id` instead of numeric handles.
+The tool is unchanged: `status`, `screenshot`, `move`, `click`, `drag`, `scroll`, `type`, `key`, `wait`. Windows refusals use the existing error classes with registry reason codes. Frame metadata carries `target_id` instead of numeric handles. The action set is the same on every platform (foundation F7).
 
 ### 6.2 Grants
 
@@ -275,14 +279,14 @@ A grant is created only through the existing owner `preview` → `allow` review 
 - whether display affinity, cloaking or minimization would stop capture;
 - the warning text.
 
-Allow re-resolves the candidate and refuses if any identity field changed.
+Because `window` is not re-resolvable, allow follows the foundation's review-bound arming (F5): it names the `preview_id` of the review the owner saw, before that review's deadline, re-checks that the live target still matches every bound identity field, and refuses otherwise. It never re-lists or picks a different window.
 
 ### 6.3 Target candidates (owner only)
 
 - `GET /api/v1/tools/computer/targets` (tool route group, owner credential, `Cache-Control: no-store`) enumerates visible, non-cloaked, non-minimized, unowned top-level windows on the bound desktop, in the server's session, owned by the owner's user SID, at medium IL or lower. It excludes Cyber's own processes and the denylist.
-- Each entry is a candidate token valid for 30 s, plus display fields. Both `preview` and `allow` refuse an expired candidate; `allow` additionally re-resolves it (§6.2).
+- Each entry is a candidate token valid for 30 s (foundation F4), plus display fields. `preview` refuses an expired candidate; `allow` is bound to the review (§6.2).
 - Titles can be sensitive. This route is never offered to the model tool, hub, peers or relay, and its output is not persisted.
-- CLI: `cyber computer targets` prints the list; `cyber computer allow <session> --window <candidate> [--ttl N] [--yes]` previews or arms. Display scope (`--display`) is refused on Windows until D4.
+- CLI: `cyber computer targets` prints the list; `cyber computer allow <session> --window <candidate> [--ttl N]` previews and asks for confirmation, and the foundation's `--preview <id> --yes` confirms a pending review. `--window` with `--yes` and no `--preview` is refused with `interactive_review_required` (F5). Display scope (`--display`) is refused with `selector_unsupported_on_platform` until D4.
 
 ### 6.4 SDK and OpenAPI
 
@@ -334,8 +338,8 @@ All licenses are compatible with the project's Apache-2.0 license. `cargo deny`/
 | T8 | Bypassing capture exclusion or protected content | Affinity checked and respected; no fallback path | A malicious same-user process can still capture; Cyber only promises not to help |
 | T9 | PID/HWND reuse to redirect a grant | PID+creation time+HWND+class+image-path hash+user SID+session binding; revocation on mismatch | Same-process HWND reuse with the same class (rare) |
 | T10 | Unicode/keyboard layout tricks (dead keys, IME composition, hidden modifiers) | `KEYEVENTF_UNICODE` bypasses layouts for text; chords resolved per target layout and refused if hidden modifiers needed; IME candidate windows are other-process overlays → refused | An IME active in the target may transform `VK_PACKET` input *(inference)*; acceptance tests one IME-off and one IME-on layout |
-| T11 | Stuck modifiers/buttons after Stop or crash | Release tracker with drop guard; cleanup on cancel; `cleanup_uncertain` recorded | Crash between down and up can leave a key logically down until the next physical press. Documented; the next lease holder sees the abandoned mutex and warns the owner before acting, and the crashed home's own recovery settles its intents `unknown`. |
-| T12 | A4 squats the lease mutex or watch-thread resources | Fail closed (Busy/unavailable) | Denial of service by same-user code |
+| T11 | Stuck modifiers/buttons after Stop or crash | Release tracker with drop guard; cleanup on cancel; `cleanup: "uncertain"` recorded | Crash between down and up can leave a key logically down until the next physical press. Documented; the next lease holder sees the abandoned mutex and warns the owner before acting, and the crashed home's own recovery settles its intents `unknown`. |
+| T12 | A4 squats the lease mutex or watch-thread resources | Fail closed (`host_lease_busy` / `host_lease_unavailable`) | Denial of service by same-user code |
 | T13 | A4 calls `SendInput` or captures directly | None; same-user code has the owner's authority | Same as macOS: not OS privilege separation |
 | T14 | A5 reads private captures or gains desktop rights | Hidden state root and ACLs exclude AppContainer SID; no capture capabilities granted; capability verification at launch | None known *(regression test required)* |
 | T15 | A6 obtains control | No hub/peer/relay route to computer endpoints (existing); owner credential required | None beyond owner credential compromise |
@@ -352,16 +356,16 @@ Each decision lists the recommended option first.
 
 - **D1 – Supported OS/architecture baseline.** *Recommended:* Windows 11 x64, GA channel 25H2 (26200) and 26H2 (26300), local console session. ARM64 stays unsupported until the `windows-11-arm` runner runs the adapter test suite and a physical ARM64 device passes acceptance. Windows 10, 24H2, 26H1, Server and LTSC stay unsupported. *Alternative:* include 24H2 Enterprise until 2027-10-12.
 - **D2 – Capture authority path.** *Recommended:* programmatic `CreateForWindow` from the unpackaged server, with Cyber owner review as the authority and an honest `owner_review_only` health report. Never borderless. Any OS-policy denial is a hard refusal. Spike S1 confirms the actual OS behavior. *Alternative:* require `GraphicsCapturePicker` on each grant. That needs an owned visible window and a picker-item-to-HWND binding that is not documented.
-- **D3 – In-process adapter vs helper.** *Recommended:* in-process, no helper, no IPC. *Alternative:* a signed helper with authenticated IPC (§5.10), only if D2 needs package identity.
-- **D4 – Display scope on Windows.** *Recommended:* defer. First release is window-only, and `--display` returns `unsupported_selector`. *Alternative:* allow WGC `CreateForMonitor` under a separate owner scope with a stronger warning.
-- **D5 – RDP/remote sessions.** *Recommended:* unsupported and refused via `SM_REMOTESESSION`. *Alternative:* a later change with its own acceptance.
+- **D3 – In-process adapter vs helper.** The worker contract moved to the foundation (F9); the topology choice stays here. *Recommended:* in-process, no helper, no IPC. *Alternative:* a helper under the F9 rules (§5.10), only if D2 needs package identity.
+- **D4 – Display scope on Windows.** *Recommended:* defer. First release is window-only, and `--display` returns `selector_unsupported_on_platform`. *Alternative:* allow WGC `CreateForMonitor` under a separate owner scope with a stronger warning.
+- **D5 – RDP/remote sessions.** The `remote_session` code and the rule that new platforms refuse remote sessions until accepted moved to the foundation (F2, F6). *Recommended:* detect with `SM_REMOTESESSION` and refuse. *Alternative:* a later change with its own acceptance.
 - **D6 – DPI model.** *Recommended:* per-thread PMv2 on adapter threads; process manifest unchanged. *Alternative:* a process-wide PMv2 manifest. That affects console/TUI behavior and needs separate review.
 - **D7 – HDR.** *Recommended:* refuse when the target's monitor is in advanced-color mode. *Alternative:* request an FP16 frame pool and tone-map to SDR, with acceptance on an HDR display.
-- **D8 – Chords on Windows.** *Recommended:* refuse `command` (Win) and `alt` under window scope. Allow only the Ctrl editing allowlist. Refuse Ctrl+C/X/V. *Alternative:* allow clipboard chords to match macOS behavior, accepting that the owner's clipboard can be pasted into a model-driven window.
+- **D8 – Chords on Windows.** *Moved to the foundation as F8 and approved there on 2026-11-15.* Windows adopts the shared table (§5.2): `command` and `alt` refused under window scope, the shared edit-key list (including Ctrl+S and Ctrl+Up/Down), clipboard chords refused as on macOS, and the global deny list. No Windows decision remains.
 - **D9 – Terminals hosting Cyber.** *Recommended:* refuse Windows Terminal/conhost windows as targets while any Cyber TUI attachment exists on this server. *Alternative:* refuse only the specific console window that hosts the TUI. Mapping consoles to windows is fragile *(inference)*.
 - **D10 – Supported application classes.** *Recommended:* claim only classes that pass the fixture matrix (Win32 common controls, WinUI 3, WPF). Chromium/Electron are listed as "untested". *Alternative:* add an Electron fixture to the first acceptance run.
 - **D11 – Release/packaging.** *Recommended:* the feature is built and tested on Windows CI, but user delivery waits for the separate decision to publish Windows binaries again ([release-without-windows](../release-without-windows/proposal.md)) and for Authenticode signing of `cyber.exe`. Until then, acceptance uses a recorded developer build with its SHA-256. *Alternative:* an experimental, unsigned developer channel clearly labelled as such.
-- **D12 – Shared schema with Linux.** *Recommended:* land §4 as one foundation PR reviewed against both this design and the #43 design before either adapter. *Alternative:* Windows-only fields first, then a migration. Not recommended: it creates two migrations.
+- **D12 – Shared schema with Linux.** *Resolved by the foundation (#134), approved 2026-11-15* (F1, F2, F4, F7). This change is rebased on it.
 
 ## 10. Spikes before implementation
 
