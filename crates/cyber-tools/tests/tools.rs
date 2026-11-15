@@ -971,11 +971,12 @@ async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
         fn health(&self, _: bool) -> Result<Health, Error> {
             Ok(Health {
                 supported: true,
-                platform: "fixture".into(),
+                platform: "macos".into(),
                 minimum_version: "fixture".into(),
                 screen_capture: true,
                 accessibility: true,
                 binary: "fixture".into(),
+                ..Health::default()
             })
         }
         fn resolve(&self, _: &Selector) -> Result<NativeTarget, Error> {
@@ -993,6 +994,9 @@ async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
                 image_width: 1,
                 image_height: 1,
                 rotation: 0,
+                target_id: String::new(),
+                source: None,
+                topology_epoch: 0,
             })
         }
         fn capture(&self, target: &NativeTarget) -> Result<Capture, Error> {
@@ -1038,6 +1042,7 @@ async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
             Selector {
                 app: Some("fixture.app".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();

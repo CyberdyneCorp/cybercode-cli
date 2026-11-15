@@ -677,9 +677,7 @@ impl Controller {
     ) -> Result<InputPermit, Error> {
         self.ready(&admission)?;
         if !(self.supervisor)() {
-            return Err(Error::Consent(
-                "resolve pending human approvals before native input",
-            ));
+            return Err(Error::Consent(crate::consent::SUPERVISOR));
         }
         let mut state = self.lock()?;
         let grant = state.grant.as_ref().ok_or(Error::NotArmed)?.clone();
@@ -714,17 +712,15 @@ impl Controller {
         }
         if !admission.human_present || !(self.attendance)(admission.session) {
             self.stop_session(admission.session);
-            return Err(Error::Consent("an attached human is required"));
+            return Err(Error::Consent(crate::consent::PRESENCE));
         }
         if !admission.permitted {
             self.stop_session(admission.session);
-            return Err(Error::Consent(
-                "current Mode or permission rules deny this action",
-            ));
+            return Err(Error::Consent(crate::consent::MODE));
         }
         if !admission.os_consent {
             self.stop();
-            return Err(Error::Consent("native OS consent is required"));
+            return Err(Error::Consent(crate::consent::OS));
         }
         Ok(())
     }

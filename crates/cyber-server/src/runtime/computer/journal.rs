@@ -6,6 +6,23 @@ use std::sync::Arc;
 use super::{ComputerError, FrameInfo, Receipt, Result, UnknownOperation};
 
 pub struct Journal(pub Arc<Store>);
+
+/// A row without a stored receipt was never settled; recovery marks it unknown.
+/// Stored receipts, including version 1 rows, are returned as written.
+fn unsettled(operation: String, action: String, status: String) -> Receipt {
+    let unknown = matches!(
+        status.as_str(),
+        "intent" | "unknown" | "unknown_acknowledged"
+    );
+    Receipt {
+        operation_id: operation,
+        action,
+        outcome: if unknown { "unknown".into() } else { status },
+        reason: unknown.then_some(cyber_computer::ReasonCode::ServerRestart),
+        schema_version: cyber_computer::capability::SCHEMA_VERSION,
+        ..Receipt::default()
+    }
+}
 impl Journal {
     pub fn recover(&self) -> Result<()> {
         self.0.transaction(|tx| {
@@ -34,17 +51,7 @@ impl Journal {
         }
         let mut receipt = receipt
             .and_then(|value| serde_json::from_str::<Receipt>(&value).ok())
-            .unwrap_or(Receipt {
-                operation_id: operation,
-                action,
-                outcome: if matches!(status.as_str(), "intent" | "unknown_acknowledged") {
-                    "unknown".into()
-                } else {
-                    status
-                },
-                replayed: false,
-                frame: None,
-            });
+            .unwrap_or_else(|| unsettled(operation, action, status));
         receipt.replayed = true;
         Ok(Some(receipt))
     }

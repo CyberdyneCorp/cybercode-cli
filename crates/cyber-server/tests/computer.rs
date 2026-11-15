@@ -91,11 +91,12 @@ impl Backend for Fake {
         }
         Ok(Health {
             supported: true,
-            platform: "fixture".into(),
+            platform: "macos".into(),
             minimum_version: "fixture".into(),
             screen_capture: true,
             accessibility: true,
             binary: "fixture".into(),
+            ..Health::default()
         })
     }
     fn resolve(&self, _: &Selector) -> Result<NativeTarget, Error> {
@@ -113,6 +114,9 @@ impl Backend for Fake {
             image_width: 100,
             image_height: 100,
             rotation: 0,
+            target_id: String::new(),
+            source: None,
+            topology_epoch: 0,
         })
     }
     fn capture(&self, target: &NativeTarget) -> Result<Capture, Error> {
@@ -197,6 +201,31 @@ async fn owner_routes_bind_auth_location_exact_review_and_global_stop() {
     assert_eq!(preview.status(), 200);
     assert_eq!(preview.headers()["cache-control"], "no-store");
     let preview = preview.json::<Value>().await.unwrap();
+    assert_eq!(preview["data"]["schema_version"], 2);
+    assert_eq!(preview["data"]["re_resolvable"], true);
+    let picked = client
+        .post(format!("{url}/sessions/{id}/computer/preview"))
+        .basic_auth("cyber", Some("owner-fixture-password"))
+        .json(&json!({"pick":"window"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(picked.status(), 400);
+    let picked: Value = picked.json().await.unwrap();
+    assert_eq!(picked["_tag"], "ComputerInvalidRequestError");
+    assert_eq!(picked["reason"], "selector_unsupported_on_platform");
+    let health: Value = client
+        .get(format!("{url}/tools/computer/health"))
+        .basic_auth("cyber", Some("owner-fixture-password"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(health["data"]["health"]["schema_version"], 2);
+    assert_eq!(health["data"]["health"]["mode"], "input_enabled");
+    assert_eq!(health["data"]["health"]["screen_capture"], true);
     let path = format!("{url}/sessions/{id}/computer/allow");
     assert_eq!(
         client
@@ -432,6 +461,7 @@ async fn deleting_session_removes_private_captures_with_retention_disabled() {
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();

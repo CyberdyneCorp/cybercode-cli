@@ -3,25 +3,25 @@
 - [x] 1.1 Read the macOS contract and code seams, and the Linux (#130) and Windows (#131) drafts; list the shared decisions.
 - [x] 1.2 Draft proposal, design (F1–F12), tasks and contract deltas for `computer-use`, `cli-commands` and `sandbox`.
 - [x] 1.3 Owner reviews this change and answers the owner-review decisions (F1, F4, F6b, F7, F8a–c, F9, F12). Approved 2026-11-15: the recommended option for each.
-- [ ] 1.4 Rebase #130 and #131 onto this change: drop their duplicated shared requirements and reference the registry, selector, lifecycle, chord, worker and receipt requirements here.
+- [x] 1.4 Rebase #130 and #131 onto this change: drop their duplicated shared requirements and reference the registry, selector, lifecycle, chord, worker and receipt requirements here. Done: #130 rebased onto `design/computer-use-shared-schema` (head a3ffed24), #131 likewise (head f38ab48d); duplicates dropped, both reference this change.
 
 ## 2. Types and schema (after approval)
 
-- [ ] 2.1 Add `schema_version`, `mode`, `capture`, `input`, `authority`, `session`, `os`, `selectors`, `evidence` and `diagnostics` to `Health`, keeping legacy fields and their macOS values.
-- [ ] 2.2 Add the `ReasonCode` registry and make `Error::UnsupportedPlatform` text platform-neutral with a code; keep error class names.
-- [ ] 2.3 Add `window` and `pick` selector variants with per-platform acceptance, `target_id`, `source` and `topology_epoch` on `NativeTarget`; mark legacy numeric fields deprecated in OpenAPI.
-- [ ] 2.4 Add the receipt fields from design §11.1 and store `schema_version` in the journal; prove version 1 rows still replay.
-- [ ] 2.5 Regenerate OpenAPI and the TypeScript SDK; snapshot diff shows additive changes only.
+- [x] 2.1 Add `schema_version`, `mode`, `capture`, `input`, `authority`, `session`, `os`, `selectors`, `evidence` and `diagnostics` to `Health`, keeping legacy fields and their macOS values. Evidence: `cyber-computer/src/capability.rs` (`Health::normalize` maps a version 1 report field by field per §12); tests `capability::tests::*` and `runtime::computer::tests::health_and_status_never_acquire_the_host_lease`.
+- [x] 2.2 Add the `ReasonCode` registry and make `Error::UnsupportedPlatform` text platform-neutral with a code; keep error class names. Evidence: `cyber-computer/src/reason.rs` (45 codes, 9 categories), `Error::reason()`, HTTP errors add `reason`; tests `reason::tests::*`, `tests::unsupported_platform_text_is_platform_neutral_and_carries_a_code`.
+- [x] 2.3 Add `window` and `pick` selector variants with per-platform acceptance, `target_id`, `source` and `topology_epoch` on `NativeTarget`; mark legacy numeric fields deprecated in OpenAPI. Evidence: `backend.rs` `Selector::validate_for`, `NativeTarget::{same_binding,for_journal}`; `sdk/openapi.json` marks `app`, `pid`, `window`, `display`, `launch_ms` deprecated; tests `backend::selector_tests::*`, `unsupported_selectors_are_refused_before_any_native_call`.
+- [x] 2.4 Add the receipt fields from design §11.1 and store `schema_version` in the journal; prove version 1 rows still replay. Evidence: `Receipt` fields in `runtime/computer/mod.rs`; the version lives in the stored receipt JSON (rows without it read as 1, no migration, so older binaries still open the database); tests `version_one_journal_rows_replay_as_written`, `receipts_carry_version_two_references_but_no_owner_display_detail`, `partial_delivery_settles_unknown_with_counts_and_uncertain_cleanup`.
+- [x] 2.5 Regenerate OpenAPI and the TypeScript SDK; snapshot diff shows additive changes only. Evidence: a structural diff of `sdk/openapi.json` against the previous document finds no removed path, property or enum value and no changed type; the only newly required properties are response fields (`ComputerStatus.schema_version`, `ComputerPreview.{schema_version,evidence,re_resolvable}`); request shapes only gained optional `window`/`pick`.
 
 ## 3. Runtime and policy
 
-- [ ] 3.1 Switch admission and revocation-on-loss to `capture.available` / `input.available`.
-- [ ] 3.2 Add `review`, `end_scope` and `set_revocation_sink` default methods to `Backend`; wire the sink to `Computer::stop`.
+- [x] 3.1 Switch admission and revocation-on-loss to `capture.available` / `input.available`. Evidence: `Computer::{admission_with,checked_health}`; existing `observed_os_consent_revocation_cannot_rearm_after_consent_is_restored` passes unchanged.
+- [x] 3.2 Add `review`, `end_scope` and `set_revocation_sink` default methods to `Backend`; wire the sink to `Computer::stop`. Evidence: `Backend` defaults in `backend.rs`, `Computer::install_revocation_sink` called from `configure_computer_backend`; tests `default_backend_review_resolves_and_scope_hooks_are_no_ops`, `topology_change_stales_frames_without_revoking_and_binding_loss_fences_before_teardown`.
 - [ ] 3.3 Implement review-bound arming for non-re-resolvable selectors and `allow --preview <id> --yes`.
-- [ ] 3.4 Implement the topology epoch and frame staleness, and the binding-loss path (fence first, then `end_scope`).
-- [ ] 3.5 Implement the shared chord evaluator before admission; keep the native macOS check; add the macOS parity table test.
-- [ ] 3.6 Refuse unsupported actions and chords before journal intent with a reason code and zero native calls.
-- [ ] 3.7 Add the compiled evidence table and the input gate for platforms added after macOS.
+- [x] 3.4 Implement the topology epoch and frame staleness, and the binding-loss path (fence first, then `end_scope`). Evidence: `Computer::{revoked,stamp,refuse_before_admission}`; test `topology_change_stales_frames_without_revoking_and_binding_loss_fences_before_teardown` (end_scope observes no live authority).
+- [x] 3.5 Implement the shared chord evaluator before admission; keep the native macOS check; add the macOS parity table test. Evidence: `cyber-computer/src/chord.rs`; native rule extracted unchanged into `chord_allowed` in `native/macos.m`; `chord_parity_tests::shared_policy_allows_and_refuses_exactly_what_the_native_adapter_does` compares all 2,432 grammar-valid chord/scope pairs against the native function (macOS), and `macos_rows_match_the_shipped_rule_for_every_grammar_chord` against an independent copy of the shipped rule (every OS).
+- [x] 3.6 Refuse unsupported actions and chords before journal intent with a reason code and zero native calls. Evidence: tests `blocked_chord_is_refused_before_intent_with_the_grant_left_armed`, `input_on_a_capture_only_host_is_refused_by_code_without_journal_or_native_calls`.
+- [x] 3.7 Add the compiled evidence table and the input gate for platforms added after macOS. Evidence: `capability::{EVIDENCE,input_gated}` (macOS `implemented`, Linux and Windows `unsupported`); the gate also applies to version 1 reports from other platforms; tests `later_platforms_enable_input_only_for_accepted_configurations`, `a_legacy_report_from_a_later_platform_cannot_bypass_the_evidence_gate`.
 
 ## 4. Surfaces and docs
 
