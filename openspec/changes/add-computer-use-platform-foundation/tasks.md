@@ -17,7 +17,7 @@
 
 - [x] 3.1 Switch admission and revocation-on-loss to `capture.available` / `input.available`. Evidence: `Computer::{admission_with,checked_health}`; existing `observed_os_consent_revocation_cannot_rearm_after_consent_is_restored` passes unchanged.
 - [x] 3.2 Add `review`, `end_scope` and `set_revocation_sink` default methods to `Backend`; wire the sink to `Computer::stop`. Evidence: `Backend` defaults in `backend.rs`, `Computer::install_revocation_sink` called from `configure_computer_backend`; tests `default_backend_review_resolves_and_scope_hooks_are_no_ops`, `topology_change_stales_frames_without_revoking_and_binding_loss_fences_before_teardown`.
-- [ ] 3.3 Implement review-bound arming for non-re-resolvable selectors and `allow --preview <id> --yes`.
+- [x] 3.3 Implement review-bound arming for non-re-resolvable selectors and `allow --preview <id> --yes`. Evidence: the owner API already arms only by `preview_id`; previews now report `re_resolvable`, `allow` never calls `review`, and unconfirmed, superseded or rejected reviews call `end_scope`; tests `pick_reviews_arm_only_by_review_identifier_and_tear_down_unconfirmed_scopes` and the CLI test below.
 - [x] 3.4 Implement the topology epoch and frame staleness, and the binding-loss path (fence first, then `end_scope`). Evidence: `Computer::{revoked,stamp,refuse_before_admission}`; test `topology_change_stales_frames_without_revoking_and_binding_loss_fences_before_teardown` (end_scope observes no live authority).
 - [x] 3.5 Implement the shared chord evaluator before admission; keep the native macOS check; add the macOS parity table test. Evidence: `cyber-computer/src/chord.rs`; native rule extracted unchanged into `chord_allowed` in `native/macos.m`; `chord_parity_tests::shared_policy_allows_and_refuses_exactly_what_the_native_adapter_does` compares all 2,432 grammar-valid chord/scope pairs against the native function (macOS), and `macos_rows_match_the_shipped_rule_for_every_grammar_chord` against an independent copy of the shipped rule (every OS).
 - [x] 3.6 Refuse unsupported actions and chords before journal intent with a reason code and zero native calls. Evidence: tests `blocked_chord_is_refused_before_intent_with_the_grant_left_armed`, `input_on_a_capture_only_host_is_refused_by_code_without_journal_or_native_calls`.
@@ -25,13 +25,13 @@
 
 ## 4. Surfaces and docs
 
-- [ ] 4.1 CLI `status` prints mode, reasons and evidence; `allow --preview <id> --yes`; refusal of `--yes` with non-re-resolvable selectors.
-- [ ] 4.2 TUI and dashboard show mode, reasons, evidence level and receipt reasons/cleanup state.
-- [ ] 4.3 `docs/computer-use.md`: reason-code registry, chord table, evidence table, schema-version policy.
-- [ ] 4.4 Sandbox: test that sandboxed children cannot read private captures and receive no native capability on each supported OS.
+- [x] 4.1 CLI `status` prints mode, reasons and evidence; `allow --preview <id> --yes`; refusal of `--yes` with non-re-resolvable selectors. Evidence: `status` prints the version 2 health (mode, `capture`/`input` reasons, `evidence`); `allow --window/--pick/--preview`; error output appends the server `reason`; test `commands::computer::tests::preview_confirmation_and_non_re_resolvable_selectors_need_explicit_review`; `docs/cli.md` regenerated.
+- [x] 4.2 TUI and dashboard show mode, reasons, evidence level and receipt reasons/cleanup state. Evidence: TUI banner and `computer` tool cards (`cyber-tui` test `health_capability_and_receipt_reasons_are_summarized`); dashboard health panel, review card and tool result badge (`web/test/computer.test.ts`); version 1 reports render as before.
+- [x] 4.3 `docs/computer-use.md`: reason-code registry, chord table, evidence table, schema-version policy. Also the `--preview` flow and the F8c timing change; `docs/web-dashboard.md` mentions the new panel lines.
+- [x] 4.4 Sandbox: test that sandboxed children cannot read private captures and receive no native capability on each supported OS. Evidence: `cyber-tools` test `sandboxed_children_cannot_read_captures_or_inherit_native_handles` (macOS and Linux; Windows has no native computer adapter): a sandboxed `bash` child cannot read or list the capture directory even when it is listed as readable, its open handles (lsof or /proc) include no host-lease descriptor, and the owner frame API still serves the capture.
 
 ## 5. Verification
 
 - [ ] 5.1 Unit and runtime tests listed in design §15 pass on macOS, Linux and Windows CI.
-- [ ] 5.2 Existing macOS computer-use tests pass unchanged except the documented F8c chord timing.
-- [ ] 5.3 `openspec validate --all --strict`, `scripts/spec_lint.py` and `scripts/spec_inventory.py --check` pass.
+- [x] 5.2 Existing macOS computer-use tests pass unchanged except the documented F8c chord timing. Evidence: no existing assertion changed; fake backends only gained the new struct fields (`..Default::default()`, empty `target_id`/`source`) and report platform `macos`, since they model the macOS adapter and the evidence gate applies to every other platform name. `cyber-computer` and `cyber-server` pass 1,041 tests on macOS; no existing test exercised a refused chord.
+- [x] 5.3 `openspec validate --all --strict`, `scripts/spec_lint.py` and `scripts/spec_inventory.py --check` pass. Evidence: 106/106 valid; spec_lint 0 errors; inventory current.

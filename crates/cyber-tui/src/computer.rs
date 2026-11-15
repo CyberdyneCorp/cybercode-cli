@@ -8,6 +8,8 @@ pub struct State {
     pub grant: Option<(String, i64, String)>,
     pub uncertain: bool,
     pub supported: bool,
+    /// Capability mode, reason codes and evidence level from the health report.
+    pub capability: Option<String>,
     pending: bool,
     next: Option<Instant>,
 }
@@ -36,6 +38,7 @@ impl State {
                 self.supported = value["data"]["enabled"] == true
                     && value["data"]["health"]["supported"] == true;
                 self.uncertain = false;
+                self.capability = capability(&value["data"]["health"]);
                 self.grant = value["data"]["grant"]["target"]["identity"]
                     .as_str()
                     .zip(value["data"]["grant"]["expires_at"].as_i64())
@@ -64,8 +67,13 @@ impl State {
         if *expiry <= crate::loops::now_ms() && !self.uncertain {
             return None;
         }
+        let capability = self
+            .capability
+            .as_deref()
+            .map(|text| format!(" · {}", crate::sidebar::clean(text)))
+            .unwrap_or_default();
         Some(format!(
-            "Computer {} · Ctrl+Alt+Esc STOP · {} · {}s · {}",
+            "Computer {} · Ctrl+Alt+Esc STOP · {} · {}s · {}{capability}",
             if self.uncertain {
                 "status unknown"
             } else {
@@ -77,10 +85,78 @@ impl State {
         ))
     }
 }
+/// `mode · reasons · evidence` from a version 2 health report; `None` for version 1.
+fn capability(health: &Value) -> Option<String> {
+    let mode = health["mode"].as_str()?;
+    let mut parts = vec![mode.to_owned()];
+    let reasons: Vec<&str> = ["capture", "input"]
+        .iter()
+        .flat_map(|kind| health[kind]["reasons"].as_array().into_iter().flatten())
+        .filter_map(Value::as_str)
+        .collect();
+    let mut unique = reasons.clone();
+    unique.dedup();
+    if !unique.is_empty() {
+        parts.push(unique.join(","));
+    }
+    if let Some(evidence) = health["evidence"].as_str() {
+        parts.push(format!("evidence {evidence}"));
+    }
+    Some(parts.join(" · "))
+}
+
+/// A short note for a computer receipt that carries a reason, cleanup state or event
+/// counts. Receipts never contain typed text or window titles.
+pub fn receipt_note(output: &str) -> Option<String> {
+    let receipt: Value = serde_json::from_str(output).ok()?;
+    let outcome = receipt["outcome"].as_str()?;
+    let mut parts = Vec::new();
+    if let Some(reason) = receipt["reason"].as_str() {
+        parts.push(format!("reason {reason}"));
+    }
+    if let Some(cleanup) = receipt["cleanup"].as_str().filter(|c| *c != "not_needed") {
+        parts.push(format!("cleanup {cleanup}"));
+    }
+    if let (Some(posted), Some(requested)) = (
+        receipt["events"]["posted"].as_u64(),
+        receipt["events"]["requested"].as_u64(),
+    ) {
+        parts.push(format!("{posted}/{requested} events posted"));
+    }
+    (!parts.is_empty()).then(|| format!("{outcome} · {}", parts.join(" · ")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn health_capability_and_receipt_reasons_are_summarized() {
+        let mut state = State {
+            session: "one".into(),
+            ..State::default()
+        };
+        state.apply("one",Ok(json!({"data":{"enabled":true,"health":{"supported":true,"mode":"capture_only","capture":{"available":true,"reasons":[]},"input":{"available":false,"reasons":["evidence_pending"]},"evidence":"fixture_tested"},"grant":{"target":{"identity":"pick:output"},"expires_at":i64::MAX,"session_id":"one"}}})));
+        let banner = state.banner("one").unwrap();
+        assert!(
+            banner.contains("capture_only · evidence_pending · evidence fixture_tested"),
+            "{banner}"
+        );
+        state.apply("one",Ok(json!({"data":{"health":{"supported":true},"grant":{"target":{"identity":"app:x"},"expires_at":i64::MAX}}})));
+        assert!(
+            state.capability.is_none(),
+            "version 1 reports render as before"
+        );
+        assert_eq!(
+            receipt_note(r#"{"outcome":"unknown","reason":"input_unavailable","cleanup":"uncertain","events":{"requested":2,"posted":1}}"#).as_deref(),
+            Some("unknown · reason input_unavailable · cleanup uncertain · 1/2 events posted")
+        );
+        assert_eq!(
+            receipt_note(r#"{"outcome":"posted","cleanup":"not_needed"}"#),
+            None
+        );
+        assert_eq!(receipt_note("not json"), None);
+    }
     #[test]
     fn authority_is_bound_to_session_and_uncertain_control_keeps_stop_visible() {
         let mut state = State::default();

@@ -6,6 +6,14 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- Computer use reports a platform-neutral capability report (schema version 2): a derived mode (`unsupported`, `capture_only`, `input_enabled`), stable reason codes, authority kind, honored selectors and the support evidence level, alongside the existing macOS fields. Receipts add platform, grant, target and frame references, a reason, cleanup state and timestamps; HTTP errors add a `reason` code. `cyber computer allow <session> --preview <id> --yes` confirms a printed review by its identifier.
+
+### Changed
+
+- A key chord that computer use refuses (for example Command+C under an application grant) is now refused with `key_chord_refused` before anything is recorded or sent, and the grant stays armed. Before, it was recorded, failed in the native adapter, settled as an unknown operation and stopped the grant. The set of allowed and refused chords on macOS is unchanged.
+
 ## [0.1.0-beta.2] - 2026-11-12
 
 The second pre-release, for macOS and Linux. Besides testing `cyber upgrade` from 0.1.0-beta.1, it adds:

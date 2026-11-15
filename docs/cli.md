@@ -845,7 +845,7 @@ cyber computer [OPTIONS] <COMMAND>
 
 - [`status`](#cyber-computer-status): Inspect native OS consent and the running binary; optionally a Session's grant
 - [`setup`](#cyber-computer-setup): Request macOS Screen Recording and Accessibility consent for the running server
-- [`allow`](#cyber-computer-allow): Review and arm one application window or an explicitly selected display
+- [`allow`](#cyber-computer-allow): Review and arm one application window or an explicitly selected display, or confirm a pending review by its identifier
 - [`stop`](#cyber-computer-stop): Immediately revoke native control; without a Session, revoke all host control
 
 ## `cyber computer status`
@@ -874,10 +874,10 @@ cyber computer setup [OPTIONS]
 
 ## `cyber computer allow`
 
-Review and arm one application window or an explicitly selected display
+Review and arm one application window or an explicitly selected display, or confirm a pending review by its identifier
 
 ```text
-cyber computer allow [OPTIONS] <SESSION>
+cyber computer allow [OPTIONS] <--app <APP>|--display <DISPLAY>|--window <WINDOW>|--pick <PICK>|--preview <PREVIEW>> <SESSION>
 ```
 
 **Arguments:**
@@ -888,6 +888,9 @@ cyber computer allow [OPTIONS] <SESSION>
 
 - `--app <APP>`: Bundle ID of the application (for example com.apple.TextEdit)
 - `--display <DISPLAY>`: Native display ID; 0 explicitly selects the main display.
+- `--window <WINDOW>`: Candidate token from an owner-only window listing (platforms that offer one)
+- `--pick <PICK>`: Let the platform picker choose a window or output (platforms that offer one) Values: `window`, `output`.
+- `--preview <PREVIEW>`: Confirm this pending review by its identifier; starts no new review or picker.
 - `--ttl <TTL>`: Lifetime in seconds (1–900); default 300.
 - `--yes`: Confirm this native scope after reviewing its details printed below.
 - `--acknowledge-unknown`: Acknowledge the reviewed unresolved native operations before rearming.

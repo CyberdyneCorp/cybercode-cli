@@ -1,6 +1,6 @@
 # Design: platform-neutral computer-use foundation
 
-Status: **decisions approved by the owner, 2026-11-15 (all recommended options).** Nothing here is implemented. This change defines public types and shared policy only. It adds no platform mechanism, and it keeps macOS behavior as shipped except where a decision below says otherwise and is marked **owner review**.
+Status: **decisions approved by the owner, 2026-11-15 (all recommended options).** Implemented on branch `design/computer-use-shared-schema` (PR #134). This change defines public types and shared policy only. It adds no platform mechanism, and it keeps macOS behavior as shipped except where a decision below says otherwise and is marked **owner review**.
 
 ## 1. Context
 
