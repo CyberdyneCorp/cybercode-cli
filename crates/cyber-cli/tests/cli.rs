@@ -1440,6 +1440,7 @@ fn doctor_reports_every_check_as_json() {
             "catalog",
             "credentials",
             "database",
+            "construction discards",
             "sandbox",
             "git",
             "rg",

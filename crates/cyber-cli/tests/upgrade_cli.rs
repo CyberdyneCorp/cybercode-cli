@@ -330,16 +330,18 @@ impl Release {
         ];
         if self.target.contains("windows") {
             let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-            let stored = zip::write::SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Stored);
+            let deflated = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated)
+                .compression_level(Some(1));
             for (name, body) in members {
-                zip.start_file(name, stored).unwrap();
+                zip.start_file(name, deflated).unwrap();
                 zip.write_all(body).unwrap();
             }
             return zip.finish().unwrap().into_inner();
         }
-        // Stored, not compressed: deflating a debug binary unoptimized takes half a minute.
-        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::none());
+        // Compressed at the fastest level: a debug binary stored uncompressed can exceed the
+        // upgrader's 512 MiB download cap. miniz_oxide is optimized in dev builds, so this is quick.
+        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         let mut tar = tar::Builder::new(gz);
         for (name, body) in members {
             let mut header = tar::Header::new_gnu();
