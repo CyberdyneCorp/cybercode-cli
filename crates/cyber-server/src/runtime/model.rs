@@ -480,6 +480,10 @@ pub struct SessionState {
     /// Delivered rules withdrawn so far, in marker order (`rule_withdrawal`).
     #[serde(skip)]
     pub(crate) rule_withdrawals: Vec<super::rule_withdrawal::RuleWithdrawal>,
+    /// System messages carrying hook `additional_context`, which inspection reports
+    /// as their own source.
+    #[serde(skip)]
+    pub(crate) hook_context_messages: BTreeSet<String>,
     /// Pull requests this Session is linked to (`session.pr.linked.1`).
     #[serde(skip)]
     pub(crate) pull_requests: BTreeSet<u64>,
@@ -798,6 +802,7 @@ impl SessionState {
         Self {
             loaded_tools: BTreeSet::new(),
             rule_withdrawals: Vec::new(),
+            hook_context_messages: BTreeSet::new(),
             pull_requests: BTreeSet::new(),
             notifications: Vec::new(),
             sent_files: BTreeMap::new(),
@@ -1494,6 +1499,9 @@ impl SessionState {
                     message_id: s.message_id.clone(),
                     rules: s.withdrawn_rules,
                 });
+        }
+        if s.reason == super::drain::HOOK_CONTEXT_REASON {
+            self.hook_context_messages.insert(s.message_id.clone());
         }
         self.push_entry(Entry::System {
             id: s.message_id,

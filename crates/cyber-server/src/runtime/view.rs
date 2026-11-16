@@ -75,9 +75,7 @@ pub fn messages(state: &SessionState, target: &Replay<'_>) -> Vec<Message> {
             Entry::System { text, epoch: e, .. } => {
                 // Context updates from replaced epochs are no longer projected.
                 if e.is_none() || *e == epoch {
-                    out.push(Message::user_text(format!(
-                        "<system-reminder>\n{text}\n</system-reminder>"
-                    )));
+                    out.push(system_message(text));
                 }
             }
             Entry::Assistant(a) => {
@@ -92,6 +90,11 @@ pub fn messages(state: &SessionState, target: &Replay<'_>) -> Vec<Message> {
         }
     }
     out
+}
+
+/// A Mid-Conversation System Message as the model receives it.
+pub(super) fn system_message(text: &str) -> Message {
+    Message::user_text(format!("<system-reminder>\n{text}\n</system-reminder>"))
 }
 
 /// `tool_loop` replays the answers after the latest user message and drops older

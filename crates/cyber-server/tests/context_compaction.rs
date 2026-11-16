@@ -1221,3 +1221,138 @@ async fn inspection_lists_delivered_rules_and_marks_revoked_approval_without_rea
         std::fs::set_permissions(rules.join(name), std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 }
+
+fn source_tokens(inspection: &serde_json::Value, list: &str, id: &str) -> Option<u64> {
+    inspection[list]
+        .as_array()?
+        .iter()
+        .find(|source| source["id"] == id)?["estimated_tokens"]
+        .as_u64()
+}
+
+/// `system-context` → Scope-aware rule inspection and loading: hook
+/// `additional_context` queued by a background handler is a pending update counted in
+/// the next-request estimate, then a `hook_context` source of its own once committed,
+/// and leaves the projection once compaction summarizes it. Its text is never returned.
+#[tokio::test]
+async fn inspection_reports_hook_context_as_pending_then_as_its_own_source() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            ("test/main", vec![text("first"), text("second")]),
+            ("test/summary", vec![text("summary")]),
+        ],
+        compaction: small_tail(),
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("begin")).await.unwrap();
+    h.settle(&id).await;
+    let hook_text = format!("[hook audit] HOOK_CONTEXT_SENTINEL {}", "x".repeat(400));
+    h.runtime
+        .queue_hook_context(&id, hook_text.clone())
+        .await
+        .unwrap();
+
+    let (state, pending) = h.runtime.inspect_session_context(&id).await.unwrap();
+    let pending = serde_json::to_value(pending).unwrap();
+    let without = serde_json::to_value(h.runtime.inspect_context(&state)).unwrap();
+    assert_eq!(pending["pending_hook_contexts"], 1);
+    let pending_tokens = pending["pending_hook_context_tokens"].as_u64().unwrap();
+    assert!(pending_tokens > 100, "{pending}");
+    assert_eq!(pending["compaction_pending"], false);
+    assert_eq!(
+        pending["next_request"]["estimated_input_tokens"]
+            .as_u64()
+            .unwrap(),
+        without["next_request"]["estimated_input_tokens"]
+            .as_u64()
+            .unwrap()
+            + pending_tokens
+    );
+    assert_eq!(source_tokens(&pending, "sources", "hook_context"), None);
+    assert!(!pending.to_string().contains("HOOK_CONTEXT_SENTINEL"));
+
+    h.runtime.admit(&id, admit("continue")).await.unwrap();
+    h.settle(&id).await;
+    let sent = &h.models.requests("test/main")[1];
+    assert!(transcript(sent).contains("HOOK_CONTEXT_SENTINEL"));
+    let (_, committed) = h.runtime.inspect_session_context(&id).await.unwrap();
+    let committed = serde_json::to_value(committed).unwrap();
+    assert_eq!(committed["pending_hook_contexts"], 0);
+    assert_eq!(committed["pending_hook_context_tokens"], 0);
+    let hook = source_tokens(&committed, "sources", "hook_context").unwrap();
+    assert_eq!(hook, pending_tokens);
+    assert_eq!(
+        committed["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|source| source["id"] == "hook_context")
+            .unwrap()["origin"],
+        "hook"
+    );
+    // The prepared request that carried it reports the same share.
+    assert_eq!(
+        source_tokens(
+            &committed["last_prepared_request"],
+            "sources",
+            "hook_context"
+        ),
+        Some(hook)
+    );
+    // Splitting hook context out of history leaves the stored total unchanged.
+    let history = source_tokens(&committed, "sources", "history").unwrap();
+    let total = committed["estimated_input_tokens"].as_u64().unwrap();
+    assert!(history + hook <= total, "{committed:#}");
+    assert!(!committed.to_string().contains("HOOK_CONTEXT_SENTINEL"));
+
+    h.runtime.compact(&id, None).await.unwrap();
+    let (_, compacted) = h.runtime.inspect_session_context(&id).await.unwrap();
+    let compacted = serde_json::to_value(compacted).unwrap();
+    assert_eq!(source_tokens(&compacted, "sources", "hook_context"), None);
+}
+
+/// A compaction requested while a turn runs is a pending update: inspection reports it
+/// and the next-request estimate states that the history it counts will be replaced.
+#[tokio::test]
+async fn inspection_reports_a_compaction_requested_during_a_turn() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![text("a"), tools(&[("c1", "write", "{}")]), text("b")],
+            ),
+            ("test/summary", vec![text("summary")]),
+        ],
+        compaction: small_tail(),
+        ..Setup::default()
+    });
+    h.tools.set("write", Behavior::Gated);
+    let id = h.session().await;
+    h.runtime.admit(&id, admit("one")).await.unwrap();
+    h.settle(&id).await;
+    h.runtime.admit(&id, admit("two")).await.unwrap();
+    h.tools.started.notified().await;
+    h.runtime.compact(&id, None).await.unwrap();
+    let (_, inspection) = h.runtime.inspect_session_context(&id).await.unwrap();
+    let inspection = serde_json::to_value(inspection).unwrap();
+    assert_eq!(inspection["compaction_pending"], true);
+    assert!(
+        inspection["next_request"]["assumptions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("compaction_pending")),
+        "{inspection:#}"
+    );
+    h.tools.release.notify_one();
+    h.settle(&id).await;
+    let (_, after) = h.runtime.inspect_session_context(&id).await.unwrap();
+    let after = serde_json::to_value(after).unwrap();
+    assert_eq!(after["compaction_pending"], false);
+    assert!(
+        !after["next_request"]["assumptions"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("compaction_pending"))
+    );
+}

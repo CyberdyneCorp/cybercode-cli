@@ -765,6 +765,18 @@ export type ContextInspection = {
   epoch_pending: boolean;
   queued_inputs: number;
   held_inputs: number;
+  /**
+   * Hook `additional_context` from background handlers, queued to be committed
+   * before the next request. Its text is never returned.
+   */
+  pending_hook_contexts: number;
+  /** Estimated tokens of the queued hook context; included in `next_request`. */
+  pending_hook_context_tokens: number;
+  /**
+   * A compaction was requested while the Session was running and applies at the
+   * next Safe Boundary.
+   */
+  compaction_pending: boolean;
   delivered_rule_count: number;
   /**
    * Rules delivered in this Context Epoch, in delivery order, with their current
@@ -1387,7 +1399,7 @@ export type ErrorBody = {
 };
 
 /** Why a next-request estimate can differ from the request actually sent. */
-export type EstimateAssumption = "tool_schemas_from_last_request" | "model_changed" | "epoch_rebuild_pending" | "sources_changed_on_disk" | "excludes_turn_instructions" | "delivered_rules_changed";
+export type EstimateAssumption = "tool_schemas_from_last_request" | "model_changed" | "epoch_rebuild_pending" | "sources_changed_on_disk" | "excludes_turn_instructions" | "delivered_rules_changed" | "compaction_pending";
 
 /** `session.goal.evaluated.1`. */
 export type Evaluated = {
