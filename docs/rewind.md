@@ -134,7 +134,12 @@ runtime and checks that subtree stop reports retained unknown evidence, keeps
 admission closed and does not replay restoration. This is not a native
 partial-replacement crash test. The file-copy suite additionally kills a real
 worker between native file replacements, then verifies retained preimages, an incomplete journal and refusal
-to replay. Broader cut-point/metadata/platform acceptance and managed resolution
+to replay. Real-binary cases also kill the service at debug-only fixture points:
+after origin and before intent publication, after the intent and before staging,
+directly after a progress record (for an ordinary rewind, a staged undo beside an
+inactive branch, and inside a keep/rollback), after filesystem completion with
+displaced images, after the paired recovery writer commit, and after a journal
+acknowledgement whose reply was never sent. Broader cut-point/metadata/platform acceptance and managed resolution
 remain required. Git restore has not gained this new journal.
 
 ## Non-Git storage and retained restore intents
@@ -441,6 +446,23 @@ acknowledgement metadata; it does not reinstall source files or change the
 conversation. Confirmation/reconciliation exits 1 if the returned state does not
 establish the requested acknowledgement. Lookup itself can return an unresolved
 state with exit 0 because the read succeeded. Both commands support `--format json`.
+
+If the keep/rollback itself is interrupted (for example the service dies between
+its file exchanges), its resolution journal (`restore_resolution_...`) is listed as
+a separate journal next to the original. The interrupted request stays `pending`;
+repeating it never resumes or replays it. Review and confirm keep or rollback for
+the resolution journal first. The interrupted request then reports
+`resolved_by_another_request`, and the original journal still needs its own review
+and a new request ID before new input is admitted:
+
+```sh
+cyber sessions recovery ses_example restore_resolution_example --action keep
+cyber sessions recovery ses_example restore_resolution_example --action keep \
+  --confirm <fingerprint> --request-id resolution-keep
+cyber sessions recovery ses_example restore_example --action keep
+cyber sessions recovery ses_example restore_example --action keep \
+  --confirm <fingerprint> --request-id original-keep
+```
 
 These commands expose the implemented managed file-copy recovery path on admitted
 Linux/macOS hosts. Ordinary managed Git source recovery remains disabled by default
