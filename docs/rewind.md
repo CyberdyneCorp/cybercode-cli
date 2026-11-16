@@ -443,7 +443,11 @@ cyber sessions recovery-request ses_example recovery-one --acknowledge
 
 This verifies the exact retained worker/checkout receipts and writes only native
 acknowledgement metadata; it does not reinstall source files or change the
-conversation. Confirmation/reconciliation exits 1 if the returned state does not
+conversation. Metadata that is already acknowledged is left untouched, so repeating
+the command writes nothing. Cleanup after `keep` deletes a retained private image
+only when it is the restore's own recorded original or target; any other inode
+(for example an owner file that raced the interrupted restore) refuses cleanup and
+keeps its bytes. Confirmation/reconciliation exits 1 if the returned state does not
 establish the requested acknowledgement. Lookup itself can return an unresolved
 state with exit 0 because the read succeeded. Both commands support `--format json`.
 
