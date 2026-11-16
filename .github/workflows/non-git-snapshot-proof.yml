@@ -219,6 +219,16 @@ jobs:
           set -euo pipefail
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli zero_payload:: -- --nocapture --test-threads=1 2>&1 | tee zero-payload-retirement-proof.log
+      - name: Restore and recovery process-death cuts
+        if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
+        env:
+          TMPDIR: /tmp/c${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$TMPDIR"
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli restore_cuts:: -- --nocapture --test-threads=2 2>&1 | tee recovery-cut-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli ordinary_cuts:: -- --nocapture --test-threads=1 2>&1 | tee -a recovery-cut-proof.log
       - name: JSONL driver and atomic last-message regressions
         if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:
@@ -295,6 +305,7 @@ jobs:
             preparation-retirement-proof.log
             paired-retirement-proof.log
             zero-payload-retirement-proof.log
+            recovery-cut-proof.log
             jsonl-driver-proof.log
             structured-result-proof.log
             instruction-limits-proof.log

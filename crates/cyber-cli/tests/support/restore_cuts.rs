@@ -21,8 +21,22 @@ impl Fixture {
         let model = scripted_model::ScriptedModel::start(reply);
         let env = Env::new(&model);
         std::fs::remove_dir_all(env.directory.join(".git")).unwrap();
+        Self::capture(model, env, None)
+    }
+    /// The same files tracked in a managed Git worktree (`native-git-acceptance`).
+    #[cfg(feature = "native-git-acceptance")]
+    fn managed() -> Self {
+        let model = scripted_model::ScriptedModel::start(reply);
+        let (env, session) = managed_git_fixture(&model);
         write_files(&env, "before");
-        let session = env.exec(None, "before snapshot");
+        git_fixture(&env.directory, &["add", "--all"]);
+        Self::capture(model, env, Some(session))
+    }
+    fn capture(model: scripted_model::ScriptedModel, env: Env, session: Option<String>) -> Self {
+        if session.is_none() {
+            write_files(&env, "before");
+        }
+        let session = env.exec(session.as_deref(), "before snapshot");
         let first = env.user_ids(&session)[0].clone();
         write_files(&env, "after");
         env.exec(Some(&session), "after snapshot");
@@ -328,8 +342,7 @@ fn first_progress(f: &Fixture) -> (String, String) {
     (journal, applied[0].clone())
 }
 
-fn progress_cut_resolution(action: &str) {
-    let f = Fixture::new();
+fn progress_cut_resolution(f: Fixture, action: &str) {
     let messages = f.env.messages(&f.session);
     let (journal, applied) = kill_after_first_progress(&f);
     // A fresh service: the failed restore did not move the transcript.
@@ -353,16 +366,15 @@ fn progress_cut_resolution(action: &str) {
 
 #[test]
 fn restore_killed_after_a_progress_record_is_kept_without_replay() {
-    progress_cut_resolution("keep");
+    progress_cut_resolution(Fixture::new(), "keep");
 }
 
 #[test]
 fn restore_killed_after_a_progress_record_is_rolled_back_without_replay() {
-    progress_cut_resolution("rollback");
+    progress_cut_resolution(Fixture::new(), "rollback");
 }
 
-fn completion_cut_resolution(action: &str) {
-    let f = Fixture::new();
+fn completion_cut_resolution(f: Fixture, action: &str) {
     let messages = f.env.messages(&f.session);
     f.kill_rewind_at("copy-restore-filesystem-completed");
     let journal = assert_completed_without_writer(&f, &messages);
@@ -394,12 +406,12 @@ fn assert_completed_without_writer(f: &Fixture, messages: &[Value]) -> String {
 
 #[test]
 fn restore_killed_after_filesystem_completion_with_payloads_is_kept() {
-    completion_cut_resolution("keep");
+    completion_cut_resolution(Fixture::new(), "keep");
 }
 
 #[test]
 fn restore_killed_after_filesystem_completion_with_payloads_is_rolled_back() {
-    completion_cut_resolution("rollback");
+    completion_cut_resolution(Fixture::new(), "rollback");
 }
 
 /// The paired recovery commit is durable when the service dies; neither journal is
@@ -407,7 +419,10 @@ fn restore_killed_after_filesystem_completion_with_payloads_is_rolled_back() {
 /// explicit acknowledgement publishes only journal metadata.
 #[test]
 fn paired_recovery_killed_after_writer_commit_reconciles_without_replay() {
-    let f = Fixture::new();
+    paired_case(Fixture::new());
+}
+
+fn paired_case(f: Fixture) {
     let messages = f.env.messages(&f.session);
     let (journal, _) = kill_after_first_progress(&f);
     let request_id = "paired-writer-cut";
@@ -612,7 +627,10 @@ fn restore_killed_after_intent_before_staging_is_cancelled_without_source_effect
 /// then can the original journal be settled by a new reviewed request.
 #[test]
 fn interrupted_resolution_is_retained_and_resolved_as_independent_evidence() {
-    let f = Fixture::new();
+    interrupted_case(Fixture::new());
+}
+
+fn interrupted_case(f: Fixture) {
     let messages = f.env.messages(&f.session);
     let (journal, applied) = kill_after_first_progress(&f);
     let request = f.request(&journal, "rollback", "interrupted-resolution");
@@ -680,8 +698,7 @@ fn assert_not_redispatched(f: &Fixture, request: &Value, applied: &str) {
 /// An interrupted staged code undo in a Session that also has an inactive branch:
 /// keep or rollback settles the native journal without staging, committing or
 /// discarding conversation state, and the branch stays exportable.
-fn staged_undo_partial(action: &str) {
-    let f = Fixture::new();
+fn staged_undo_partial(f: Fixture, action: &str) {
     let branch = inactive_branch(&f);
     let messages = f.env.messages(&f.session);
     let selection = reviewed_selection(&f.env, &f.first, "code", "stage");
@@ -745,12 +762,12 @@ fn assert_branch_kept(f: &Fixture, message: &str) {
 
 #[test]
 fn interrupted_staged_undo_with_an_inactive_branch_is_kept() {
-    staged_undo_partial("keep");
+    staged_undo_partial(Fixture::new(), "keep");
 }
 
 #[test]
 fn interrupted_staged_undo_with_an_inactive_branch_is_rolled_back() {
-    staged_undo_partial("rollback");
+    staged_undo_partial(Fixture::new(), "rollback");
 }
 
 /// The private journal namespace is replaced (by an equal-content copy, then by a
@@ -758,7 +775,10 @@ fn interrupted_staged_undo_with_an_inactive_branch_is_rolled_back() {
 /// source effect, and the reviewed recovery succeeds once the original is back.
 #[test]
 fn replaced_private_journal_namespace_refuses_recovery_without_effects() {
-    let f = Fixture::new();
+    namespace_swap(Fixture::new());
+}
+
+fn namespace_swap(f: Fixture) {
     let messages = f.env.messages(&f.session);
     let (journal, applied) = kill_after_first_progress(&f);
     let request = f.request(&journal, "rollback", "namespace-swap");
@@ -795,4 +815,96 @@ fn replaced_private_journal_namespace_refuses_recovery_without_effects() {
     f.confirm_acknowledged(&request);
     f.assert_uniform("after");
     assert_eq!(f.env.messages(&f.session), messages);
+}
+
+/// A corrupt, then missing, retained `intent.json` refuses listing, review and an
+/// already reviewed confirmation without source effects; with the exact record back
+/// in place the reviewed request settles normally.
+fn damaged_intent(f: Fixture) {
+    let messages = f.env.messages(&f.session);
+    let (journal, applied) = kill_after_first_progress(&f);
+    let request = f.request(&journal, "rollback", "damaged-intent");
+    let intent = f
+        .namespace()
+        .join("journals")
+        .join(&journal)
+        .join("intent.json");
+    let bytes = std::fs::read(&intent).unwrap();
+    let moved = intent.with_file_name("moved-intent.json");
+    let refused = |reason: &str| {
+        for args in [
+            vec!["sessions", "recovery", &f.session, "--format", "json"],
+            vec![
+                "sessions", "recovery", &f.session, &journal, "--action", "rollback", "--format",
+                "json",
+            ],
+        ] {
+            let stderr = exits(&f.env.cyber(&args), 2);
+            assert!(stderr.contains(reason), "{stderr}");
+        }
+        assert!(
+            !recovery_confirm_cli(&f.env, &f.session, &request)
+                .status
+                .success()
+        );
+        assert_eq!(f.env.file(&applied).as_deref(), Some("before"));
+        assert_eq!(f.journals(), vec![journal.clone()]);
+    };
+    std::fs::write(&intent, b"{not json").unwrap();
+    refused("key must be a string");
+    std::fs::write(&intent, &bytes).unwrap();
+    std::fs::rename(&intent, &moved).unwrap();
+    refused("No such file or directory");
+    std::fs::rename(&moved, &intent).unwrap();
+    f.confirm_acknowledged(&request);
+    f.assert_uniform("after");
+    assert_eq!(f.env.messages(&f.session), messages);
+}
+
+#[test]
+fn damaged_retained_intent_refuses_recovery_without_effects() {
+    damaged_intent(Fixture::new());
+}
+
+/// Managed Git (`native-git-acceptance`) equivalents of the file-copy cuts above.
+#[cfg(feature = "native-git-acceptance")]
+mod managed {
+    use super::*;
+
+    #[test]
+    fn git_restore_killed_after_a_progress_record_is_kept() {
+        progress_cut_resolution(Fixture::managed(), "keep");
+    }
+    #[test]
+    fn git_restore_killed_after_a_progress_record_is_rolled_back() {
+        progress_cut_resolution(Fixture::managed(), "rollback");
+    }
+    #[test]
+    fn git_interrupted_staged_undo_with_an_inactive_branch_is_kept() {
+        staged_undo_partial(Fixture::managed(), "keep");
+    }
+    #[test]
+    fn git_interrupted_staged_undo_with_an_inactive_branch_is_rolled_back() {
+        staged_undo_partial(Fixture::managed(), "rollback");
+    }
+    #[test]
+    fn git_replaced_private_journal_namespace_refuses_recovery() {
+        namespace_swap(Fixture::managed());
+    }
+    #[test]
+    fn git_restore_killed_after_filesystem_completion_is_rolled_back() {
+        completion_cut_resolution(Fixture::managed(), "rollback");
+    }
+    #[test]
+    fn git_paired_recovery_killed_after_writer_commit_reconciles() {
+        paired_case(Fixture::managed());
+    }
+    #[test]
+    fn git_interrupted_resolution_is_retained_as_independent_evidence() {
+        interrupted_case(Fixture::managed());
+    }
+    #[test]
+    fn git_damaged_retained_intent_refuses_recovery() {
+        damaged_intent(Fixture::managed());
+    }
 }

@@ -4336,3 +4336,29 @@ edit survives; a fresh owner completes the identical frozen plan once and a seco
 reclaims nothing; intents (and `preparation.json`) keep their bytes; a fresh service
 returns the same receipt through lookup/acknowledgement, with no transcript movement
 or inference. No defect was found.
+
+### Managed Git equivalents and damaged intents (2026-11-16, local)
+
+`restore_cuts` now builds the same four-file fixture in a managed Git worktree
+(`Fixture::managed`, tracked files, `native-git-acceptance`) and runs the file-copy
+scenarios unchanged there (`restore_cuts::managed::git_*`): keep and rollback after a
+kill directly after a progress record, a staged undo beside an inactive branch killed
+mid-restore (keep and rollback), private journal namespace replacement by a copy and
+by a symlink alias, a damaged retained intent, rollback after filesystem completion
+with displaced images, the paired writer-commit cut and an interrupted resolution
+retained as independent evidence. All refusals and outcomes match the file-copy
+backend.
+
+`damaged_retained_intent_refuses_recovery_without_effects` (both backends): after a
+partial restore and a reviewed rollback, `intent.json` is overwritten with invalid
+JSON and then moved away. Listing, review and the already reviewed confirmation all
+refuse (exit 2: the parse error, then `No such file or directory`) with no source
+effect and no resolution journal; with the exact record back in place (same inode)
+the reviewed request settles. Review finding, not changed: one damaged journal makes
+the whole Session listing fail closed, so its sibling journals cannot be listed until
+the record is repaired.
+
+CI: `non-git-snapshot-proof.yml` gains a "Restore and recovery process-death cuts"
+step (`restore_cuts::` and `ordinary_cuts::` with `native-git-acceptance`) on
+ubuntu-24.04, ubuntu-24.04-arm, macos-15 and macos-15-intel; its log is retained as
+`recovery-cut-proof.log`. Platform results are claimed only from those runs.
