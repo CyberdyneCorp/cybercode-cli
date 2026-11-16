@@ -286,6 +286,57 @@ async fn errors_are_tagged() {
     );
 }
 
+/// `snapshots-checkpoints` → Owner-only discard of construction evidence: listing is
+/// read-only; review and confirmation refuse every caller that presents another
+/// identity than the local owner (`403`) before any work, and a lookup never acts.
+#[tokio::test]
+async fn construction_discard_is_owner_only_and_listing_is_read_only() {
+    let h = Harness::new(Setup::default());
+    let api = Api::new(&h);
+    let (_, created) = api.post("/sessions", json!({})).await;
+    let id = created["data"]["id"].as_str().unwrap().to_string();
+    let base = format!("/sessions/{id}/rewind/constructions");
+    let (status, listing) = api.get(&base).await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    assert_eq!(listing["data"], json!({"stages": [], "pending": []}));
+    let stage = format!("preparing_6_op_one_{}", "0".repeat(26));
+    let review = json!({"stage": stage});
+    let confirm = json!({"stage": stage, "confirmation": "a".repeat(64), "request_id": "one"});
+    for header in [
+        ("authorization", "Bearer relay-token"),
+        ("x-cyber-attach", "att_one"),
+        ("origin", "http://localhost:5173"),
+        ("sec-fetch-mode", "cors"),
+        ("x-cyber-client", "mcp:model"),
+    ] {
+        for (path, body) in [("review", &review), ("confirm", &confirm)] {
+            let (status, body, _) = api
+                .call(
+                    Method::POST,
+                    &format!("{base}/discard/{path}"),
+                    Some(body.clone()),
+                    &[header],
+                )
+                .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{header:?} {path}: {body}");
+            assert_eq!(body["_tag"], "ForbiddenError");
+        }
+    }
+    // The owner reaches the runtime, which finds no such stage.
+    let (status, body) = api.post(&format!("{base}/discard/review"), review).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let (status, body) = api
+        .post(
+            &format!("{base}/discard/confirm"),
+            json!({"stage": stage, "confirmation": "not-a-fingerprint", "request_id": "one"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, body) = api.get(&format!("{base}/discard/requests/one")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["_tag"], "ConstructionDiscardNotFoundError");
+}
+
 #[tokio::test]
 async fn renaming_cleans_bounds_and_requires_a_title() {
     let h = Harness::new(Setup::default());
