@@ -52,6 +52,7 @@ pub struct Pending {
     pub size: u64,
 }
 
+#[cfg(unix)]
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
@@ -74,6 +75,7 @@ pub fn valid_key(key: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+#[cfg(unix)]
 fn require_component(name: &str) -> io::Result<()> {
     if valid_component(name) {
         Ok(())
