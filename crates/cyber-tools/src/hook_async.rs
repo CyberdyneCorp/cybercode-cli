@@ -175,7 +175,7 @@ impl BuiltinHost {
         let report = match result {
             Ok(report) => report,
             Err(error) => {
-                runtime.hook_notice(&event.identity().session_id, &definition.digest, &error);
+                crate::tool_hooks::notice(runtime, event, &definition.digest, &error);
                 return;
             }
         };
@@ -185,7 +185,7 @@ impl BuiltinHost {
             .as_deref()
             .unwrap_or(&definition.digest);
         if let Some(diagnostic) = &report.diagnostic {
-            runtime.hook_notice(&event.identity().session_id, &definition.digest, diagnostic);
+            crate::tool_hooks::notice(runtime, event, &definition.digest, diagnostic);
         }
         let HookDecision {
             additional_context, ..

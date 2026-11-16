@@ -3455,11 +3455,12 @@ async fn hook_notices_follow_session_and_location_without_durable_replay() {
     );
 }
 
-/// `LiveEvent::HookReceipt` is internal to the telemetry exporter: the Location, all
-/// Locations and Session streams never forward it, while the hook notice after it still
-/// arrives.
+/// `LiveEvent::HookReceipt` reaches a client only on an instance stream that asks for it
+/// with `include=hook_receipts`: the default Location, all Locations and Session streams
+/// never forward it, while the hook notice after it still arrives. The opted-in stream
+/// carries the admitted and the settled summary, before the notice and without IO.
 #[tokio::test]
-async fn event_stream_never_forwards_hook_receipts() {
+async fn event_stream_forwards_hook_receipts_only_when_asked() {
     use cyber_core::{
         config::{self, LoadRequest},
         hooks::{HookCatalog, HookEvent, HookIdentity, HookLocation},
@@ -3529,6 +3530,14 @@ async fn event_stream_never_forwards_hook_receipts() {
     for stream in streams.iter_mut().take(2) {
         read_sse_until(stream, "server.connected").await;
     }
+    let mut opted = client
+        .get(format!("{base}/event?scope=all&include=hook_receipts"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap()
+        .bytes_stream();
+    read_sse_until(&mut opted, "server.connected").await;
     let mut live = h.runtime.subscribe();
     h.runtime
         .record_skipped_hook(&event, &definition, "untrusted")
@@ -3549,6 +3558,32 @@ async fn event_stream_never_forwards_hook_receipts() {
             "{buffer}"
         );
     }
+    let buffer = read_sse_until(&mut opted, "after the receipts").await;
+    let receipts: Vec<Value> = buffer
+        .split("\n\n")
+        .filter(|event| event.contains("event: session.hook.receipt"))
+        .filter_map(|event| event.lines().find_map(|line| line.strip_prefix("data: ")))
+        .map(|data| serde_json::from_str(data).unwrap())
+        .collect();
+    assert_eq!(receipts.len(), 2, "{buffer}");
+    let notice = buffer.find("after the receipts").unwrap();
+    assert!(
+        buffer.rfind("session.hook.receipt").unwrap() < notice,
+        "{buffer}"
+    );
+    let settled = &receipts[1]["data"];
+    assert_eq!(settled["session_id"], id.as_str(), "{buffer}");
+    assert_eq!(settled["receipt"]["id"], receipt.as_str(), "{buffer}");
+    assert_eq!(settled["receipt"]["hook_id"], "guard", "{buffer}");
+    assert_eq!(settled["receipt"]["outcome"], "skipped", "{buffer}");
+    assert!(
+        receipts[0]["data"]["receipt"]["outcome"].is_null(),
+        "{buffer}"
+    );
+    assert!(
+        receipts[1]["durable"].is_null() && !buffer.contains("\"io\""),
+        "{buffer}"
+    );
 }
 
 #[tokio::test]
