@@ -208,3 +208,45 @@ fn cancelled_preparation_payload_cleanup_killed_mid_deletion_resumes_frozen_plan
     );
     f.assert_quiet(&messages, requests);
 }
+
+/// Regression: an unowned inode in an original journal slot (the outcome of an owner
+/// write racing the exchange) is reviewed as foreign and kept; payload cleanup must
+/// refuse to unlink it rather than trust the keep outcome's observation.
+#[test]
+fn kept_recovery_cleanup_never_unlinks_an_unowned_slot_inode() {
+    let f = Fixture::new();
+    let (journal, applied) = kill_after_first_progress(&f);
+    let index = if applied == name(3) { 2 } else { 3 };
+    let directory = f.namespace().join("journals").join(&journal);
+    let slot = directory.join(format!("stage_{index}"));
+    let foreign = directory.join("owner-latest");
+    std::fs::write(&foreign, "owner latest bytes").unwrap();
+    std::fs::rename(&foreign, &slot).unwrap();
+    let request = f.request(&journal, "keep", "unowned-slot");
+    let result = f.confirm_acknowledged(&request);
+    let receipt: SnapshotRecoveryReceipt =
+        serde_json::from_value(result["receipt"].clone()).unwrap();
+    let owner = receipt
+        .checkout
+        .as_ref()
+        .unwrap()
+        .resolution_origin
+        .activity_id
+        .clone();
+    exits(&f.env.cyber(&["service", "stop"]), 0);
+    let maintenance = reclamation_support::Maintenance::open(&f.home());
+    maintenance.age(owner);
+    let refused = maintenance.reclaim(&f.env.directory);
+    assert!(refused.is_err(), "unowned slot was planned: {refused:?}");
+    assert_eq!(
+        std::fs::read_to_string(&slot).unwrap(),
+        "owner latest bytes"
+    );
+    assert!(
+        maintenance
+            .policy
+            .record(&Receipt::Recovery(receipt))
+            .unwrap()
+            .is_none()
+    );
+}

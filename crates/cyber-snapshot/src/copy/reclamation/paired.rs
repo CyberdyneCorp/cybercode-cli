@@ -262,6 +262,11 @@ fn original_payloads(
         parent.changes.len(),
         parent.updates.as_ref(),
     )?;
+    // A keep outcome only observed the slot; ownership is the restore's own record.
+    let ownership = parent
+        .ownership
+        .as_ref()
+        .ok_or("Missing original payload ownership")?;
     let mut files = Vec::new();
     let planned = planned(frozen, owner);
     for (index, slots) in outcome.files.iter().enumerate() {
@@ -278,6 +283,11 @@ fn original_payloads(
             return Err("Original recovery private slot differs from acknowledged outcome".into());
         }
         if let Some(file) = file {
+            if !ownership.owns_slot(index, &file.identity) {
+                return Err(
+                    "Original recovery private slot holds an inode the restore never owned".into(),
+                );
+            }
             files.push(file);
         }
     }
