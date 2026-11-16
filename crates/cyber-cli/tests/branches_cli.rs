@@ -22,6 +22,9 @@ mod ordinary_cuts;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "support/reclamation.rs"]
 mod reclamation_support;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "support/restore_cuts.rs"]
+mod restore_cuts;
 #[path = "../../cyber-app/tests/support/scripted_model.rs"]
 mod scripted_model;
 #[cfg(any(target_os = "macos", target_os = "linux"))]

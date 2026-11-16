@@ -446,6 +446,8 @@ impl Store {
             .transpose()
             .map_err(RestoreError::Failed)?;
         journal.origin = origin;
+        // Fixture point: the origin is published; its journal has no intent yet.
+        cyber_core::process_cut::pause("copy-restore-origin-published");
 
         let construction = if worker.is_some() {
             Some(
@@ -456,6 +458,8 @@ impl Store {
             Self::record(&dir, journal).map_err(RestoreError::Failed)?;
             None
         };
+        // Fixture point: the intent is published; no target image is staged yet.
+        cyber_core::process_cut::pause("copy-restore-intent-published");
         let preimages = self
             .resolution_preimages(journal.resolution.as_ref())
             .map_err(RestoreError::Failed)?;
@@ -554,6 +558,8 @@ impl Store {
             }
             journal.applied.push(journal.changes[i].path.clone());
             Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+            // Fixture point: one exchange and its progress record are durable.
+            cyber_core::process_cut::pause("copy-restore-progress-recorded");
         }
         drop(preimages);
         self.verify_root().map_err(RestoreError::Failed)?;
@@ -561,6 +567,8 @@ impl Store {
             .map_err(RestoreError::Failed)?;
         journal.completed = true;
         Self::record(&dir, journal).map_err(RestoreError::Failed)?;
+        // Fixture point: filesystem completion is durable; no writer commit yet.
+        cyber_core::process_cut::pause("copy-restore-filesystem-completed");
         Ok(journal.applied.clone())
     }
 

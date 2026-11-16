@@ -621,9 +621,13 @@ impl SnapshotCompletion {
         if let Some(original) = &mut self.worker._original {
             original.claims = claims.original;
         }
+        // Fixture point: the owner pair committed; the native journals are unacknowledged.
+        super::process_cut::pause("recovery-pair-writer-commit");
         self.native.guard.acknowledge(self.worker.scope.snapshot_origin()).map_err(|error| RuntimeError::Conflict(format!(
             "Recovery runtime acknowledgement committed; native journal acknowledgement requires reconciliation: {error}"
         )))?;
+        // Fixture point: the native journals are acknowledged; no reply was sent.
+        super::process_cut::pause("recovery-journal-acknowledged");
         Ok(receipt)
     }
     pub(crate) fn commit(
@@ -681,7 +685,10 @@ impl SnapshotCompletion {
             .acknowledge(self.worker.scope.snapshot_origin())
             .map_err(|error| RuntimeError::Conflict(format!(
                 "Snapshot runtime acknowledgement committed; native journal acknowledgement requires reconciliation: {error}"
-            )))
+            )))?;
+        // Fixture point: the native journal is acknowledged; no reply was sent.
+        super::process_cut::pause("ordinary-restore-journal-acknowledged");
+        Ok(())
     }
 }
 
