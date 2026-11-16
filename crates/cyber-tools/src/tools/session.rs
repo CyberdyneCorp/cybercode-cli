@@ -243,9 +243,11 @@ async fn ask(ctx: &Ctx<'_>, questions: Vec<Question>) -> Result<Vec<Vec<String>>
             .notification_hooks(ctx.inv, "question", message, ctx.cancel.clone()),
     )
     .await;
+    // As for permissions, a delivered reply wins over a later cancellation.
     let reply = tokio::select! {
-        _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted),
+        biased;
         r = ctx.inv.asker.question(questions) => r,
+        _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted),
     };
     match reply {
         QuestionReply::Answers { answers } => Ok(answers),
