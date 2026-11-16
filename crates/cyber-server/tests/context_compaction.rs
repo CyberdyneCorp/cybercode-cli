@@ -1356,3 +1356,62 @@ async fn inspection_reports_a_compaction_requested_during_a_turn() {
             .contains(&serde_json::json!("compaction_pending"))
     );
 }
+
+/// `system-context` → Inspection of an untrusted source: project instruction files and
+/// imports refused because they resolve outside the project are listed as withheld
+/// (`outside_project`), without their text reaching the model or the inspection.
+#[cfg(unix)]
+#[tokio::test]
+async fn inspection_reports_instruction_files_refused_outside_the_project() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("first")])],
+        ..Setup::default()
+    });
+    let outside = h.dir.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("linked.md"), "OUTSIDE_LINKED_SENTINEL").unwrap();
+    std::fs::write(outside.join("imported.md"), "OUTSIDE_IMPORTED_SENTINEL").unwrap();
+    std::os::unix::fs::symlink(outside.join("linked.md"), h.repo.join("CYBER.md")).unwrap();
+    std::fs::write(
+        h.repo.join("AGENTS.md"),
+        format!("agents\n@{}", outside.join("imported.md").display()),
+    )
+    .unwrap();
+    let request = cyber_server::runtime::CreateSession {
+        directory: h.repo.canonicalize().unwrap().display().to_string(),
+        model: "test/main".into(),
+        ..Default::default()
+    };
+    let id = h.runtime.create_session(request).await.unwrap().id;
+    h.runtime.admit(&id, admit("begin")).await.unwrap();
+    h.settle(&id).await;
+    let sent = transcript(&h.models.requests("test/main")[0]);
+    let system = h.models.requests("test/main")[0].system.join("\n");
+    for text in [&sent, &system] {
+        assert!(!text.contains("OUTSIDE_LINKED_SENTINEL"));
+        assert!(!text.contains("OUTSIDE_IMPORTED_SENTINEL"));
+    }
+    assert!(system.contains("agents"));
+    let (_, inspection) = h.runtime.inspect_session_context(&id).await.unwrap();
+    let inspection = serde_json::to_value(inspection).unwrap();
+    let entries: Vec<_> = inspection["withheld_sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            (
+                entry["path"].as_str().unwrap().to_owned(),
+                entry["reason"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let linked = h.repo.canonicalize().unwrap().join("CYBER.md");
+    let imported = outside.canonicalize().unwrap().join("imported.md");
+    for path in [linked, imported] {
+        assert!(
+            entries.contains(&(path.display().to_string(), "outside_project".into())),
+            "{inspection:#}"
+        );
+    }
+    assert!(!inspection.to_string().contains("SENTINEL"));
+}

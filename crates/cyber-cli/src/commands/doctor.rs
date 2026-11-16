@@ -169,7 +169,7 @@ fn instructions(ctx: &Context, config: Option<&cyber_core::config::Resolved>) ->
 }
 
 /// Baseline files, path-scoped rule definitions discovered for later attachment, and
-/// withheld rule definitions grouped by reason. A loader warning that only repeats a
+/// withheld rule definitions and instruction files grouped by reason. A loader warning that only repeats a
 /// withheld definition is not listed twice.
 fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions) -> Check {
     let files: Vec<String> = loaded
@@ -200,10 +200,7 @@ fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions
         detail.push_str(&format!("; withheld ({reason}): {}", paths.join(", ")));
     }
     if withheld.omitted > 0 {
-        detail.push_str(&format!(
-            "; {} more withheld rule definitions",
-            withheld.omitted
-        ));
+        detail.push_str(&format!("; {} more withheld definitions", withheld.omitted));
     }
     let warnings: Vec<&String> = loaded
         .warnings
@@ -212,7 +209,7 @@ fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions
             !withheld
                 .entries
                 .iter()
-                .any(|entry| warning.starts_with(&format!("{}: ", entry.path)))
+                .any(|entry| repeats(warning, &entry.path))
         })
         .collect();
     for warning in &warnings {
@@ -224,6 +221,16 @@ fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions
         Status::Warn
     };
     check("instructions", status, detail)
+}
+
+/// The warning names `path` as its subject (`<path>: ...` or `<path> resolves ...`),
+/// so it only repeats that withheld definition.
+fn repeats(warning: &str, path: &str) -> bool {
+    warning.strip_prefix(path).is_some_and(|rest| {
+        rest.starts_with(": ")
+            || rest.starts_with(" resolves ")
+            || rest.starts_with(" is not allowed ")
+    })
 }
 
 fn lsp_checks(ctx: &Context, config: &Value) -> Vec<Check> {

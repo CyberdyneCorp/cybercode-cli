@@ -59,6 +59,8 @@ pub enum WithheldReason {
     CompatDisabled,
     /// Rule discovery reached its file or byte bound before it.
     BoundExceeded,
+    /// A project instruction file or import resolves outside the project.
+    OutsideProject,
 }
 
 impl WithheldReason {
@@ -70,6 +72,7 @@ impl WithheldReason {
             Self::InvalidFrontmatter => "invalid_frontmatter",
             Self::CompatDisabled => "compat_disabled",
             Self::BoundExceeded => "bound_exceeded",
+            Self::OutsideProject => "outside_project",
         }
     }
 }

@@ -5887,7 +5887,7 @@ export type WithheldContextSource = {
 };
 
 /** Why a definition that applies to the Location was left out of context. */
-export type WithheldReason = "trust_held" | "read_denied" | "invalid_frontmatter" | "compat_disabled" | "bound_exceeded";
+export type WithheldReason = "trust_held" | "read_denied" | "invalid_frontmatter" | "compat_disabled" | "bound_exceeded" | "outside_project";
 
 /** A definition left out of context, without its content or size. */
 export type WithheldSource = {

@@ -10476,6 +10476,11 @@
             "type": "string",
             "const": "bound_exceeded",
             "description": "Rule discovery reached its file or byte bound before it."
+          },
+          {
+            "type": "string",
+            "const": "outside_project",
+            "description": "A project instruction file or import resolves outside the project."
           }
         ],
         "description": "Why a definition that applies to the Location was left out of context."
