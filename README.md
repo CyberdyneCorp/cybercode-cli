@@ -32,10 +32,10 @@ Examples below use the built binary. If you installed it on your PATH, use `cybe
 
 ## Install a release
 
-**No release has been published yet**, so the install script below does not work until the first one; build from source as in the [Quickstart](#quickstart) meanwhile. Tagged releases publish signed archives for macOS and Linux (glibc and musl) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary. Windows builds are not released yet (the Windows sandbox is still partial); build from source on Windows.
+Pre-releases are published on the beta channel: the newest is [`v0.1.0-beta.2`](https://github.com/CyberdyneCorp/cybercode-cli/releases/tag/v0.1.0-beta.2). There is no stable release yet, so `releases/latest/download/install.sh` does not resolve; install from the beta channel below. Releases publish signed archives for macOS and Linux (glibc and musl) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary. Windows builds are not released yet (the Windows sandbox is still partial); build from source on Windows.
 
 ```bash
-curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/download/v0.1.0-beta.2/install.sh | sh -s -- --channel beta
 cyber upgrade                # verified in-place upgrade
 cyber uninstall --dry-run    # what uninstall would remove
 ```
