@@ -532,6 +532,99 @@ fn jsonl_errors_do_not_echo_secrets() {
     }
 }
 
+/// Built-in detectors do not recognise these values; the run's configured
+/// `tool_output.redact` pattern and its known provider key still hide them.
+#[test]
+fn jsonl_errors_hide_configured_patterns_and_known_secret_values() {
+    const KEY: &str = "plainvalue-without-shape";
+    const TICKET: &str = "corp-123456";
+    let body = json!({"error":{"message":format!("rejected {TICKET} with key {KEY}"),"type":"invalid_request_error"}});
+    let script = format!("fail:{body}");
+    let provider = Provider::start(&[&script]);
+    let config = json!({
+        "providers":{"corp":{"api_key":KEY,"api":{"type":"openai-compatible","url":provider.url},"models":{"main":{}}}},
+        // Tool output redaction off does not turn off redaction of errors.
+        "tool_output":{"redact":{"enabled":false,"patterns":["corp-[0-9]{6}"]}},
+    });
+    let mut run = Driven::start_configured(&provider, &[], config);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"one","text":"go"}"#);
+    let result = run.until("result", &mut seen);
+    assert_ne!(result["exit_code"], 0, "{seen:#?}");
+    assert!(
+        result["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("rejected"),
+        "{seen:#?}"
+    );
+    run.send(&format!(r#"{{"type":"ticket {TICKET} key {KEY}"}}"#));
+    let end = run.until("end", &mut seen);
+    assert_eq!(run.exit(), Some(2));
+    assert!(end["error"].as_str().is_some(), "{end}");
+    let errors: Vec<&Value> = seen
+        .iter()
+        .filter(|line| ["error", "result", "end"].contains(&line["type"].as_str().unwrap_or("")))
+        .collect();
+    assert!(errors.len() >= 3, "{seen:#?}");
+    for line in errors {
+        let text = line.to_string();
+        assert!(!text.contains(KEY) && !text.contains(TICKET), "{text}");
+    }
+}
+
+/// Every line a driven step writes names the inputs that step answers.
+#[test]
+fn step_lines_name_the_inputs_they_answer() {
+    let provider = Provider::start(&[
+        r#"bash {"command":"echo step"}"#,
+        "text:first answer",
+        "text:second answer",
+    ]);
+    let mut run = Driven::start_configured(
+        &provider,
+        &["--include-partial-messages"],
+        json!({"permissions":"allow"}),
+    );
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"one","text":"run it"}"#);
+    let first = run.until("input", &mut seen);
+    assert_eq!(run.until("result", &mut seen)["id"], "one");
+    run.send(r#"{"type":"user","id":"two","text":"again"}"#);
+    let second = run.until("input", &mut seen);
+    assert_eq!(run.until("result", &mut seen)["id"], "two");
+    run.send(r#"{"type":"end"}"#);
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0);
+    assert_eq!(run.exit(), Some(0));
+    let owner = |line: &Value| line["input_message_ids"].clone();
+    let lines =
+        |kind: &str| -> Vec<&Value> { seen.iter().filter(|line| line["type"] == kind).collect() };
+    for kind in ["tool_use", "tool_result"] {
+        let found = lines(kind);
+        assert_eq!(found.len(), 1, "{seen:#?}");
+        assert_eq!(owner(found[0]), json!([first["message_id"]]), "{kind}");
+    }
+    let texts = lines("assistant_text");
+    assert_eq!(texts.len(), 2, "{seen:#?}");
+    assert_eq!(owner(texts[0]), json!([first["message_id"]]));
+    assert_eq!(owner(texts[1]), json!([second["message_id"]]));
+    assert!(
+        lines("text_delta")
+            .iter()
+            .all(|line| owner(line) == json!([first["message_id"]])
+                || owner(line) == json!([second["message_id"]])),
+        "{seen:#?}"
+    );
+    for kind in ["system", "input", "result", "end"] {
+        assert!(
+            lines(kind)
+                .iter()
+                .all(|line| line.get("input_message_ids").is_none()),
+            "{kind}: {seen:#?}"
+        );
+    }
+}
+
 #[test]
 fn two_prompts_give_two_results_in_order_then_end() {
     let provider = Provider::start(&["text:first answer", "text:second answer"]);
@@ -1835,5 +1928,258 @@ fn interrupt_stops_an_owned_subagent_and_keeps_stdin_live() {
             .iter()
             .any(|turn| turn.to_string().contains("child done")),
         "the stopped subagent handed back"
+    );
+}
+
+/// The parent delegates [`CHILD_TASK`] to a foreground (synchronous) subagent and
+/// answers once it returns.
+const DELEGATE_FOREGROUND: [&str; 2] = [
+    r#"gate:agent {"prompt":"CHILD_TASK: run it","description":"Run the child task"}"#,
+    "text:parent answer",
+];
+
+#[test]
+fn a_foreground_subagent_permission_is_answered_over_stdin() {
+    let provider = Provider::start_split(
+        &DELEGATE_FOREGROUND,
+        &[r#"bash {"command":"echo from-child"}"#, "text:child done"],
+    );
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
+    let input = run.until("input", &mut seen);
+    provider.release();
+    approve_delegation(&mut run, &input, &mut seen);
+    let asked = run.until("permission_request", &mut seen);
+    assert_descendant(&asked, &input);
+    run.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["message_id"], input["message_id"], "{seen:#?}");
+    assert_eq!(result["result"], "parent answer", "{seen:#?}");
+    assert_eq!(result["exit_code"], 0, "{seen:#?}");
+    run.send(r#"{"type":"end"}"#);
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.exit(), Some(0));
+    let child = child_turns(&provider);
+    assert_eq!(child.len(), 2, "{child:#?}");
+    assert!(
+        child[1].to_string().contains("from-child"),
+        "{:#}",
+        child[1]
+    );
+}
+
+#[test]
+fn eof_declines_a_foreground_subagent_question_and_settles_the_input() {
+    let provider = Provider::start_split(
+        &DELEGATE_FOREGROUND,
+        &[
+            r#"question {"questions":[{"question":"Choose","header":"Choice","options":[{"label":"yes"},{"label":"no"}]}]}"#,
+            "text:child saw no answer",
+        ],
+    );
+    let mut run =
+        Driven::start_configured(&provider, &[], json!({"permissions":{"question":"allow"}}));
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
+    let input = run.until("input", &mut seen);
+    provider.release();
+    approve_delegation(&mut run, &input, &mut seen);
+    let asked = run.until("question", &mut seen);
+    assert_descendant(&asked, &input);
+    run.close();
+    let result = run.until("result", &mut seen);
+    assert_eq!(result["message_id"], input["message_id"], "{seen:#?}");
+    assert_eq!(result["result"], "parent answer", "{seen:#?}");
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 0, "{seen:#?}");
+    assert_eq!(run.exit(), Some(0));
+    let child = child_turns(&provider);
+    assert_eq!(child.len(), 2, "the child went on unanswered: {child:#?}");
+    assert!(
+        child[1]
+            .to_string()
+            .contains("No interactive user is attached"),
+        "{:#}",
+        child[1]
+    );
+}
+
+/// Two drivers on one Session: the first driver's foreground subagent request is
+/// neither shown to nor answerable by the second.
+#[test]
+fn a_second_driver_neither_sees_nor_answers_the_first_drivers_foreground_subagent_request() {
+    let provider = Provider::start_split(
+        &DELEGATE_FOREGROUND,
+        &[r#"bash {"command":"echo from-child"}"#, "text:child done"],
+    );
+    let server = Server::start(&provider);
+    let url = format!("http://127.0.0.1:{}", server.port);
+    let attach = [
+        "--attach",
+        url.as_str(),
+        "--password",
+        server.password.as_str(),
+    ];
+    let mut first = Driven::start(&provider, &attach);
+    let mut seen = Vec::new();
+    first.send(r#"{"type":"user","text":"delegate it","id":"first"}"#);
+    let input = first.until("input", &mut seen);
+    let session = input["session_id"].as_str().unwrap().to_owned();
+    provider.wait_for_gate();
+    let mut flags = attach.to_vec();
+    flags.extend(["--session", session.as_str()]);
+    let mut second = Driven::start_beside(&provider, &flags, &first);
+    let mut other = Vec::new();
+    second.until("system", &mut other);
+    provider.release();
+    approve_delegation(&mut first, &input, &mut seen);
+
+    let asked = first.until("permission_request", &mut seen);
+    assert_descendant(&asked, &input);
+    second.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    assert_eq!(second.until("error", &mut other)["code"], "protocol");
+    first.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    let result = first.until("result", &mut seen);
+    assert_eq!(
+        (result["id"].as_str(), result["result"].as_str()),
+        (Some("first"), Some("parent answer")),
+        "{seen:#?}"
+    );
+    first.send(r#"{"type":"end"}"#);
+    assert_eq!(first.until("end", &mut seen)["exit_code"], 0, "{seen:#?}");
+    assert_eq!(first.exit(), Some(0));
+    second.send(r#"{"type":"end"}"#);
+    assert_eq!(second.until("end", &mut other)["exit_code"], 0);
+    assert!(
+        other
+            .iter()
+            .all(|l| l["type"] != "permission_request" && l["type"] != "result"),
+        "{other:#?}"
+    );
+    assert_eq!(second.exit(), Some(0));
+    assert_eq!(child_turns(&provider).len(), 2, "the child's tool ran once");
+}
+
+/// The subagent's tool call is held at its permission request, so it has not run:
+/// stopping it withdraws that request and the interruption is acknowledged.
+#[test]
+fn interrupt_stops_an_owned_subagent_awaiting_permission() {
+    let provider = Provider::start_split(
+        &[
+            DELEGATE[0].strip_prefix("gate:").unwrap(),
+            DELEGATE[1],
+            "text:later answer",
+        ],
+        &[
+            r#"bash {"command":"echo from-child > ran"}"#,
+            "text:child done",
+        ],
+    );
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
+    let input = run.until("input", &mut seen);
+    approve_delegation(&mut run, &input, &mut seen);
+    let asked = run.until("permission_request", &mut seen);
+    assert_descendant(&asked, &input);
+    run.send(r#"{"type":"interrupt"}"#);
+    let stopped = run.until("result", &mut seen);
+    assert_eq!(stopped["id"], "delegate", "{seen:#?}");
+    assert_eq!(stopped["error"], "Input interrupted", "{seen:#?}");
+    // The withdrawn request is no longer answerable.
+    run.send(
+        &json!({"type":"permission_reply","request_id":asked["id"],"reply":"once"}).to_string(),
+    );
+    assert_eq!(
+        run.until("error", &mut seen)["code"],
+        "protocol",
+        "{seen:#?}"
+    );
+    run.send(r#"{"type":"user","id":"later","text":"continue"}"#);
+    assert_eq!(run.until("input", &mut seen)["status"], "admitted");
+    let completed = run.until("result", &mut seen);
+    assert_eq!(
+        (completed["id"].as_str(), completed["result"].as_str()),
+        (Some("later"), Some("later answer")),
+        "{seen:#?}"
+    );
+    run.send(r#"{"type":"end"}"#);
+    assert_eq!(run.until("end", &mut seen)["exit_code"], 1, "{seen:#?}");
+    assert_eq!(run.exit(), Some(1));
+    assert_eq!(
+        child_turns(&provider).len(),
+        1,
+        "the stopped subagent went on"
+    );
+    assert!(
+        !run_dir_has(&seen, "ran"),
+        "the withheld tool call ran: {seen:#?}"
+    );
+}
+
+/// Whether any tool result reports the marker file; the call must never run.
+fn run_dir_has(seen: &[Value], marker: &str) -> bool {
+    seen.iter()
+        .any(|line| line["type"] == "tool_result" && line["output"].to_string().contains(marker))
+}
+
+/// Interrupting the input stops its foreground subagent with the parent's `agent` call.
+/// The scoped interruption is acknowledged and stdin stays live; the child's withheld
+/// call never runs. The parent's cancelled `agent` call itself settles as outcome
+/// unknown: a call cancelled while its child ran cannot prove what the child did.
+#[test]
+fn interrupt_stops_a_foreground_subagent_awaiting_permission() {
+    let provider = Provider::start_split(
+        &[
+            DELEGATE_FOREGROUND[0].strip_prefix("gate:").unwrap(),
+            "text:later answer",
+        ],
+        &[
+            r#"bash {"command":"echo from-child > ran"}"#,
+            "text:child done",
+        ],
+    );
+    let mut run = Driven::start(&provider, &[]);
+    let mut seen = Vec::new();
+    run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
+    let input = run.until("input", &mut seen);
+    approve_delegation(&mut run, &input, &mut seen);
+    let asked = run.until("permission_request", &mut seen);
+    assert_descendant(&asked, &input);
+    run.send(r#"{"type":"interrupt"}"#);
+    let stopped = run.until("result", &mut seen);
+    assert_eq!(stopped["id"], "delegate", "{seen:#?}");
+    assert_eq!(stopped["exit_code"], 1, "{seen:#?}");
+    let parent_call = seen
+        .iter()
+        .find(|line| line["type"] == "tool_result")
+        .expect("the agent call settled");
+    assert_eq!(parent_call["status"], "outcome_unknown", "{seen:#?}");
+    run.send(r#"{"type":"user","id":"later","text":"continue"}"#);
+    assert_eq!(run.until("input", &mut seen)["status"], "admitted");
+    let completed = run.until("result", &mut seen);
+    assert_eq!(
+        (completed["id"].as_str(), completed["result"].as_str()),
+        (Some("later"), Some("later answer")),
+        "{seen:#?}"
+    );
+    run.send(r#"{"type":"end"}"#);
+    let end = run.until("end", &mut seen);
+    assert_eq!(
+        (end["exit_code"].as_u64(), end["error"].as_str()),
+        (Some(1), None),
+        "the interruption was not acknowledged: {seen:#?}"
+    );
+    assert_eq!(run.exit(), Some(1));
+    assert_eq!(
+        child_turns(&provider).len(),
+        1,
+        "the stopped subagent went on"
     );
 }

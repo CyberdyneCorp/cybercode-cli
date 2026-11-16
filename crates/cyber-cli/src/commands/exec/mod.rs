@@ -298,6 +298,11 @@ fn launch(
             client
         };
         let mut out = Out::new(format, &args, &session);
+        let config = ctx.config().ok().map(|resolved| resolved.value);
+        out.redact_errors(report::error_redactor(
+            config.as_ref(),
+            args.password.as_deref(),
+        ));
         let code = match (review, &args.workflow) {
             (_, Some(target)) => {
                 workflow::execute(&client, ctx, &session, &args, target, out).await
