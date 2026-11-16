@@ -626,6 +626,11 @@ mod instruction_tests {
         assert_eq!(check.detail, "unavailable: configuration unavailable");
     }
 
+    /// Reported paths use the platform separator; compare them with `/`.
+    fn slashed(text: &str) -> String {
+        text.replace('\\', "/")
+    }
+
     /// Held and invalid rule definitions are listed by reason, once each, without their
     /// bodies.
     #[test]
@@ -645,12 +650,12 @@ mod instruction_tests {
             .split("; ")
             .find(|part| part.starts_with("withheld (invalid_frontmatter): "))
             .unwrap_or_else(|| panic!("{detail}"));
-        assert!(invalid.ends_with("rules/broken.md"), "{detail}");
+        assert!(slashed(invalid).ends_with("rules/broken.md"), "{detail}");
         let held = detail
             .split("; ")
             .find(|part| part.starts_with("withheld (trust_held): "))
             .unwrap_or_else(|| panic!("{detail}"));
-        assert!(held.ends_with(".cyber/rules/held.md"), "{detail}");
+        assert!(slashed(held).ends_with(".cyber/rules/held.md"), "{detail}");
         // Each definition is reported once: its loader warning is not repeated.
         assert_eq!(detail.matches("held.md").count(), 1, "{detail}");
         assert_eq!(detail.matches("broken.md").count(), 1, "{detail}");
@@ -675,7 +680,11 @@ mod instruction_tests {
         let mut parts = check.detail.split("; ");
         let baseline = parts.next().unwrap();
         assert!(baseline.starts_with("1 loaded: "), "{}", check.detail);
-        assert!(baseline.ends_with("rules/always.md"), "{}", check.detail);
+        assert!(
+            slashed(baseline).ends_with("rules/always.md"),
+            "{}",
+            check.detail
+        );
         assert_eq!(
             parts.collect::<Vec<_>>(),
             ["2 path-scoped rule definitions attached on matching file access"]
@@ -697,7 +706,7 @@ mod instruction_tests {
         assert_eq!(check.status, Status::Warn, "{}", check.detail);
         assert!(
             check.detail.contains("withheld (trust_held): ")
-                && check.detail.contains(".claude/rules/scoped.md"),
+                && slashed(&check.detail).contains(".claude/rules/scoped.md"),
             "{}",
             check.detail
         );
@@ -720,7 +729,7 @@ mod instruction_tests {
             .find(|part| part.starts_with("withheld (compat_disabled): "))
             .unwrap_or_else(|| panic!("{}", check.detail));
         assert!(
-            disabled.ends_with(".claude/rules/scoped.md"),
+            slashed(disabled).ends_with(".claude/rules/scoped.md"),
             "{}",
             check.detail
         );

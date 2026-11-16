@@ -97,7 +97,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Intel's complete matrix can exceed 45 minutes while compiling the final
     # structured-result binaries after all native recovery checks have passed.
-    timeout-minutes: 60
+    # With the recovery crash-cut cases it took 56 minutes and hit 60 twice.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
