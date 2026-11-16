@@ -21,6 +21,7 @@ use tokio::sync::mpsc;
 
 use super::background::{Owned, Settle};
 use super::frames::{self, Frame, MAX_LINE};
+use super::hook_lines::HookLines;
 use super::report::{Out, Run};
 use super::{EXIT_ERROR, EXIT_INTERRUPTED, ExecArgs, NO_APPROVER, api, safe_id};
 use crate::error::CliError;
@@ -70,6 +71,7 @@ struct Driver<'a> {
     out: &'a mut Out,
     run: Run,
     owned: Owned,
+    hooks: HookLines,
     inputs: Vec<Input>,
     /// Indexes of promoted inputs whose answer is in progress.
     answering: Vec<usize>,
@@ -101,11 +103,12 @@ pub async fn execute(
     let filter = id.clone();
     let mut events = Box::pin(
         client
-            .events(true)
+            .all_events(args.include_hook_events)
             .await
             .map_err(api)?
             .filter(move |e| futures::future::ready(e.session_id.as_deref() == Some(&filter))),
     );
+    let hooks = HookLines::start(client, args, &id, &out).await;
     let owned = Owned::capture(client, &id).await?;
     let (sender, mut lines) = mpsc::channel(64);
     tokio::spawn(read_stdin(sender));
@@ -116,6 +119,7 @@ pub async fn execute(
         out: &mut out,
         run,
         owned,
+        hooks,
         inputs: Vec::new(),
         answering: Vec::new(),
         answer_done: false,
@@ -130,6 +134,7 @@ pub async fn execute(
     driver.attach().await;
     driver.drive(&mut events, &mut lines).await;
     driver.release().await;
+    driver.hooks.reconcile(client, driver.out).await;
     Ok(driver.finish())
 }
 
@@ -268,6 +273,8 @@ impl Driver<'_> {
                 );
             }
             Err(error) => {
+                // A refusal can come from a `UserPromptSubmit` hook: its line goes first.
+                self.hooks.reconcile(self.client, self.out).await;
                 input.error = Some(error.to_string());
                 input.answered = true;
                 self.out.stream_line(
@@ -368,6 +375,7 @@ impl Driver<'_> {
 
     async fn event(&mut self, event: Event) {
         self.owned.observe(&event);
+        self.hooks.live(&event, self.out);
         let kind = event.kind.as_str();
         // Durable kinds end with a version (`.1`); live ones such as `session.idle` do not.
         let base = match kind.rsplit_once('.') {
@@ -377,6 +385,7 @@ impl Driver<'_> {
         match base {
             "session.idle" => {
                 self.idle = true;
+                self.hooks.reconcile(self.client, self.out).await;
                 self.flush_answers();
             }
             "session.prompt.promoted" => self.promoted(&event.data),

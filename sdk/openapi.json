@@ -21833,13 +21833,21 @@
     "/api/v1/event": {
       "get": {
         "operationId": "v1.event.subscribe",
-        "summary": "Live events for a Location (scope=all for every Location)",
+        "summary": "Live events for a Location (scope=all for every Location; include=hook_receipts adds IO-free `session.hook.receipt` summaries)",
         "tags": [
           "event"
         ],
         "parameters": [
           {
             "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
             "in": "query",
             "required": false,
             "schema": {
