@@ -586,6 +586,33 @@ mod tests {
         drop(typed);
         runtime.shutdown().await;
     }
+    /// A binary-document owner never acquires snapshot origin or recovery authority,
+    /// before or after launch, and the refused review writes nothing.
+    #[tokio::test]
+    async fn binary_document_activity_never_grants_snapshot_recovery_authority() {
+        let (_temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
+        let handle = runtime.inner.handle(&session).await.unwrap();
+        let mut binary =
+            activity::Scope::reserve_binary(&runtime.inner, &handle, "doc_fixture".into())
+                .await
+                .unwrap();
+        let bound = origin(&runtime, &session, binary.id());
+        assert!(binary.launch_snapshot(bound.clone()).is_err());
+        binary.launch().unwrap();
+        let before = runtime.inner.store.aggregate_seq(binary.id()).unwrap();
+        assert!(
+            runtime
+                .validate_recovery_activity(&mut review(bound))
+                .is_err()
+        );
+        assert_eq!(
+            runtime.inner.store.aggregate_seq(binary.id()).unwrap(),
+            before
+        );
+        binary.settle().unwrap();
+        drop(binary);
+        runtime.shutdown().await;
+    }
     #[tokio::test]
     async fn legacy_origin_without_exact_lock_proof_stays_inspectable_and_fenced() {
         let (_temp, runtime, session, _, _) = super::super::binary_documents_tests::fixture().await;
