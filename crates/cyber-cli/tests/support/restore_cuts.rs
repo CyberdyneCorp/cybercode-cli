@@ -908,3 +908,140 @@ mod managed {
         damaged_intent(Fixture::managed());
     }
 }
+
+/// Calls one recovery HTTP route through `cyber api`; returns the exit status and the
+/// decoded body (`data` on success, the error envelope otherwise).
+fn route(f: &Fixture, method: &str, path: &str, body: Option<&Value>) -> (bool, Value) {
+    let mut args = vec!["api", method, path];
+    let body = body.map(Value::to_string);
+    if let Some(body) = &body {
+        args.extend(["-d", body]);
+    }
+    let output = f.env.cyber(&args);
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+    if output.status.success() {
+        (true, value["data"].clone())
+    } else {
+        (false, value)
+    }
+}
+
+#[track_caller]
+fn refused(result: (bool, Value), tag: &str, message: &str) {
+    assert!(!result.0, "{}", result.1);
+    assert_eq!(result.1["_tag"], tag, "{}", result.1);
+    assert!(
+        result.1["message"].as_str().unwrap().contains(message),
+        "{}",
+        result.1
+    );
+}
+
+/// Route-level review/confirm/lookup/discovery/acknowledgement over the real HTTP
+/// server: stale, foreign-Session, changed-content and unknown requests are refused
+/// without source effects; a repeated confirmation is lookup only; nothing moves the
+/// transcript or starts inference.
+#[test]
+fn recovery_routes_refuse_stale_and_foreign_requests_without_effects() {
+    let f = Fixture::new();
+    let messages = f.env.messages(&f.session);
+    let (journal, applied) = kill_after_first_progress(&f);
+    let requests = f.model.requests().len();
+    let base = format!("/sessions/{}/rewind/recovery", f.session);
+    let foreign = json(&f.env.cyber(&["api", "POST", "/sessions", "-d", "{}"]))["data"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other = format!("/sessions/{foreign}/rewind/recovery");
+    let selection = json!({"journal_id":journal,"action":"rollback"});
+    let (ok, review) = route(&f, "POST", &format!("{base}/review"), Some(&selection));
+    assert!(ok, "{review}");
+    let mut request = selection.clone();
+    request["confirmation"] = review["confirmation"].clone();
+    request["request_id"] = "route-request".into();
+    let mut stale = request.clone();
+    stale["confirmation"] = "0".repeat(64).into();
+    let foreign_session = "different Session/checkout";
+    refused(
+        route(&f, "POST", &format!("{base}/confirm"), Some(&stale)),
+        "ConflictError",
+        "stale",
+    );
+    refused(
+        route(&f, "POST", &format!("{other}/review"), Some(&selection)),
+        "ConflictError",
+        foreign_session,
+    );
+    refused(
+        route(&f, "POST", &format!("{other}/confirm"), Some(&request)),
+        "ConflictError",
+        foreign_session,
+    );
+    assert_eq!(f.env.file(&applied).as_deref(), Some("before"));
+    assert_eq!(f.journals(), vec![journal.clone()]);
+    let (ok, confirmed) = route(&f, "POST", &format!("{base}/confirm"), Some(&request));
+    assert!(ok, "{confirmed}");
+    assert_eq!(confirmed["state"], "acknowledged");
+    assert_eq!(confirmed["journal_acknowledged"], true);
+    f.assert_uniform("after");
+    // Lookup, discovery, a repeated confirmation and acknowledgement never mutate files.
+    std::fs::write(f.env.directory.join(&applied), "owner edit").unwrap();
+    for (method, path, body) in [
+        ("GET", format!("{base}/requests/route-request"), None),
+        ("POST", format!("{base}/confirm"), Some(&request)),
+        (
+            "POST",
+            format!("{base}/requests/route-request/acknowledge"),
+            Some(&json!({})),
+        ),
+    ] {
+        let (ok, reply) = route(&f, method, &path, body);
+        assert!(ok, "{reply}");
+        assert_eq!(reply["receipt"], confirmed["receipt"]);
+    }
+    let (ok, discovered) = route(
+        &f,
+        "GET",
+        &format!("{base}/requests?journal_id={journal}"),
+        None,
+    );
+    assert!(ok);
+    assert_eq!(discovered, json!([request]));
+    let mut changed = request.clone();
+    changed["action"] = "keep".into();
+    refused(
+        route(&f, "POST", &format!("{base}/confirm"), Some(&changed)),
+        "ConflictError",
+        "different content",
+    );
+    refused(
+        route(&f, "GET", &format!("{other}/requests/route-request"), None),
+        "RequestNotFoundError",
+        "No retained",
+    );
+    refused(
+        route(
+            &f,
+            "POST",
+            &format!("{other}/requests/route-request/acknowledge"),
+            Some(&json!({})),
+        ),
+        "InvalidRequestError",
+        "No retained",
+    );
+    refused(
+        route(&f, "GET", &format!("{base}/requests/unknown"), None),
+        "RequestNotFoundError",
+        "No retained",
+    );
+    let (ok, none) = route(
+        &f,
+        "GET",
+        &format!("{other}/requests?journal_id={journal}"),
+        None,
+    );
+    assert!(ok);
+    assert_eq!(none, json!([]));
+    assert_eq!(f.env.file(&applied).as_deref(), Some("owner edit"));
+    f.assert_quiet(&messages, requests);
+}

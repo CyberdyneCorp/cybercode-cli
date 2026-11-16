@@ -4362,3 +4362,28 @@ CI: `non-git-snapshot-proof.yml` gains a "Restore and recovery process-death cut
 step (`restore_cuts::` and `ordinary_cuts::` with `native-git-acceptance`) on
 ubuntu-24.04, ubuntu-24.04-arm, macos-15 and macos-15-intel; its log is retained as
 `recovery-cut-proof.log`. Platform results are claimed only from those runs.
+
+### Recovery routes and a real-server SDK client (2026-11-16, local)
+
+`recovery_routes_refuse_stale_and_foreign_requests_without_effects` (`restore_cuts`,
+real service, every route called directly through `cyber api`): after a real partial
+restore, `POST .../recovery/review` returns a fingerprint; a stale confirmation
+(`ConflictError` "stale"), a foreign Session's review and confirmation (`ConflictError`
+"different Session/checkout"), a request ID reused with different content
+(`ConflictError`) and unknown or foreign lookups (`RequestNotFoundError`) are refused
+with no source change and no resolution journal. The exact confirmation settles; lookup,
+the repeated confirmation and acknowledgement return the same receipt over a later
+owner edit; discovery returns exactly the request for its Session and `[]` for another;
+the transcript and inference count do not change. Review finding (not changed): a
+foreign Session's `POST .../requests/{id}/acknowledge` refuses as `InvalidRequestError`
+"No retained recovery request" while the same lookup is `RequestNotFoundError`.
+
+`sdk/typescript/test/recovery.e2e.test.ts` (runs with `CYBER_BIN`, so in CI's SDK job):
+the CLI produces a non-Git Session, a fresh service is started with the debug
+`copy-restore-progress-recorded` point and SIGKILLed through its registration, and the
+SDK (`Cyber.start({mode:"spawn"})`) lists the journal, reviews rollback, gets a 409
+`ConflictError` for a stale fingerprint and for a foreign Session, confirms
+(`acknowledged`, `journal_acknowledged: true`), and gets the same receipt from lookup
+and a repeated confirmation over a later owner edit, a 404 for a foreign lookup, an
+unchanged transcript and no inference. Local macOS arm64 pass; the SDK suite passes
+(139 pass, 11 skipped without `CYBER_BIN`).
