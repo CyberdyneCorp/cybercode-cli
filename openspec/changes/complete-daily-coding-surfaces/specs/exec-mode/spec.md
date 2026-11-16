@@ -33,13 +33,14 @@
 - **AND** scoped input leases SHALL grant neither Session-wide attendance nor native computer authority; malformed, missing scoped evidence and mixed bindings SHALL NOT fall back to legacy attendance
 
 #### Scenario: A descendant request carries its root input cohort
-- **WHEN** a child Session asks for permission or a question and every link from it up to its root Session is a running background subagent Job whose immutable input origin is complete, bounded (1–32 unique identities of at most 256 UTF-8 bytes) and identical across that link's running Jobs
+- **WHEN** a child Session asks for permission or a question and every link from it up to its root Session is proven, either by a running background subagent Job whose immutable input origin is complete, bounded (1–32 unique identities of at most 256 UTF-8 bytes) and identical across that link's running Jobs, or by the parent's foreground (synchronous) subagent call that is running in this server process and whose exact dispatched call has such a complete recorded input cohort
+- **AND** when a running Job and a running foreground call both prove one link, their cohorts are identical
 - **THEN** the durable and routed request SHALL expose `root_session_id` and that root link's `root_input_message_ids`
 - **AND** when the root cohort is bound to an input client, only that live client at the bound Session and Location SHALL keep the request waiting and have its reply accepted; its release or expiry SHALL settle the request unattended without borrowing browser, stream or other client attendance
-- **WHEN** a link is missing (a foreground or detached child, or one whose background Job is no longer running), mixed, malformed, oversized, cyclic or deeper than 32 links
+- **WHEN** a link is missing (a detached child, one whose background Job is no longer running, or one whose foreground call has returned), mixed, malformed, oversized, cyclic or deeper than 32 links
 - **THEN** the request SHALL carry no root cohort and SHALL keep its existing attendance; it SHALL grant no inferred input ownership
 - **WHEN** the server restarts
-- **THEN** the root cohort SHALL remain derivable from durable Job provenance and recorded requests, but SHALL NOT recreate the bound client's live attendance, and the interrupted Job SHALL NOT stamp new requests
+- **THEN** the root cohort SHALL remain derivable from durable Job provenance and recorded requests, but SHALL NOT recreate the bound client's live attendance, and neither the interrupted Job nor the foreground call that the restart ended SHALL stamp new requests
 
 #### Scenario: The driver owns descendant and hook-originated requests
 - **WHEN** a request routed to the driven Session carries `root_session_id` equal to that Session and every `root_input_message_ids` identity is a pending input of the driver
@@ -98,6 +99,10 @@
 - **THEN** the interruption SHALL suppress that Job's handback and stop the child subtree through the subtree stop path, counting the Job only when that stop is acknowledged
 - **AND** a mixed, detached, oversized or otherwise unproven descendant SHALL remain running and the receipt SHALL report `descendant_job` with status unknown
 - **AND** a subtree stop that leaves unknown execution, such as a tool call cancelled mid-flight, SHALL report unknown and keep the child's admission closed for recovery
+- **WHEN** a subtree tool call is still held at its permission or question request
+- **THEN** the stop SHALL withdraw that request before cancelling the call, the call SHALL settle as refused without running, and that call SHALL NOT make the stop unknown
+- **WHEN** the selected Drain is running a foreground subagent call
+- **THEN** cancelling that Drain SHALL stop the child with the call, and the call SHALL settle as outcome unknown, because a call cancelled while its child ran cannot itself prove the child's effects; the input SHALL fail while later input stays admissible
 
 #### Scenario: Bounded background ownership lookup
 - **WHEN** an authenticated client queries Job state for 1–32 unique input identities, each at most 256 UTF-8 bytes
@@ -140,6 +145,20 @@
 - **THEN** it SHALL stage bytes in an exclusively created sibling file and atomically replace the destination without following a pre-existing temporary or destination link
 - **AND** concurrent writers SHALL publish complete answers and clean up their own temporary files, including after publication failure
 - **AND** a publication failure SHALL preserve per-input results, report the error in `end`, and fail an otherwise successful aggregate run without replacing an existing interruption or protocol exit code
+
+#### Scenario: Owned requests and buffered input stay bounded
+- **WHEN** an owned request arrives while 64 owned requests already wait for this driver
+- **THEN** the driver SHALL decline it at once (`reject` for a permission, dismissal for a question) and write an `error` line with code `capacity` naming the request, without tracking it or ending the run
+- **AND** at most 16 parsed stdin lines SHALL wait for the control loop, so a writer that runs further ahead is held back by its own pipe
+
+#### Scenario: Step lines name the inputs they answer
+- **WHEN** the driver writes an `assistant_text`, `reasoning`, `tool_use`, `tool_result`, `permission_denied`, `retry`, `text_delta`, `reasoning_delta` or `usage_limit` line for a step whose recorded input cohort belongs to it, or the `error` line of that step's failure
+- **THEN** the line SHALL carry that step's `input_message_ids`; `system`, `input`, `result` and `end` lines and protocol errors SHALL NOT, and request lines keep their server-derived provenance
+
+#### Scenario: Error text is secret-safe
+- **WHEN** a JSONL line carries diagnostic text in `error` or `message`, including provider error bodies, server responses and echoed stdin
+- **THEN** the driver SHALL replace every secret found by the built-in detectors, the configured `tool_output.redact` patterns (minus its allow list) and the exact values of known secrets (secret-named environment variables, secret configuration entries and the attach password) with its redaction marker, also when `tool_output.redact.enabled` is `false`
+- **AND** answer text in `result` SHALL NOT be altered
 
 #### Scenario: Completed inputs do not consume pending capacity
 - **WHEN** a driver emits terminal results across a run longer than its pending-input limit
