@@ -238,19 +238,25 @@ impl Runtime {
         session_id: &str,
     ) -> Result<(SessionState, ContextInspection), super::RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
-        let pending = PendingContext {
-            hook_contexts: handle
-                .pending_hook_context
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone(),
-            compaction: handle
-                .pending_compaction
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_some(),
+        // The Safe Boundary commits queued hook context under the state lock, so reading
+        // both under it counts each queued text once, as pending or as committed.
+        let (mut state, pending) = {
+            let state = handle.state.lock().await;
+            let pending = PendingContext {
+                hook_contexts: handle
+                    .pending_hook_context
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+                compaction: handle
+                    .pending_compaction
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_some(),
+            };
+            (state.clone(), pending)
         };
-        let state = self.state(session_id).await?;
+        state.children_usage = self.children_usage(session_id)?;
         let inspection = self.inspect_context_with(&state, &pending);
         Ok((state, inspection))
     }
