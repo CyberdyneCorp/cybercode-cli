@@ -131,6 +131,30 @@ impl Maintenance {
         let result = self.runtime.block_on(cut.reclaim(source.to_str().unwrap()));
         format!("{result:?}")
     }
+    /// Like `reclaim_until_killed`, but blocks once any one of `payloads` is gone,
+    /// whichever the frozen plan deletes first.
+    pub fn reclaim_until_any_killed(
+        &self,
+        source: &Path,
+        payloads: Vec<PathBuf>,
+        ready: PathBuf,
+    ) -> String {
+        let config = Arc::new(move |_: &Path| {
+            if payloads
+                .iter()
+                .all(|payload| std::fs::symlink_metadata(payload).is_ok())
+            {
+                return serde_json::json!({"snapshots":{"retention_days":7}});
+            }
+            std::fs::write(&ready, b"payload deletion in progress").unwrap();
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            }
+        });
+        let cut = Self::configured(&self.root, self.policy.clone(), config);
+        let result = self.runtime.block_on(cut.reclaim(source.to_str().unwrap()));
+        format!("{result:?}")
+    }
     pub fn age(&self, activity: String) {
         self.store
             .transaction(move |db| {

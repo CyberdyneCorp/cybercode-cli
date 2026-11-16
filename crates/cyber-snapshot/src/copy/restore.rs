@@ -499,6 +499,8 @@ impl Store {
         } else {
             Self::record(&dir, journal).map_err(RestoreError::Failed)?;
         }
+        // Fixture point: every target image and its ownership are durable; no exchange.
+        cyber_core::process_cut::pause("copy-restore-images-prepared");
         if let Some(preimages) = &preimages {
             preimages
                 .verify_review(self)

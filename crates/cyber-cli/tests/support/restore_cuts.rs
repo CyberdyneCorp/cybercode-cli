@@ -4,6 +4,8 @@
 //! commit, and after a native journal acknowledgement whose reply was never sent.
 //! Each cut is a debug-only `CYBER_TEST_PROCESS_CUT` point in the service.
 use super::*;
+#[path = "cleanup_cuts.rs"]
+mod cleanup;
 const FILES: usize = 4;
 
 struct Fixture {
@@ -531,22 +533,8 @@ fn ordinary_restore_killed_after_journal_acknowledgement_never_replays() {
     assert_eq!(f.model.requests().len(), requests);
 }
 
-/// Kill a restore at a pre-effect journal construction point, then cancel the exited
-/// preparation through the real CLI. Returns whether the journal held an intent.
-fn construction_cut_cancellation(point: &str) -> bool {
-    let f = Fixture::new();
-    let messages = f.env.messages(&f.session);
-    f.kill_rewind_at(point);
-    let journals = f.journals();
-    assert_eq!(journals.len(), 1, "{journals:?}");
-    let journal = f.namespace().join("journals").join(&journals[0]);
-    let has_intent = journal.join("intent.json").exists();
-    assert_eq!(f.payloads(&journals[0]), 0, "no image may be staged yet");
-    f.assert_uniform("after");
-    // New input is fenced until the exited preparation is resolved.
-    let refused = f.env.cyber(&["exec", "--session", &f.session, "fenced"]);
-    assert!(!refused.status.success());
-    let requests = f.model.requests().len();
+/// Review and cancel the only exited preparation; returns its activity and receipt.
+fn cancel_preparation(f: &Fixture, request_id: &str) -> (String, Value) {
     let list = json(&f.env.cyber(&[
         "sessions",
         "recovery-preparation",
@@ -563,12 +551,33 @@ fn construction_cut_cancellation(point: &str) -> bool {
         "--format",
         "json",
     ]));
-    let body =
-        json!({"confirmation":review["confirmation"],"request_id":format!("{point}-cancel")});
+    let body = json!({"confirmation":review["confirmation"],"request_id":request_id});
     let receipt = json(&preparation_confirm_cli(
         &f.env, &f.session, &activity, &body,
     ));
     assert_eq!(receipt["activity_id"], activity.as_str());
+    (activity, receipt)
+}
+
+/// Kill a restore at a pre-effect journal construction point, then cancel the exited
+/// preparation through the real CLI. Returns whether the journal held an intent.
+fn construction_cut_cancellation(point: &str) -> bool {
+    let f = Fixture::new();
+    let messages = f.env.messages(&f.session);
+    f.kill_rewind_at(point);
+    let journals = f.journals();
+    assert_eq!(journals.len(), 1, "{journals:?}");
+    let journal = f.namespace().join("journals").join(&journals[0]);
+    let has_intent = journal.join("intent.json").exists();
+    assert_eq!(f.payloads(&journals[0]), 0, "no image may be staged yet");
+    f.assert_uniform("after");
+    // New input is fenced until the exited preparation is resolved.
+    let refused = f.env.cyber(&["exec", "--session", &f.session, "fenced"]);
+    assert!(!refused.status.success());
+    let requests = f.model.requests().len();
+    let request_id = format!("{point}-cancel");
+    let (activity, receipt) = cancel_preparation(&f, &request_id);
+    let body = json!({"confirmation":receipt["confirmation"],"request_id":request_id});
     // A repeated confirmation is lookup only.
     assert_eq!(
         json(&preparation_confirm_cli(

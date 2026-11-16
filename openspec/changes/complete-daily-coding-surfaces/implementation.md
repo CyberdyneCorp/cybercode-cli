@@ -3964,7 +3964,7 @@ macOS arm64; no Linux, macOS Intel or Windows result is claimed.
 | Filesystem completion (completed intent, before writer commit) | real service: `copy_kept_creation_after_completed_source_kill_retires_zero_payload`; fixture point (2026-11-16, `copy-restore-filesystem-completed`): `restore_killed_after_filesystem_completion_with_payloads_is_kept`/`_rolled_back` (four displaced images) | none locally for file-copy |
 | Writer commit (committed Session writer, unacknowledged journal) | real service: `ordinary_restore_killed_after_writer_commit_before_journal_ack_reconciles_without_replay`; paired recovery (2026-11-16, `recovery-pair-writer-commit`): `paired_recovery_killed_after_writer_commit_reconciles_without_replay` | none locally for file-copy |
 | Journal acknowledgement | storage: `process_death_during_spare_write_preserves_active_intent_and_reopens_without_replay`; managed checkout claim: `killed_acknowledgement_resumes_without_rewriting_claim_or_deleting_partial_stage`, `killed_construction_keeps_locked_complete_stage_and_never_creates_or_replays_stable_claim`; after the acknowledgement, before the reply (2026-11-16): `ordinary_restore_killed_after_journal_acknowledgement_never_replays` (`ordinary-restore-journal-acknowledged`), `paired_recovery_killed_after_journal_acknowledgement_returns_the_receipt` (`recovery-journal-acknowledged`) | none locally for file-copy |
-| Reclaim | real service fixture + separate maintenance process: `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan` (new; after the durable plan and the first unlink, inside the deletion transaction); App: `actual_process_death_preserves_plan_and_resumes_without_source_replay` (before deletion and after all deletions); collection: `process_death_after_last_manifest_unlink_resumes_from_durable_policy_provenance` | **gap**: paired keep/rollback payload cleanup is interrupted in-process only (`managed_native_recovery_after_partial_kill`, `native_retirement_resumes_before_and_after_deletion_without_rewriting_acknowledgement`); managed Git paired/prepared metadata retirement now has App SIGKILL cuts (see the section below), paired/prepared payload reclaim still does not |
+| Reclaim | real service fixture + separate maintenance process: `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan`; paired and prepared (2026-11-16, `restore_cuts::cleanup`): `kept_recovery_payload_cleanup_killed_mid_deletion_resumes_frozen_plan`, `rolled_back_recovery_payload_cleanup_killed_mid_deletion_resumes_frozen_plan`, `cancelled_preparation_payload_cleanup_killed_mid_deletion_resumes_frozen_plan`; App: `actual_process_death_preserves_plan_and_resumes_without_source_replay`; collection: `process_death_after_last_manifest_unlink_resumes_from_durable_policy_provenance`; metadata retirement: `paired_managed_metadata_process_death_resumes_both_owner_bindings`, `prepared_cancellation_metadata_process_death_resumes_frozen_plan` | none locally for file-copy |
 
 New in this increment (`crates/cyber-cli/tests/support/ordinary_cuts.rs`, part of
 the `branches_cli` test binary):
@@ -4322,3 +4322,17 @@ Still open: paired/prepared payload-reclaim process death, real kills at later
 progress records and in Git (`native-git-acceptance`) equivalents of these cuts,
 HTTP route tests and a real-server SDK test for recovery, a TUI path from
 "Code unavailable" into journal recovery, and the platform matrix.
+
+### Paired and prepared payload-cleanup process death (2026-11-16, local)
+
+`crates/cyber-cli/tests/support/cleanup_cuts.rs` (submodule of `restore_cuts`) settles
+a partial restore with a real keep or rollback, or cancels a restore killed at the new
+debug-only `copy-restore-images-prepared` point (all four target images and their
+ownership durable, no exchange), ages the owner, and runs production reclamation in a
+separate test process that blocks inside the deletion transaction once any planned
+payload is unlinked (`Maintenance::reclaim_until_any_killed`). After SIGKILL some, but
+not all, payloads are gone and the durable plan is uncompleted. A later owner symlink
+edit survives; a fresh owner completes the identical frozen plan once and a second pass
+reclaims nothing; intents (and `preparation.json`) keep their bytes; a fresh service
+returns the same receipt through lookup/acknowledgement, with no transcript movement
+or inference. No defect was found.
