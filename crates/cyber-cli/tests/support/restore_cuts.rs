@@ -1045,3 +1045,69 @@ fn recovery_routes_refuse_stale_and_foreign_requests_without_effects() {
     assert_eq!(f.env.file(&applied).as_deref(), Some("owner edit"));
     f.assert_quiet(&messages, requests);
 }
+
+/// Metadata files of a journal with their inode numbers and bytes.
+fn metadata_state(f: &Fixture, journal: &str) -> Vec<(String, u64, String)> {
+    use std::os::unix::fs::MetadataExt;
+    let directory = f.namespace().join("journals").join(journal);
+    let mut state: Vec<_> = std::fs::read_dir(&directory)
+        .unwrap()
+        .map(|entry| entry.unwrap())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("intent"))
+        .map(|entry| {
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                entry.metadata().unwrap().ino(),
+                std::fs::read_to_string(entry.path()).unwrap(),
+            )
+        })
+        .collect();
+    state.sort();
+    state
+}
+
+/// Regression: repeating an explicit acknowledgement of an already acknowledged
+/// recovery or ordinary restore is a metadata no-op; it must not rewrite intents
+/// (which would break identities pinned by a planned metadata retirement).
+#[test]
+fn repeated_acknowledgement_never_rewrites_acknowledged_intents() {
+    let f = Fixture::new();
+    let (journal, _) = kill_after_first_progress(&f);
+    let result = f.confirm_acknowledged(&f.request(&journal, "keep", "repeat-ack"));
+    let resolution = result["receipt"]["resolution_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let before = [
+        metadata_state(&f, &journal),
+        metadata_state(&f, &resolution),
+    ];
+    for _ in 0..2 {
+        assert_eq!(f.lookup("repeat-ack", true)["journal_acknowledged"], true);
+    }
+    assert_eq!(
+        [
+            metadata_state(&f, &journal),
+            metadata_state(&f, &resolution)
+        ],
+        before
+    );
+    // The same holds for an ordinary restore receipt.
+    let g = Fixture::new();
+    let preview = rewind_preview(&g.env, &g.session, &g.first, "both");
+    json(&confirm_rewind(
+        &g.env, &g.session, &g.first, "both", &preview,
+    ));
+    let (journal, intent) = g.only_journal();
+    assert_eq!(intent["acknowledged"], true);
+    let before = metadata_state(&g, &journal);
+    let route = format!(
+        "/sessions/{}/rewind/restores/{}/acknowledge",
+        g.session,
+        intent["origin"]["activity_id"].as_str().unwrap()
+    );
+    for _ in 0..2 {
+        json(&g.env.cyber(&["api", "POST", &route, "-d", "{}"]));
+    }
+    assert_eq!(metadata_state(&g, &journal), before);
+}
