@@ -4387,3 +4387,68 @@ SDK (`Cyber.start({mode:"spawn"})`) lists the journal, reviews rollback, gets a 
 and a repeated confirmation over a later owner edit, a 404 for a foreign lookup, an
 unchanged transcript and no inference. Local macOS arm64 pass; the SDK suite passes
 (139 pass, 11 skipped without `CYBER_BIN`).
+
+## M8 substantive code and security review of the recovery path (2026-11-16, local)
+
+Scope: review/confirm/lookup/acknowledge, the paired Store commit, journal
+acknowledgement, payload and metadata reclamation, and their HTTP routes
+(`cyber-server` `runtime/snapshot_*`, `activity.rs`, `http/sessions.rs`; `cyber-snapshot`
+`copy/{restore,resolution*,ownership,storage,intent_slots,preparation,lifetime,orphaned}.rs`
+and `copy/reclamation/`; `cyber-store` `append_pair_checked`), checked against
+managed-recovery.md. Lens: origin/ownership proof, TOCTOU, mutation on repeated
+lookup, deletion of unresolved evidence, commit ordering, route authorization, silent
+error paths, resource bounds.
+
+Defects fixed, each with a regression test:
+
+1. **Keep cleanup could unlink an owner file** (`copy/reclamation/paired.rs`
+   `original_payloads`). Paired cleanup deleted whatever inode the keep outcome had
+   observed in the original journal's private slot, without checking it against the
+   restore's own ownership record. An owner write that races an exchange can leave the
+   owner's file there; review reports it `foreign`, keep is allowed, and after retention
+   cleanup deleted it. Ordinary and resolution cleanup already required
+   `verify_original`. The slot inode must now be the recorded original source or the
+   prepared target (`Ownership::owns_slot`); otherwise cleanup refuses and keeps the
+   bytes. Regression: `kept_recovery_cleanup_never_unlinks_an_unowned_slot_inode`
+   (failed before: 35 bytes reclaimed).
+2. **Repeated acknowledgement rewrote acknowledged intents**
+   (`copy/resolution.rs` `acknowledge_resolution_authorized`,
+   `reconcile_restore_receipt`). Every repeated `--acknowledge`/`POST .../acknowledge`
+   rewrote both intents, swapping slot inodes, so identities pinned by a planned
+   but interrupted metadata retirement no longer matched and resumed retirement
+   would refuse forever. Already published metadata is now left untouched.
+   Regression: `repeated_acknowledgement_never_rewrites_acknowledged_intents`
+   (recovery and ordinary restore; failed before on changed inodes).
+3. **Hardening:** a new resolution was admitted when the existence check of its
+   journal failed for any reason (`symlink_metadata(..).is_ok()`); only `NotFound`
+   now admits creation, other errors refuse (`resolve_recovery`).
+
+Recorded, not changed (need design or verification):
+
+- A failed consuming paired commit drops the moved checkout claims inside the writer
+  callback before disposal records the activity `unknown` (`activity.rs`
+  `commit_recovery`); the lifetime lock still blocks reacquisition. Needs a
+  verification test before any change.
+- A keep that sees a harmless owner edit after `execute_journal` marks the resolution
+  complete leaves a permanently `unknown` request that the owner must resolve as its
+  own journal (`resolution.rs` keep `verify_unchanged_slots` order). Fail-closed;
+  changing the order touches the approved protocol, so it is left for the owner.
+- The cleanup protection query compares the canonical origin directory with the
+  stored `session.directory` (`snapshot_reclamation.rs`); a Session stored through a
+  symlinked path might not protect its journal. Not confirmed.
+- One damaged `intent.json` makes the whole Session listing fail closed; a foreign
+  acknowledge refuses as `InvalidRequestError` while lookup refuses as
+  `RequestNotFoundError`; with TCP and no password any local process can call the
+  owner routes (general server policy); `retention_days` defaults to 7 when the
+  `snapshots` object exists without it; request discovery scans events with
+  `json_extract` (bounded at 4096).
+- Owner question still open: while an interrupted keep/rollback is pending, the
+  original journal can be re-reviewed under a new request ID, while the refusal hint
+  says not to choose a new ID.
+
+Reviewed and sound: request ownership bound to Session creation; lookup-only reuse and
+changed-content refusal; fingerprints recomputed under locks before effects; the
+writer re-attests both owners and notifies only after COMMIT; journal
+acknowledgement only after the observed commit; per-exchange authorization and parent
+route checks; intent-slot identity checks; ordinary/resolution cleanup ownership,
+inventory and pins; plan/delete/complete ordering; record, listing and request bounds.
