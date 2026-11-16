@@ -26,7 +26,12 @@ pub struct DiscardArgs {
     #[arg(long, value_parser = activity_id)]
     activity: Option<String>,
     /// Discard only the reviewed stage; requires the stage name and --request-id.
-    #[arg(long, value_parser = fingerprint, requires_all = ["stage", "request_id"])]
+    #[arg(
+        long,
+        value_parser = fingerprint,
+        requires_all = ["stage", "request_id"],
+        conflicts_with = "activity"
+    )]
     confirm: Option<String>,
     /// Stable request identity; repeat it to resume after an interruption or a lost reply.
     #[arg(long, value_parser = request_id, requires = "confirm")]
@@ -91,7 +96,11 @@ pub async fn run(client: &Client, args: DiscardArgs, global: &GlobalArgs) -> Res
         let inventory: ConstructionInventory = data(client.get(&base).await.map_err(api)?)?;
         return list_output(&inventory, &session, global);
     }
-    if let (Some(confirmation), Some(stage)) = (args.confirm, &args.stage) {
+    if let Some(confirmation) = args.confirm {
+        let stage = args
+            .stage
+            .as_ref()
+            .ok_or_else(|| CliError::usage("Discard confirmation names the reviewed stage"))?;
         let request_id = args
             .request_id
             .ok_or_else(|| CliError::usage("Discard confirmation requires --request-id"))?;
