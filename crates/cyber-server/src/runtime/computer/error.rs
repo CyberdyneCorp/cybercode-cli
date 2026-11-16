@@ -26,4 +26,14 @@ impl From<std::io::Error> for ComputerError {
         Self::Storage
     }
 }
+impl ComputerError {
+    /// The registry reason code of this failure, when one applies.
+    pub fn reason(&self) -> Option<cyber_computer::ReasonCode> {
+        match self {
+            Self::Native(error) => error.reason(),
+            _ => None,
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, ComputerError>;

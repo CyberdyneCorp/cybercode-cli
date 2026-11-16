@@ -191,11 +191,26 @@ pub(super) fn error(error: ComputerError) -> ApiError {
         ComputerError::Native(Native::Limit(_)) => {
             (StatusCode::TOO_MANY_REQUESTS, "ComputerLimitError")
         }
+        ComputerError::Native(Native::Refused(code, _)) => refused(*code),
         ComputerError::FrameExpired => (StatusCode::NOT_FOUND, "ComputerFrameExpiredError"),
         ComputerError::Conflict => (StatusCode::CONFLICT, "ComputerConflictError"),
         ComputerError::Unknown => (StatusCode::CONFLICT, "ComputerUnknownOutcomeError"),
         ComputerError::Storage => (StatusCode::SERVICE_UNAVAILABLE, "ComputerStorageError"),
         _ => (StatusCode::BAD_REQUEST, "ComputerInvalidRequestError"),
     };
-    ApiError::new(status, tag, error.to_string())
+    let reason = error.reason();
+    let api = ApiError::new(status, tag, error.to_string());
+    match reason {
+        Some(code) => api.with_reason(code.as_str()),
+        None => api,
+    }
+}
+
+/// Pre-admission refusals keep the existing error classes and add `reason`.
+fn refused(code: cyber_computer::ReasonCode) -> (StatusCode, &'static str) {
+    match cyber_computer::refusal_class(code) {
+        "ComputerConsentError" => (StatusCode::FORBIDDEN, "ComputerConsentError"),
+        "ComputerStaleFrameError" => (StatusCode::CONFLICT, "ComputerStaleFrameError"),
+        _ => (StatusCode::BAD_REQUEST, "ComputerInvalidRequestError"),
+    }
 }
