@@ -312,6 +312,24 @@ impl CheckoutAcknowledgement {
     }
 }
 
+/// The construction stage the published acknowledgement of `owner` names, when
+/// one is published. Read-only: nothing is locked, verified or adopted.
+pub(super) fn published_stage(
+    directory: &cap_std::fs::Dir,
+    owner: &str,
+) -> io::Result<Option<String>> {
+    let file = match open_file(directory, &format!("{owner}{SUFFIX}")) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let record: Record = serde_json::from_slice(&contents(&file, LIMIT)?).map_err(invalid)?;
+    if record.binding.owner_id != owner {
+        return Err(invalid("Checkout acknowledgement names another owner"));
+    }
+    Ok(Some(record.staging_name))
+}
+
 pub(in crate::worktrees::activity) fn for_removal(
     managed: &Managed,
     record: &UseRecord,

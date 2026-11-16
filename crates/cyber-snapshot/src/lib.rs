@@ -606,6 +606,56 @@ impl GitSnapshots {
 }
 
 impl Snapshots for GitSnapshots {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn cancellation_stages(
+        &self,
+        origin: cyber_server::runtime::SnapshotOrigin,
+    ) -> BoxFuture<'_, Result<Vec<String>, String>> {
+        let data = self.data_dir.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || copy::discard::stages(&data, &origin))
+                .await
+                .map_err(|error| error.to_string())?
+        })
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn cancellation_stage(
+        &self,
+        origin: cyber_server::runtime::SnapshotOrigin,
+        name: String,
+    ) -> BoxFuture<'_, Result<Option<cyber_server::runtime::NativeConstructionStage>, String>> {
+        let data = self.data_dir.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || copy::discard::stage(&data, &origin, &name))
+                .await
+                .map_err(|error| error.to_string())?
+        })
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn fence_cancellation_stage(
+        &self,
+        origin: cyber_server::runtime::SnapshotOrigin,
+        stage: cyber_server::runtime::NativeConstructionStage,
+    ) -> BoxFuture<
+        '_,
+        Result<
+            Box<dyn cyber_server::runtime::ConstructionFence>,
+            cyber_server::runtime::ConstructionFenceError,
+        >,
+    > {
+        let data = self.data_dir.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                copy::discard::fence(&data, &origin, &stage).map(|fence| {
+                    Box::new(fence) as Box<dyn cyber_server::runtime::ConstructionFence>
+                })
+            })
+            .await
+            .map_err(|error| {
+                cyber_server::runtime::ConstructionFenceError::Refused(error.to_string())
+            })?
+        })
+    }
     fn lock_worker(
         &self,
         binding: cyber_server::runtime::SnapshotLifetimeBinding,

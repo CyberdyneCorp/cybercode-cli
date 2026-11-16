@@ -11,8 +11,11 @@ mod snapshot;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use snapshot::CheckoutRetirementGuard;
 pub use snapshot::{CheckoutAcknowledgement, CheckoutBinding, CheckoutOwner, SnapshotClaim};
+pub use snapshot::{
+    CheckoutConstructionFence, CheckoutConstructionReview, SnapshotConstruction,
+    SnapshotConstructionKind,
+};
 pub use snapshot::{CheckoutRetirementFile, CheckoutRetirementPlan};
-pub use snapshot::{SnapshotConstruction, SnapshotConstructionKind};
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct UseRecord {
