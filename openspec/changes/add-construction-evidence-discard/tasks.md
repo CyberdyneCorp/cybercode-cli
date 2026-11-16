@@ -1,8 +1,8 @@
-Status: awaiting owner review. No task starts before approval.
+Status: approved by the owner 2026-11-15; implementation not started.
 
 ## 1. Review
 
-- [ ] 1.1 Owner reviews proposal, design and the `snapshots-checkpoints` delta and answers the open questions in design.md.
+- [x] 1.1 Owner reviews proposal, design and the `snapshots-checkpoints` delta and answers the open questions in design.md. Approved 2026-11-15: one stage per confirmation, CLI/API first (TUI shows the command), failed unlinks retried indefinitely and reported as `discard pending`.
 
 ## 2. Implementation (after approval)
 

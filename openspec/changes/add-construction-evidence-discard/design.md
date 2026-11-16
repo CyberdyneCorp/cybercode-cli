@@ -1,6 +1,6 @@
 ## Context
 
-Status: **awaiting owner review**. No implementation exists; nothing here is enabled.
+Status: **approved by the owner 2026-11-15** (open questions answered below). No implementation exists yet; nothing here is enabled.
 
 Construction evidence is any private stage a constructor flushed but did not publish:
 checkout claim stages (`preparing_<len>_<activity>_…`), acknowledgement stages
@@ -93,9 +93,13 @@ lifetime lock, published-record check and digest-bound review are what make that
 deletion safe. Bounding stage size keeps review cheap but leaves very large stages for
 a later decision.
 
-## Open questions for the owner
+## Owner decisions (2026-11-15)
 
-- Should discard also be allowed per activity in one confirmation, or strictly one
-  stage per confirmation?
-- Should the TUI expose it, or only the CLI/API in the first revision?
-- Retention for `discarded/<request_id>/` if the unlink step fails repeatedly.
+- **Scope:** one stage per confirmation. Each stage is reviewed, confirmed and
+  receipted on its own; there is no per-activity bulk discard in this revision.
+- **Surfaces:** CLI (`cyber sessions recovery discard`) and the authenticated
+  HTTP/SDK route only. The TUI recovery panel lists the evidence and shows the exact
+  CLI command; a TUI action is deferred to a later revision.
+- **Failed unlink:** periodic maintenance retries unlinking `discarded/<request_id>/`
+  indefinitely. It is never dropped silently: `doctor` and recovery listings report it
+  as `discard pending`, and its bytes count toward the snapshot cap until removed.

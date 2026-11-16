@@ -1,6 +1,6 @@
 ## Why
 
-Status: **awaiting owner review** (owner decision 2026-11-15: OpenSpec first, no code).
+Status: **approved by the owner 2026-11-15** (OpenSpec first; open questions answered in design.md).
 
 `complete-daily-coding-surfaces` deliberately gives half-built checkout construction
 evidence no cleanup authority. A process killed after a checkout-claim or

@@ -24,3 +24,21 @@
 - **WHEN** the owner reviews and confirms their discard
 - **THEN** the system SHALL discard only those stages and record the receipt
 - **AND** retained restore journals and payload images SHALL stay listed read-only and SHALL NOT be deleted by this command
+
+#### Scenario: One stage per confirmation
+- **GIVEN** an activity with more than one construction stage
+- **WHEN** the owner confirms a discard
+- **THEN** the confirmation SHALL name exactly one reviewed stage and its receipt SHALL cover only that stage
+- **AND** the system SHALL NOT offer a bulk discard for an activity or Session
+
+#### Scenario: Failed unlink stays pending
+- **GIVEN** a confirmed discard whose stage was moved to the private discarded area but could not be unlinked
+- **WHEN** periodic maintenance runs
+- **THEN** the system SHALL retry the unlink without a time limit and SHALL NOT drop the entry silently
+- **AND** doctor and recovery listings SHALL report it as `discard pending` and its bytes SHALL count toward the snapshot storage cap until removed
+
+#### Scenario: Terminal recovery panel points to the command
+- **GIVEN** a Session with construction evidence
+- **WHEN** the owner opens the terminal recovery panel
+- **THEN** the panel SHALL list the evidence and show the exact CLI discard command
+- **AND** the panel SHALL NOT perform the discard itself in this revision
