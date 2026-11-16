@@ -25,7 +25,10 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
     }
     match view.phase {
         Phase::Preparation => unreachable!(),
-        Phase::Journals => journals(view, &mut lines),
+        Phase::Journals => {
+            journals(view, &mut lines);
+            constructions(&app.session.id, view, &mut lines);
+        }
         Phase::Requests => requests(view, &mut lines),
         Phase::Review => review(view, &mut lines),
         Phase::Outcome => outcome(view, &mut lines),
@@ -60,6 +63,28 @@ fn journals(view: &View, lines: &mut Vec<Line<'static>>) {
             } else {
                 ""
             }
+        )));
+    }
+}
+/// Construction evidence is listed with the exact CLI command that reviews it;
+/// discarding stays a CLI/API action in this revision.
+fn constructions(session: &str, view: &View, lines: &mut Vec<Line<'static>>) {
+    for stage in &view.constructions.stages {
+        lines.push(Line::from(format!(
+            "Construction evidence {} · owner {} · discard with: cyber sessions recovery-discard {} {}",
+            clean(&stage.name),
+            clean(stage.activity_id.as_deref().unwrap_or("unknown")),
+            clean(session),
+            clean(&stage.name)
+        )));
+    }
+    for receipt in &view.constructions.pending {
+        lines.push(Line::from(format!(
+            "discard pending: {} · request {:?} · cyber sessions recovery-discard-request {} {}",
+            clean(&receipt.stage.name),
+            receipt.request_id,
+            clean(session),
+            clean(&receipt.request_id)
         )));
     }
 }

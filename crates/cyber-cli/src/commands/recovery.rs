@@ -154,6 +154,7 @@ pub async fn run(client: &Client, args: RecoveryArgs, global: &GlobalArgs) -> Re
         list(&journals, global)?;
         if !output::is_json(global.format) {
             super::preparation_recovery::unresolved_hint(client, &id).await;
+            super::discard_recovery::construction_hint(client, &id).await;
         }
         return Ok(());
     };

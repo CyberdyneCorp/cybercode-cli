@@ -48,6 +48,7 @@ pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     checks.extend(lsp_checks(ctx, &config));
     checks.extend(rt.block_on(catalog_checks(ctx, &config)));
     checks.push(database(ctx));
+    checks.push(construction_discards(ctx));
     checks.push(sandbox());
     checks.push(tool("git", &["--version"], Status::Fail));
     checks.push(tool("rg", &["--version"], Status::Warn));
@@ -353,6 +354,68 @@ fn database(ctx: &Context) -> Check {
         Ok(problem) => check("database", Status::Fail, format!("quick_check: {problem}")),
         Err(e) => check("database", Status::Fail, e.to_string()),
     }
+}
+
+/// Owner-confirmed construction discards (`snapshots-checkpoints` → Owner-only discard
+/// of construction evidence): receipts are kept forever; a stage moved into its
+/// quarantine but not yet unlinked is `discard pending` until maintenance removes it.
+fn construction_discards(ctx: &Context) -> Check {
+    const NAME: &str = "construction discards";
+    let DatabaseLocation::File(path) = ctx.database() else {
+        return check(NAME, Status::Pass, "in memory");
+    };
+    if !path.exists() {
+        return check(NAME, Status::Pass, "none");
+    }
+    match discard_receipts(&path) {
+        Ok(receipts) => discard_check(&receipts),
+        Err(error) => check(NAME, Status::Warn, format!("unavailable: {error}")),
+    }
+}
+
+fn discard_receipts(
+    path: &std::path::Path,
+) -> rusqlite::Result<Vec<cyber_server::runtime::ConstructionDiscardReceipt>> {
+    let db =
+        rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let mut query = db.prepare(
+        "SELECT data FROM event e WHERE type=?1 AND NOT EXISTS(SELECT 1 FROM event n \
+         WHERE n.aggregate_id=e.aggregate_id AND n.type=e.type \
+         AND json_extract(n.data,'$.request_id')=json_extract(e.data,'$.request_id') AND n.seq>e.seq) \
+         ORDER BY aggregate_id,seq LIMIT 4097",
+    )?;
+    let rows = query.query_map(
+        [cyber_server::runtime::construction_discard::DISCARDED],
+        |row| row.get::<_, String>(0),
+    )?;
+    let mut receipts = vec![];
+    for row in rows {
+        if let Ok(receipt) = serde_json::from_str(&row?) {
+            receipts.push(receipt);
+        }
+    }
+    Ok(receipts)
+}
+
+fn discard_check(receipts: &[cyber_server::runtime::ConstructionDiscardReceipt]) -> Check {
+    let pending: Vec<String> = receipts
+        .iter()
+        .filter(|receipt| receipt.pending())
+        .map(|receipt| {
+            format!(
+                "discard pending: {} (Session {}, request {:?})",
+                receipt.stage.name, receipt.session_id, receipt.request_id
+            )
+        })
+        .collect();
+    if pending.is_empty() {
+        return check(
+            "construction discards",
+            Status::Pass,
+            format!("{} receipt(s), none pending", receipts.len()),
+        );
+    }
+    check("construction discards", Status::Warn, pending.join("; "))
 }
 
 fn sandbox() -> Check {

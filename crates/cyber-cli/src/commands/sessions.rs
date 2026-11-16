@@ -84,6 +84,10 @@ pub enum SessionsCmd {
     RecoveryPreparation(super::preparation_recovery::PreparationArgs),
     /// Look up a committed preparation cancellation; optionally reconcile its native metadata.
     RecoveryPreparationRequest(super::preparation_recovery::RequestArgs),
+    /// List, review or discard one unpublished construction stage (local owner only).
+    RecoveryDiscard(super::discard_recovery::DiscardArgs),
+    /// Look up a construction discard request by its request ID, without acting.
+    RecoveryDiscardRequest(super::discard_recovery::DiscardRequestArgs),
     /// Set or remove a branch label.
     Label {
         /// ID, exact title or unique ID prefix.
@@ -210,7 +214,9 @@ async fn dispatch(client: &Client, cmd: SessionsCmd, global: &GlobalArgs) -> Res
         recovery @ (SessionsCmd::Recovery(_)
         | SessionsCmd::RecoveryRequest(_)
         | SessionsCmd::RecoveryPreparation(_)
-        | SessionsCmd::RecoveryPreparationRequest(_)) => {
+        | SessionsCmd::RecoveryPreparationRequest(_)
+        | SessionsCmd::RecoveryDiscard(_)
+        | SessionsCmd::RecoveryDiscardRequest(_)) => {
             dispatch_recovery(client, recovery, global).await
         }
         SessionsCmd::Other(_) => unreachable!("handled before connecting"),
@@ -231,6 +237,12 @@ async fn dispatch_recovery(
         }
         SessionsCmd::RecoveryPreparationRequest(args) => {
             super::preparation_recovery::request(client, args, global).await
+        }
+        SessionsCmd::RecoveryDiscard(args) => {
+            super::discard_recovery::run(client, args, global).await
+        }
+        SessionsCmd::RecoveryDiscardRequest(args) => {
+            super::discard_recovery::request(client, args, global).await
         }
         _ => unreachable!("only recovery commands are dispatched here"),
     }

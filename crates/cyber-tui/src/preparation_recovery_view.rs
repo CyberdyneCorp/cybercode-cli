@@ -22,13 +22,13 @@ pub fn lines(app: &App) -> Vec<Line<'static>> {
         )));
     }
     match view.phase {
-        Phase::Candidates => candidates(view, &mut lines),
+        Phase::Candidates => candidates(&app.session.id, view, &mut lines),
         Phase::Review => review(view, &mut lines),
         Phase::Outcome => outcome(view, &mut lines),
     }
     lines
 }
-fn candidates(view: &View, lines: &mut Vec<Line<'static>>) {
+fn candidates(session: &str, view: &View, lines: &mut Vec<Line<'static>>) {
     lines.push(Line::from(
         "↑/↓ select · Enter discovers a committed receipt before review · R reloads",
     ));
@@ -53,7 +53,9 @@ fn candidates(view: &View, lines: &mut Vec<Line<'static>>) {
         )));
         for stage in &candidate.checkout_constructions {
             lines.push(Line::from(format!(
-                "    Unresolved checkout construction evidence {stage:?}: cancelling restores prompt admission; the stage stays fenced and worktree removal refuses until construction recovery exists."
+                "    Unresolved checkout construction evidence {stage:?}: cancelling restores prompt admission; the stage stays fenced and worktree removal refuses until the owner discards it with: cyber sessions recovery-discard {} {}",
+                crate::messaging::clean(session),
+                crate::messaging::clean(stage)
             )));
         }
     }
