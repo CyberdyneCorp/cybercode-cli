@@ -530,19 +530,85 @@ points to the unresolved preparation, and `recovery-preparation` lists the stage
 under its activity (JSON `checkout_constructions`); the TUI recovery panel (**C**,
 then **P**) shows the same line. Cancelling that pre-effect preparation restores
 prompt admission. The stage itself is fenced by design: it is never adopted as a
-claim, it is not deleted, and removing the worktree refuses with a
+claim, nothing deletes it automatically, and removing the worktree refuses with a
 `same-owner unknown constructor` error naming it. An interrupted acknowledgement
-stage behaves the same way for metadata retirement. Cleaning up construction
-evidence needs a separate recovery protocol that does not exist yet; do not delete
-the stage by hand to force removal.
+stage behaves the same way for metadata retirement. Only the owner's explicit
+discard (below) removes construction evidence; do not delete the stage by hand.
 
-Recovery clients show a stage only under the preparation whose activity owns it.
-A stage with a malformed name, an acknowledgement stage whose owner has no listed
-preparation, and any stage after its preparation was cancelled (the default
-listing drops cancelled candidates; the TUI history view still shows them) appear
-only in the worktree removal or metadata retirement refusal, which always names
-them. The name inventory is advisory: if it cannot be read, the listing still
-returns its preparations without stage names.
+Recovery clients show a checkout stage under the preparation whose activity owns
+it while that preparation is unresolved. Every stage, including one whose
+preparation was cancelled, a cancellation-record stage and one with a malformed
+name, is listed by `cyber sessions recovery-discard <session>` (and in the text of
+`cyber sessions recovery` and the TUI recovery panel, with the exact discard
+command). The preparation listing's name inventory is advisory: if it cannot be
+read, the listing still returns its preparations without stage names.
+
+### Discarding construction evidence (local owner only)
+
+A construction stage is a private file a constructor flushed but never published: a
+checkout claim stage (`preparing_*`), a checkout acknowledgement stage
+(`ack_preparing_*`) or a file-copy cancellation-record stage (`tmp_*` beside a
+journal's `preparation.json`). The local owner can discard exactly one reviewed stage
+per confirmation:
+
+```sh
+cyber sessions recovery-discard ses_example
+cyber sessions recovery-discard ses_example preparing_10_op_example_01J...
+cyber sessions recovery-discard ses_example preparing_10_op_example_01J... \
+  --confirm <review-fingerprint> --request-id discard-one
+cyber sessions recovery-discard-request ses_example discard-one
+```
+
+The first command lists the stages (kind, owner activity, Location state) and every
+`discard pending` request; `--activity <op>` reviews the only stage of an activity.
+Review is read-only: it reports the stage's kind, owner activity, device and inode,
+size, modification time, SHA-256 (stages over 1 MiB, links and special files are
+refused), the operations it fences and whether the Location is present or removed,
+plus a fingerprint over all of that and the Session revision.
+
+Confirmation refuses, leaving every stage, journal and record unchanged, when:
+
+- the fingerprint is stale (the stage or the Session changed since review);
+- the Session is not idle, has background work or an admitted snapshot worker, or
+  still has an unresolved snapshot preparation (cancel it first);
+- the stage's constructor lock or the activity's snapshot lifetime lock is still
+  held (`busy:`), or the snapshot namespace is busy;
+- the stage name has no derivable owner, or its owner is not a snapshot activity of
+  the Session;
+- a claim stage's activity already published a claim; an acknowledgement stage's
+  claim has no `.snapshot-ack` published from another stage yet, or a
+  cancellation-record stage's journal has no `preparation.json` yet (run
+  `recovery-preparation-request --acknowledge` once first);
+- the caller is not the authenticated local owner (`403`): a bearer or peer
+  identity, a peer attachment, a browser, an MCP client label or a model tool;
+- the Session is a managed checkout whose Location was removed.
+
+Restore journals, payload images and every published claim, acknowledgement and
+cancellation record are never discarded by this command, and it never removes the
+worktree. Once the last stage is gone, worktree removal and metadata retirement are
+admitted again.
+
+A confirmed discard first records a `session.snapshot.construction_discarded.1`
+intent in the Session's history, then moves the stage with a no-replace rename into
+a private `discarded/<key>/` directory of the same namespace, flushes it and unlinks
+it there; the receipt is completed last. Every step re-checks the reviewed identity:
+a file that differs is reported (`changed`) and never deleted. Repeating the
+confirmation with the same request ID resumes an interrupted discard or returns the
+receipt; `recovery-discard-request` (or
+`GET .../rewind/constructions/discard/requests/<request-id>`) only reads it. A stage
+that was moved but not unlinked is `discard pending`: maintenance retries the unlink
+a minute after start and then hourly without a time limit, `cyber doctor` and the
+recovery listings report it, and file-copy stages count toward the snapshot storage
+cap until removed. Receipts are never removed by retention.
+
+The API equivalents are `GET /sessions/<id>/rewind/constructions`,
+`POST /sessions/<id>/rewind/constructions/discard/review` (`{"stage": ...}` or
+`{"activity_id": ...}`), `POST .../discard/confirm`
+(`{"stage", "confirmation", "request_id"}`) and
+`GET .../discard/requests/<request-id>`; the SDK exposes `constructionInventory`,
+`constructionDiscardReview`, `constructionDiscardConfirm` and
+`constructionDiscardLookup` on `client.session`. The TUI only shows the command in
+this revision.
 
 Confirm only a reviewed fingerprint and retain your stable cancellation ID:
 
@@ -565,5 +631,5 @@ Cancellation preserves files, transcript, retained intents, private payloads and
 independent process/checkout uncertainty. Older receipts can remain inspectable
 without gaining newer native acknowledgement authority. If source effects may
 have been admitted, use the journal's keep/rollback review instead. No force-clear
-or evidence deletion option exists. The TUI preparation path and remaining partial
+option exists; construction stages are discarded only as described above. The TUI preparation path and remaining partial
 constructor/native-platform acceptance are still unfinished.

@@ -37,6 +37,12 @@
 - **THEN** the system SHALL retry the unlink without a time limit and SHALL NOT drop the entry silently
 - **AND** doctor and recovery listings SHALL report it as `discard pending` and its bytes SHALL count toward the snapshot storage cap until removed
 
+#### Scenario: Construction evidence is listed with its command
+- **GIVEN** a Session with construction stages or a discard that is still pending
+- **WHEN** the owner lists its recovery evidence
+- **THEN** the system SHALL list each stage with its kind, owner activity and Location state and each pending discard as `discard pending`
+- **AND** listing SHALL NOT grant discard authority or change anything
+
 #### Scenario: Terminal recovery panel points to the command
 - **GIVEN** a Session with construction evidence
 - **WHEN** the owner opens the terminal recovery panel

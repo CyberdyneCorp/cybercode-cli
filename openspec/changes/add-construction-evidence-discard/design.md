@@ -1,6 +1,7 @@
 ## Context
 
-Status: **approved by the owner 2026-11-15** (open questions answered below). No implementation exists yet; nothing here is enabled.
+Status: **approved by the owner 2026-11-15** (open questions answered below);
+implemented 2026-11-16 with the clarifications in "Implementation notes".
 
 Construction evidence is any private stage a constructor flushed but did not publish:
 checkout claim stages (`preparing_<len>_<activity>_…`), acknowledgement stages
@@ -103,3 +104,67 @@ a later decision.
 - **Failed unlink:** periodic maintenance retries unlinking `discarded/<request_id>/`
   indefinitely. It is never dropped silently: `doctor` and recovery listings report it
   as `discard pending`, and its bytes count toward the snapshot cap until removed.
+
+## Implementation notes (2026-11-16)
+
+These pin down choices the approved text left open. Where a note is stricter than the
+text, the stricter rule is implemented; none widens discard authority.
+
+- **Surfaces and names.** CLI `cyber sessions recovery-discard <session> [<stage> |
+  --activity <op>] [--confirm <fingerprint> --request-id <id>]` and
+  `cyber sessions recovery-discard-request <session> <request-id>` (the
+  `recovery-<noun>` naming of the other recovery commands). A read-only
+  `GET .../rewind/constructions` lists stages (cancellation-record stages had no
+  listing) and `discard pending` requests; `sessions recovery` text, the TUI journal
+  panel and the TUI preparation panel show each stage with the exact CLI command.
+- **Owner only.** The main listener already requires the owner credential and peers
+  have their own listener without these routes. The review and confirm handlers also
+  refuse (`403`, reason `owner_only`) a request presenting a bearer token, a peer
+  attachment (`X-Cyber-Attach`), a browser (`Origin` or `Sec-Fetch-Mode`) or an MCP
+  client label (`X-Cyber-Client: mcp:*`). No model tool exists.
+- **Owner derivation.** Claim and acknowledgement stages: the owner parsed from the
+  name. Cancellation-record stages (`tmp_*` in a journal directory): the stage counts
+  only when its complete bytes are the cancellation receipt of exactly the origin that
+  owns the journal; any other journal file is not construction evidence and is never
+  touched. The owner must be a snapshot activity of the reviewed Session.
+- **Published records.** With rename publication a record published *from* a stage
+  cannot coexist with it, so the bullet is enforced as: a claim stage refuses while a
+  claim `<op>.lock` exists for its activity; an acknowledgement stage refuses until a
+  `.snapshot-ack` published from another stage exists (receipt reconciliation has run
+  once); a cancellation-record stage refuses until its journal's `preparation.json`
+  exists (the same rule: `recovery-preparation-request --acknowledge` has run once).
+- **Liveness.** Exclusive, non-blocking: the stage's own constructor lock (claim and
+  acknowledgement stages are held locked by their constructor from creation through
+  publication), the activity's snapshot lifetime lock (`workers/<op>`) and, for
+  cancellation-record stages, the snapshot namespace lock. A held lock refuses as
+  `409` (`busy:`).
+- **Session fences.** Idle, no Drain, no background job or delegation, no admitted
+  snapshot or binary worker, and no snapshot activity of the Session that is not
+  settled (the owner activity's preparation must be cancelled first).
+- **Quarantine.** `<common-dir>/cyber-worktree-activity/discarded/<key>/` for checkout
+  stages and `<data>/snapshot/global/<namespace>/discarded/<key>/` for
+  cancellation-record stages, both 0700, where `<key>` is a SHA-256 of the Session and
+  request ID. The stage is moved with a no-replace rename and unlinked only when its
+  device, inode, size, modification time and digest still match the receipt.
+- **Receipt.** `session.snapshot.construction_discarded.1` events on the Session
+  aggregate: `intent` before any filesystem change, then `completed`, `pending` (moved,
+  not unlinked) or `changed` (another file holds the name; nothing deleted). The
+  latest event per request ID is the receipt. Lookup never acts; a repeated confirm
+  with the same request ID resumes the frozen plan (re-fencing first when the stage
+  never moved).
+- **Maintenance.** A runtime task retries every request whose stage left its namespace
+  but was not unlinked, a minute after start and then hourly, with no time limit. A
+  request interrupted before the move waits for the owner's repeated confirmation.
+  `cyber doctor` reports every `discard pending` request.
+- **Snapshot cap.** Quarantined cancellation-record bytes live in the snapshot
+  namespace and count toward its cap. Quarantined checkout stages live in the
+  repository's private Git metadata, outside the snapshot store; they are reported as
+  `discard pending` but are not counted (open for the owner).
+- **Removed Location.** Supported for cancellation-record stages, which are found
+  from the activity's recorded origin (Location path, root, namespace and journal
+  identities) when the directory is gone. A managed Session whose Location was
+  removed refuses: its registration cannot be verified without the checkout, and its
+  checkout stages are not discoverable (open for the owner).
+- **Bounds.** Stages over 1 MiB, links, special files and multi-link files are refused
+  at review. Platforms without the native primitives (Windows) refuse.
+

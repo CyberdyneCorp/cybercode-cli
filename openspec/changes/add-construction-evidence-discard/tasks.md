@@ -1,4 +1,4 @@
-Status: approved by the owner 2026-11-15; implementation not started.
+Status: approved by the owner 2026-11-15; implemented 2026-11-16 (design.md, "Implementation notes").
 
 ## 1. Review
 
@@ -6,7 +6,7 @@ Status: approved by the owner 2026-11-15; implementation not started.
 
 ## 2. Implementation (after approval)
 
-- [ ] 2.1 Read-only stage review (identity, digest, fences, Location state) and fingerprint, for claim, acknowledgement and cancellation-record stages.
-- [ ] 2.2 Confirm with the fencing order in design.md, durable intent, no-replace quarantine rename, unlink and completed receipt; resume and lookup by `request_id`.
-- [ ] 2.3 HTTP routes, OpenAPI, SDK, `cyber sessions recovery-discard`, TUI entry, `docs/rewind.md`.
-- [ ] 2.4 Tests: refusal for every case in "What still refuses"; real process death between intent, rename and unlink; stale fingerprint; removed Location; worktree removal admitted only after discard.
+- [x] 2.1 Read-only stage review (identity, digest, fences, Location state) and fingerprint, for claim, acknowledgement and cancellation-record stages. Evidence: `cyber_core::construction_discard::observe` (no-follow, non-blocking, regular single-link file, 1 MiB bound, SHA-256), `Repository::review_snapshot_construction` (claim/ack), `cyber-snapshot` `copy::discard::stage` (cancellation records bound to their exact origin), `Runtime::construction_discard_review` and the read-only `construction_inventory` listing.
+- [x] 2.2 Confirm with the fencing order in design.md, durable intent, no-replace quarantine rename, unlink and completed receipt; resume and lookup by `request_id`. Evidence: `crates/cyber-server/src/runtime/construction_discard/confirm.rs` (Session fences, fingerprint, lifetime and stage locks, `session.snapshot.construction_discarded.1` intent/completion, resume from the frozen plan, hourly maintenance retry), `cyber_core::construction_discard::{quarantine, unlink, locate}`.
+- [x] 2.3 HTTP routes, OpenAPI, SDK, `cyber sessions recovery-discard`, TUI entry, `docs/rewind.md`. Evidence: `/rewind/constructions` routes with the owner-only guard, regenerated `sdk/openapi.json` and TypeScript SDK (`constructionInventory`, `constructionDiscardReview`, `constructionDiscardConfirm`, `constructionDiscardLookup`), `recovery-discard`/`recovery-discard-request` in `docs/cli.md`, `cyber doctor` check, the TUI recovery panels show the exact command, `docs/rewind.md` "Discarding construction evidence".
+- [x] 2.4 Tests: refusal for every case in "What still refuses"; real process death between intent, rename and unlink; stale fingerprint; removed Location; worktree removal admitted only after discard. Evidence: `cyber-cli/tests/support/construction_discard.rs` (real SIGKILL claim stage; unresolved preparation, stale fingerprint, removal fenced then admitted; kill table at `construction-discard-intent-committed`, `-quarantined`, `-unlinked` with resume, maintenance retry and doctor `discard pending`), `cyber-server/tests/http.rs` (owner-only `403` for bearer, peer attachment, browser and MCP callers), `cyber-core` `construction_discard` and `activity::snapshot::discard` tests (live constructor, published claim, unreconciled acknowledgement, malformed names, links/FIFOs/aliases/oversized, changed and foreign files never deleted), `cyber-snapshot` `copy::discard` tests (busy namespace and lifetime, unreconciled cancellation, foreign journal files untouched, removed Location, snapshot-cap accounting), TUI panel test.
