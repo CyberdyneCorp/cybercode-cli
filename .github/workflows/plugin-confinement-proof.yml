@@ -34,6 +34,10 @@ jobs:
       matrix:
         os: [macos-15, macos-15-intel, ubuntu-24.04, ubuntu-24.04-arm]
         runtime: [node, python, bun, deno, native]
+        # macOS Intel runners queue for hours: pull requests skip them, main and
+        # workflow_dispatch still run them.
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'macos-15-intel' || 'none' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -133,6 +137,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15, macos-15-intel]
+        # macOS Intel runners queue for hours: pull requests skip them, main and
+        # workflow_dispatch still run them.
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'macos-15-intel' || 'none' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -381,6 +389,10 @@ jobs:
       matrix:
         os: [macos-15, macos-15-intel]
         runtime: [node, python, python-system, bun, deno]
+        # macOS Intel runners queue for hours: pull requests skip them, main and
+        # workflow_dispatch still run them.
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'macos-15-intel' || 'none' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

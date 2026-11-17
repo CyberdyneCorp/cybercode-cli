@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.diff.outputs.code }}
+      platforms: ${{ steps.platforms.outputs.platforms }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +33,14 @@ jobs:
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
           fi
+      # Every release target, from .github/build-targets.json. Pull requests skip the
+      # `post_merge_only` ones (macOS Intel: its runners queue for hours); pushes to main
+      # build them all (`installation-upgrade` → Release targets).
+      - id: platforms
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          echo "platforms=$(jq -c --arg event "$EVENT" '[.[] | select($event != "pull_request" or (.post_merge_only | not)) | del(.post_merge_only)]' .github/build-targets.json)" >> "$GITHUB_OUTPUT"
 
   rust:
     name: Rust (${{ matrix.os }})
@@ -233,27 +242,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-15
-            target: aarch64-apple-darwin
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-          # Every release target builds on pull requests, so a tag never finds the
-          # first failure (`installation-upgrade` → Release targets).
-          - os: windows-2025
-            target: x86_64-pc-windows-msvc
-            exe: .exe
-          - os: windows-11-arm
-            target: aarch64-pc-windows-msvc
-            exe: .exe
+        include: ${{ fromJSON(needs.changes.outputs.platforms) }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:

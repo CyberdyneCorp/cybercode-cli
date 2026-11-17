@@ -34,6 +34,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-latest]
+        # macOS Intel runners queue for hours: pull requests skip them, main and
+        # workflow_dispatch still run them.
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'macos-15-intel' || 'none' }}
     env:
       CARGO_INCREMENTAL: 0
     steps:

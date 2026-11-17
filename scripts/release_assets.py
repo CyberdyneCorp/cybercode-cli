@@ -35,7 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_BASE_URL = "https://github.com/CyberdyneCorp/cybercode-cli/releases/download"
 
-# Every target CI builds, in `ci.yml` order, then Windows.
+# Every target CI builds, in `.github/build-targets.json` order, then Windows.
 ALL_TARGETS = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",

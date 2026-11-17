@@ -83,6 +83,91 @@ on:
       - crates/cyber-core/src/worktrees/**
       - Cargo.lock
       - .github/workflows/non-git-snapshot-proof.yml
+  # Pull requests skip macOS Intel; it runs after merge.
+  push:
+    branches: [main]
+    paths:
+      - crates/cyber-snapshot/**
+      - crates/cyber-app/Cargo.toml
+      - crates/cyber-app/src/**
+      - crates/cyber-app/tests/support/scripted_model.rs
+      - crates/cyber-app/tests/support/snapshot*.rs
+      - crates/cyber-app/tests/support/managed_retirement_cut.rs
+      - crates/cyber-app/tests/support/managed_recovery_cut.rs
+      - crates/cyber-app/tests/support/location_retirement.rs
+      - crates/cyber-server/src/runtime/snapshot*.rs
+      - crates/cyber-server/src/runtime/snapshot_reclamation/**
+      - crates/cyber-server/src/runtime/rewind*.rs
+      - crates/cyber-server/src/runtime/drain.rs
+      - crates/cyber-server/src/runtime/structured*.rs
+      - crates/cyber-server/src/runtime/model.rs
+      - crates/cyber-server/src/runtime/mod.rs
+      - crates/cyber-server/src/runtime/events.rs
+      - crates/cyber-server/src/runtime/activity.rs
+      - crates/cyber-server/src/runtime/jobs.rs
+      - crates/cyber-server/src/runtime/input_jobs.rs
+      - crates/cyber-server/src/runtime/input_clients.rs
+      - crates/cyber-server/src/runtime/input_interrupt.rs
+      - crates/cyber-server/src/runtime/presence.rs
+      - crates/cyber-server/src/runtime/interactive.rs
+      - crates/cyber-server/src/runtime/goals/unattended.rs
+      - crates/cyber-server/tests/input_clients.rs
+      - crates/cyber-server/tests/input_interrupt.rs
+      - crates/cyber-server/tests/interactive_clients.rs
+      - crates/cyber-server/src/http/interactive.rs
+      - crates/cyber-server/src/runtime/process_jobs.rs
+      - crates/cyber-server/src/runtime/requests.rs
+      - crates/cyber-server/src/runtime/requests/**
+      - crates/cyber-server/tests/requests.rs
+      - crates/cyber-server/tests/jobs.rs
+      - crates/cyber-server/tests/structured_root.rs
+      - crates/cyber-server/tests/support/structured_terminal_fault.rs
+      - crates/cyber-server/src/http/sessions.rs
+      - crates/cyber-server/src/http/events.rs
+      - crates/cyber-server/src/http/jobs.rs
+      - crates/cyber-client/src/lib.rs
+      - crates/cyber-app/tests/snapshot_git_runtime.rs
+      - crates/cyber-app/tests/snapshot_reclamation.rs
+      - crates/cyber-app/tests/instructions.rs
+      - crates/cyber-core/src/config/**
+      - crates/cyber-core/src/rules.rs
+      - crates/cyber-core/src/import/snapshot.rs
+      - crates/cyber-core/src/memory/windows.rs
+      - crates/cyber-core/tests/import_snapshot.rs
+      - crates/cyber-core/src/import/mod.rs
+      - crates/cyber-core/src/lib.rs
+      - crates/cyber-core/tests/config.rs
+      - crates/cyber-tools/src/host.rs
+      - crates/cyber-tools/src/tools/fs.rs
+      - crates/cyber-tools/src/tools/patch.rs
+      - crates/cyber-tools/src/tools/agent.rs
+      - crates/cyber-tools/src/tools/background.rs
+      - crates/cyber-tools/tests/background_bash.rs
+      - crates/cyber-tools/tests/background_subagents.rs
+      - crates/cyber-server/src/runtime/auto_override.rs
+      - crates/cyber-tools/tests/instruction_config.rs
+      - crates/cyber-tools/tests/path_skills.rs
+      - crates/cyber-tools/tests/shell_patch.rs
+      - crates/cyber-server/src/runtime/context*.rs
+      - crates/cyber-server/src/runtime/instructions.rs
+      - crates/cyber-server/src/runtime/instructions/**
+      - crates/cyber-server/src/runtime/host.rs
+      - crates/cyber-server/tests/context_compaction.rs
+      - crates/cyber-server/tests/http.rs
+      - crates/cyber-tui/src/context_inspection.rs
+      - crates/cyber-server/tests/support/mod.rs
+      - crates/cyber-cli/Cargo.toml
+      - crates/cyber-cli/src/**
+      - crates/cyber-cli/tests/branches_cli.rs
+      - crates/cyber-cli/tests/exec_stream_input.rs
+      - crates/cyber-cli/tests/exec_output_schema.rs
+      - crates/cyber-cli/tests/support/**
+      - crates/cyber-server/src/workspace.rs
+      - crates/cyber-core/src/binary/native/**
+      - crates/cyber-core/src/binary/native.rs
+      - crates/cyber-core/src/worktrees/**
+      - Cargo.lock
+      - .github/workflows/non-git-snapshot-proof.yml
   workflow_dispatch:
 permissions:
   contents: read
@@ -103,6 +188,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        # macOS Intel runners queue for hours: pull requests skip them, main and
+        # workflow_dispatch still run them.
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'macos-15-intel' || 'none' }}
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_PROFILE_DEV_DEBUG: line-tables-only

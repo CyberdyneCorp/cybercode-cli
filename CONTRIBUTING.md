@@ -54,6 +54,7 @@ A pull request must pass:
   - The requirement inventory in `ROADMAP.md`: `python3 scripts/spec_inventory.py` after changing specs.
 - `openspec validate --all --strict` and `python3 scripts/spec_lint.py`.
 - The web dashboard and SDK builds and tests.
+- A release build of every target in `.github/build-targets.json` except `x86_64-apple-darwin`. GitHub's macOS Intel runners queue for hours, so the Intel build and the Intel legs of the native proof workflows run after merge, on each push to `main`, and on manual (`workflow_dispatch`) runs.
 
 ## Pull requests
 
