@@ -196,6 +196,18 @@ impl AdmissionAuthority {
 }
 
 impl Runtime {
+    pub(super) fn admitted_bindings(
+        &self,
+        source: &str,
+        attempt: Option<&super::names::Resumed>,
+    ) -> Result<Option<Vec<Binding>>, RuntimeError> {
+        let bindings = self.callback_admission_bindings(source)?;
+        if let Some(captured) = attempt.and_then(|attempt| attempt.admission_bindings.as_ref()) {
+            self.verify_admission_bindings(captured)?;
+        }
+        Ok(bindings)
+    }
+
     pub(super) fn verify_admission_bindings(
         &self,
         bindings: &[Binding],
@@ -284,6 +296,18 @@ impl Runtime {
     /// The scope remains closed until acknowledged settlement or reviewed recovery is implemented.
     pub async fn close_subtree_admissions(&self, id: &str) -> Result<String, RuntimeError> {
         let _open = self.inner.open().await?;
+        self.close_subtree_admissions_leased(id).await
+    }
+
+    /// As [`Self::close_subtree_admissions`] for a caller that already retains a
+    /// lifecycle lease; re-entering the lifecycle lock could stall behind shutdown.
+    pub(super) async fn close_subtree_admissions_leased(
+        &self,
+        id: &str,
+    ) -> Result<String, RuntimeError> {
+        if self.inner.closed.is_cancelled() {
+            return Err(RuntimeError::ShuttingDown);
+        }
         let handle = self.inner.handle(id).await?;
         let mut state = handle.state.lock().await;
         self.inner.ensure_admission_open(id)?;
@@ -546,6 +570,10 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
     if event.kind == super::hooks::STARTED && event.data["synthetic"] == true {
         return Ok(());
     }
+    if super::snapshot_recovery_record::project_pending(tx, event)? {
+        return Ok(());
+    }
+    super::snapshot_recovery_record::check_ordinary_admission(tx, event)?;
     check_closed_admission(tx, event)?;
     let source = match event.kind.as_str() {
         super::events::CREATED => event.data["info"]["parent_id"].as_str().map(str::to_string),
@@ -647,6 +675,7 @@ fn check_closed_admission(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(
         _ => return Ok(()),
     };
     for target in targets {
+        super::snapshot_recovery_record::check_session_admission(tx, target, &event.aggregate_id)?;
         let chain = snapshot_chain(tx, target)
             .map_err(|e| e.to_string())?
             .ok_or("Admission ancestry has a cycle or a missing ancestor")?;

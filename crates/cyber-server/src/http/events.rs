@@ -241,8 +241,8 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
         | LiveEvent::MemoryUpdated { .. }
         | LiveEvent::WorkflowProgress { .. }
         | LiveEvent::Worktree { .. }
-        // No Session stream carries it; only the instance stream, on request
-        // (`include=hook_receipts`), forwards it.
+        // Only streams that ask (`include=hook_receipts`) forward it: the instance
+        // stream, and a Session stream for that Session's own receipts.
         | LiveEvent::HookReceipt { .. } => None,
         LiveEvent::Durable { session_id, .. }
         | LiveEvent::HookNotice { session_id, .. }
@@ -465,6 +465,16 @@ pub(crate) async fn session_events(
     Path(id): Path<String>,
     parts: Parts,
 ) -> Result<Response, ApiError> {
+    let include_live = match parts
+        .uri
+        .query()
+        .and_then(|query| query_value(query, "live"))
+        .as_deref()
+    {
+        None | Some("false") => false,
+        Some("true") => true,
+        _ => return Err(ApiError::invalid("live must be true or false")),
+    };
     let after = parts
         .uri
         .query()
@@ -486,16 +496,41 @@ pub(crate) async fn session_events(
         })?,
         None => -1,
     };
+    let advertise_presence = match parts
+        .uri
+        .query()
+        .and_then(|query| query_value(query, "presence"))
+        .as_deref()
+    {
+        None | Some("true") => true,
+        Some("false") => false,
+        _ => return Err(ApiError::invalid("presence must be true or false")),
+    };
+    // Opt-in IO-free hook receipt summaries of this Session only (`exec --include-hook-events`).
+    let receipts = match parts
+        .uri
+        .query()
+        .and_then(|query| query_value(query, "include"))
+        .as_deref()
+    {
+        None => false,
+        Some("hook_receipts") => true,
+        _ => return Err(ApiError::invalid("include must be hook_receipts")),
+    };
+    let filter = SessionLive {
+        live: include_live,
+        receipts,
+    };
     let directory = state.runtime.state(&id).await?.info.directory;
     // Subscribe before replaying so nothing committed in between is missed.
     let live = state.runtime.subscribe();
     let (tx, rx) = mpsc::channel(256);
     let runtime = state.runtime.clone();
-    let present =
-        (!browser_stream(&parts)).then(|| runtime.attach_client(Watching::Session(id.clone())));
+    let present = (advertise_presence && !browser_stream(&parts))
+        .then(|| runtime.attach_client(Watching::Session(id.clone())));
     spawn_stream(runtime.clone(), tx.clone(), async move {
         let _present = present;
-        follow(state, id, directory, after, live, tx).await;
+        follow(state, id, directory, after, live, tx, filter).await;
     });
     Ok(stream_response(rx, runtime))
 }
@@ -507,6 +542,7 @@ async fn follow(
     mut last: i64,
     mut live: broadcast::Receiver<LiveEvent>,
     tx: mpsc::Sender<Event>,
+    filter: SessionLive,
 ) {
     let mut counter = 0;
     if !recover_session_stream(&state, &id, &mut directory, &mut last, &tx, &mut counter).await {
@@ -536,14 +572,7 @@ async fn follow(
                 }
             }
             Ok(LiveEvent::Deleted { session_id }) if session_id == id => return,
-            Ok(event @ LiveEvent::HookNotice { .. })
-            | Ok(event @ LiveEvent::RequestRouted { .. })
-            | Ok(event @ LiveEvent::WorktreeSetup { .. })
-            | Ok(event @ LiveEvent::ToolProgress { .. })
-            | Ok(event @ LiveEvent::JobOutput { .. })
-            | Ok(event @ LiveEvent::MessagingOutcome { .. })
-                if session_of(&event) == Some(id.as_str()) =>
-            {
+            Ok(event) if session_live_allowed(&event, &id, filter) => {
                 counter += 1;
                 let mut e = envelope(&event, counter);
                 e.location = Some(directory.clone());
@@ -568,6 +597,34 @@ async fn follow(
             }
             Err(broadcast::error::RecvError::Closed) => return,
         }
+    }
+}
+
+/// Which live events a Session stream adds to its durable ones.
+#[derive(Clone, Copy)]
+struct SessionLive {
+    /// `live=true`: idle, delta and error notices.
+    live: bool,
+    /// `include=hook_receipts`: this Session's receipt summaries.
+    receipts: bool,
+}
+
+fn session_live_allowed(event: &LiveEvent, id: &str, filter: SessionLive) -> bool {
+    if let LiveEvent::HookReceipt { session_id, .. } = event {
+        return filter.receipts && session_id == id;
+    }
+    if session_of(event) != Some(id) {
+        return false;
+    }
+    match event {
+        LiveEvent::Durable { .. } | LiveEvent::Deleted { .. } => false,
+        LiveEvent::HookNotice { .. }
+        | LiveEvent::RequestRouted { .. }
+        | LiveEvent::WorktreeSetup { .. }
+        | LiveEvent::ToolProgress { .. }
+        | LiveEvent::JobOutput { .. }
+        | LiveEvent::MessagingOutcome { .. } => true,
+        _ => filter.live,
     }
 }
 

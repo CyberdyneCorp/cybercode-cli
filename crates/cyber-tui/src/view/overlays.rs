@@ -646,6 +646,7 @@ pub(crate) const HELP: &[(&str, &str)] = &[
         "/memory [global]",
         "review notes, deletion and pinned recovery",
     ),
+    ("/context", "inspect the current Session context"),
     ("/cost", "token classes, subtree cost and cache hit rate"),
     (
         "/hooks history",

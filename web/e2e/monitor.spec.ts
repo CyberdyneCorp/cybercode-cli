@@ -39,7 +39,10 @@ test('Runs binds real workflow pause/resume/stop, Job output/stop and Goal contr
   await eventually(() => dashboard.api<{ current: { status: string } }>(`/sessions/${session}/goals`), (state) => state.current?.status === 'paused');
   await page.getByRole('button', { name: 'Clear Goal', exact: true }).click();
   await eventually(() => dashboard.api<{ current: unknown }>(`/sessions/${session}/goals`), (state) => state.current === null);
-  for (const question of await dashboard.pending('questions', session)) await dashboard.api(`/sessions/${session}/questions/${question.id}/reply`, 'POST', {});
+  // Clearing the Goal stops future iterations. Settle its in-flight turn before
+  // checking that an independent headless run creates no interactive request.
+  await dashboard.api(`/sessions/${session}/interrupt`, 'POST', {});
+  expect((await dashboard.pending('questions', session)).length).toBe(0);
   const headless=await dashboard.api<{id:string}>('/workflows/runs','POST',{session_id:session,script:"export const meta={name:'headless-browser-fixture',description:'Must stay headless'}; export default async()=>ask('Must not be resurrected by browser presence');"});
   await eventually(()=>dashboard.api<{status:string}>(`/workflows/runs/${headless.id}`),state=>state.status==='failed');
   await page.getByRole('button',{name:'Reconnect',exact:true}).click();

@@ -986,6 +986,7 @@ dependencies = [
  "aws-lc-rs",
  "axum",
  "base64 0.22.1",
+ "blake3",
  "cap-std",
  "chrono",
  "cyber-account",
@@ -1046,6 +1047,7 @@ dependencies = [
  "cyber-llm",
  "cyber-sandbox",
  "cyber-server",
+ "cyber-snapshot",
  "cyber-store",
  "cyber-telemetry",
  "cyber-tools",
@@ -1150,6 +1152,7 @@ name = "cyber-core"
 version = "0.1.0-beta.2"
 dependencies = [
  "aho-corasick",
+ "blake3",
  "cap-fs-ext",
  "cap-std",
  "chrono",
@@ -1310,6 +1313,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "sha2 0.10.9",
  "similar 3.2.0",
  "tempfile",
  "tokio",

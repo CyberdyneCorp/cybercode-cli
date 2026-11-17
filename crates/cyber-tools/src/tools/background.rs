@@ -119,15 +119,18 @@ pub(super) async fn admit(ctx: &Ctx<'_>, command: &str, kind: &str) -> Result<Ad
         .ok_or_else(|| failed("Missing the data directory for job logs"))?;
     let input = &ctx.inv.input;
     let reservation = runtime
-        .reserve_process_job(ProcessJob {
-            session_id: ctx.inv.session_id.clone(),
-            kind: kind.into(),
-            command: command.into(),
-            description: text(input, "description").into(),
-            notify: input.get("notify").and_then(Value::as_bool) != Some(false),
-            output_dir: data.join("jobs"),
-            max_jobs: settings.max_jobs,
-        })
+        .reserve_process_job_for_call(
+            ProcessJob {
+                session_id: ctx.inv.session_id.clone(),
+                kind: kind.into(),
+                command: command.into(),
+                description: text(input, "description").into(),
+                notify: input.get("notify").and_then(Value::as_bool) != Some(false),
+                output_dir: data.join("jobs"),
+                max_jobs: settings.max_jobs,
+            },
+            ctx.inv,
+        )
         .await
         .map_err(refusal)?;
     let log = JobLog::create(reservation.output_path(), settings.max_output_bytes)

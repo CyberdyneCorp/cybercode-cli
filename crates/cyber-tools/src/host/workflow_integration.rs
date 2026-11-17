@@ -227,6 +227,7 @@ impl BuiltinHost {
     async fn integration_context<'a>(&'a self, inv: &'a Invocation) -> Result<Ctx<'a>, String> {
         Ok(Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -297,6 +298,7 @@ impl BuiltinHost {
         }
         let context = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -621,6 +623,7 @@ impl BuiltinHost {
         policy.location = managed.path.clone();
         let check_ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),

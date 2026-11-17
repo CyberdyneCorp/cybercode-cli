@@ -38,8 +38,8 @@ pub(super) struct Owned {
     baseline: HashSet<String>,
     /// The forked command's delegation; `None` once known not to be forked.
     fork: Option<Admission>,
-    /// Message IDs admitted to the parent since the run began.
-    admitted: HashSet<String>,
+    /// Only the one fork's failed/cancelled handback needs live admission proof.
+    fork_handback_admitted: bool,
     last_seq: i64,
     lagged: Option<(i64, Instant)>,
     /// Jobs and the fork a stop already tried to cancel.
@@ -62,7 +62,7 @@ impl Owned {
             session: session.into(),
             baseline,
             fork: None,
-            admitted: HashSet::new(),
+            fork_handback_admitted: false,
             last_seq: -1,
             lagged: None,
             stopped: HashSet::new(),
@@ -78,7 +78,7 @@ impl Owned {
             session: session.into(),
             baseline: HashSet::new(),
             fork: None,
-            admitted: HashSet::new(),
+            fork_handback_admitted: false,
             last_seq: -1,
             lagged: None,
             stopped: HashSet::new(),
@@ -91,6 +91,7 @@ impl Owned {
     pub fn command(&mut self, message: &str) -> Result<(), CliError> {
         let id = Runtime::skill_command_delegation_id(&self.session, message);
         self.fork = Some(Admission::existing(&self.session, &id)?);
+        self.fork_handback_admitted = false;
         Ok(())
     }
 
@@ -99,9 +100,11 @@ impl Owned {
             self.last_seq = self.last_seq.max(seq);
         }
         if event.kind.starts_with("session.prompt.admitted")
-            && let Some(id) = event.data["message_id"].as_str()
+            && event.session_id.as_deref() == Some(self.session.as_str())
+            && let Some(fork) = &self.fork
+            && event.data["message_id"] == format!("msg_skill_handback_{}", fork.id)
         {
-            self.admitted.insert(id.into());
+            self.fork_handback_admitted = true;
         }
         if event.kind == "session.error" && event.data["kind"] == "background_settlement" {
             self.settlement = event.data["message"].as_str().map(str::to_string);
@@ -136,7 +139,6 @@ impl Owned {
             self.fork = None;
             return Ok(Settle::Done);
         };
-        let handback = format!("msg_skill_handback_{}", fork.id);
         match record.status {
             DelegationStatus::Pending | DelegationStatus::Cancelling => Ok(Settle::Wait),
             DelegationStatus::Unknown => Err(CliError::runtime(format!(
@@ -144,7 +146,7 @@ impl Owned {
                 fork.id
             ))),
             DelegationStatus::Failed | DelegationStatus::Cancelled
-                if !stopping && !self.admitted.contains(&handback) =>
+                if !stopping && !self.fork_handback_admitted =>
             {
                 let id = fork.id.clone();
                 self.handback_pending(&id).map(|()| Settle::Wait)
@@ -340,4 +342,36 @@ fn append_error(run: &mut Run, message: String) {
         Some(prior) => format!("{prior}; {message}"),
         None => message,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn only_the_exact_fork_handback_and_session_set_admission_evidence() {
+        let mut owned = Owned::empty("ses_1");
+        owned.command("msg_1").unwrap();
+        let expected = format!("msg_skill_handback_{}", owned.fork_id().unwrap());
+        let mut event = Event {
+            kind: "session.prompt.admitted.1".into(),
+            data: json!({"message_id":expected}),
+            seq: Some(0),
+            session_id: Some("ses_other".into()),
+        };
+        owned.observe(&event);
+        assert!(!owned.fork_handback_admitted);
+        event.session_id = Some("ses_1".into());
+        for index in 0..4096 {
+            event.data = json!({"message_id":format!("msg_{index}")});
+            owned.observe(&event);
+        }
+        assert!(!owned.fork_handback_admitted);
+        event.data = json!({"message_id":expected});
+        owned.observe(&event);
+        assert!(owned.fork_handback_admitted);
+        owned.command("msg_2").unwrap();
+        assert!(!owned.fork_handback_admitted);
+    }
 }

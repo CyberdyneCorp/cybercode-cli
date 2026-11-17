@@ -35,6 +35,9 @@ async fn load(client: &Client, request: &Request) -> Result<Msg, String> {
 async fn run(client: &Client, request: &Request) -> Result<Reply, String> {
     let route = format!("/sessions/{}/rewind", request.session);
     match &request.command {
+        Command::Recovery(command) => crate::recovery::perform(client, request, command)
+            .await
+            .map(|reply| Reply::Recovery(Box::new(reply))),
         Command::Load => Ok(Reply::Loaded(Box::new(load(client, request).await?))),
         Command::Preview(selection) => {
             let response = client

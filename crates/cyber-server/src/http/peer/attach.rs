@@ -370,6 +370,7 @@ pub(super) async fn prompt(
         ));
     }
     let prompt = PromptBody {
+        input_client: None,
         id: body.id,
         parts: body.parts,
         delivery: body.delivery.unwrap_or(Delivery::Steer),

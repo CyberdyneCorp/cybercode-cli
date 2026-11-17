@@ -107,6 +107,7 @@ impl Inner {
     /// is of the current path.
     pub(crate) async fn commit_staged_revert(&self, handle: &Handle) -> Result<(), RuntimeError> {
         let mut state = handle.state.lock().await;
+        self.ensure_snapshot_admission(handle, &state.info.id)?;
         let Some(revert) = state.revert.clone() else {
             return Ok(());
         };
@@ -123,7 +124,13 @@ impl Inner {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains_key(session_id);
-        if running {
+        let snapshot = self
+            .activities
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .any(|control| control.source == session_id && control.snapshot_worker);
+        if running || snapshot {
             Err(RuntimeError::Busy(session_id.into()))
         } else {
             Ok(())

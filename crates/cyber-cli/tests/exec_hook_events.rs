@@ -461,3 +461,49 @@ fn driven_runs_report_hook_lines_before_each_result() {
     );
     assert_no_secret_in_hook_lines(&lines, &detail);
 }
+
+/// A driven run follows its Session's own event stream (managed recovery), not the
+/// instance stream: the receipts must arrive on that stream (`include=hook_receipts`) so
+/// a `PreToolUse` line still precedes its call's `tool_result`, and none arrive without
+/// the flag. Regression for the merge that moved driven runs to the Session stream.
+#[test]
+fn driven_runs_report_pre_tool_use_lines_before_each_tool_result() {
+    let stdin = format!(
+        "{}\n{}\n",
+        r#"{"type":"user","text":"go","id":"a"}"#, r#"{"type":"end"}"#
+    );
+    let driven = |flag: bool| {
+        let provider = Provider::start(TOOLS);
+        let (dir, root) = root(&provider);
+        let mut command = cyber(&root);
+        command.args(["--format", "stream-json", "--input-format", "stream-json"]);
+        if flag {
+            command.arg("--include-hook-events");
+        }
+        let output = run(command, &stdin);
+        drop((provider, dir));
+        output
+    };
+
+    let output = driven(true);
+    let detail = detail(&output);
+    assert_eq!(output.status.code(), Some(0), "{detail}");
+    let lines = lines(&output);
+    assert_receipt_lines(&lines, 3, &detail);
+    let allowed = guard_line(&lines, "allow-read", "read", &detail);
+    let blocked = guard_line(&lines, "block-bash", "bash", &detail);
+    assert_eq!(lines[blocked]["outcome"], "blocked", "{detail}");
+    let result = find(&lines, |l| l["type"] == "result", &detail);
+    assert!(allowed < result && blocked < result, "{detail}");
+    assert_no_secret_in_hook_lines(&lines, &detail);
+
+    let plain = driven(false);
+    let plain_detail = self::detail(&plain);
+    assert_eq!(plain.status.code(), Some(0), "{plain_detail}");
+    assert!(
+        !self::lines(&plain)
+            .iter()
+            .any(|l| l["type"] == "hook_event"),
+        "{plain_detail}"
+    );
+}

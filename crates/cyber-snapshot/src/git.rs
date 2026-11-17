@@ -2,11 +2,24 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 
 use cyber_server::runtime::{FileDiff, Snapshot};
 use sha1::{Digest, Sha1};
+mod catalog;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod config;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod eligibility;
 #[path = "git_history.rs"]
 pub(crate) mod history;
+mod images;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) mod prepared;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod raw;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod user_index;
 
 /// A shadow git directory bound to one worktree and scoped to one Location.
 #[derive(Debug, Clone)]
@@ -17,17 +30,26 @@ pub(crate) struct Shadow {
     common_dir: PathBuf,
     /// The Location relative to the worktree, as a pathspec (`.` for the root).
     pathspec: String,
+    catalogs: Arc<Mutex<catalog::CatalogCache>>,
+    pub private_roots: Vec<PathBuf>,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    pub capture_settings: prepared::CaptureSettings,
 }
 
 /// Environment variables that would redirect git away from the shadow repository.
-const GIT_ENV: &[&str] = &[
+pub(crate) const GIT_ENV: &[&str] = &[
     "GIT_DIR",
+    "GIT_CONFIG",
     "GIT_WORK_TREE",
     "GIT_INDEX_FILE",
     "GIT_OBJECT_DIRECTORY",
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_COMMON_DIR",
     "GIT_NAMESPACE",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
 ];
 
 /// Git for Windows does not accept verbatim (`\\?\`) paths as `GIT_DIR`, work tree or
@@ -65,6 +87,42 @@ impl Drop for PreviewIndex {
     }
 }
 
+/// A marker only prevents fallback admission. It grants no Git/source authority
+/// and creates no project identity cache when library discovery is unsupported.
+pub(crate) fn repository_marker(location: &Path) -> bool {
+    let Ok(location) = std::fs::canonicalize(location) else {
+        return true;
+    };
+    location.ancestors().any(|parent| {
+        !matches!(std::fs::symlink_metadata(parent.join(".git")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
+/// Identification permits reads and private metadata reservation only. The
+/// native journal additionally requires retained runtime checkout authority.
+pub(crate) fn managed_data_source(
+    data: &Path,
+    location: &Path,
+) -> Result<Option<cyber_core::worktrees::Managed>, String> {
+    if !location.starts_with(data) {
+        return Ok(None);
+    }
+    if location == data || location.starts_with(data.join("snapshot")) {
+        return Ok(None);
+    }
+    let managed = cyber_core::worktrees::Repository::managed_at(location)
+        .map_err(|error| error.to_string())?
+        .map(|(_, managed)| managed);
+    Ok(managed.filter(|managed| {
+        managed.ready
+            && !managed.id.is_empty()
+            && managed.path.starts_with(data)
+            && managed.path != data
+            && !managed.path.starts_with(data.join("snapshot"))
+    }))
+}
+
 impl Shadow {
     pub fn locate(root: &Path, location: &Path) -> Option<Self> {
         let project = cyber_core::project::identify(location);
@@ -76,13 +134,31 @@ impl Shadow {
         let rel = location
             .strip_prefix(&worktree)
             .ok()?
-            .to_string_lossy()
-            .replace('\\', "/");
+            .components()
+            .map(|part| part.as_os_str().to_str())
+            .collect::<Option<Vec<_>>>()?
+            .join("/");
         Some(Self {
             git_dir: git_path(&root.join(&project.id).join(hex)),
             worktree: git_path(&worktree),
             common_dir: git_path(&common_dir),
             pathspec: if rel.is_empty() { ".".into() } else { rel },
+            catalogs: Arc::new(Mutex::new(catalog::CatalogCache::new())),
+            private_roots: vec![
+                if managed_data_source(root.parent().unwrap_or(root), &location)
+                    .ok()?
+                    .is_some()
+                {
+                    root.to_path_buf()
+                } else {
+                    root.parent().unwrap_or(root).to_path_buf()
+                },
+            ],
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            capture_settings: prepared::CaptureSettings {
+                ignore: vec![],
+                max_untracked: 2 * 1024 * 1024,
+            },
         })
     }
 
@@ -112,6 +188,7 @@ impl Shadow {
             .env("GIT_WORK_TREE", &self.worktree)
             .current_dir(&self.worktree)
             .args([
+                "--literal-pathspecs",
                 "-c",
                 "core.autocrlf=false",
                 "-c",
@@ -126,11 +203,18 @@ impl Shadow {
     }
 
     async fn ensure_init(&self) -> Result<(), String> {
+        let mut source = self.clone();
+        source.git_dir = self.common_dir.clone();
+        let format = source.object_format().await?;
         if self.git_dir.join("HEAD").exists() {
+            if self.object_format().await? != format {
+                return Err("Git snapshot shadow object format differs from its repository".into());
+            }
             return Ok(());
         }
         std::fs::create_dir_all(&self.git_dir).map_err(|e| e.to_string())?;
-        self.run(&["init", "--quiet"]).await?;
+        self.run(&["init", "--quiet", &format!("--object-format={format}")])
+            .await?;
         for (key, value) in [
             ("core.autocrlf", "false"),
             ("core.fsmonitor", "false"),
@@ -143,10 +227,29 @@ impl Shadow {
         std::fs::write(alternates, format!("{}\n", objects.display())).map_err(|e| e.to_string())
     }
 
+    async fn object_format(&self) -> Result<&'static str, String> {
+        match self
+            .run_bounded(&["rev-parse", "--show-object-format=storage"], 16)
+            .await?
+            .as_slice()
+        {
+            b"sha1\n" => Ok("sha1"),
+            b"sha256\n" => Ok("sha256"),
+            _ => Err("Unsupported Git snapshot repository object format".into()),
+        }
+    }
+
     pub async fn track(&self, ignore: &[String], max_bytes: u64) -> Result<Snapshot, String> {
         self.ensure_init().await?;
-        let skipped = self.large_untracked(max_bytes).await;
-        self.write_excludes(ignore, &skipped)?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        self.write_capture_excludes(ignore, max_bytes).await?;
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            let skipped = self.large_untracked(max_bytes).await;
+            self.write_excludes(ignore, max_bytes, &skipped)?;
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let capture_before = self.capture_git_state(ignore, max_bytes).await;
         let excluded = self.omitted().await?;
         let cached_paths: Vec<_> = excluded
             .iter()
@@ -165,40 +268,90 @@ impl Shadow {
             .trim()
             .to_string();
         let skipped = excluded.clone();
-        let tree = self.record_snapshot(&tree, excluded).await?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let (policy, raw, skipped) = match capture_before {
+            Ok(before) => {
+                let after = self.capture_git_state(ignore, max_bytes).await?;
+                if before != after {
+                    return Err("Git policy or raw state changed during checkpoint capture".into());
+                }
+                let raw = self.write_raw_capture(&after.files).await?;
+                (Some(after.policy), Some(raw), skipped)
+            }
+            Err(_) => {
+                let mut skipped = skipped;
+                skipped
+                    .push("native Git policy/raw-state proof unavailable for this capture".into());
+                (None, None, skipped)
+            }
+        };
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let (policy, raw) = (None, None);
+        let tree = self.record_snapshot(&tree, excluded, policy, raw).await?;
         Ok(Snapshot { tree, skipped })
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn capture_git_state(
+        &self,
+        ignore: &[String],
+        max_untracked: u64,
+    ) -> Result<crate::copy::git_capture::Capture, String> {
+        let settings = prepared::CaptureSettings {
+            ignore: ignore.to_vec(),
+            max_untracked,
+        };
+        let inputs = self.ignore_inputs_for(&settings).await?;
+        let worktree = self.worktree.clone();
+        let prefix = if self.pathspec == "." {
+            String::new()
+        } else {
+            self.pathspec.clone()
+        };
+        tokio::task::spawn_blocking(move || {
+            crate::copy::git_rules::capture_state(&worktree, &prefix, &inputs)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("{error:?}"))
     }
 
     /// Untracked files (per the user's repository) over the size limit.
     async fn large_untracked(&self, max_bytes: u64) -> Vec<String> {
-        let mut cmd = tokio::process::Command::new("git");
-        for name in GIT_ENV {
-            cmd.env_remove(name);
-        }
-        let out = cmd
-            .arg("-C")
-            .arg(&self.worktree)
-            .args([
-                "ls-files",
-                "--others",
-                "--exclude-standard",
-                "-z",
-                "--",
-                &self.pathspec,
-            ])
-            .output()
-            .await;
-        let Ok(out) = out else { return Vec::new() };
-        out.stdout
+        let mut command = self.command(&[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            &self.pathspec,
+        ]);
+        command
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env("GIT_OPTIONAL_LOCKS", "0");
+        let Ok(bytes) =
+            Self::bounded_command(command, 8 * 1024 * 1024, std::time::Duration::from_secs(10))
+                .await
+        else {
+            return Vec::new();
+        };
+        bytes
             .split(|b| *b == 0)
             .filter(|p| !p.is_empty())
+            .take(65536)
             .map(|p| String::from_utf8_lossy(p).to_string())
             .filter(|p| std::fs::metadata(self.worktree.join(p)).is_ok_and(|m| m.len() > max_bytes))
             .collect()
     }
 
-    /// The user's `info/exclude`, `snapshots.ignore` and the skipped large files.
-    fn write_excludes(&self, ignore: &[String], skipped: &[String]) -> Result<(), String> {
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    fn write_excludes(
+        &self,
+        ignore: &[String],
+        _max_untracked: u64,
+        skipped: &[String],
+    ) -> Result<(), String> {
         let mut text =
             std::fs::read_to_string(self.common_dir.join("info/exclude")).unwrap_or_default();
         text.push('\n');
@@ -218,26 +371,24 @@ impl Shadow {
 
     pub async fn changed(&self, from: &str, to: &str) -> Result<Vec<String>, String> {
         let excluded = self.excluded_between(from, to).await?;
-        let out = self
-            .run(&[
-                "diff",
-                "--name-only",
-                "--no-renames",
-                "-z",
-                from,
-                to,
-                "--",
-                &self.pathspec,
-            ])
-            .await?;
-        Ok(split_z(&out)
+        let before = self.image_catalog(from).await?;
+        let after = self.image_catalog(to).await?;
+        let names: std::collections::BTreeSet<_> =
+            before.keys().chain(after.keys()).cloned().collect();
+        Ok(names
             .into_iter()
-            .filter(|p| !history::excludes(&excluded, p))
+            .filter(|path| {
+                before.get(path) != after.get(path) && !history::excludes(&excluded, path)
+            })
             .collect())
     }
 
     pub async fn diff(&self, from: &str, to: &str) -> Result<Vec<FileDiff>, String> {
+        self.image_catalog(from).await?;
+        self.image_catalog(to).await?;
         let excluded = self.excluded_between(from, to).await?;
+        let from = self.snapshot_metadata(from).await?.0;
+        let to = self.snapshot_metadata(to).await?.0;
         let status = split_z(
             &self
                 .run(&[
@@ -245,8 +396,8 @@ impl Shadow {
                     "--name-status",
                     "--no-renames",
                     "-z",
-                    from,
-                    to,
+                    &from,
+                    &to,
                     "--",
                     &self.pathspec,
                 ])
@@ -259,8 +410,8 @@ impl Shadow {
                     "--numstat",
                     "--no-renames",
                     "-z",
-                    from,
-                    to,
+                    &from,
+                    &to,
                     "--",
                     &self.pathspec,
                 ])
@@ -290,8 +441,8 @@ impl Shadow {
                     "--no-ext-diff",
                     "--no-color",
                     "--no-renames",
-                    from,
-                    to,
+                    &from,
+                    &to,
                     "--",
                     file,
                 ])
@@ -322,12 +473,12 @@ impl Shadow {
         changes: Vec<TreeChange>,
     ) -> Result<String, String> {
         use tokio::io::AsyncWriteExt;
-        self.recorded_exclusions(current).await?;
+        let current = self.snapshot_metadata(current).await?.0;
         let index = PreviewIndex(
             self.git_dir
                 .join(format!("preview-{}.index", ulid::Ulid::new())),
         );
-        self.index_command(&index.0, &["read-tree", current])
+        self.index_command(&index.0, &["read-tree", &current])
             .await?;
         for change in changes {
             match change.image {
@@ -398,23 +549,17 @@ impl Shadow {
 
     /// `(mode, contents)` of a path in a tree, or `None` when absent.
     pub async fn blob(&self, tree: &str, path: &str) -> Result<Option<(String, Vec<u8>)>, String> {
-        self.recorded_exclusions(tree).await?;
-        let listing = self.run(&["ls-tree", "-z", tree, "--", path]).await?;
-        let entry = String::from_utf8_lossy(&listing).to_string();
-        let Some(meta) = entry.split('\t').next().filter(|m| !m.is_empty()) else {
+        images::validate_path(path)?;
+        let catalog = self.image_catalog(tree).await?;
+        let Some((mode, object)) = catalog.get(path) else {
             return Ok(None);
         };
-        let fields: Vec<&str> = meta.split(' ').collect();
-        let [mode, kind, sha] = fields[..] else {
-            return Ok(None);
-        };
-        if kind != "blob" {
-            return Ok(None);
+        if !matches!(mode.as_str(), "100644" | "100755" | "120000") {
+            return Err("Unsupported Git image entry".into());
         }
-        Ok(Some((
-            mode.to_string(),
-            self.run(&["cat-file", "blob", sha]).await?,
-        )))
+        let bytes = self.run(&["cat-file", "blob", object]).await?;
+        images::verify(object, &bytes)?;
+        Ok(Some((mode.clone(), bytes)))
     }
 }
 
@@ -459,7 +604,7 @@ fn split_z(out: &[u8]) -> Vec<String> {
 }
 
 /// Escape gitignore metacharacters so a path matches only itself.
-fn escape(path: &str) -> String {
+pub(crate) fn escape(path: &str) -> String {
     path.chars().fold(String::new(), |mut s, c| {
         if matches!(c, '*' | '?' | '[' | '\\' | '!' | '#') {
             s.push('\\');

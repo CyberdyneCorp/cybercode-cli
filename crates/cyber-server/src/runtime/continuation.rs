@@ -35,6 +35,14 @@ impl Runtime {
         let lifecycle = self.inner.open().await?;
         let handle = self.inner.handle(id).await?;
         let state = handle.state.lock().await.clone();
+        if let Some(client) = &admission.input_client {
+            super::input_clients::validate(client)?;
+            if state.info.parent_id.is_some() {
+                return Err(RuntimeError::Invalid(
+                    "Input-client continuation requires descendant ownership".into(),
+                ));
+            }
+        }
         let message = admission
             .message_id
             .get_or_insert_with(|| cyber_core::ids::new_id("msg"))
@@ -43,6 +51,7 @@ impl Runtime {
         if let Some(receipt) = existing_receipt(&state, &message, &digest)? {
             return Ok(receipt);
         }
+        self.inner.ensure_snapshot_admission(&handle, id)?;
         if state.info.parent_id.is_none() {
             drop(lifecycle);
             return self.admit_prompt(id, admission, files).await;
@@ -244,7 +253,8 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         state.ensure_worktree_ready()?;
         if state.child_continuation_unknown
-            || handle.location_uncertain.load(Ordering::SeqCst)
+            || handle.snapshot_active.load(Ordering::SeqCst)
+            || handle.has_location_uncertainty()
             || state.calls.values().any(|call| {
                 matches!(
                     call.status,
@@ -315,6 +325,7 @@ pub(super) fn launch_child(
     settlement: Option<Box<dyn ChildContinuation>>,
 ) {
     let cancel = CancellationToken::new();
+    let completed = CancellationToken::new();
     drains.insert(
         id.into(),
         DrainEntry {
@@ -324,6 +335,8 @@ pub(super) fn launch_child(
             cancel: cancel.clone(),
             follow_up: false,
             deleting: false,
+            completed: completed.clone(),
+            _completion: completed.drop_guard(),
         },
     );
     tokio::spawn(drain::run(Arc::clone(inner), id.into(), false, cancel));

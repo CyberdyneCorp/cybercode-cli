@@ -4,13 +4,14 @@
 
 ## What Changes
 
-- `server-api` "Instance event stream": `GET /api/v1/event?include=hook_receipts` also carries `session.hook.receipt`, the IO-free receipt summary the runtime already publishes when a receipt is admitted and when it settles. Without `include=hook_receipts` no stream changes. Session replay, WebSocket and MCP streams still never carry it.
+- `server-api` "Instance event stream": `GET /api/v1/event?include=hook_receipts` also carries `session.hook.receipt`, the IO-free receipt summary the runtime already publishes when a receipt is admitted and when it settles. Without `include=hook_receipts` no stream changes.
+- `server-api` "Durable session replay": `GET /api/v1/sessions/{id}/events?include=hook_receipts` carries that Session's own receipt summaries, live and in order with its other events, for driven exec runs (`--input-format stream-json`), which follow the Session stream. Never another Session's receipts; without the opt-in the Session stream is unchanged. History, WebSocket and MCP streams still never carry them.
 - `hooks` (added requirement "Hook receipt summaries for clients"): what the summary holds and never holds (no stdin, stdout, stderr, decision reason, updated input, additional context or environment, even with `telemetry.log_hook_io`), and that it is live only, so the durable `GET /sessions/{id}/hook-executions` listing stays the source of record.
 - `exec-mode` (added requirement "Hook events in exec"; "Streaming input and partial output" now points to it): `cyber exec --include-hook-events` with `--format stream-json`, in single-prompt and `--input-format stream-json` runs, writes one `hook_event` line per settled hook execution of the run's Session. Lines follow the live stream, so a gating hook's line precedes the line of what it gated; before each `result` line exec reconciles with the durable listing so receipts settled before it subscribed or lost to stream lag still get exactly one line. Any other format exits 2; `--workflow` exits 2.
 - Delivers the hook-event clause of `complete-daily-coding-surfaces` task 6.3; that change's `tasks.md` is not edited here.
 
 ## Impact
 
-- Code: `cyber-server` (`http/events.rs` opt-in, OpenAPI query parameter), `cyber-client` (`Client::all_events`), `cyber-cli` (`exec/hook_lines.rs`, `exec/mod.rs`, `exec/driver.rs`).
-- API: additive. A new optional `include` query parameter on `GET /api/v1/event` (OpenAPI and the generated TypeScript SDK); the default stream and the `stream-json` schema without the flag are unchanged.
+- Code: `cyber-server` (`http/events.rs` opt-in, OpenAPI query parameter), `cyber-client` (`Client::all_events`, `Client::session_input_event_stream`), `cyber-cli` (`exec/hook_lines.rs`, `exec/mod.rs`, `exec/driver.rs`).
+- API: additive. A new optional `include` query parameter on `GET /api/v1/event` and `GET /api/v1/sessions/{sessionID}/events` (OpenAPI and the generated TypeScript SDK); the default stream and the `stream-json` schema without the flag are unchanged.
 - Docs: `docs/local-core-guide.md`, `docs/features.md`, `docs/cli.md`, `CHANGELOG.md`.

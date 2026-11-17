@@ -108,7 +108,7 @@ async fn background_bash_returns_job_id_and_log_path_and_survives_turn_end() {
     ]);
     let mut live = flow.runtime.subscribe();
     let session = flow.session("default").await;
-    flow.prompt(&session, "start the job").await;
+    let input = flow.prompt(&session, "start the job").await;
     flow.settle(&session).await;
     let handle: Value = serde_json::from_str(&flow.output(&session, "bg").await).unwrap();
     let id = handle["job_id"].as_str().unwrap();
@@ -123,6 +123,31 @@ async fn background_bash_returns_job_id_and_log_path_and_survives_turn_end() {
     assert_eq!(job.kind, "bash");
     assert_eq!(job.command.as_deref(), Some(command));
     assert_eq!(job.description, "wait for go");
+    let origin = job.input_origin.clone().expect("recorded caller inputs");
+    assert_eq!(origin.input_message_ids, vec![input.clone()]);
+    let owned = flow
+        .runtime
+        .input_job_state(cyber_server::runtime::InputJobQuery {
+            session_id: session.clone(),
+            input_message_ids: vec![input.clone()],
+        })
+        .unwrap();
+    assert!(owned[0].running);
+    let foreign = flow
+        .runtime
+        .input_job_state(cyber_server::runtime::InputJobQuery {
+            session_id: session.clone(),
+            input_message_ids: vec!["msg_other_driver".into()],
+        })
+        .unwrap();
+    assert!(!foreign[0].running && !foreign[0].awaiting_handback);
+    assert_eq!(origin.call_id, "bg");
+    assert_eq!(origin.attempt, 1);
+    assert_eq!(origin.operation_key, format!("{session}:bg"));
+    assert_eq!(
+        origin.message_id,
+        flow.runtime.state(&session).await.unwrap().calls["bg"].message_id
+    );
     until("started in the log", 10, || {
         log(&handle).contains("started")
     })
@@ -150,6 +175,134 @@ async fn background_bash_returns_job_id_and_log_path_and_survives_turn_end() {
     assert_eq!(streamed, "started\nfinished\n");
     flow.settle(&session).await;
     assert_eq!(flow.main.requests().len(), 3, "the notice starts a Turn");
+    assert_eq!(flow.runtime.job(id).unwrap().input_origin, Some(origin));
+    let settled = flow
+        .runtime
+        .input_job_state(cyber_server::runtime::InputJobQuery {
+            session_id: session.clone(),
+            input_message_ids: vec![input],
+        })
+        .unwrap();
+    assert!(!settled[0].running && !settled[0].awaiting_handback);
+}
+
+#[tokio::test]
+async fn detached_process_job_does_not_infer_ownership_from_the_latest_prompt() {
+    let flow = flow(vec![text("previous input finished")]);
+    let session = flow.session("default").await;
+    flow.prompt(&session, "another client's input").await;
+    flow.settle(&session).await;
+    let handle = start(&flow, &session, json!({"command": "true", "notify": false})).await;
+    let job = terminal(&flow, handle["job_id"].as_str().unwrap()).await;
+    assert!(job.input_origin.is_none());
+    assert_eq!(flow.main.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn background_job_started_by_a_handback_retains_the_original_input() {
+    let flow = flow(vec![
+        call(
+            "root_bg",
+            "bash",
+            json!({"command":"echo first","background":true}),
+        ),
+        text("root answer"),
+        call(
+            "nested_bg",
+            "bash",
+            json!({"command":"while [ ! -f nested_go ]; do sleep 0.02; done; echo second","background":true}),
+        ),
+        text("first notice handled"),
+        text("nested notice handled"),
+    ]);
+    let session = flow.session("default").await;
+    let input = flow.prompt(&session, "start background work").await;
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            flow.settle(&session).await;
+            if flow.runtime.jobs(Some(&session)).unwrap().len() == 2
+                && flow.main.requests().len() == 4
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("nested Job did not start");
+    let held = flow
+        .runtime
+        .input_job_state(cyber_server::runtime::InputJobQuery {
+            session_id: session.clone(),
+            input_message_ids: vec![input.clone()],
+        })
+        .unwrap()[0]
+        .running;
+    std::fs::write(flow.f.repo.join("nested_go"), "").unwrap();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            flow.settle(&session).await;
+            let jobs = flow.runtime.jobs(Some(&session)).unwrap();
+            if jobs.len() == 2
+                && jobs
+                    .iter()
+                    .all(|job| job.status != JobStatus::Running && job.notified)
+                && flow.main.requests().len() == 5
+            {
+                return jobs;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("nested handbacks did not settle")
+    .into_iter()
+    .for_each(|job| {
+        assert_eq!(
+            job.input_origin.unwrap().input_message_ids,
+            std::slice::from_ref(&input)
+        );
+    });
+    assert!(
+        held,
+        "nested Job was lost after the original Job handed back"
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn permission_requested_by_a_handback_keeps_the_original_input_cohort() {
+    let flow = Flow::new(
+        vec![
+            call(
+                "root_bg",
+                "bash",
+                json!({"command":"while [ ! -f go ]; do sleep 0.02; done","background":true}),
+            ),
+            text("root answer"),
+            call("handback_ask", "bash", json!({"command":"echo authorized"})),
+            text("notice handled"),
+        ],
+        true,
+    );
+    flow.f.set_config(serde_json::from_str(ALLOW).unwrap());
+    let session = flow.session("default").await;
+    let input = flow.prompt(&session, "start background work").await;
+    flow.settle(&session).await;
+    flow.f
+        .set_config(json!({"permissions":{"bash":"ask","external_directory":"allow"}}));
+    std::fs::write(flow.f.repo.join("go"), "").unwrap();
+    let request = flow.pending(&session).await;
+    let owners = request.input_message_ids.clone();
+    let call = request.call_id.clone();
+    flow.runtime
+        .reply_permission(&request.id, cyber_server::runtime::PermissionReply::Once)
+        .await
+        .unwrap();
+    flow.settle(&session).await;
+    assert_eq!(owners, [input]);
+    assert_eq!(call, "handback_ask");
+    flow.runtime.shutdown().await;
 }
 
 #[tokio::test]

@@ -181,6 +181,7 @@ pub(super) async fn run(
                                 let policy = host.policy(&inv).await.map_err(|_| Error::Changed)?;
                                 let fresh = Ctx {
                                     skill_paths: Default::default(),
+                                    read_receipt: Default::default(),
                                     loaded_skill: Default::default(),
                                     provenance: Default::default(),
                                     compiler_feedback: Default::default(),

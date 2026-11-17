@@ -2349,7 +2349,7 @@ fn doctor_lists_cyber_md_and_warns_when_it_is_truncated() {
     assert_eq!(row["status"], "warn", "{row}");
     let detail = row["detail"].as_str().unwrap();
     let warning = format!(
-        "{}CYBER.md exceeds instructions.max_bytes (32768 bytes) and was truncated",
+        "{}CYBER.md exceeds instruction_limits.max_file_bytes (32768 bytes) and was truncated",
         std::path::MAIN_SEPARATOR
     );
     assert!(detail.contains(&warning), "{detail}");
@@ -2471,7 +2471,10 @@ fn doctor_refuses_protected_imports_and_project_files_under_a_broken_config() {
     std::fs::write(repo.join("cyber.json"), "{ not json").unwrap();
     let row = doctor_instructions(&env, &repo);
     let detail = row["detail"].as_str().unwrap();
-    assert!(detail.starts_with("no instruction files"), "{detail}");
+    assert!(
+        detail.starts_with("unavailable: configuration unavailable"),
+        "{detail}"
+    );
     assert!(!detail.contains("CLAUDE.md"), "{detail}");
 }
 

@@ -239,6 +239,7 @@ async fn recorded_job_without_a_live_owner_cannot_acknowledge_cancellation() {
         .unwrap();
     let job = Job {
         id: "job_owner_lost".into(),
+        input_origin: None,
         session_id: parent.clone(),
         child_id: child.id,
         name: "lost".into(),

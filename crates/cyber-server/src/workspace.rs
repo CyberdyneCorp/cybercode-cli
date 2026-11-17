@@ -13,8 +13,18 @@ static LOCKS: OnceLock<Mutex<Locks>> = OnceLock::new();
 /// Git Locations share their worktree root; non-Git Locations use their exact
 /// canonical directory. Callers acquire this before any individual path lock.
 pub fn mutation_lock(location: &Path) -> io::Result<Arc<AsyncMutex<()>>> {
-    let root = cyber_core::project::worktree_root(location)
-        .unwrap_or_else(|| location.to_path_buf())
+    let location = location.canonicalize()?;
+    // libgit2 may not discover newer Git repository formats. A marker can widen
+    // coordination to the worktree without granting repository/source authority.
+    // Native origin, Location and source proofs remain independently mandatory.
+    let root = cyber_core::project::worktree_root(&location)
+        .or_else(|| {
+            location
+                .ancestors()
+                .find(|path| path.join(".git").symlink_metadata().is_ok())
+                .map(Path::to_path_buf)
+        })
+        .unwrap_or(location)
         .canonicalize()?;
     let mut locks = LOCKS
         .get_or_init(Mutex::default)
@@ -35,6 +45,32 @@ pub fn mutation_lock(location: &Path) -> io::Result<Arc<AsyncMutex<()>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sha256_scoped_locations_share_coordination_without_writing_project_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        let output = std::process::Command::new("git")
+            .args(["init", "--quiet", "--object-format=sha256"])
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let scope = root.join("scope/deep");
+        std::fs::create_dir_all(&scope).unwrap();
+        let first = mutation_lock(&root).unwrap();
+        let second = mutation_lock(&scope).unwrap();
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!root.join(".git/cyber-project-id").exists());
+        let held = first.try_lock().unwrap();
+        assert!(second.try_lock().is_err());
+        drop(held);
+        assert!(second.try_lock().is_ok());
+    }
+
     #[tokio::test]
     async fn separate_owners_share_one_lock_until_the_owned_worker_releases_it() {
         let root = tempfile::tempdir().unwrap();

@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -37,7 +37,7 @@ impl Provider {
         let server = thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
-                    Ok((stream, _)) => answer(stream, &seen, &script),
+                    Ok((stream, _)) => answer(stream, &seen, &script, &stop),
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
                     }
@@ -67,7 +67,12 @@ impl Drop for Provider {
     }
 }
 
-fn answer(mut stream: TcpStream, turns: &Mutex<Vec<Value>>, script: &Mutex<VecDeque<String>>) {
+fn answer(
+    mut stream: TcpStream,
+    turns: &Mutex<Vec<Value>>,
+    script: &Mutex<VecDeque<String>>,
+    done: &AtomicBool,
+) {
     stream.set_nonblocking(false).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -78,6 +83,12 @@ fn answer(mut stream: TcpStream, turns: &Mutex<Vec<Value>>, script: &Mutex<VecDe
     let chunk = if body["tools"].is_array() {
         turns.lock().unwrap().push(body);
         let next = script.lock().unwrap().pop_front().unwrap_or_default();
+        if next == "wait" {
+            while !done.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(5));
+            }
+            return;
+        }
         match next.strip_prefix("text:") {
             Some(text) => {
                 json!({"choices":[{"index":0,"delta":{"content":text},"finish_reason":"stop"}]})
@@ -139,10 +150,11 @@ impl Env {
         Self { _dir: dir, root }
     }
 
-    fn exec(&self, flags: &[&str]) -> Output {
+    fn command(&self, flags: &[&str]) -> Command {
         let helper =
             PathBuf::from(env!("CARGO_BIN_EXE_cyber")).with_file_name("cyber-sandbox-exec");
-        Command::new(env!("CARGO_BIN_EXE_cyber"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cyber"));
+        command
             .args(["--cwd", self.root.join("repo").to_str().unwrap()])
             .args(["exec", "--embedded", "--model", "corp/main"])
             .args(flags)
@@ -154,9 +166,12 @@ impl Env {
             .env("CYBER_SANDBOX_HELPER", helper)
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .current_dir(&self.root)
-            .stdin(Stdio::null())
-            .output()
-            .unwrap()
+            .stdin(Stdio::null());
+        command
+    }
+
+    fn exec(&self, flags: &[&str]) -> Output {
+        self.command(flags).output().unwrap()
     }
 
     fn schema(&self) -> String {
@@ -172,6 +187,133 @@ impl Env {
 
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+fn collect(mut child: Child) -> Output {
+    for _ in 0..200 {
+        if child.try_wait().unwrap().is_some() {
+            return child.wait_with_output().unwrap();
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let output = child.wait_with_output().unwrap();
+    panic!("structured exec did not settle after cancellation: {output:?}");
+}
+
+fn wait_for_turns(provider: &Provider, child: &mut Child, count: usize) {
+    for _ in 0..2000 {
+        if provider.turns() >= count {
+            return;
+        }
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "exec exited before the requested correction"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("the provider did not receive the correction");
+}
+
+#[test]
+fn budgets_and_short_timeouts_preserve_exit_4_before_or_during_inference() {
+    for (stopping, reason) in [
+        (["--max-tokens", "1"], "budget_exceeded"),
+        (["--timeout", "2s"], "timeout"),
+    ] {
+        let provider = Provider::start(&[r#"{"wrong":1}"#, "wait"]);
+        let env = Env::new(&provider);
+        let schema = env.schema();
+        let mut flags = vec!["--output-schema", &schema, "--format", "json"];
+        flags.extend(stopping);
+        flags.push("audit");
+        let output = collect(
+            env.command(&flags)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        assert_stopped_schema(&output, reason);
+        // Auxiliary usage or the wall deadline may stop an admitted schema
+        // before its first main turn. Neither requires inference after the stop.
+        assert!(
+            provider.turns() <= 2,
+            "{reason}: {} main turns; {output:?}",
+            provider.turns()
+        );
+    }
+}
+
+fn assert_stopped_schema(output: &Output, reason: &str) {
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    let result: Value = serde_json::from_str(stdout(output).trim()).unwrap();
+    assert_eq!(result["exit_code"], 4, "{result}");
+    assert_eq!(result["stop_reason"], reason, "{result}");
+    assert_eq!(result["result"], Value::Null);
+    assert!(result["error"].as_str().is_some(), "{result}");
+}
+
+#[test]
+fn a_wall_timeout_during_a_verified_structured_correction_keeps_exit_4() {
+    let provider = Provider::start(&[r#"{"wrong":1}"#, "wait"]);
+    let env = Env::new(&provider);
+    let mut child = env
+        .command(&[
+            "--output-schema",
+            &env.schema(),
+            "--format",
+            "json",
+            "--timeout",
+            "10s",
+            "audit",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // This separate case proves the in-flight correction precondition instead
+    // of assuming startup completed before a short wall deadline.
+    wait_for_turns(&provider, &mut child, 2);
+    let output = collect(child);
+    assert_stopped_schema(&output, "timeout");
+    assert_eq!(provider.turns(), 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn sigint_during_a_structured_correction_keeps_exit_130() {
+    let provider = Provider::start(&[r#"{"wrong":1}"#, "wait"]);
+    let env = Env::new(&provider);
+    let mut child = env
+        .command(&[
+            "--output-schema",
+            &env.schema(),
+            "--format",
+            "json",
+            "audit",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_turns(&provider, &mut child, 2);
+    // This is the owned test child, after its correction reached the provider.
+    let signal = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(signal.success());
+    let output = collect(child);
+    assert_eq!(output.status.code(), Some(130), "{output:?}");
+    let result: Value = serde_json::from_str(stdout(&output).trim()).unwrap();
+    assert_eq!(result["exit_code"], 130);
+    assert_eq!(result["stop_reason"], "interrupted");
+    assert_eq!(result["result"], Value::Null);
+    assert!(result["error"].as_str().is_some());
+    assert_eq!(provider.turns(), 2);
 }
 
 #[test]

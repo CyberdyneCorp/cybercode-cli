@@ -32,10 +32,22 @@ pub enum JobStatus {
     Interrupted,
 }
 
+/// Immutable input provenance from the dispatched parent call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct JobInputOrigin {
+    pub message_id: String,
+    pub call_id: String,
+    pub attempt: u32,
+    pub operation_key: String,
+    pub input_message_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Job {
     pub id: String,
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_origin: Option<JobInputOrigin>,
     /// The child Session of a `subagent` Job; empty for process Jobs.
     pub child_id: String,
     pub name: String,
@@ -118,6 +130,7 @@ pub struct JobAttempt {
 
 /// Fences child creation/registration against Session deletion.
 pub struct JobAdmission {
+    input_origin: Option<JobInputOrigin>,
     authority: super::AdmissionAuthority,
     runtime: WeakRuntime,
     parent: String,
@@ -192,6 +205,57 @@ impl WeakRuntime {
 }
 
 impl Runtime {
+    pub(super) fn job_input_origin(
+        &self,
+        session: &str,
+        invocation: &super::Invocation,
+    ) -> Result<Option<JobInputOrigin>, RuntimeError> {
+        if invocation.session_id != session {
+            return Err(RuntimeError::Invalid(
+                "Job call belongs to a different Session".into(),
+            ));
+        }
+        let session = session.to_owned();
+        let message_id = invocation.message_id.clone();
+        let call_id = invocation.call_id.clone();
+        let attempt = invocation.attempt;
+        let operation_key = invocation.operation_key.clone();
+        let inputs = self.inner.store.read({
+            let (message, call) = (message_id.clone(), call_id.clone());
+            let operation_key = operation_key.clone();
+            move |db| {
+                let dispatched: bool = db.query_row(
+                    "SELECT EXISTS(
+                        SELECT 1 FROM tool_call c
+                        WHERE c.session_id=?1 AND c.message_id=?2 AND c.call_id=?3
+                        AND c.status='dispatched' AND c.attempt=?4
+                        AND (
+                            SELECT json_extract(d.data,'$.operation_key')
+                            FROM event d WHERE d.aggregate_id=c.session_id
+                            AND d.type='session.tool.dispatched.1'
+                            AND json_extract(d.data,'$.call_id')=c.call_id
+                            AND json_extract(d.data,'$.attempt')=c.attempt
+                            ORDER BY d.seq DESC LIMIT 1
+                        )=?5
+                    )",
+                    params![session, message, call, attempt, operation_key],
+                    |row| row.get(0),
+                )?;
+                if !dispatched {
+                    return Ok(Vec::new());
+                }
+                super::requests::input_owners::recorded(db, &session, &message, &call)
+            }
+        })?;
+        Ok((!inputs.is_empty()).then_some(JobInputOrigin {
+            message_id,
+            call_id,
+            attempt,
+            operation_key,
+            input_message_ids: inputs,
+        }))
+    }
+
     /// Read own and descendant counters from one durable database snapshot.
     pub fn job_usage(&self, id: &str) -> Result<JobUsage, RuntimeError> {
         let id = id.to_owned();
@@ -287,11 +351,23 @@ impl Runtime {
         }
         self.state(parent).await?;
         Ok(JobAdmission {
+            input_origin: None,
             authority,
             runtime: self.downgrade(),
             parent: parent.into(),
             _guard: guard,
         })
+    }
+
+    /// Reserve a child Job with the original call's recorded input cohort.
+    pub async fn reserve_child_job_for_call(
+        &self,
+        parent: &str,
+        invocation: &super::Invocation,
+    ) -> Result<JobAdmission, RuntimeError> {
+        let mut reservation = self.reserve_child_job(parent).await?;
+        reservation.input_origin = self.job_input_origin(parent, invocation)?;
+        Ok(reservation)
     }
 
     /// Transfers an already-created child to a process-local owner after durable registration.
@@ -355,6 +431,7 @@ impl Runtime {
         let job = Job {
             id: cyber_core::ids::new_id("job"),
             session_id: parent.into(),
+            input_origin: _reservation.input_origin.clone(),
             child_id: child.into(),
             name,
             kind: "subagent".into(),
@@ -615,17 +692,25 @@ impl Runtime {
         } else {
             None
         };
+        // Commit the exact notifier's acceptance with its canonical handback,
+        // before waking inference. Requests from that Turn can then resolve the
+        // immutable original cohort without a source-label or naming heuristic.
+        job.notified = true;
         self.admit_recorded(
             &job.session_id,
             admission,
             None,
             super::PromptCheck::Checked(None),
-            Vec::new(),
+            vec![super::events::event(NOTIFIED, &job)],
             untrusted,
         )
         .await?;
-        job.notified = true;
-        self.record_job(NOTIFIED, &job).await
+        // Historical replies may have committed the input before the notifier
+        // record. An exact admission retry returns that receipt without extras.
+        if !self.job(&job.id)?.notified {
+            self.record_job(NOTIFIED, &job).await?;
+        }
+        Ok(())
     }
 
     pub async fn cancel_job(&self, id: &str) -> Result<Job, RuntimeError> {

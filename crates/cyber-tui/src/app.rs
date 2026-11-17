@@ -168,6 +168,9 @@ pub enum Action {
     LoadModels,
     /// `/skills`: the Location's skills for the Session agent, with diagnostics.
     LoadSkills,
+    InspectContext {
+        request_id: String,
+    },
     /// Refetch `/commands`, as MCP prompt commands come and go with connections.
     LoadCommands,
     /// `/plugins` (`reload: false`) or `/reload-plugins`: the Location's plugins.
@@ -354,6 +357,12 @@ pub enum Overlay {
     /// The end of a background task's log, opened from `/tasks`.
     TaskLog {
         title: String,
+        text: String,
+        scroll: u16,
+    },
+    /// `/context`: estimates and source metadata for the current Session.
+    Context {
+        request_id: String,
         text: String,
         scroll: u16,
     },
@@ -1055,7 +1064,7 @@ impl App {
                 self.file_diff_key(key);
                 Vec::new()
             }
-            Overlay::TaskLog { .. } => {
+            Overlay::TaskLog { .. } | Overlay::Context { .. } => {
                 self.task_log_key(key);
                 Vec::new()
             }
@@ -1190,7 +1199,8 @@ impl App {
 
     /// Keys over a task's log.
     fn task_log_key(&mut self, key: KeyEvent) {
-        let Overlay::TaskLog { scroll, .. } = &mut self.overlay else {
+        let (Overlay::TaskLog { scroll, .. } | Overlay::Context { scroll, .. }) = &mut self.overlay
+        else {
             return;
         };
         match key.code {
@@ -1828,6 +1838,19 @@ impl App {
             }
             "hooks" => {
                 self.toast("Use /hooks to review definitions or /hooks history for receipts");
+                Vec::new()
+            }
+            "context" if args.is_empty() => {
+                let request_id = cyber_core::ids::new_id("ctx");
+                self.overlay = Overlay::Context {
+                    request_id: request_id.clone(),
+                    text: "Loading context…".into(),
+                    scroll: 0,
+                };
+                vec![Action::InspectContext { request_id }]
+            }
+            "context" => {
+                self.toast("Use /context without arguments");
                 Vec::new()
             }
             "cost" | "usage" => self.open_usage(),

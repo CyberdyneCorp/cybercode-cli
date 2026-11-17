@@ -9,7 +9,7 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 ### Added
 
 - Computer use reports a platform-neutral capability report (schema version 2): a derived mode (`unsupported`, `capture_only`, `input_enabled`), stable reason codes, authority kind, honored selectors and the support evidence level, alongside the existing macOS fields. Receipts add platform, grant, target and frame references, a reason, cleanup state and timestamps; HTTP errors add a `reason` code. `cyber computer allow <session> --preview <id> --yes` confirms a printed review by its identifier.
-- `cyber exec --format stream-json --include-hook-events` adds a `hook_event` line for each hook that ran for the run's Session (hook ID, event, scope, outcome, decision, duration, and the tool call it guarded), before the line of what it gated. Hook input, output, reasons and environment are never included. The instance event stream carries the underlying `session.hook.receipt` summaries when asked with `include=hook_receipts`.
+- `cyber exec --format stream-json --include-hook-events` adds a `hook_event` line for each hook that ran for the run's Session (hook ID, event, scope, outcome, decision, duration, and the tool call it guarded), before the line of what it gated. Hook input, output, reasons and environment are never included. The instance event stream carries the underlying `session.hook.receipt` summaries when asked with `include=hook_receipts`, and so does a Session's event stream (`/sessions/{id}/events`) for that Session's own receipts, which `--input-format stream-json` runs follow.
 
 ### Changed
 

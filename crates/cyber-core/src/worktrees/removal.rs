@@ -170,7 +170,7 @@ impl Repository {
                         "Ownership changed during removal; recovery is required",
                     ));
                 }
-                std::fs::remove_file(&path)?;
+                retain_acknowledged_creation(self, &record.managed, &path)?;
                 sync_parent(&path)?;
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -224,6 +224,55 @@ impl Repository {
         }
         record.phase = RemovalPhase::BranchRemoved;
         save(self, record)
+    }
+}
+
+fn retain_acknowledged_creation(
+    repo: &Repository,
+    managed: &Managed,
+    path: &Path,
+) -> io::Result<()> {
+    super::activity::safe_id(&managed.id, "wt")?;
+    let activity = repo
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let retained = match std::fs::read_dir(activity) {
+        Ok(entries) => {
+            let mut found = false;
+            for entry in entries {
+                found |= entry?
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "snapshot-ack");
+            }
+            found
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error),
+    };
+    if !retained {
+        return std::fs::remove_file(path);
+    }
+    let archived = path.with_file_name(format!("{}.removed", managed.id));
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        rustix::fs::renameat_with(
+            rustix::fs::CWD,
+            path,
+            rustix::fs::CWD,
+            &archived,
+            rustix::fs::RenameFlags::NOREPLACE,
+        )?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = archived;
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Native acknowledged creation archival is unavailable",
+        ))
     }
 }
 

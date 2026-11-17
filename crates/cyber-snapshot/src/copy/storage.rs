@@ -7,6 +7,8 @@ use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
 pub type Result<T> = std::result::Result<T, String>;
+/// Three u64 decimal fields, nanoseconds (at most nine digits) and separators.
+pub const IDENTITY_MAX_BYTES: usize = 20 * 3 + 9 + 3;
 pub fn fail(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
@@ -14,20 +16,36 @@ pub fn identity(file: &File) -> Result<String> {
     let m = file.metadata().map_err(fail)?;
     let birth = m
         .created()
-        .map_err(|_| "Filesystem does not expose stable directory creation identity")?;
+        .map_err(|_| "Filesystem does not expose stable native creation identity")?;
     let birth = birth.duration_since(std::time::UNIX_EPOCH).map_err(fail)?;
-    Ok(format!(
+    let value = format!(
         "{}:{}:{}:{}",
         m.dev(),
         m.ino(),
         birth.as_secs(),
         birth.subsec_nanos()
-    ))
+    );
+    if value.len() > IDENTITY_MAX_BYTES {
+        return Err("Snapshot directory identity exceeds its encoded bound".into());
+    }
+    Ok(value)
 }
 pub fn dir_identity(dir: &Dir) -> Result<String> {
     identity(&dir.try_clone().map_err(fail)?.into_std_file())
 }
+pub fn sync_file(file: &File) -> Result<()> {
+    file.sync_all().map_err(fail)?;
+    #[cfg(target_os = "macos")]
+    rustix::fs::fcntl_fullfsync(file).map_err(fail)?;
+    Ok(())
+}
 pub fn sync(dir: &Dir) -> Result<()> {
+    readable_directory(dir)?.sync_all().map_err(fail)
+}
+pub fn parent_metadata(dir: &Dir) -> Result<cyber_core::binary::native::Metadata> {
+    cyber_core::binary::native::plain_snapshot_directory(&readable_directory(dir)?).map_err(fail)
+}
+fn readable_directory(dir: &Dir) -> Result<File> {
     // cap-std can hold O_PATH directories on Linux, which fsync rejects.
     // Reopen the pinned directory itself for I/O, without resolving an ambient path.
     let fd = rustix::fs::openat(
@@ -40,7 +58,7 @@ pub fn sync(dir: &Dir) -> Result<()> {
         rustix::fs::Mode::empty(),
     )
     .map_err(fail)?;
-    File::from(fd).sync_all().map_err(fail)
+    Ok(File::from(fd))
 }
 pub fn private_child(parent: &Dir, name: &str) -> Result<Dir> {
     child(parent, name, 0o077)
@@ -128,9 +146,7 @@ pub fn create(dir: &Dir, name: &str, bytes: &[u8]) -> Result<File> {
         .follow(FollowSymlinks::No);
     let mut file = dir.open_with(name, &options).map_err(fail)?.into_std();
     file.write_all(bytes).map_err(fail)?;
-    file.sync_all().map_err(fail)?;
-    #[cfg(target_os = "macos")]
-    rustix::fs::fcntl_fullfsync(&file).map_err(fail)?;
+    sync_file(&file)?;
     Ok(file)
 }
 pub fn atomic(dir: &Dir, name: &str, bytes: &[u8]) -> Result<()> {
@@ -148,12 +164,20 @@ pub fn lock(dir: &Dir, create: bool) -> Result<File> {
         .mode(0o600)
         .follow(FollowSymlinks::No);
     let file = dir.open_with("lock", &options).map_err(fail)?.into_std();
+    validate_lock(&file)?;
+    acquire_lock(&file)?;
+    if create {
+        sync_file(&file)?;
+        sync(dir)?;
+    }
+    Ok(file)
+}
+pub fn validate_lock(file: &File) -> Result<()> {
     let m = file.metadata().map_err(fail)?;
     if !m.is_file() || m.nlink() != 1 || m.mode() & 0o077 != 0 {
         return Err("Unsafe snapshot lock".into());
     }
-    acquire_lock(&file)?;
-    Ok(file)
+    Ok(())
 }
 fn acquire_lock(file: &File) -> Result<()> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);

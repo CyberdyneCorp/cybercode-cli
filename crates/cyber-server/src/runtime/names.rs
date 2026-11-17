@@ -271,10 +271,7 @@ impl Runtime {
             ));
         }
         let handle = self.inner.handle(&owner.id).await?;
-        if handle
-            .location_uncertain
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if handle.has_location_uncertainty() {
             return Err(RuntimeError::Invalid(
                 "Location outcome unknown; recovery is required".into(),
             ));
@@ -398,10 +395,7 @@ impl Runtime {
             ));
         }
         let handle = self.inner.handle(&owner.id).await?;
-        if handle
-            .location_uncertain
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if handle.has_location_uncertainty() {
             return Err(RuntimeError::Invalid(
                 "Location outcome unknown; recovery is required".into(),
             ));

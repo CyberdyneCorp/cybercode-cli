@@ -437,6 +437,298 @@ fn checked_append_rolls_back_decision_mutations_when_events_are_invalid() {
     assert_eq!(stored_value, 2);
 }
 
+fn pair_owners() -> [(String, i64); 2] {
+    [
+        ("native_worker".into(), -1),
+        ("resolution_receipt".into(), -1),
+    ]
+}
+
+#[test]
+fn paired_append_commits_both_owners_before_notifying_and_survives_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path(), registry());
+    let notifications = store.subscribe();
+    let (events, result) = store
+        .append_pair_checked(pair_owners(), |tx| {
+            let count: i64 = tx.query_row("SELECT count(*) FROM event", [], |r| r.get(0))?;
+            assert_eq!(count, 0);
+            Ok(([vec![event(1), event(2)], vec![event(3)]], "acknowledged"))
+        })
+        .unwrap();
+    assert_eq!(result, "acknowledged");
+    assert_eq!(events[0].iter().map(|e| e.seq).collect::<Vec<_>>(), [0, 1]);
+    assert_eq!(events[1][0].seq, 0);
+    for (owner, sequence) in [("native_worker", 1), ("resolution_receipt", 0)] {
+        let notification = notifications.try_recv().unwrap();
+        assert_eq!(notification.aggregate_id, owner);
+        assert_eq!(notification.seq, sequence);
+        // Even the first owner's notification exposes the complete committed pair.
+        assert_eq!(store.aggregate_seq("native_worker").unwrap(), Some(1));
+        assert_eq!(store.aggregate_seq("resolution_receipt").unwrap(), Some(0));
+    }
+    assert!(notifications.try_recv().is_err());
+    drop(store);
+    let reopened = open(dir.path(), registry());
+    assert_eq!(
+        reopened
+            .read_events("native_worker", -1, 10)
+            .unwrap()
+            .events
+            .len(),
+        2
+    );
+    assert_eq!(
+        reopened
+            .read_events("resolution_receipt", -1, 10)
+            .unwrap()
+            .events
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn paired_append_late_failure_rolls_back_decision_events_sequences_and_projections() {
+    for failure in ["sequence", "validation", "projector"] {
+        assert_paired_failure_rolls_back(failure);
+    }
+}
+
+fn assert_paired_failure_rolls_back(failure: &'static str) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let dir = tempfile::tempdir().unwrap();
+    let mut registry = registry();
+    registry
+        .register_with("test.invalid.data.1", |_| Err("refused payload".into()))
+        .unwrap();
+    let projected = Arc::new(AtomicUsize::new(0));
+    let seen = projected.clone();
+    registry.projector(move |tx, event| {
+        seen.fetch_add(1, Ordering::SeqCst);
+        tx.execute(
+            "INSERT INTO paired_projection VALUES (?1)",
+            [&event.aggregate_id],
+        )
+        .map_err(|error| error.to_string())?;
+        if failure == "projector" && event.aggregate_id == "resolution_receipt" {
+            return Err("refused resolution projection".into());
+        }
+        Ok(())
+    });
+    let store = open(dir.path(), registry);
+    store.transaction(|tx| {
+            tx.execute_batch("CREATE TABLE paired_projection(owner TEXT); CREATE TABLE paired_decision(value INTEGER)")?;
+            Ok(())
+        }).unwrap();
+    let notifications = store.subscribe();
+    let mut owners = pair_owners();
+    if failure == "sequence" {
+        owners[1].1 = 0;
+    }
+    let result = store.append_pair_checked(owners, move |tx| {
+        tx.execute("INSERT INTO paired_decision VALUES (1)", [])?;
+        let second = if failure == "validation" {
+            NewEvent::new("test.invalid.data.1", json!({}))
+        } else {
+            event(2)
+        };
+        Ok(([vec![event(1)], vec![second]], ()))
+    });
+    match failure {
+        "sequence" => assert!(matches!(result, Err(StoreError::Concurrency { .. }))),
+        "validation" => assert!(matches!(result, Err(StoreError::InvalidEvent { .. }))),
+        _ => assert!(matches!(result, Err(StoreError::Projector { .. }))),
+    }
+    assert!(
+        projected.load(Ordering::SeqCst) >= 1,
+        "first append must actually reach its projector"
+    );
+    assert_eq!(store.aggregate_seq("native_worker").unwrap(), None);
+    assert_eq!(store.aggregate_seq("resolution_receipt").unwrap(), None);
+    let counts: (i64, i64, i64) = store.read(|db| Ok(db.query_row(
+            "SELECT (SELECT count(*) FROM event), (SELECT count(*) FROM paired_projection), (SELECT count(*) FROM paired_decision)",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?)).unwrap();
+    assert_eq!(counts, (0, 0, 0));
+    assert!(notifications.try_recv().is_err());
+    assert!(
+        !store.has_failed(),
+        "a rejected decision must not disable the writer"
+    );
+}
+
+#[test]
+fn paired_append_rejected_commit_has_no_partial_receipt_or_notification() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path(), registry());
+    store.transaction(|tx| {
+        tx.execute_batch("CREATE TABLE paired_parent(id INTEGER PRIMARY KEY); CREATE TABLE paired_child(parent_id INTEGER REFERENCES paired_parent(id) DEFERRABLE INITIALLY DEFERRED)")?;
+        Ok(())
+    }).unwrap();
+    let notifications = store.subscribe();
+    let result = store.append_pair_checked(pair_owners(), |tx| {
+        tx.execute("INSERT INTO paired_child VALUES (1)", [])?;
+        Ok(([vec![event(1)], vec![event(2)]], ()))
+    });
+    assert!(matches!(result, Err(StoreError::Sqlite(_))));
+    for (owner, _) in pair_owners() {
+        assert_eq!(store.aggregate_seq(&owner).unwrap(), None);
+    }
+    assert!(notifications.try_recv().is_err());
+    assert!(!store.has_failed());
+    store
+        .append_pair_checked(pair_owners(), |_| {
+            Ok(([vec![event(1)], vec![event(2)]], ()))
+        })
+        .unwrap();
+    assert_eq!(store.aggregate_seq("native_worker").unwrap(), Some(0));
+    assert_eq!(store.aggregate_seq("resolution_receipt").unwrap(), Some(0));
+}
+
+#[test]
+fn paired_append_rejects_invalid_owners_without_running_the_decision() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path(), registry());
+    for owners in [
+        [("same".into(), -1), ("same".into(), -1)],
+        [(String::new(), -1), ("receipt".into(), -1)],
+        [("x".repeat(257), -1), ("receipt".into(), -1)],
+        [("native".into(), -2), ("receipt".into(), -1)],
+    ] {
+        let result =
+            store.append_pair_checked::<(), _>(owners, |_| panic!("invalid owner admitted"));
+        assert!(matches!(result, Err(StoreError::InvalidAppend(_))));
+    }
+    assert!(!store.has_failed());
+}
+
+#[test]
+fn paired_append_bounds_roll_back_decision_writes_without_notifications() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path(), registry());
+    let notifications = store.subscribe();
+    for events in [
+        [(0..65).map(event).collect(), vec![]],
+        [
+            vec![NewEvent::new(
+                KIND,
+                json!({"payload": "x".repeat(16 * 1024 * 1024)}),
+            )],
+            vec![],
+        ],
+        [
+            vec![NewEvent::new(
+                KIND,
+                json!({"payload": "x".repeat(8 * 1024 * 1024)}),
+            )],
+            vec![NewEvent::new(
+                KIND,
+                json!({"payload": "x".repeat(8 * 1024 * 1024)}),
+            )],
+        ],
+    ] {
+        let result = store.append_pair_checked(pair_owners(), move |tx| {
+            tx.execute_batch("CREATE TABLE rejected_pair(value INTEGER)")?;
+            Ok((events, ()))
+        });
+        assert!(matches!(result, Err(StoreError::InvalidAppend(_))));
+        let count: i64 = store
+            .read(|db| {
+                Ok(db.query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE name='rejected_pair'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(store.aggregate_seq("native_worker").unwrap(), None);
+        assert!(notifications.try_recv().is_err());
+        assert!(!store.has_failed());
+    }
+}
+
+#[test]
+fn paired_append_empty_retry_still_checks_both_owners_and_does_not_notify() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = open(dir.path(), registry());
+    let owners = [("n".repeat(256), -1), ("r".repeat(256), -1)];
+    store
+        .append_pair_checked(owners.clone(), |_| {
+            Ok((
+                [(0..32).map(event).collect(), (32..64).map(event).collect()],
+                (),
+            ))
+        })
+        .unwrap();
+    let notifications = store.subscribe();
+    let owned = [(owners[0].0.clone(), 31), (owners[1].0.clone(), 31)];
+    let (_, result) = store
+        .append_pair_checked(owned.clone(), |_| {
+            Ok(([vec![], vec![]], "retained receipt"))
+        })
+        .unwrap();
+    assert_eq!(result, "retained receipt");
+    assert!(notifications.try_recv().is_err());
+    let stale = [(owned[0].0.clone(), 31), (owned[1].0.clone(), 30)];
+    assert!(matches!(
+        store.append_pair_checked(stale, |_| Ok(([vec![], vec![]], ()))),
+        Err(StoreError::Concurrency { .. })
+    ));
+    let error = store.append_pair_checked::<(), _>(owned, |tx| {
+        tx.execute_batch("CREATE TABLE refused_decision(value INTEGER)")?;
+        Err(StoreError::InvalidAppend("decision refused".into()))
+    });
+    assert!(matches!(error, Err(StoreError::InvalidAppend(_))));
+    let count: i64 = store
+        .read(|db| {
+            Ok(db.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name='refused_decision'",
+                [],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(count, 0);
+    assert!(notifications.try_recv().is_err());
+    assert!(!store.has_failed());
+}
+
+#[test]
+fn paired_append_concurrent_attempts_cannot_duplicate_either_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(open(dir.path(), registry()));
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let store = store.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                store.append_pair_checked(pair_owners(), |_| {
+                    Ok(([vec![event(1)], vec![event(2)]], ()))
+                })
+            })
+        })
+        .collect();
+    let results: Vec<_> = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect();
+    assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|r| matches!(r, Err(StoreError::Concurrency { .. })))
+            .count(),
+        1
+    );
+    for (owner, _) in pair_owners() {
+        assert_eq!(store.read_events(&owner, -1, 10).unwrap().events.len(), 1);
+    }
+}
+
 /// A projection rebuilt from its events: the tables are cleared and only events of the
 /// prefix are re-projected, upcast and in commit order; a failing projector leaves the
 /// previous rows in place.

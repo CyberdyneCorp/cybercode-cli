@@ -50,6 +50,7 @@ impl BuiltinHost {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -188,6 +189,7 @@ impl BuiltinHost {
         child_inv.rules = context.child.rules.clone();
         let child_ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),

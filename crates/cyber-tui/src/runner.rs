@@ -803,6 +803,24 @@ fn apply_msg(app: &mut App, msg: Result<Msg, String>, refresh: &mut Refresh) -> 
         }
         Msg::Sessions(items) => app.open_picker(PickerKind::Sessions, "Sessions", items),
         Msg::Models(items) => app.open_picker(PickerKind::Models, "Models", items),
+        Msg::Context {
+            session_id,
+            directory,
+            request_id,
+            result,
+        } => {
+            if session_id == app.session.id
+                && directory == app.session.directory
+                && let crate::app::Overlay::Context {
+                    request_id: pending,
+                    text,
+                    ..
+                } = &mut app.overlay
+                && *pending == request_id
+            {
+                *text = result.unwrap_or_else(|error| format!("Context unavailable: {error}"));
+            }
+        }
         Msg::Skills { directory, result } => open_skills(app, &directory, result),
         Msg::Plugins {
             directory,
@@ -1631,6 +1649,48 @@ mod mode_tests {
         };
         assert!(apply(&mut app, Ok(message), &mut Refresh::default()).is_empty());
         assert!(app.agents.is_empty());
+    }
+
+    #[test]
+    fn context_command_only_applies_the_current_inspection_reply() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = app();
+        for c in "/context".chars() {
+            app.on_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        let actions = app.on_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let [Action::InspectContext { request_id }] = actions.as_slice() else {
+            panic!("expected one context inspection action, got {actions:?}");
+        };
+        let overlay = app.overlay.clone();
+        let session_id = app.session.id.clone();
+        let directory = app.session.directory.clone();
+        let mut refresh = Refresh::default();
+        for (session, location, request) in [
+            ("ses_old", directory.as_str(), request_id.as_str()),
+            (session_id.as_str(), "/old", request_id.as_str()),
+            (session_id.as_str(), directory.as_str(), "ctx_old"),
+        ] {
+            let message = Msg::Context {
+                session_id: session.into(),
+                directory: location.into(),
+                request_id: request.into(),
+                result: Ok("stale reply".into()),
+            };
+            assert!(apply(&mut app, Ok(message), &mut refresh).is_empty());
+            assert_eq!(app.overlay, overlay);
+        }
+        let message = Msg::Context {
+            session_id,
+            directory,
+            request_id: request_id.clone(),
+            result: Ok("current reply".into()),
+        };
+        assert!(apply(&mut app, Ok(message), &mut refresh).is_empty());
+        assert!(matches!(
+            app.overlay,
+            crate::app::Overlay::Context { text, .. } if text == "current reply"
+        ));
     }
 
     fn skill_catalog_choices() -> Vec<crate::model::Choice> {

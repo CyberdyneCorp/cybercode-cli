@@ -372,6 +372,7 @@ impl Outgoing {
         };
         let sent_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         Admission {
+            input_client: None,
             skill_command: None,
             template: None,
             message_id: Some(self.id.clone()),

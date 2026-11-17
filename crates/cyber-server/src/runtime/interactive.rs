@@ -7,6 +7,60 @@ use super::{
 use std::sync::PoisonError;
 
 impl Runtime {
+    pub async fn add_input_client(
+        &self,
+        session: &str,
+        directory: &str,
+    ) -> Result<InteractiveClient, InteractiveClientError> {
+        let directory = canonical(directory);
+        let handle = self
+            .inner
+            .handle(session)
+            .await
+            .map_err(|_| InteractiveClientError::Unavailable)?;
+        let state = handle.state.lock().await;
+        if canonical(&state.info.directory) != directory {
+            return Err(InteractiveClientError::Missing);
+        }
+        let receipt = self.inner.presence.create_kind(
+            session,
+            &directory,
+            super::presence::ClientKind::Input,
+        )?;
+        drop(state);
+        self.watch_interactive_clients();
+        Ok(receipt)
+    }
+    pub fn renew_input_client(
+        &self,
+        session: &str,
+        directory: &str,
+        client: &str,
+    ) -> Result<InteractiveClient, InteractiveClientError> {
+        self.inner.presence.renew_kind(
+            session,
+            &canonical(directory),
+            client,
+            super::presence::ClientKind::Input,
+        )
+    }
+    pub async fn release_input_client(
+        &self,
+        session: &str,
+        directory: &str,
+        client: &str,
+    ) -> Result<(), InteractiveClientError> {
+        self.inner.presence.release_kind(
+            session,
+            &canonical(directory),
+            client,
+            super::presence::ClientKind::Input,
+        )?;
+        self.inner
+            .settle_browser_requests()
+            .await
+            .map_err(|_| InteractiveClientError::Unavailable)
+    }
     pub async fn add_interactive_client(
         &self,
         session: &str,

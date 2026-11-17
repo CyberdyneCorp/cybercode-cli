@@ -214,6 +214,7 @@ impl Runtime {
             });
         }
         for id in ids {
+            let completed = CancellationToken::new();
             drains.insert(
                 id.clone(),
                 DrainEntry {
@@ -223,6 +224,8 @@ impl Runtime {
                     cancel: CancellationToken::new(),
                     follow_up: false,
                     deleting: true,
+                    completed: completed.clone(),
+                    _completion: completed.drop_guard(),
                 },
             );
         }

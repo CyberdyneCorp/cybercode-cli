@@ -17,11 +17,13 @@ A hook execution leaves a durable receipt: `hook.started.1` at admission and `ho
 - Hook lines for other Sessions: subagents, delegated `@agent` prompts (which follow the child Session's history) and Workflow agents. `--workflow` refuses the flag; a delegated prompt simply has no hook lines.
 - Receipts still `running` when the run ends (for example an `async` handler) get no line.
 - The matcher of the group that selected the handler: the receipt does not record it; the hook ID (or definition digest) and the event identify the handler.
-- Carrying receipts on the Session replay stream, WebSocket or MCP notifications.
+- Carrying receipts on Session replay without the opt-in, in history, or on WebSocket or MCP notifications.
 
 ## Decisions
 
 **Source: the live receipt summary, opt-in on the instance stream.** The summary already exists, is published in settlement order on the same bus as Session events, and has no IO by construction. Forwarding it only when a stream asks with `include=hook_receipts` keeps every existing client unchanged. Making receipts Session events was rejected: it would change replay, history pages and the telemetry mapper, and receipts are deliberately independent aggregates so their settlement cannot race the Session state cache.
+
+**Driven runs: the same opt-in on the Session stream.** The managed-recovery work moved driven runs (`--input-format stream-json`) from the instance stream to their Session's own event stream (`/sessions/{id}/events?live=true&presence=false`), which replays from a durable cursor. Reading receipts from a second connection would lose their order against the events they gate, which the exec-mode requirement needs. So the Session stream accepts the same `include=hook_receipts`, and forwards only receipts whose `session_id` is that Session: the route already authenticates the caller and resolves the Session, so it exposes nothing the caller could not list with `hook-executions`, and never another Session's receipts. Receipts stay live only and are not replayed after a reconnect; the durable listing reconciliation covers that, as for lag.
 
 **Reliability: reconcile with the durable listing.** The bus is a bounded broadcast; a lagging stream skips events, and receipts that settle before exec subscribes (a `SessionStart` hook while the Session is created) are never live for it. Exec therefore reads `GET /sessions/{id}/hook-executions` when it subscribes (for a Session it created) and before every `result` line, and emits settled receipts that have no line yet, oldest first. Lines are keyed by receipt ID, so a receipt is reported once whichever path sees it first. Only summary fields are copied from the listing, which may carry IO.
 

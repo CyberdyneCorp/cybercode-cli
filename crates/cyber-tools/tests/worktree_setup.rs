@@ -1913,6 +1913,370 @@ async fn process_launch_failure_remains_uncertain_and_cannot_authorize_retry() {
 }
 
 #[tokio::test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+async fn lifetime_bound_checkout_host_preserves_context_and_refuses_foreign_requests_before_creation()
+ {
+    use cyber_server::runtime::{
+        CreateSession, NoSnapshots, SnapshotLifetimeBinding, SnapshotLifetimeRequest, ToolHost,
+    };
+    let (fixture, _, managed) = owned().await;
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let created = flow.f.store.read_events(&info.id, -1, 1).unwrap().events[0]
+        .id
+        .clone();
+    // Adapter fixture: the runtime's separate lifetime lock proof is tested in
+    // runtime/native suites. This test exercises actual managed checkout creation.
+    let lifetime = SnapshotLifetimeBinding {
+        version: 2,
+        owner: SnapshotLifetimeRequest {
+            activity_id: "op_bound".into(),
+            session_id: info.id.clone(),
+            session_created_id: created,
+            directory: managed.path.clone(),
+            worktree_id: Some(managed.id.clone()),
+        },
+        root_identity: "fixture-root".into(),
+        namespace_identity: "fixture-namespace".into(),
+        directory_identity: "fixture-directory".into(),
+        file_identity: "fixture-file".into(),
+        source_phase: Some("phase_fixture".into()),
+    };
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let before = std::fs::read_dir(&directory).unwrap().count();
+    assert!(
+        flow.f
+            .host
+            .claim_snapshot_location_bound(
+                &info,
+                "op_foreign",
+                Some(&lifetime),
+                CancellationToken::new()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before);
+    let lease = flow
+        .f
+        .host
+        .claim_snapshot_location_bound(&info, "op_bound", Some(&lifetime), CancellationToken::new())
+        .await
+        .unwrap();
+    let bindings = lease.snapshot_bindings().unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(
+        bindings[0].lifetime,
+        Some(lifetime.checkout_owner().unwrap())
+    );
+    let original = std::fs::read(directory.join("op_bound.lock")).unwrap();
+    let mut proof = lease.settle_snapshot_retained().unwrap();
+    proof.verify().unwrap();
+    assert_eq!(proof.bindings().unwrap(), bindings);
+    assert_eq!(
+        std::fs::read(directory.join("op_bound.lock")).unwrap(),
+        original
+    );
+    // Host-adapter fixture: the runtime suites observe the actual consuming pair.
+    let restore = cyber_server::runtime::SnapshotRestoreReceipt {
+        origin: cyber_server::runtime::SnapshotOrigin {
+            version: 1,
+            session_id: info.id.clone(),
+            session_created_id: lifetime.owner.session_created_id.clone(),
+            activity_id: lifetime.owner.activity_id.clone(),
+            worktree_id: Some(managed.id.clone()),
+            binding: cyber_server::runtime::SnapshotBinding {
+                directory: managed.path.clone(),
+                root_identity: lifetime.root_identity.clone(),
+                namespace_identity: lifetime.namespace_identity.clone(),
+                journal_id: "restore_fixture".into(),
+                journal_identity: "fixture-journal".into(),
+                lock_identity: Some("fixture-lock".into()),
+            },
+        },
+        intent_digest: "b".repeat(64),
+        session_before: 8,
+        session_after: 9,
+        events_digest: "c".repeat(64),
+        checkout: Some(Box::new(cyber_server::runtime::SnapshotRestoreCheckout {
+            version: 1,
+            lifetime: lifetime.clone(),
+            resources_digest: lifetime.checkout_resources_digest(&bindings).unwrap(),
+        })),
+    };
+    let marker = directory.join("op_bound.snapshot-ack");
+    proof.prepare_restore_acknowledgement(&restore).unwrap();
+    assert!(!marker.exists());
+    proof.acknowledge_restore(&restore).unwrap();
+    let acknowledged = std::fs::read(&marker).unwrap();
+    proof.acknowledge_restore(&restore).unwrap();
+    assert_eq!(std::fs::read(&marker).unwrap(), acknowledged);
+    let native: serde_json::Value = serde_json::from_slice(&acknowledged).unwrap();
+    assert_eq!(
+        native["receipt_digest"],
+        restore.checkout_acknowledgement_digest().unwrap()
+    );
+    let mut different = restore.clone();
+    different.events_digest = "d".repeat(64);
+    assert!(proof.prepare_restore_acknowledgement(&different).is_err());
+    let mut legacy = restore;
+    legacy.checkout = None;
+    assert!(proof.acknowledge_restore(&legacy).is_err());
+
+    drop(proof);
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("op_bound.lock")).unwrap()).unwrap();
+    assert_eq!(
+        raw["snapshot_binding"],
+        serde_json::to_value(&bindings[0]).unwrap()
+    );
+    assert_eq!(raw["settled"], false);
+    assert_eq!(
+        std::fs::read(directory.join("op_bound.lock")).unwrap(),
+        original
+    );
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), before + 2);
+    let mut exited = lifetime.clone();
+    exited.owner.activity_id = "op_exited".into();
+    let lease = flow
+        .f
+        .host
+        .claim_snapshot_location_bound(&info, "op_exited", Some(&exited), CancellationToken::new())
+        .await
+        .unwrap();
+    let acquired = lease.snapshot_bindings().unwrap();
+    assert!(
+        flow.f
+            .host
+            .reacquire_snapshot_location(&info, &exited, &acquired)
+            .is_err()
+    );
+    drop(lease);
+    let retained = std::fs::read(directory.join("op_exited.lock")).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&retained).unwrap()["settled"],
+        false
+    );
+    let mut proof = flow
+        .f
+        .host
+        .reacquire_snapshot_location(&info, &exited, &acquired)
+        .unwrap();
+    proof.verify().unwrap();
+    assert_eq!(proof.bindings().unwrap(), acquired);
+    assert!(
+        flow.f
+            .host
+            .reacquire_snapshot_location(&info, &exited, &acquired)
+            .is_err()
+    );
+    assert!(
+        flow.f
+            .host
+            .reacquire_snapshot_location(&info, &exited, &[])
+            .is_err()
+    );
+    let mut foreign = exited.clone();
+    foreign.owner.session_created_id.push_str("_foreign");
+    assert!(
+        flow.f
+            .host
+            .reacquire_snapshot_location(&info, &foreign, &acquired)
+            .is_err()
+    );
+    // Adapter fixture: the runtime suites attest the actual committed pair.
+    let receipt = cyber_server::runtime::SnapshotPreparationReceipt {
+        activity_id: exited.owner.activity_id.clone(),
+        request_id: "fixture-cancel".into(),
+        confirmation: "a".repeat(64),
+        lifetime: exited.clone(),
+        native_sequence: 0,
+        session_sequence: 8,
+        origin: None,
+        source_admitted: Some(false),
+        checkout_resources_digest: Some(exited.checkout_resources_digest(&acquired).unwrap()),
+    };
+    let marker = directory.join("op_exited.snapshot-ack");
+    proof.prepare_preparation_acknowledgement(&receipt).unwrap();
+    assert!(!marker.exists());
+    proof.acknowledge_preparation(&receipt).unwrap();
+    let acknowledged = std::fs::read(&marker).unwrap();
+    proof.acknowledge_preparation(&receipt).unwrap();
+    assert_eq!(std::fs::read(&marker).unwrap(), acknowledged);
+    let native: serde_json::Value = serde_json::from_slice(&acknowledged).unwrap();
+    assert_eq!(
+        native["receipt_digest"],
+        receipt.checkout_acknowledgement_digest().unwrap()
+    );
+    let mut different = receipt.clone();
+    different.request_id = "different-request".into();
+    assert!(
+        proof
+            .prepare_preparation_acknowledgement(&different)
+            .is_err()
+    );
+    let mut legacy = receipt.clone();
+    legacy.checkout_resources_digest = None;
+    assert!(proof.acknowledge_preparation(&legacy).is_err());
+    drop(proof);
+    assert_eq!(
+        std::fs::read(directory.join("op_exited.lock")).unwrap(),
+        retained
+    );
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn managed_git_legacy_rewind_preserves_an_independent_native_checkout_proof() {
+    use cyber_server::runtime::{CreateSession, RevertTarget, ToolHost};
+    let (fixture, _, managed) = owned().await;
+    #[cfg(windows)]
+    fixture.set_config(json!({"sandbox":{"policy":"full-access"}}));
+    let config = fixture.config.clone();
+    let snapshots = cyber_snapshot::GitSnapshots::new(
+        fixture.dir.path().join("data"),
+        Arc::new(move |_| config.lock().unwrap().clone()),
+    );
+    let flow = support::flow::Flow::with(
+        fixture,
+        vec![support::flow::text("before"), support::flow::text("after")],
+        false,
+        snapshots,
+    );
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let first = flow.prompt(&info.id, "before external edit").await;
+    flow.settle(&info.id).await;
+    std::fs::write(managed.path.join("tracked.txt"), "after").unwrap();
+    flow.prompt(&info.id, "after external edit").await;
+    flow.settle(&info.id).await;
+    // Git still uses the legacy restore path. Exercise its compatibility while
+    // an independently acquired snapshot checkout proof remains retained.
+    let claim = flow
+        .f
+        .host
+        .claim_snapshot_location(&info, "op_retained", CancellationToken::new())
+        .await
+        .unwrap();
+    let proof = claim.settle_snapshot_retained().unwrap();
+    proof.verify().unwrap();
+    flow.runtime
+        .revert_stage(&info.id, &first, RevertTarget::Code)
+        .await
+        .unwrap();
+    flow.runtime.revert_commit(&info.id).await.unwrap();
+    proof.verify().unwrap();
+    drop(proof);
+    assert_eq!(
+        std::fs::read_to_string(managed.path.join("tracked.txt")).unwrap(),
+        "base"
+    );
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let claims = std::fs::read_dir(directory)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("op_")
+                .then_some(path)
+        })
+        .collect::<Vec<_>>();
+    assert!(!claims.is_empty());
+    for path in claims {
+        let record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(record["snapshot_binding"]["worktree_id"], managed.id);
+        assert_eq!(record["snapshot_binding"]["owner_id"], record["owner_id"]);
+        assert_eq!(record["settled"], true);
+    }
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
+async fn snapshot_location_claim_is_independent_of_a_live_session_and_retained_until_disposal() {
+    use cyber_core::worktrees::CheckoutActivity;
+    use cyber_server::runtime::{CreateSession, NoSnapshots, ToolHost};
+    let (fixture, repository, managed) = owned().await;
+    #[cfg(windows)]
+    fixture.set_config(json!({"sandbox":{"policy":"full-access"}}));
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let actor = flow
+        .f
+        .host
+        .claim_location(&info, false, CancellationToken::new())
+        .await
+        .unwrap();
+    let worker = flow
+        .f
+        .host
+        .claim_snapshot_location(&info, "op_snapshot", CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(worker.worktree_id.as_deref(), Some(managed.id.as_str()));
+    actor.settle().unwrap();
+    let proof = worker.settle_snapshot_retained().unwrap();
+    proof.verify().unwrap();
+    #[cfg(unix)]
+    {
+        let directory = managed
+            .common_dir
+            .join("cyber-worktree-activity")
+            .join(&managed.id);
+        let alias = directory.join("snapshot-alias");
+        std::fs::hard_link(directory.join("op_snapshot.lock"), &alias).unwrap();
+        assert!(proof.verify().is_err());
+        std::fs::remove_file(alias).unwrap();
+        proof.verify().unwrap();
+    }
+    let error = repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("op_snapshot"), "{error}");
+    drop(proof);
+    repository
+        .remove(&Git, &CheckoutActivity, &managed, false)
+        .await
+        .unwrap();
+    flow.runtime.shutdown().await;
+}
+
+#[tokio::test]
 async fn retained_native_location_proof_prevents_checkout_removal_until_disposal() {
     use cyber_core::worktrees::CheckoutActivity;
     use cyber_server::runtime::{CreateSession, NoSnapshots, ToolHost};
@@ -2843,4 +3207,182 @@ async fn cwd_changed_hook_shutdown_releases_outer_worktree_admission() {
     let events = recorder.events();
     assert_eq!(events.len(), 1);
     assert_cwd_transition(&flow, &id, &events[0]);
+}
+
+#[tokio::test]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+async fn recovery_checkout_roles_publish_exact_markers_without_rewriting_original_claims() {
+    use cyber_server::runtime::{
+        CreateSession, NoSnapshots, SnapshotBinding, SnapshotLifetimeBinding,
+        SnapshotLifetimeRequest, SnapshotOrigin, SnapshotRecoveryAction, SnapshotRecoveryCheckout,
+        SnapshotRecoveryCheckoutRole as Role, SnapshotRecoveryReceipt, SnapshotRestoreCheckout,
+        ToolHost,
+    };
+    use sha2::{Digest, Sha256};
+    let (fixture, _, managed) = owned().await;
+    let flow = support::flow::Flow::with(fixture, vec![], false, Arc::new(NoSnapshots));
+    let info = flow
+        .runtime
+        .create_session(CreateSession {
+            directory: managed.path.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let created = flow.f.store.read_events(&info.id, -1, 1).unwrap().events[0]
+        .id
+        .clone();
+    let request = "fixture-recovery-roles";
+    // Construct the protocol-owned fixture ID; runtime tests attest the actual pair.
+    let mut hash = Sha256::new();
+    hash.update(b"snapshot-recovery-request-v1");
+    hash.update((created.len() as u64).to_be_bytes());
+    hash.update(created.as_bytes());
+    hash.update((request.len() as u64).to_be_bytes());
+    hash.update(request.as_bytes());
+    let resolution_owner = format!("op_snapshot_recovery_{:x}", hash.finalize());
+    let lifetime = |activity: &str| SnapshotLifetimeBinding {
+        version: 2,
+        owner: SnapshotLifetimeRequest {
+            activity_id: activity.into(),
+            session_id: info.id.clone(),
+            session_created_id: created.clone(),
+            directory: managed.path.clone(),
+            worktree_id: Some(managed.id.clone()),
+        },
+        root_identity: "fixture-root".into(),
+        namespace_identity: "fixture-location-namespace".into(),
+        directory_identity: "fixture-workers".into(),
+        file_identity: format!("fixture-{activity}"),
+        source_phase: Some(format!("phase_{activity}")),
+    };
+    let original_lifetime = lifetime("op_original_roles");
+    let resolution_lifetime = lifetime(&resolution_owner);
+    let origin = |life: &SnapshotLifetimeBinding, journal: &str| SnapshotOrigin {
+        version: 1,
+        session_id: info.id.clone(),
+        session_created_id: created.clone(),
+        activity_id: life.owner.activity_id.clone(),
+        worktree_id: Some(managed.id.clone()),
+        binding: SnapshotBinding {
+            directory: managed.path.clone(),
+            root_identity: life.root_identity.clone(),
+            namespace_identity: "fixture-journals".into(),
+            journal_id: journal.into(),
+            journal_identity: format!("fixture-{journal}"),
+            lock_identity: Some("fixture-lock".into()),
+        },
+    };
+    let original = flow
+        .f
+        .host
+        .claim_snapshot_location_bound(
+            &info,
+            "op_original_roles",
+            Some(&original_lifetime),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let resolution = flow
+        .f
+        .host
+        .claim_snapshot_location_bound(
+            &info,
+            &resolution_owner,
+            Some(&resolution_lifetime),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let original_set = original.snapshot_bindings().unwrap();
+    let resolution_set = resolution.snapshot_bindings().unwrap();
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let original_path = directory.join("op_original_roles.lock");
+    let resolution_path = directory.join(format!("{resolution_owner}.lock"));
+    let original_bytes = std::fs::read(&original_path).unwrap();
+    let resolution_bytes = std::fs::read(&resolution_path).unwrap();
+    let mut original = original.settle_snapshot_retained().unwrap();
+    let mut resolution = resolution.settle_snapshot_retained().unwrap();
+    let receipt = SnapshotRecoveryReceipt {
+        journal_id: "restore_original_roles".into(),
+        resolution_id: "restore_resolution_roles".into(),
+        request_id: request.into(),
+        action: SnapshotRecoveryAction::Rollback,
+        confirmation: "a".repeat(64),
+        original: origin(&original_lifetime, "restore_original_roles"),
+        filesystem_complete: true,
+        resolution_digest: Some("b".repeat(64)),
+        checkout: Some(Box::new(SnapshotRecoveryCheckout {
+            version: 1,
+            resolution_origin: origin(&resolution_lifetime, "restore_resolution_roles"),
+            original: Some(Box::new(SnapshotRestoreCheckout {
+                version: 1,
+                lifetime: original_lifetime.clone(),
+                resources_digest: original_lifetime
+                    .checkout_resources_digest(&original_set)
+                    .unwrap(),
+            })),
+            resolution: Box::new(SnapshotRestoreCheckout {
+                version: 1,
+                lifetime: resolution_lifetime.clone(),
+                resources_digest: resolution_lifetime
+                    .checkout_resources_digest(&resolution_set)
+                    .unwrap(),
+            }),
+        })),
+    };
+    original
+        .prepare_recovery_acknowledgement(&receipt, Role::Original)
+        .unwrap();
+    resolution
+        .prepare_recovery_acknowledgement(&receipt, Role::Resolution)
+        .unwrap();
+    assert!(!directory.join("op_original_roles.snapshot-ack").exists());
+    assert!(
+        original
+            .acknowledge_recovery(&receipt, Role::Resolution)
+            .is_err()
+    );
+    resolution
+        .acknowledge_recovery(&receipt, Role::Resolution)
+        .unwrap();
+    original
+        .acknowledge_recovery(&receipt, Role::Original)
+        .unwrap();
+    let marker = directory.join("op_original_roles.snapshot-ack");
+    let before = std::fs::read(&marker).unwrap();
+    original
+        .acknowledge_recovery(&receipt, Role::Original)
+        .unwrap();
+    assert_eq!(std::fs::read(&marker).unwrap(), before);
+    let data: serde_json::Value = serde_json::from_slice(&before).unwrap();
+    assert_eq!(
+        data["receipt_digest"],
+        receipt.checkout_acknowledgement_digest().unwrap()
+    );
+    let mut foreign = receipt.clone();
+    foreign.action = SnapshotRecoveryAction::Keep;
+    assert!(
+        original
+            .prepare_recovery_acknowledgement(&foreign, Role::Original)
+            .is_err()
+    );
+    let mut legacy = receipt;
+    legacy.checkout = None;
+    assert!(
+        original
+            .acknowledge_recovery(&legacy, Role::Original)
+            .is_err()
+    );
+    drop(original);
+    drop(resolution);
+    assert_eq!(std::fs::read(original_path).unwrap(), original_bytes);
+    assert_eq!(std::fs::read(resolution_path).unwrap(), resolution_bytes);
+    flow.runtime.shutdown().await;
 }

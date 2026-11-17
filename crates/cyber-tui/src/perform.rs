@@ -184,6 +184,12 @@ pub enum Msg {
     Sessions(Vec<Choice>),
     Catalog(crate::model::Catalog),
     Models(Vec<Choice>),
+    Context {
+        session_id: String,
+        directory: String,
+        request_id: String,
+        result: Result<String, String>,
+    },
     Skills {
         directory: String,
         result: Result<Vec<Choice>, String>,
@@ -976,6 +982,7 @@ pub async fn perform_owned(
         | Action::Delete(_)
         | Action::ForkSession(_) => manage(client, action).await,
         Action::LoadModels
+        | Action::InspectContext { .. }
         | Action::LoadSkills
         | Action::LoadCommands
         | Action::LoadPlugins { .. }
@@ -1085,6 +1092,20 @@ async fn inspect_hooks(client: &Client, session: &Session, action: Action) -> Re
 
 async fn load_choices(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
+        Action::InspectContext { request_id } => {
+            let path = format!("/sessions/{}/context", encode(&session.id));
+            let result = client
+                .get(&path)
+                .await
+                .map(|body| crate::context_inspection::format(&body["data"]))
+                .map_err(err);
+            Ok(Msg::Context {
+                session_id: session.id.clone(),
+                directory: session.directory.clone(),
+                request_id,
+                result,
+            })
+        }
         Action::LoadModels => models(client).await,
         Action::LoadSkills => {
             let path = format!("/skills?agent={}", encode(&session.agent));

@@ -36,7 +36,7 @@ pub struct ReviewArgs {
     #[arg(long)]
     pub attach: Option<String>,
     /// Password for --attach (else CYBER_SERVER_PASSWORD).
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub password: Option<String>,
     #[arg(long)]
     pub max_tokens: Option<u64>,

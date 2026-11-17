@@ -392,6 +392,7 @@ pub(crate) async fn fork_skill(
     ctx.host.check_skill_tool(&inv).await.map_err(failed)?;
     let child_ctx = Ctx {
         skill_paths: Default::default(),
+        read_receipt: Default::default(),
         loaded_skill: Default::default(),
         provenance: Default::default(),
         compiler_feedback: Default::default(),
@@ -821,7 +822,7 @@ async fn reserve_child(
     parent: &SessionInfo,
     spawn: &mut Spawn,
 ) -> Result<Option<cyber_server::runtime::JobAdmission>, ToolError> {
-    let reservation = tokio::select! { biased; _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted), result=runtime.reserve_child_job(&parent.id) => result.map_err(|e| failed(e.to_string()))? };
+    let reservation = tokio::select! { biased; _ = ctx.cancel.cancelled() => return Err(ToolError::Aborted), result=runtime.reserve_child_job_for_call(&parent.id, ctx.inv) => result.map_err(|e| failed(e.to_string()))? };
     revalidate_spawn(ctx, spawn).await?;
     if spawn.fork && spawn.output_schema.is_none() {
         spawn.output_schema = runtime

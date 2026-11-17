@@ -1,6 +1,435 @@
 use super::*;
 use cyber_core::worktrees::CheckoutActivity;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn exact_native_snapshot_acknowledgement_admits_removal_without_clearing_another_unknown_session() {
+    use cyber_core::worktrees::{CheckoutAcknowledgement, CheckoutOwner};
+    for independent in [false, true] {
+        let fixture = Fixture::new();
+        let repository = fixture.repository();
+        let managed = fixture
+            .create(
+                &repository,
+                &Name::parse("ack-snapshot").unwrap(),
+                &Settings::default(),
+            )
+            .unwrap();
+        let owner = CheckoutOwner {
+            activity_id: "op_bound".into(),
+            session_id: "ses_fixture".into(),
+            session_created_id: "evt_fixture".into(),
+            directory: managed.path.clone(),
+            lifetime_digest: "a".repeat(64),
+        };
+        if independent {
+            drop(
+                block_on(repository.claim(&fixture.execution, &managed, "ses_independent"))
+                    .unwrap(),
+            );
+        }
+        let lease = block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner))
+            .unwrap();
+        let binding = lease.snapshot_binding().unwrap().clone();
+        drop(lease);
+        let path = managed
+            .common_dir
+            .join("cyber-worktree-activity")
+            .join(&managed.id)
+            .join("op_bound.lock");
+        let original = std::fs::read(&path).unwrap();
+        let creation = managed
+            .common_dir
+            .join("cyber-worktrees")
+            .join(format!("{}.json", managed.name));
+        let creation_bytes = std::fs::read(&creation).unwrap();
+        assert!(
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+                .is_err()
+        );
+        let mut proof = repository
+            .reacquire_snapshot(&managed, &binding, &owner)
+            .unwrap();
+        CheckoutAcknowledgement::new(&binding, &"a".repeat(64), &"b".repeat(64))
+            .unwrap()
+            .publish(&mut proof)
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+                .is_err()
+        );
+        drop(proof);
+        let result = block_on(repository.remove(
+            &fixture.execution,
+            &CheckoutActivity,
+            &managed,
+            independent,
+        ));
+        assert_eq!(result.is_err(), independent);
+        if !independent {
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+                .unwrap();
+            let archived = creation.with_file_name(format!("{}.removed", managed.id));
+            assert_eq!(std::fs::read(&archived).unwrap(), creation_bytes);
+            assert!(
+                block_on(repository.list(&fixture.execution))
+                    .unwrap()
+                    .is_empty()
+            );
+            let fresh = block_on(repository.recreate_removed(
+                &fixture.execution,
+                &CheckoutActivity,
+                &Settings::default(),
+                &fixture.data,
+                "prj_test",
+                &managed,
+            ))
+            .unwrap();
+            assert_ne!(fresh.id, managed.id);
+            assert!(
+                block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+                    .is_err()
+            );
+            assert_eq!(
+                std::fs::read_to_string(fresh.path.join("tracked.txt")).unwrap(),
+                "base"
+            );
+            assert_eq!(std::fs::read(archived).unwrap(), creation_bytes);
+        }
+        assert_eq!(std::fs::read(path).unwrap(), original);
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn exact_snapshot_reacquisition_preserves_unknown_state_and_refuses_live_foreign_and_replaced_evidence()
+ {
+    use cyber_core::worktrees::CheckoutOwner;
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("reacquire-snapshot").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let owner = CheckoutOwner {
+        activity_id: "op_bound".into(),
+        session_id: "ses_fixture".into(),
+        session_created_id: "evt_fixture".into(),
+        directory: managed.path.clone(),
+        lifetime_digest: "a".repeat(64),
+    };
+    let lease =
+        block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner)).unwrap();
+    let binding = lease.snapshot_binding().unwrap().clone();
+    assert!(
+        repository
+            .reacquire_snapshot(&managed, &binding, &owner)
+            .is_err()
+    );
+    drop(lease); // Unknown native outcome remains; reacquisition must not settle it.
+    let path = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id)
+        .join("op_bound.lock");
+    let original = std::fs::read(&path).unwrap();
+    let proof = repository
+        .reacquire_snapshot(&managed, &binding, &owner)
+        .unwrap();
+    assert_eq!(proof.binding(), &binding);
+    proof.verify().unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    drop(proof);
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let mut foreign = owner.clone();
+    foreign.session_created_id = "evt_foreign".into();
+    assert!(
+        repository
+            .reacquire_snapshot(&managed, &binding, &foreign)
+            .is_err()
+    );
+    let mut legacy = binding.clone();
+    legacy.version = 1;
+    legacy.lifetime = None;
+    assert!(
+        repository
+            .reacquire_snapshot(&managed, &legacy, &owner)
+            .is_err()
+    );
+    let retained = path.with_extension("retained");
+    std::fs::rename(&path, &retained).unwrap();
+    std::fs::write(&path, &original).unwrap();
+    assert!(
+        repository
+            .reacquire_snapshot(&managed, &binding, &owner)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read(retained).unwrap(), original);
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn lifetime_bound_snapshot_claim_publishes_complete_context_without_reusing_existing_owners() {
+    use cyber_core::worktrees::CheckoutOwner;
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("bound-snapshot").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let owner = CheckoutOwner {
+        activity_id: "op_bound".into(),
+        session_id: "ses_fixture".into(),
+        session_created_id: "evt_fixture".into(),
+        directory: managed.path.clone(),
+        lifetime_digest: "a".repeat(64),
+    };
+    let lease =
+        block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner)).unwrap();
+    lease.verify_snapshot().unwrap();
+    assert_eq!(lease.snapshot_binding().unwrap().version, 2);
+    assert_eq!(
+        lease.snapshot_binding().unwrap().lifetime.as_ref(),
+        Some(&owner)
+    );
+    assert!(lease.snapshot_binding().unwrap().staging_name.is_some());
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+    let bytes = std::fs::read(directory.join("op_bound.lock")).unwrap();
+    assert!(
+        block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner)).is_err()
+    );
+    let proof = lease.settle_retained().unwrap();
+    proof.verify_snapshot().unwrap();
+    drop(proof);
+    assert!(
+        block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner)).is_err()
+    );
+    let record: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        record["snapshot_binding"]["lifetime"],
+        serde_json::to_value(owner).unwrap()
+    );
+    block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_native_checkout_proof_refuses_aliases_and_an_identical_replacement_record() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("snapshot-proof").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let worker =
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).unwrap();
+    worker.verify_snapshot().unwrap();
+    let binding = worker.snapshot_binding().unwrap().clone();
+    let directory = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id);
+    let path = directory.join("op_worker.lock");
+    let raw = std::fs::read(&path).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode ^ 0o200)).unwrap();
+    assert!(worker.verify_snapshot().is_err());
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    worker.verify_snapshot().unwrap();
+    let record: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let mut changed = record.clone();
+    changed["unrecognized_evidence"] = serde_json::json!("retained");
+    std::fs::write(&path, serde_json::to_vec(&changed).unwrap()).unwrap();
+    assert!(worker.verify_snapshot().is_err());
+    std::fs::write(&path, &raw).unwrap();
+    worker.verify_snapshot().unwrap();
+    assert_eq!(
+        record["snapshot_binding"],
+        serde_json::to_value(binding).unwrap()
+    );
+    let alias = directory.join("alias");
+    std::fs::hard_link(&path, &alias).unwrap();
+    assert!(worker.verify_snapshot().is_err());
+    std::fs::remove_file(alias).unwrap();
+    worker.verify_snapshot().unwrap();
+    let replacement = directory.join("replacement");
+    std::fs::write(&replacement, &raw).unwrap();
+    std::fs::rename(replacement, &path).unwrap();
+    assert!(worker.verify_snapshot().is_err());
+    assert!(worker.settle_retained().is_err());
+    assert_eq!(std::fs::read(path).unwrap(), raw);
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_native_checkout_proof_retains_creation_and_namespace_pins() {
+    for cut in ["creation_contents", "creation_replacement", "namespace"] {
+        let fixture = Fixture::new();
+        let repository = fixture.repository();
+        let managed = fixture
+            .create(
+                &repository,
+                &Name::parse("snapshot-route").unwrap(),
+                &Settings::default(),
+            )
+            .unwrap();
+        let worker =
+            block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).unwrap();
+        let creation = managed
+            .common_dir
+            .join("cyber-worktrees/snapshot-route.json");
+        let raw = std::fs::read(&creation).unwrap();
+        match cut {
+            "creation_contents" => {
+                let mut changed = managed.clone();
+                changed.ready = false;
+                std::fs::write(&creation, serde_json::to_vec(&changed).unwrap()).unwrap();
+                assert!(worker.verify_snapshot().is_err());
+                std::fs::write(&creation, &raw).unwrap();
+                worker.verify_snapshot().unwrap();
+                continue;
+            }
+            "creation_replacement" => {
+                let replacement = creation.with_extension("replacement");
+                std::fs::write(&replacement, &raw).unwrap();
+                std::fs::rename(replacement, &creation).unwrap();
+            }
+            _ => {
+                let directory = managed
+                    .common_dir
+                    .join("cyber-worktree-activity")
+                    .join(&managed.id);
+                let record = std::fs::read(directory.join("op_worker.lock")).unwrap();
+                std::fs::rename(&directory, directory.with_extension("retained")).unwrap();
+                std::fs::create_dir(&directory).unwrap();
+                std::fs::write(directory.join("op_worker.lock"), record).unwrap();
+            }
+        }
+        assert!(worker.verify_snapshot().is_err(), "{cut}");
+        assert!(worker.settle_retained().is_err(), "{cut}");
+    }
+}
+
+#[test]
+fn snapshot_worker_owns_a_distinct_checkout_lock_through_retained_settlement() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("snapshot-worker").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let actor = block_on(repository.claim(&fixture.execution, &managed, "ses_actor")).unwrap();
+    for foreign in ["ses_actor", "bin_worker", "../op_worker"] {
+        assert!(
+            block_on(repository.claim_snapshot(&fixture.execution, &managed, foreign)).is_err()
+        );
+    }
+    assert!(block_on(repository.claim(&fixture.execution, &managed, "op_worker")).is_err());
+    assert!(block_on(repository.claim_binary(&fixture.execution, &managed, "op_worker")).is_err());
+    let worker =
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).unwrap();
+    assert_eq!(worker.owner_id(), "op_worker");
+    assert!(
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).is_err()
+    );
+    actor.settle().unwrap();
+    let proof = worker.settle_retained().unwrap();
+    let error = block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+        .unwrap_err();
+    assert!(error.to_string().contains("op_worker"), "{error}");
+    drop(proof);
+    assert!(
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).is_err()
+    );
+    block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false)).unwrap();
+}
+
+#[test]
+fn snapshot_claim_disposal_retains_unknown_evidence_without_reusing_a_session_claim() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("snapshot-unknown").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    let worker =
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).unwrap();
+    drop(worker);
+    let record = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id)
+        .join("op_worker.lock");
+    let retained = std::fs::read(&record).unwrap();
+    assert!(
+        block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker")).is_err()
+    );
+    block_on(repository.claim(&fixture.execution, &managed, "ses_actor"))
+        .unwrap()
+        .settle()
+        .unwrap();
+    let error = block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+        .unwrap_err();
+    assert!(error.to_string().contains("unknown"), "{error}");
+    assert_eq!(std::fs::read(record).unwrap(), retained);
+}
+
+#[test]
+fn settled_snapshot_worker_does_not_acknowledge_unknown_session_checkout_activity() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let managed = fixture
+        .create(
+            &repository,
+            &Name::parse("snapshot-session").unwrap(),
+            &Settings::default(),
+        )
+        .unwrap();
+    drop(block_on(repository.claim(&fixture.execution, &managed, "ses_actor")).unwrap());
+    let record = managed
+        .common_dir
+        .join("cyber-worktree-activity")
+        .join(&managed.id)
+        .join("ses_actor.lock");
+    let retained = std::fs::read(&record).unwrap();
+    block_on(repository.claim_snapshot(&fixture.execution, &managed, "op_worker"))
+        .unwrap()
+        .settle()
+        .unwrap();
+    assert!(block_on(repository.claim(&fixture.execution, &managed, "ses_actor")).is_err());
+    assert!(
+        block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, false))
+            .is_err()
+    );
+    assert_eq!(std::fs::read(record).unwrap(), retained);
+}
+
 #[test]
 fn binary_worker_retains_an_independent_checkout_lease_through_source_commit() {
     let fixture = Fixture::new();
@@ -517,4 +946,58 @@ fn claims_refuse_stale_ownership_and_invalid_session_names_before_creating_recor
     managed.id = "wt_replacement".into();
     assert!(block_on(repository.claim(&fixture.execution, &managed, "ses_valid")).is_err());
     assert!(!managed.common_dir.join("cyber-worktree-activity").exists());
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn retaining_owned_snapshot_claim_never_settles_unknown_evidence_without_a_marker() {
+    use cyber_core::worktrees::{CheckoutAcknowledgement, CheckoutOwner};
+    for acknowledge in [false, true] {
+        let fixture = Fixture::new();
+        let repository = fixture.repository();
+        let managed = fixture
+            .create(
+                &repository,
+                &Name::parse("owned-retain").unwrap(),
+                &Settings::default(),
+            )
+            .unwrap();
+        let owner = CheckoutOwner {
+            activity_id: "op_owned".into(),
+            session_id: "ses_fixture".into(),
+            session_created_id: "evt_fixture".into(),
+            directory: managed.path.clone(),
+            lifetime_digest: "a".repeat(64),
+        };
+        let lease = block_on(repository.claim_snapshot_bound(&fixture.execution, &managed, &owner))
+            .unwrap();
+        let path = managed
+            .common_dir
+            .join("cyber-worktree-activity")
+            .join(&managed.id)
+            .join("op_owned.lock");
+        let original = std::fs::read(&path).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&original).unwrap()["settled"],
+            false
+        );
+        let mut claim = lease.retain_snapshot().unwrap();
+        claim.verify().unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        assert!(
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true))
+                .is_err()
+        );
+        if acknowledge {
+            CheckoutAcknowledgement::new(claim.binding(), &"a".repeat(64), &"b".repeat(64))
+                .unwrap()
+                .publish(&mut claim)
+                .unwrap();
+        }
+        drop(claim);
+        let result =
+            block_on(repository.remove(&fixture.execution, &CheckoutActivity, &managed, true));
+        assert_eq!(result.is_ok(), acknowledge);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+    }
 }

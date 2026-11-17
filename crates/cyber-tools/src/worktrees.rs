@@ -32,6 +32,13 @@ use crate::host::{BuiltinHost, Ctx};
 use crate::permissions::Request;
 use crate::tools::process::Process;
 
+#[derive(Clone, Copy)]
+enum CheckoutWorker<'a> {
+    Binary(&'a str),
+    Snapshot(&'a str),
+    SnapshotBound(&'a cyber_core::worktrees::CheckoutOwner),
+}
+
 /// Inputs for creating a new Session in a managed worktree.
 pub struct WorktreeSessionRequest {
     pub session: CreateSession,
@@ -102,6 +109,7 @@ impl BuiltinHost {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -167,6 +175,7 @@ impl BuiltinHost {
         };
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -219,9 +228,93 @@ impl BuiltinHost {
             info.worktree_id.as_deref(),
             false,
             cancel,
-            Some(document),
+            Some(CheckoutWorker::Binary(document)),
         )
         .await
+    }
+
+    pub(crate) async fn claim_snapshot_worktree_location(
+        &self,
+        info: &SessionInfo,
+        activity: &str,
+        cancel: CancellationToken,
+    ) -> Result<cyber_server::runtime::LocationLease, String> {
+        let inv = location_invocation(info);
+        self.claim_location(
+            &inv,
+            info.worktree_id.as_deref(),
+            false,
+            cancel,
+            Some(CheckoutWorker::Snapshot(activity)),
+        )
+        .await
+    }
+
+    pub(crate) async fn claim_snapshot_worktree_location_bound(
+        &self,
+        info: &SessionInfo,
+        activity: &str,
+        lifetime: Option<&cyber_server::runtime::SnapshotLifetimeBinding>,
+        cancel: CancellationToken,
+    ) -> Result<cyber_server::runtime::LocationLease, String> {
+        let owner = lifetime
+            .map(|lifetime| {
+                if lifetime.owner.activity_id != activity
+                    || lifetime.owner.session_id != info.id
+                    || lifetime.owner.worktree_id != info.worktree_id
+                    || std::fs::canonicalize(&info.directory).map_err(|error| error.to_string())?
+                        != lifetime.owner.directory
+                {
+                    return Err("Foreign snapshot checkout lifetime".into());
+                }
+                lifetime.checkout_owner()
+            })
+            .transpose()?;
+        let inv = location_invocation(info);
+        let worker = owner
+            .as_ref()
+            .map(CheckoutWorker::SnapshotBound)
+            .unwrap_or(CheckoutWorker::Snapshot(activity));
+        self.claim_location(
+            &inv,
+            info.worktree_id.as_deref(),
+            false,
+            cancel,
+            Some(worker),
+        )
+        .await
+    }
+
+    pub(crate) fn reacquire_snapshot_worktree_location(
+        &self,
+        info: &SessionInfo,
+        lifetime: &cyber_server::runtime::SnapshotLifetimeBinding,
+        bindings: &[cyber_core::worktrees::CheckoutBinding],
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        lifetime.checkout_resources_digest(bindings)?;
+        if lifetime.owner.session_id != info.id
+            || lifetime.owner.worktree_id != info.worktree_id
+            || std::fs::canonicalize(&info.directory).map_err(|error| error.to_string())?
+                != lifetime.owner.directory
+        {
+            return Err("Foreign snapshot checkout reacquisition context".into());
+        }
+        let locations = Repository::managed_locations_at(Path::new(&info.directory))
+            .map_err(|error| error.to_string())?;
+        if locations.len() != bindings.len() {
+            return Err("Snapshot checkout resource inventory changed".into());
+        }
+        let owner = lifetime.checkout_owner()?;
+        let claims = locations
+            .iter()
+            .zip(bindings)
+            .map(|((repository, managed), binding)| {
+                repository
+                    .reacquire_snapshot(managed, binding, &owner)
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Box::new(RetainedSnapshotProof(claims)))
     }
 
     pub(crate) async fn claim_hook_test_location(
@@ -259,7 +352,7 @@ impl BuiltinHost {
         bound: Option<&str>,
         creating: bool,
         cancel: CancellationToken,
-        binary: Option<&str>,
+        worker: Option<CheckoutWorker<'_>>,
     ) -> Result<cyber_server::runtime::LocationLease, String> {
         use cyber_server::runtime::LocationLease;
         let activity = self
@@ -286,6 +379,7 @@ impl BuiltinHost {
         }
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -308,14 +402,27 @@ impl BuiltinHost {
         for (repository, managed) in locations {
             leases.push(
                 retry_repository_busy(&ctx.cancel, || async {
-                    if let Some(document) = binary {
-                        repository
-                            .claim_binary(&execution, &managed, document)
-                            .await
-                    } else {
-                        repository
-                            .claim(&execution, &managed, &inv.session_id)
-                            .await
+                    match worker {
+                        Some(CheckoutWorker::Binary(document)) => {
+                            repository
+                                .claim_binary(&execution, &managed, document)
+                                .await
+                        }
+                        Some(CheckoutWorker::Snapshot(activity)) => {
+                            repository
+                                .claim_snapshot(&execution, &managed, activity)
+                                .await
+                        }
+                        Some(CheckoutWorker::SnapshotBound(owner)) => {
+                            repository
+                                .claim_snapshot_bound(&execution, &managed, owner)
+                                .await
+                        }
+                        None => {
+                            repository
+                                .claim(&execution, &managed, &inv.session_id)
+                                .await
+                        }
                     }
                 })
                 .await
@@ -365,6 +472,7 @@ impl BuiltinHost {
     ) -> io::Result<Vec<WorktreeListing>> {
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -606,6 +714,7 @@ impl BuiltinHost {
     ) -> io::Result<Ctx<'a>> {
         Ok(Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -873,6 +982,7 @@ impl BuiltinHost {
         }
         let ctx = Ctx {
             skill_paths: Default::default(),
+            read_receipt: Default::default(),
             loaded_skill: Default::default(),
             provenance: Default::default(),
             compiler_feedback: Default::default(),
@@ -1173,6 +1283,9 @@ struct ActiveLocation {
     activity: crate::lsp::Activity,
 }
 impl cyber_server::runtime::LocationGuard for ActiveLocation {
+    fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.lease.snapshot_bindings()
+    }
     fn settle(self: Box<Self>) -> Result<(), String> {
         self.lease.settle()
     }
@@ -1181,9 +1294,225 @@ impl cyber_server::runtime::LocationGuard for ActiveLocation {
         let proof = lease.settle_retained()?;
         Ok(Box::new((proof, activity)))
     }
+    fn settle_snapshot_retained(
+        self: Box<Self>,
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        let Self { lease, activity } = *self;
+        Ok(Box::new(ActiveSnapshotLocation {
+            proof: lease.settle_snapshot_retained()?,
+            _activity: activity,
+        }))
+    }
+}
+
+struct ActiveSnapshotLocation {
+    proof: Box<dyn cyber_server::runtime::SnapshotLocationGuard>,
+    _activity: crate::lsp::Activity,
+}
+impl cyber_server::runtime::SnapshotLocationGuard for ActiveSnapshotLocation {
+    fn verify(&self) -> Result<(), String> {
+        self.proof.verify()
+    }
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.proof.bindings()
+    }
+    fn prepare_restore_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        self.proof.prepare_restore_acknowledgement(receipt)
+    }
+    fn acknowledge_restore(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        self.proof.acknowledge_restore(receipt)
+    }
+    fn prepare_recovery_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.proof.prepare_recovery_acknowledgement(receipt, role)
+    }
+    fn acknowledge_recovery(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.proof.acknowledge_recovery(receipt, role)
+    }
+}
+
+struct RetainedSnapshotProof(Vec<cyber_core::worktrees::SnapshotClaim>);
+impl RetainedSnapshotProof {
+    fn recovery_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+        publish: bool,
+    ) -> Result<(), String> {
+        use cyber_server::runtime::SnapshotLocationGuard;
+        let evidence = receipt
+            .checkout_evidence(role)
+            .ok_or("Legacy recovery receipt lacks resource role")?;
+        let digest = evidence
+            .lifetime
+            .checkout_resources_digest(&self.bindings()?)?;
+        if digest != evidence.resources_digest {
+            return Err("Recovery resource set differs".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            let ack = cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .map_err(|error| error.to_string())?;
+            if publish {
+                ack.publish(claim)
+            } else {
+                ack.retain_existing(claim)
+            }
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
+    }
+}
+impl cyber_server::runtime::SnapshotLocationGuard for RetainedSnapshotProof {
+    fn verify(&self) -> Result<(), String> {
+        self.0
+            .iter()
+            .try_for_each(|claim| claim.verify().map_err(|error| error.to_string()))
+    }
+    fn bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.verify()?;
+        Ok(self.0.iter().map(|claim| claim.binding().clone()).collect())
+    }
+    fn prepare_preparation_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        let resources = self.bindings()?;
+        let digest = receipt.lifetime.checkout_resources_digest(&resources)?;
+        if receipt.checkout_resources_digest.as_ref() != Some(&digest) {
+            return Err("Committed receipt differs from original checkout resources".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .and_then(|ack| ack.retain_existing(claim))
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
+    }
+    fn acknowledge_preparation(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotPreparationReceipt,
+    ) -> Result<(), String> {
+        let resources = self.bindings()?;
+        let digest = receipt.lifetime.checkout_resources_digest(&resources)?;
+        if receipt.checkout_resources_digest.as_ref() != Some(&digest) {
+            return Err("Committed receipt differs from original checkout resources".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .and_then(|ack| ack.publish(claim))
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
+    }
+    fn prepare_restore_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        let checkout = receipt
+            .checkout
+            .as_ref()
+            .ok_or("Legacy restore receipt lacks checkout evidence")?;
+        let digest = checkout
+            .lifetime
+            .checkout_resources_digest(&self.bindings()?)?;
+        if digest != checkout.resources_digest {
+            return Err("Restore checkout resources differ".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .and_then(|ack| ack.retain_existing(claim))
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
+    }
+    fn acknowledge_restore(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRestoreReceipt,
+    ) -> Result<(), String> {
+        let checkout = receipt
+            .checkout
+            .as_ref()
+            .ok_or("Legacy restore receipt lacks checkout evidence")?;
+        let digest = checkout
+            .lifetime
+            .checkout_resources_digest(&self.bindings()?)?;
+        if digest != checkout.resources_digest {
+            return Err("Restore checkout resources differ".into());
+        }
+        let receipt_digest = receipt.checkout_acknowledgement_digest()?;
+        for claim in &mut self.0 {
+            cyber_core::worktrees::CheckoutAcknowledgement::new(
+                claim.binding(),
+                &digest,
+                &receipt_digest,
+            )
+            .and_then(|ack| ack.publish(claim))
+            .map_err(|error| error.to_string())?;
+        }
+        self.verify()
+    }
+    fn prepare_recovery_acknowledgement(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.recovery_acknowledgement(receipt, role, false)
+    }
+    fn acknowledge_recovery(
+        &mut self,
+        receipt: &cyber_server::runtime::SnapshotRecoveryReceipt,
+        role: cyber_server::runtime::SnapshotRecoveryCheckoutRole,
+    ) -> Result<(), String> {
+        self.recovery_acknowledgement(receipt, role, true)
+    }
 }
 
 impl cyber_server::runtime::LocationGuard for WorktreeLease {
+    fn snapshot_bindings(&self) -> Result<Vec<cyber_core::worktrees::CheckoutBinding>, String> {
+        self.0
+            .iter()
+            .map(|lease| {
+                lease.verify_snapshot().map_err(|error| error.to_string())?;
+                lease
+                    .snapshot_binding()
+                    .cloned()
+                    .map_err(|error| error.to_string())
+            })
+            .collect()
+    }
     fn settle(self: Box<Self>) -> Result<(), String> {
         for lease in self.0 {
             lease.settle().map_err(|error| error.to_string())?;
@@ -1198,6 +1527,33 @@ impl cyber_server::runtime::LocationGuard for WorktreeLease {
             .map(|lease| lease.settle_retained().map_err(|error| error.to_string()))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Box::new(leases))
+    }
+    fn settle_snapshot_retained(
+        self: Box<Self>,
+    ) -> Result<Box<dyn cyber_server::runtime::SnapshotLocationGuard>, String> {
+        for lease in &self.0 {
+            lease.verify_snapshot().map_err(|error| error.to_string())?;
+        }
+        let leases = self
+            .0
+            .into_iter()
+            .map(|lease| {
+                let lease = if lease
+                    .snapshot_binding()
+                    .map_err(|error| error.to_string())?
+                    .version
+                    == 1
+                {
+                    lease.settle_retained().map_err(|error| error.to_string())?
+                } else {
+                    lease
+                };
+                lease.retain_snapshot().map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let proof = RetainedSnapshotProof(leases);
+        cyber_server::runtime::SnapshotLocationGuard::verify(&proof)?;
+        Ok(Box::new(proof))
     }
 }
 

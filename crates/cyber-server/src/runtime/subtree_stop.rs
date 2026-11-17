@@ -36,8 +36,19 @@ impl Runtime {
     /// Close admission and stop known local subtree actors; admission stays closed.
     /// Unknown native/cross-process outcomes require recovery, never implicit reopening.
     pub async fn stop_subtree(&self, id: &str) -> Result<SubtreeStopReport, RuntimeError> {
-        let coordinator = self.inner.subtree_stop_lock.lock().await;
         drop(self.inner.open().await?);
+        self.stop_subtree_leased(id).await
+    }
+    /// As [`Self::stop_subtree`] for a caller that already retains a lifecycle
+    /// lease (scoped input interruption); never re-enters the lifecycle lock.
+    pub(super) async fn stop_subtree_leased(
+        &self,
+        id: &str,
+    ) -> Result<SubtreeStopReport, RuntimeError> {
+        let coordinator = self.inner.subtree_stop_lock.lock().await;
+        if self.inner.closed.is_cancelled() {
+            return Err(RuntimeError::ShuttingDown);
+        }
         let existing = self
             .inner
             .subtree_stops
@@ -59,7 +70,7 @@ impl Runtime {
                 .read(move |db| super::subtree_reopen::active_scope(db, &lookup))?;
             let scope = match scope {
                 Some(scope) => scope,
-                None => self.close_subtree_admissions(id).await?,
+                None => self.close_subtree_admissions_leased(id).await?,
             };
             let ids = self.inner.descendants(id)?;
             let sweep = cyber_core::ids::new_id("op");
@@ -273,9 +284,7 @@ impl Runtime {
         for id in ids {
             let handle = self.inner.handle(id).await?;
             let state = handle.state.lock().await.clone();
-            if handle
-                .location_uncertain
-                .load(std::sync::atomic::Ordering::SeqCst)
+            if handle.has_location_uncertainty()
                 || state.child_continuation_unknown
                 || state.child_worktree_setup_pending
                 || state.open_step.is_some()

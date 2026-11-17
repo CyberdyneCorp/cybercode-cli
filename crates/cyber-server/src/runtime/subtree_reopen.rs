@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 pub(super) const REOPENED: &str = "session.admission.reopened.1";
@@ -134,7 +133,7 @@ impl Runtime {
         let mut proofs = Vec::with_capacity(locations.len());
         for info in locations {
             let handle = self.inner.handle(&info.id).await?;
-            if handle.location_uncertain.load(Ordering::SeqCst) {
+            if handle.has_location_uncertainty() {
                 return Err(RuntimeError::Conflict(
                     "Native Location requires reviewed recovery".into(),
                 ));

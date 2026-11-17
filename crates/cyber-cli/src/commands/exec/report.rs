@@ -1,11 +1,13 @@
 //! Output for `cyber exec`: text, json and stream-json (`exec-mode` → Output formats,
 //! Stream JSON event schema, Exit codes).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
 use std::time::Instant;
 
 use cyber_client::{Client, ClientError};
+use cyber_core::redact::Redactor;
 use cyber_core::review::{Counts, ErrorCode, Findings, Target, TargetError};
 use cyber_core::untrusted::UntrustedRecord;
 use serde_json::{Value, json};
@@ -50,6 +52,15 @@ pub struct Run {
 }
 
 impl Run {
+    /// JSONL already emitted these payloads. Keep billing and aggregate status,
+    /// while releasing the previous answer's text, tool inputs and denials.
+    pub(super) fn retire_driver_answer(&mut self) {
+        self.text = String::new();
+        self.structured = None;
+        self.calls = HashMap::new();
+        self.denials = Vec::new();
+    }
+
     pub fn new(args: &ExecArgs, started: Instant) -> Self {
         Self {
             started,
@@ -535,6 +546,7 @@ impl Out {
         if self.format != Format::StreamJson {
             return;
         }
+        secret_safe(&mut payload);
         payload["type"] = json!(kind);
         payload["ts"] = json!(now_ms());
         payload["session_id"] = json!(self.session_id);
@@ -1106,6 +1118,19 @@ fn summary(input: &Value) -> String {
     String::new()
 }
 
+/// The diagnostic fields of a stream line (`error`, `message`) with every built-in
+/// secret shape replaced by its marker: they carry provider, server and stdin text,
+/// which is not otherwise filtered before it reaches the JSONL consumer.
+fn secret_safe(payload: &mut Value) {
+    for field in ["error", "message"] {
+        if let Some(text) = payload.get(field).and_then(Value::as_str)
+            && let Cow::Owned(redacted) = Redactor::builtin().redact(text).text
+        {
+            payload[field] = json!(redacted);
+        }
+    }
+}
+
 /// The `tool_result` stream line of a settlement, with its `redactions` when any.
 fn tool_result_line(id: &str, data: &Value) -> Value {
     let output = data["output"].as_str().unwrap_or_default();
@@ -1133,6 +1158,32 @@ fn redaction_note(tool: &str, data: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn error_result_and_end_fields_never_carry_a_secret_literally() {
+        let raw = "HTTP 401: {\"detail\":\"bad api_key=sk-test-0123456789abcdef\"} via AKIAZZZZEXAMPLE7QXYZ";
+        for mut line in [
+            json!({"code": "protocol", "message": raw}),
+            json!({"id": "one", "result": "kept AKIAZZZZEXAMPLE7QXYZ", "error": raw}),
+            json!({"exit_code": 1, "error": format!("Background ownership could not be reconciled; inspect Session ses_1: {raw}")}),
+        ] {
+            secret_safe(&mut line);
+            let text = line.to_string();
+            assert!(!text.contains("sk-test-0123456789abcdef"), "{text}");
+            assert!(text.contains("[REDACTED:"), "{text}");
+            let field = line.get("message").unwrap_or(&line["error"]);
+            assert!(!field.as_str().unwrap().contains("AKIAZZZZEXAMPLE7QXYZ"));
+        }
+        let mut answer = json!({"result": "AKIAZZZZEXAMPLE7QXYZ", "error": null});
+        secret_safe(&mut answer);
+        assert_eq!(
+            answer["result"], "AKIAZZZZEXAMPLE7QXYZ",
+            "the answer is not an error"
+        );
+        let mut plain = json!({"message": "unknown type \"shell\""});
+        secret_safe(&mut plain);
+        assert_eq!(plain["message"], "unknown type \"shell\"");
+    }
 
     #[test]
     fn settlements_with_redactions_report_them() {
@@ -1207,6 +1258,32 @@ mod tests {
             (0, &json!(true)),
             "inline override"
         );
+    }
+
+    #[test]
+    fn retiring_a_driver_answer_releases_payloads_without_losing_run_totals_or_error() {
+        let args = Wrapper::parse_from(["exec", "hi"]).args;
+        let mut run = Run::new(&args, Instant::now());
+        run.input_tokens = 12;
+        run.output_tokens = 3;
+        run.cost = 0.5;
+        run.turns = 2;
+        run.error = Some("earlier failure".into());
+        run.text = "completed answer".repeat(1024);
+        run.structured = Some(json!({"answer":"completed"}));
+        run.calls.insert(
+            "call_1".into(),
+            ("bash".into(), json!({"command":"exit 1"})),
+        );
+        run.denials.push(json!({"message":"denied"}));
+        run.retire_driver_answer();
+        assert!(run.text.is_empty());
+        assert!(run.structured.is_none());
+        assert!(run.calls.is_empty());
+        assert!(run.denials.is_empty());
+        assert_eq!((run.input_tokens, run.output_tokens, run.turns), (12, 3, 2));
+        assert_eq!(run.cost, 0.5);
+        assert_eq!(run.error.as_deref(), Some("earlier failure"));
     }
 
     /// A discarded attempt is reported as a `retry` line; only recorded content becomes

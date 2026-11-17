@@ -6,6 +6,8 @@ mod driver;
 mod frames;
 pub(crate) mod goals;
 mod hook_lines;
+mod inputs;
+mod last_message;
 pub(crate) mod report;
 mod review_run;
 mod schema;
@@ -57,7 +59,7 @@ pub struct ExecArgs {
     #[arg(long)]
     pub attach: Option<String>,
     /// Password for --attach (else CYBER_SERVER_PASSWORD).
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub password: Option<String>,
     #[arg(long)]
     pub agent: Option<String>,

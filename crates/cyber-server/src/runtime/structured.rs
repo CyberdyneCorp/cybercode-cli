@@ -198,6 +198,24 @@ impl ResultState {
         self.input.is_some() && !self.settled
     }
 
+    /// Finish only this open root input. A durable valid finalizer wins over
+    /// interruption or replacement; otherwise retain an explicit terminal error.
+    pub fn terminal_outcome(&self, reason: &str) -> Option<StructuredOutcome> {
+        if !self.root_open() {
+            return None;
+        }
+        let value = self.returned.as_ref().map(|(_, value)| value.clone());
+        let error = value
+            .is_none()
+            .then(|| format!("StructuredOutputError: {reason}"));
+        Some(StructuredOutcome {
+            message_id: self.input.clone().expect("open root input"),
+            value,
+            error,
+            attempts: self.attempts,
+        })
+    }
+
     /// A child's returned result ends its Drain; a root input's does not stop the next.
     pub fn blocks_drain(&self) -> bool {
         self.input.is_none() && self.returned.is_some()
