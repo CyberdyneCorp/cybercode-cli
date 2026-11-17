@@ -2,11 +2,13 @@
 import type { Port } from "./transport.js";
 export interface ComputerContext { session: string; directory: string; actionable: boolean; signal: AbortSignal }
 export interface NativeGrant { id: string; session_id: string; target: { identity: string }; expires_at: number }
-interface NativeHealth { supported: boolean; platform: string; minimum_version: string; screen_capture: boolean; accessibility: boolean; binary: string }
+interface NativeCapability { available: boolean; reasons: string[] }
+/** Version 2 fields are optional: a version 1 server omits them. Unknown reason codes mean "unavailable". */
+interface NativeHealth { supported: boolean; platform: string; minimum_version: string; screen_capture: boolean; accessibility: boolean; binary: string; schema_version?: number; mode?: "unsupported" | "capture_only" | "input_enabled"; capture?: NativeCapability; input?: NativeCapability; evidence?: string }
 export interface NativeReport { enabled: boolean; health: NativeHealth; grant: NativeGrant | null }
 interface UnknownOperation { operation_id: string; action: string; started_ms: number }
 export interface NativeFrame {id:string;session_id:string;created_ms:number;sha256:string;bytes:number;target:NativePreview["target"]}
-export interface NativePreview { id: string; session_id: string; expires_at: number; target: { identity: string; app: string | null; display: number; pid: number; window: number; x: number; y: number; width: number; height: number; image_width: number; image_height: number }; unknown_operations: UnknownOperation[]; warning: string }
+export interface NativePreview { id: string; session_id: string; expires_at: number; target: { identity: string; app: string | null; display: number; pid: number; window: number; x: number; y: number; width: number; height: number; image_width: number; image_height: number }; unknown_operations: UnknownOperation[]; warning: string; evidence?: string }
 
 /** State owns review freshness and uncertainty; the view only renders and invokes actions. */
 export class ComputerControls {
@@ -79,4 +81,23 @@ export class ComputerControls {
     catch { if (generation === this.#generation) { this.preview = undefined; this.uncertain = true; this.notice = "Native action was not confirmed. Refresh status and review the target again; input is never automatically replayed."; } }
     finally { if (generation === this.#generation) { this.busy = false; this.changed(); await this.refresh(); } }
   }
+}
+
+/** `mode · reasons · evidence` for a version 2 health report; undefined for version 1. */
+export function capabilitySummary(health: NativeHealth): string | undefined {
+  if (!health.mode) return undefined;
+  const reasons = [...new Set([...(health.capture?.reasons ?? []), ...(health.input?.reasons ?? [])])];
+  return [`Mode: ${health.mode}`, reasons.length ? `Reasons: ${reasons.join(", ")}` : "", health.evidence ? `Evidence: ${health.evidence}` : ""].filter(Boolean).join(" · ");
+}
+
+/** A note for a computer receipt with a reason, cleanup state or event counts. Receipts never carry typed text. */
+export function receiptNote(output: string): string | undefined {
+  let receipt: { outcome?: unknown; reason?: unknown; cleanup?: unknown; events?: { requested?: unknown; posted?: unknown } };
+  try { receipt = JSON.parse(output) as typeof receipt; } catch { return undefined; }
+  if (!receipt || typeof receipt.outcome !== "string") return undefined;
+  const parts: string[] = [];
+  if (typeof receipt.reason === "string") parts.push(`reason ${receipt.reason}`);
+  if (typeof receipt.cleanup === "string" && receipt.cleanup !== "not_needed") parts.push(`cleanup ${receipt.cleanup}`);
+  if (typeof receipt.events?.posted === "number" && typeof receipt.events.requested === "number") parts.push(`${receipt.events.posted}/${receipt.events.requested} events posted`);
+  return parts.length ? `${receipt.outcome} · ${parts.join(" · ")}` : undefined;
 }

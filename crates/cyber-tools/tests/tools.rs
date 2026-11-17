@@ -971,11 +971,12 @@ async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
         fn health(&self, _: bool) -> Result<Health, Error> {
             Ok(Health {
                 supported: true,
-                platform: "fixture".into(),
+                platform: "macos".into(),
                 minimum_version: "fixture".into(),
                 screen_capture: true,
                 accessibility: true,
                 binary: "fixture".into(),
+                ..Health::default()
             })
         }
         fn resolve(&self, _: &Selector) -> Result<NativeTarget, Error> {
@@ -993,6 +994,9 @@ async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
                 image_width: 1,
                 image_height: 1,
                 rotation: 0,
+                target_id: String::new(),
+                source: None,
+                topology_epoch: 0,
             })
         }
         fn capture(&self, target: &NativeTarget) -> Result<Capture, Error> {
@@ -1038,6 +1042,7 @@ async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
             Selector {
                 app: Some("fixture.app".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -1080,6 +1085,137 @@ async fn private_computer_capture_root_refuses_other_session_builtin_reads() {
             .unwrap()
             .is_empty(),
         "owner API remains readable after sandbox registration"
+    );
+}
+
+/// `sandbox` → Sandboxed processes hold no native computer authority: while a grant is
+/// armed and its host lease is held, a sandboxed child cannot read the private capture
+/// directory (even when it is listed as readable) and inherits no lease descriptor.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn sandboxed_children_cannot_read_captures_or_inherit_native_handles() {
+    use cyber_computer::{
+        Error,
+        backend::{Backend, Capture, Health, HostLease, NativeTarget, Selector},
+        control::InputPermit,
+    };
+    use std::sync::Arc;
+    struct LeaseFixture(std::path::PathBuf);
+    impl Backend for LeaseFixture {
+        fn acquire_lease(&self) -> Result<HostLease, Error> {
+            // Like the native lease: an open, close-on-exec descriptor.
+            let file = std::fs::File::create(&self.0).map_err(|_| Error::Busy)?;
+            Ok(Arc::new(file))
+        }
+        fn health(&self, _: bool) -> Result<Health, Error> {
+            Ok(Health {
+                supported: true,
+                platform: "macos".into(),
+                minimum_version: "fixture".into(),
+                screen_capture: true,
+                accessibility: true,
+                binary: "fixture".into(),
+                ..Health::default()
+            })
+        }
+        fn resolve(&self, _: &Selector) -> Result<NativeTarget, Error> {
+            Ok(NativeTarget {
+                identity: "app:fixture:42:1:7".into(),
+                app: Some("fixture.app".into()),
+                pid: 42,
+                window: 7,
+                display: 1,
+                launch_ms: 1,
+                x: 0.,
+                y: 0.,
+                width: 1.,
+                height: 1.,
+                image_width: 1,
+                image_height: 1,
+                rotation: 0,
+                target_id: String::new(),
+                source: None,
+                topology_epoch: 0,
+            })
+        }
+        fn capture(&self, target: &NativeTarget) -> Result<Capture, Error> {
+            let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+            png.extend(1u32.to_be_bytes());
+            png.extend(1u32.to_be_bytes());
+            Ok(Capture {
+                target: target.clone(),
+                png,
+            })
+        }
+        fn input(&self, _: &NativeTarget, _: &InputPermit) -> Result<(), Error> {
+            panic!("sandbox fixture must not inject input")
+        }
+    }
+    let f = Fixture::new();
+    let home = f.dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let paths = cyber_core::paths::Paths::resolve(
+        &std::collections::HashMap::from([(
+            "CYBER_HOME".into(),
+            f.dir.path().join("sandbox-install").display().to_string(),
+        )]),
+        &home,
+    );
+    paths.ensure().unwrap();
+    cyber_tools::plugin_host::hide_computer_artifacts(&paths, &home).unwrap();
+    let root = paths.data.join("computer");
+    let lease = f.dir.path().join("native-lease-fixture.lock");
+    let computer = cyber_server::runtime::computer::Computer::new(
+        f.store.clone(),
+        root.clone(),
+        Arc::new(|| cyber_server::runtime::computer::ComputerPolicy {
+            enabled: true,
+            retention_days: 1,
+        }),
+        Arc::new(|_| true),
+        Arc::new(LeaseFixture(lease.clone())),
+    )
+    .unwrap();
+    let preview = computer
+        .preview("ses_capture_owner", Selector::app("fixture.app"))
+        .unwrap();
+    computer
+        .allow("ses_capture_owner", &preview.id, None, false)
+        .unwrap();
+    let frame = computer
+        .screenshot("ses_capture_owner", "sandbox-capture")
+        .unwrap()
+        .frame
+        .unwrap();
+    let directory = std::fs::read_dir(&root)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    std::fs::write(directory.join("canary.txt"), "SANDBOX_CAPTURE_CANARY").unwrap();
+    f.set_config(json!({"permissions":{"bash":"allow","external_directory":"allow"},"sandbox":{"readable_paths":[root]}}));
+    let handles = if cfg!(target_os = "linux") {
+        "for fd in /proc/self/fd/*; do readlink $fd; done"
+    } else {
+        "lsof -a -p $$ -Fn"
+    };
+    let command = format!(
+        "cat {dir}/canary.txt; ls {dir}; {handles}; echo DONE",
+        dir = directory.display()
+    );
+    let out = ok(f.call("default", "bash", json!({"command": command})).await);
+    assert!(out.contains("DONE"), "{out}");
+    assert!(out.contains("/dev/null"), "handle listing ran: {out}");
+    assert!(!out.contains("SANDBOX_CAPTURE_CANARY"), "{out}");
+    assert!(!out.contains(&frame.id), "{out}");
+    assert!(!out.contains("native-lease-fixture"), "{out}");
+    assert!(
+        !computer
+            .frame_bytes("ses_capture_owner", &frame.id)
+            .unwrap()
+            .is_empty(),
+        "the owner frame API still serves the capture"
     );
 }
 

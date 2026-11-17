@@ -141,6 +141,7 @@ pub struct HookExecutionResult {
 /// Call verify before effects; finish records observations even after admission closes.
 pub struct HookExecution {
     store: Arc<Store>,
+    tools: Arc<dyn super::ToolHost>,
     bus: super::bus::Bus,
     authority: AdmissionAuthority,
     activity: super::activity::Scope,
@@ -191,7 +192,13 @@ impl HookExecution {
         };
         self.record.duration_ms = Some(elapsed(self.started));
         self.record.outcome = Some(result.outcome);
-        self.record.decision = Some(result.decision);
+        // The receipt is durable and served to clients: the hook's reasons are
+        // redacted and bounded like the tool result they become.
+        self.record.decision = Some(super::redaction::hook_decision(
+            &*self.tools,
+            &self.record.directory,
+            result.decision,
+        ));
         self.record.acknowledged = Some(result.acknowledged);
         self.record.must_stop = result.must_stop || !result.acknowledged;
         self.record.io = if self.record.log_io { result.io } else { None };
@@ -294,6 +301,17 @@ pub(super) fn elapsed(started: Instant) -> u64 {
 }
 
 impl Runtime {
+    /// Hook-supplied `text` redacted for the Location at `directory` and bounded,
+    /// before it reaches the model, a notice or a receipt.
+    pub fn redact_hook_text(&self, directory: &str, text: String) -> String {
+        super::redaction::hook_text(&*self.inner.tools, directory, text)
+    }
+
+    /// `decision` with its reasons redacted for the Location at `directory` and bounded.
+    pub fn redact_hook_decision(&self, directory: &str, decision: HookDecision) -> HookDecision {
+        super::redaction::hook_decision(&*self.inner.tools, directory, decision)
+    }
+
     pub fn hook_notice(&self, session: &str, hook_id: &str, message: &str) {
         self.inner.bus.publish(super::LiveEvent::HookNotice {
             session_id: session.into(),
@@ -373,6 +391,7 @@ impl Runtime {
         Ok(Some(HookExecution {
             native_observation,
             store: Arc::clone(&self.inner.store),
+            tools: Arc::clone(&self.inner.tools),
             bus: self.inner.bus.clone(),
             authority,
             activity,

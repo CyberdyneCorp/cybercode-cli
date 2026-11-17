@@ -29,8 +29,9 @@ pub enum LiveEvent {
         hook_id: String,
         message: String,
     },
-    /// A hook receipt was admitted or settled: an internal summary for the telemetry
-    /// exporter, with no IO. Every client stream drops it, and no API schema has it.
+    /// A hook receipt was admitted or settled: a summary with no IO, for the telemetry
+    /// exporter and for instance streams that ask for it with `include=hook_receipts`
+    /// (`cyber exec --include-hook-events`). Every other client stream drops it.
     #[schemars(skip)]
     HookReceipt {
         session_id: String,

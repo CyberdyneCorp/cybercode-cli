@@ -227,6 +227,7 @@ export interface Operations {
     path: Record<string, never>;
     query: {
       scope?: QueryValue;
+      include?: QueryValue;
     };
     body: undefined;
     response: S.EventEnvelope;
@@ -1273,6 +1274,7 @@ export interface Operations {
       after?: QueryValue;
       live?: QueryValue;
       presence?: QueryValue;
+      include?: QueryValue;
     };
     body: undefined;
     response: S.EventEnvelope;
@@ -2353,7 +2355,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/event",
     pathParams: [],
-    query: ["scope"],
+    query: ["scope", "include"],
     body: "none",
     located: true,
     unwrap: false,
@@ -4238,7 +4240,7 @@ export const operations = {
     method: "GET",
     path: "/api/v1/sessions/{sessionID}/events",
     pathParams: ["sessionID"],
-    query: ["after", "live", "presence"],
+    query: ["after", "live", "presence", "include"],
     body: "none",
     located: false,
     unwrap: false,
@@ -5753,7 +5755,7 @@ export function createGroups(caller: Caller) {
         caller.call("v1.config.setOutputStyle", { body }, options),
     },
     event: {
-      /** Live events for a Location (scope=all for every Location) (`GET /api/v1/event`) */
+      /** Live events for a Location (scope=all for every Location; include=hook_receipts adds IO-free `session.hook.receipt` summaries) (`GET /api/v1/event`) */
       subscribe: (query?: Operations["v1.event.subscribe"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
         caller.stream("v1.event.subscribe", { query }, options),
     },
@@ -6270,7 +6272,7 @@ export function createGroups(caller: Caller) {
       /** Edit a live Goal's condition, check (null removes it) or budget; publishes session.goal.edited.1 (`PATCH /api/v1/sessions/{sessionID}/goals/{goalID}`) */
       editGoal: (sessionID: string, goalID: string, body: Operations["v1.session.editGoal"]["body"], options?: RequestOptions): Promise<Operations["v1.session.editGoal"]["response"]> =>
         caller.call("v1.session.editGoal", { path: { sessionID, goalID }, body }, options),
-      /** Replay durable events, then follow (`GET /api/v1/sessions/{sessionID}/events`) */
+      /** Replay durable events, then follow (live=true adds live notices; include=hook_receipts adds this Session's IO-free `session.hook.receipt` summaries) (`GET /api/v1/sessions/{sessionID}/events`) */
       events: (sessionID: string, query?: Operations["v1.session.events"]["query"], options?: StreamOptions): AsyncIterableIterator<S.EventEnvelope> =>
         caller.stream("v1.session.events", { path: { sessionID }, query }, options),
       /** Export the Session: info, totals, messages with parts and tool calls, Goals and Workflow Run summaries; `include_children=true` nests child Sessions, `branches=all` exports every branch instead of the active path, and `sanitize=true` replaces content with `[redacted:<kind>:<n>]` markers (`GET /api/v1/sessions/{sessionID}/export`) */
