@@ -441,13 +441,34 @@ fn dry_run_names_the_plan_and_downloads_nothing() {
     assert_eq!(entries, 1, "no temporary or .old file");
 }
 
+/// The test binary without debug sections, so it stays under the upgrader's archive
+/// limits: a debug build with line tables is larger than a release archive may be.
+/// It still runs, which the test needs for the cleanup on the next start.
+fn runnable_release_binary() -> Vec<u8> {
+    let source = Path::new(env!("CARGO_BIN_EXE_cyber"));
+    if cfg!(windows) {
+        // Debug information lives in the separate .pdb on Windows.
+        return std::fs::read(source).unwrap();
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let copy = dir.path().join("cyber");
+    std::fs::copy(source, &copy).unwrap();
+    let stripped = std::process::Command::new("strip")
+        .arg("-S")
+        .arg(&copy)
+        .status()
+        .is_ok_and(|status| status.success());
+    assert!(stripped, "strip -S failed on the test binary");
+    std::fs::read(&copy).unwrap()
+}
+
 #[test]
 fn script_upgrade_replaces_the_binary_after_verification() {
     let release = Release::new();
     release.env.stub.manifest("stable", NEXT);
     // The real binary with a marker appended stands in for the next release: it still
     // runs, and its digest tells it apart from the installed copy.
-    let mut next = std::fs::read(env!("CARGO_BIN_EXE_cyber")).unwrap();
+    let mut next = runnable_release_binary();
     next.extend_from_slice(b"\ncyber release 9.9.9\n");
     release.publish(NEXT, NEXT, &release.archive(&next, b"helper 9.9.9"));
 
