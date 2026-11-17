@@ -258,7 +258,9 @@ pub use auto::{AutoDecision, AutoEffect, AutoReview, AutoReviewStage, TAINTED_RE
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
-pub use context_inspection::{ContextInspection, PreparedContextEstimate, RuleApproval};
+pub use context_inspection::{
+    ContextInspection, PendingContext, PreparedContextEstimate, RuleApproval,
+};
 pub use context_meter::ContextMeter;
 pub use cyber_core::prompts::ModelFamily;
 pub use events::{AuxiliaryUsage, CompactionTrigger, registry as event_registry};

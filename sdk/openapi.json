@@ -10157,6 +10157,22 @@
             "format": "uint",
             "minimum": 0
           },
+          "pending_hook_contexts": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0,
+            "description": "Hook `additional_context` from background handlers, queued to be committed\nbefore the next request. Its text is never returned."
+          },
+          "pending_hook_context_tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Estimated tokens of the queued hook context; included in `next_request`."
+          },
+          "compaction_pending": {
+            "type": "boolean",
+            "description": "A compaction was requested while the Session was running and applies at the\nnext Safe Boundary."
+          },
           "delivered_rule_count": {
             "type": "integer",
             "format": "uint",
@@ -10219,6 +10235,9 @@
           "epoch_pending",
           "queued_inputs",
           "held_inputs",
+          "pending_hook_contexts",
+          "pending_hook_context_tokens",
+          "compaction_pending",
           "delivered_rule_count",
           "delivered_rules",
           "omitted_delivered_rules",
@@ -10457,6 +10476,11 @@
             "type": "string",
             "const": "bound_exceeded",
             "description": "Rule discovery reached its file or byte bound before it."
+          },
+          {
+            "type": "string",
+            "const": "outside_project",
+            "description": "A project instruction file or import resolves outside the project."
           }
         ],
         "description": "Why a definition that applies to the Location was left out of context."
@@ -10596,6 +10620,11 @@
             "type": "string",
             "const": "delivered_rules_changed",
             "description": "A rule delivered in this Context Epoch was changed or its approval revoked; the\nnext Context Epoch will not deliver that definition again."
+          },
+          {
+            "type": "string",
+            "const": "compaction_pending",
+            "description": "A requested compaction runs at the next Safe Boundary and replaces the history\nthis estimate counts."
           }
         ],
         "description": "Why a next-request estimate can differ from the request actually sent."

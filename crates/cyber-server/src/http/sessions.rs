@@ -1203,8 +1203,7 @@ async fn context(
     Path(id): Path<String>,
     Query(query): Query<ContextQuery>,
 ) -> Result<Json<Data<SessionContext>>> {
-    let s = state.runtime.state(&id).await?;
-    let inspection = state.runtime.inspect_context(&s);
+    let (s, inspection) = state.runtime.inspect_session_context(&id).await?;
     let epoch = s.epoch.as_ref().map(|e| e.number);
     let (baseline, summary, task) = if query.include_content {
         (

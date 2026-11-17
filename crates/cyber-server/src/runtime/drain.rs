@@ -767,9 +767,12 @@ impl Inner {
     }
 }
 
+/// The `session.system.added` reason of hook-provided context.
+pub(crate) const HOOK_CONTEXT_REASON: &str = "hook_context";
+
 /// A Mid-Conversation System Message carrying hook-provided context.
 pub(crate) fn hook_context(text: String) -> cyber_store::NewEvent {
-    system(text, "hook_context")
+    system(text, HOOK_CONTEXT_REASON)
 }
 
 /// The durable record of a hook's `continue: false`, with its tagged stop reason.
@@ -1305,6 +1308,7 @@ impl Inner {
                 resolved,
                 epoch.number,
                 state.compacted.is_some(),
+                super::context_inspection::hook_context_tokens(&state),
                 message_id.clone(),
             )),
             input_message_ids: super::requests::input_owners::capture(&state),
