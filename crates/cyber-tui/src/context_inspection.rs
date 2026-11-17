@@ -43,6 +43,7 @@ pub(crate) fn format(data: &Value) -> String {
     if inspection["epoch_pending"].as_bool() == Some(true) {
         lines.push("The next turn will rebuild the Context Epoch.".into());
     }
+    lines.extend(pending_updates(inspection));
     let changed = inspection["changed_sources"].as_u64().unwrap_or(0);
     if changed > 0 {
         lines.push(format!(
@@ -59,6 +60,10 @@ pub(crate) fn format(data: &Value) -> String {
                 source["origin"].as_str(),
                 source["estimated_tokens"].as_u64(),
             ) {
+                let (id, origin) = (
+                    crate::messaging::clean_line(id),
+                    crate::messaging::clean_line(origin),
+                );
                 lines.push(format!("{id} · {origin} · ~{tokens} tokens"));
             }
         }
@@ -89,9 +94,28 @@ fn next_request(next: &Value) -> Vec<String> {
             Some("sources_changed_on_disk") => "changed sources will be read again",
             Some("excludes_turn_instructions") => "turn-only instructions not included",
             Some("delivered_rules_changed") => "changed or revoked rules are not delivered again",
+            Some("compaction_pending") => "the requested compaction has not run yet",
             _ => continue,
         };
         lines.push(format!("  Assumes {text}"));
+    }
+    lines
+}
+
+/// Updates queued on the Session for its next Safe Boundary.
+fn pending_updates(inspection: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    let hooks = inspection["pending_hook_contexts"].as_u64().unwrap_or(0);
+    if hooks > 0 {
+        let tokens = inspection["pending_hook_context_tokens"]
+            .as_u64()
+            .unwrap_or(0);
+        lines.push(format!(
+            "Pending hook context: {hooks} · ~{tokens} tokens · added before the next request"
+        ));
+    }
+    if inspection["compaction_pending"].as_bool() == Some(true) {
+        lines.push("Compaction requested · runs at the next safe boundary".into());
     }
     lines
 }
@@ -340,5 +364,34 @@ mod tests {
         assert!(text.contains("  Assumes tool schemas sized as in the last request"));
         assert!(text.contains("  Assumes the last request used another model"));
         assert!(!text.contains("future"));
+    }
+
+    #[test]
+    fn inspection_shows_pending_hook_context_and_compaction_without_hook_text() {
+        let text = super::format(&serde_json::json!({
+            "epoch": 2,
+            "inspection": {
+                "pending_hook_contexts": 2, "pending_hook_context_tokens": 140,
+                "compaction_pending": true,
+                "sources": [
+                    {"id": "history", "origin": "session_replay", "estimated_tokens": 900},
+                    {"id": "hook_context", "origin": "hook\u{001b}", "estimated_tokens": 60}
+                ],
+                "next_request": {
+                    "estimated_input_tokens": 1200,
+                    "assumptions": ["compaction_pending"]
+                }
+            }
+        }));
+        assert!(
+            text.contains("Pending hook context: 2 · ~140 tokens · added before the next request")
+        );
+        assert!(text.contains("Compaction requested · runs at the next safe boundary"));
+        assert!(text.contains("hook_context · hook · ~60 tokens"));
+        assert!(text.contains("  Assumes the requested compaction has not run yet"));
+        assert!(!text.contains('\u{001b}'));
+        let idle = super::format(&serde_json::json!({"epoch": 1, "inspection": {}}));
+        assert!(!idle.contains("Pending hook context"));
+        assert!(!idle.contains("Compaction requested"));
     }
 }

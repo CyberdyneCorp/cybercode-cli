@@ -93,12 +93,18 @@ impl PreparedContextEstimate {
         resolved: &super::ResolvedModel,
         epoch: u32,
         compacted: bool,
+        hook_tokens: u64,
         step_id: String,
     ) -> Self {
         let window = (resolved.context_limit > 0).then_some(resolved.context_limit);
         let estimated_input_tokens =
             view::estimate_tokens(&request.system, &request.messages, &request.tools);
-        let mut sources = estimates(&request.system[..2], &request.messages, compacted);
+        let mut sources = estimates(
+            &request.system[..2],
+            &request.messages,
+            compacted,
+            hook_tokens,
+        );
         let turn_bytes = request
             .system
             .iter()
@@ -151,6 +157,9 @@ pub enum EstimateAssumption {
     /// A rule delivered in this Context Epoch was changed or its approval revoked; the
     /// next Context Epoch will not deliver that definition again.
     DeliveredRulesChanged,
+    /// A requested compaction runs at the next Safe Boundary and replaces the history
+    /// this estimate counts.
+    CompactionPending,
 }
 
 /// The stored projection plus the tool schemas of the last prepared request: what the
@@ -183,6 +192,14 @@ pub struct ContextInspection {
     pub epoch_pending: bool,
     pub queued_inputs: usize,
     pub held_inputs: usize,
+    /// Hook `additional_context` from background handlers, queued to be committed
+    /// before the next request. Its text is never returned.
+    pub pending_hook_contexts: usize,
+    /// Estimated tokens of the queued hook context; included in `next_request`.
+    pub pending_hook_context_tokens: u64,
+    /// A compaction was requested while the Session was running and applies at the
+    /// next Safe Boundary.
+    pub compaction_pending: bool,
     pub delivered_rule_count: usize,
     /// Rules delivered in this Context Epoch, in delivery order, with their current
     /// approval. Definition bodies are never included or read.
@@ -206,8 +223,53 @@ pub struct ContextInspection {
     pub next_request: Option<NextRequestEstimate>,
 }
 
+/// Context updates held on the Session handle rather than in its durable state.
+#[derive(Debug, Default)]
+pub struct PendingContext {
+    pub hook_contexts: Vec<String>,
+    pub compaction: bool,
+}
+
 impl Runtime {
+    /// Inspect a Session's context, including updates queued on its handle for the
+    /// next Safe Boundary. Reads state only; nothing is committed or started.
+    pub async fn inspect_session_context(
+        &self,
+        session_id: &str,
+    ) -> Result<(SessionState, ContextInspection), super::RuntimeError> {
+        let handle = self.inner.handle(session_id).await?;
+        // The Safe Boundary commits queued hook context under the state lock, so reading
+        // both under it counts each queued text once, as pending or as committed.
+        let (mut state, pending) = {
+            let state = handle.state.lock().await;
+            let pending = PendingContext {
+                hook_contexts: handle
+                    .pending_hook_context
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
+                compaction: handle
+                    .pending_compaction
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .is_some(),
+            };
+            (state.clone(), pending)
+        };
+        state.children_usage = self.children_usage(session_id)?;
+        let inspection = self.inspect_context_with(&state, &pending);
+        Ok((state, inspection))
+    }
+
     pub fn inspect_context(&self, state: &SessionState) -> ContextInspection {
+        self.inspect_context_with(state, &PendingContext::default())
+    }
+
+    pub fn inspect_context_with(
+        &self,
+        state: &SessionState,
+        pending: &PendingContext,
+    ) -> ContextInspection {
         let model = self.inner.resolve(&state.info.model).ok();
         let window = model
             .as_ref()
@@ -231,6 +293,11 @@ impl Runtime {
                 }),
             queued_inputs: count_inputs(state, InputStatus::Pending),
             held_inputs: count_inputs(state, InputStatus::Held),
+            pending_hook_contexts: pending.hook_contexts.len(),
+            pending_hook_context_tokens: system_message_tokens(
+                pending.hook_contexts.iter().map(String::as_str),
+            ),
+            compaction_pending: pending.compaction,
             delivered_rule_count: state
                 .epoch
                 .as_ref()
@@ -300,7 +367,12 @@ impl Runtime {
         };
         let system = super::context::request_system(epoch, model.family);
         let messages = view::messages(state, &view::Replay::of(&model));
-        inspection.sources = estimates(&system, &messages, state.compacted.is_some());
+        inspection.sources = estimates(
+            &system,
+            &messages,
+            state.compacted.is_some(),
+            hook_context_tokens(state),
+        );
         let estimate = view::estimate_tokens(&system, &messages, &[]);
         inspection.estimated_input_tokens = Some(estimate);
         inspection.estimated_input_utilization =
@@ -405,8 +477,13 @@ fn next_request(
     if inspection.changed_delivered_rules > 0 {
         assumptions.push(EstimateAssumption::DeliveredRulesChanged);
     }
+    if inspection.compaction_pending {
+        assumptions.push(EstimateAssumption::CompactionPending);
+    }
     assumptions.push(EstimateAssumption::ExcludesTurnInstructions);
-    let estimated_input_tokens = stored.saturating_add(tools);
+    let estimated_input_tokens = stored
+        .saturating_add(tools)
+        .saturating_add(inspection.pending_hook_context_tokens);
     Some(NextRequestEstimate {
         estimated_input_tokens,
         estimated_input_utilization: inspection
@@ -447,10 +524,45 @@ fn count_inputs(state: &SessionState, status: InputStatus) -> usize {
         .count()
 }
 
+/// Estimated tokens of the hook-context system messages in the projected history.
+/// They are committed without a Context Epoch, so every one after the compaction
+/// tail start is projected.
+pub(super) fn hook_context_tokens(state: &SessionState) -> u64 {
+    let start = state
+        .compacted
+        .as_ref()
+        .map_or(0, |c| c.tail_start)
+        .min(state.entries.len());
+    system_message_tokens(
+        state.entries[start..]
+            .iter()
+            .filter_map(|entry| match entry {
+                super::Entry::System { id, text, .. }
+                    if state.hook_context_messages.contains(id) =>
+                {
+                    Some(text.as_str())
+                }
+                _ => None,
+            }),
+    )
+}
+
+/// Estimated tokens of `texts` sent as Mid-Conversation System Messages.
+fn system_message_tokens<'a>(texts: impl Iterator<Item = &'a str>) -> u64 {
+    let messages: Vec<Message> = texts.map(view::system_message).collect();
+    if messages.is_empty() {
+        return 0;
+    }
+    view::estimate_tokens(&[], &messages, &[])
+}
+
+/// Source groups of a projected request. Hook context is reported apart from the
+/// history it is part of, so `history` counts the rest.
 fn estimates(
     system: &[String],
     messages: &[Message],
     compacted: bool,
+    hook_tokens: u64,
 ) -> Vec<ContextSourceEstimate> {
     let mut sources = vec![
         source(
@@ -471,11 +583,15 @@ fn estimates(
         messages
     };
     if !history.is_empty() {
+        let tokens = view::estimate_tokens(&[], history, &[]);
         sources.push(source(
             "history",
             "session_replay",
-            view::estimate_tokens(&[], history, &[]),
+            tokens.saturating_sub(hook_tokens),
         ));
+    }
+    if hook_tokens > 0 {
+        sources.push(source("hook_context", "hook", hook_tokens));
     }
     sort_sources(&mut sources);
     sources

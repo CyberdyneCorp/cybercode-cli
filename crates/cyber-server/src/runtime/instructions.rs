@@ -892,6 +892,7 @@ impl<'a> Loader<'a> {
                 "{} resolves outside the project and was not loaded",
                 path.display()
             ));
+            self.withhold(path, WithheldReason::OutsideProject);
             return Ok(());
         }
         if confine.is_some() && !self.settings.read_allowed(path, &key) {
@@ -899,6 +900,7 @@ impl<'a> Loader<'a> {
                 "{} is not allowed by the read permission rules and was not loaded",
                 path.display()
             ));
+            self.withhold(path, WithheldReason::ReadDenied);
             return Ok(());
         }
         self.include(path, key, confine)
@@ -1032,15 +1034,17 @@ impl<'a> Loader<'a> {
         if self.stack.len() > MAX_IMPORT_DEPTH {
             return self.warn(from, reference, "exceeds the import depth of 5");
         }
+        let target = target.unwrap_or_default();
         if confine.is_some_and(|root| !key.starts_with(root)) {
+            self.withhold(&key, WithheldReason::OutsideProject);
             return self.warn(
                 from,
                 reference,
                 "is outside the project and was not imported",
             );
         }
-        let target = target.unwrap_or_default();
         if confine.is_some() && !self.settings.read_allowed(&target, &key) {
+            self.withhold(&key, WithheldReason::ReadDenied);
             return self.warn(
                 from,
                 reference,
@@ -1398,6 +1402,11 @@ mod tests {
         assert!(!loaded.text().unwrap().contains("secret\n"));
         assert_eq!(loaded.warnings.len(), 2, "{:?}", loaded.warnings);
         assert!(loaded.warnings[0].contains("outside the project"));
+        // The refused import is a typed withheld entry, so inspection reports it.
+        let entries = &loaded.withheld.entries;
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        assert!(entries[0].path.ends_with("secret.md"), "{entries:?}");
+        assert_eq!(entries[0].reason, WithheldReason::OutsideProject);
     }
 
     /// Regression: project files and their imports skipped the read rules, so `@.env`
@@ -1419,6 +1428,20 @@ mod tests {
         assert_eq!(loaded.warnings.len(), 2, "{:?}", loaded.warnings);
         assert!(loaded.warnings[0].contains("@.env is not allowed by the read permission rules"));
         assert!(loaded.warnings[1].contains("not allowed by the read permission rules"));
+        let withheld: Vec<_> = loaded
+            .withheld
+            .entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), entry.reason))
+            .collect();
+        assert_eq!(withheld.len(), 2, "{withheld:?}");
+        assert!(withheld[0].0.ends_with(".env"), "{withheld:?}");
+        assert!(withheld[1].0.ends_with("AGENTS.md"), "{withheld:?}");
+        assert!(
+            withheld
+                .iter()
+                .all(|(_, reason)| *reason == WithheldReason::ReadDenied)
+        );
         let nested = load_nested(
             &repo.global,
             &repo.root,
