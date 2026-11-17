@@ -401,6 +401,20 @@ impl Client {
         Ok(parse_events(chunks))
     }
 
+    /// [`Client::events`] for every Location, plus the IO-free `session.hook.receipt`
+    /// summaries when `hook_receipts` is set (`include=hook_receipts`).
+    pub async fn all_events(
+        &self,
+        hook_receipts: bool,
+    ) -> Result<impl Stream<Item = Event> + use<>, ClientError> {
+        let path = if hook_receipts {
+            "/event?scope=all&include=hook_receipts"
+        } else {
+            "/event?scope=all"
+        };
+        Ok(parse_events(self.open_stream(path).await?))
+    }
+
     /// One owned Session event connection. Dropping this stream closes presence;
     /// unlike `session_events`, no detached reconnect task outlives its consumer.
     pub async fn session_event_stream(
@@ -431,13 +445,21 @@ impl Client {
 
     /// JSONL input observation grants no Session-wide interactive presence.
     /// The caller retains a separate input-client lease for its own admissions.
+    /// `hook_receipts` adds this Session's IO-free `session.hook.receipt` summaries
+    /// (`include=hook_receipts`), in order with its other events.
     pub async fn session_input_event_stream(
         &self,
         session_id: &str,
         after: i64,
+        hook_receipts: bool,
     ) -> Result<impl Stream<Item = Event> + use<>, ClientError> {
+        let include = if hook_receipts {
+            "&include=hook_receipts"
+        } else {
+            ""
+        };
         let path = format!(
-            "/sessions/{}/events?after={after}&live=true&presence=false",
+            "/sessions/{}/events?after={after}&live=true&presence=false{include}",
             encode(session_id).replace('/', "%2F")
         );
         Ok(parse_events(self.open_stream(&path).await?))
@@ -931,7 +953,30 @@ mod tests {
         );
         let client = Client::embedded(EmbeddedClient::new(router));
         let stream = client
-            .session_input_event_stream("ses_owner", 42)
+            .session_input_event_stream("ses_owner", 42, false)
+            .await
+            .unwrap();
+        drop(stream);
+    }
+
+    #[tokio::test]
+    async fn input_observation_stream_opts_into_hook_receipts_only_when_asked() {
+        let router = axum::Router::new().route(
+            "/api/v1/sessions/{id}/events",
+            axum::routing::get(|uri: axum::http::Uri| async move {
+                assert_eq!(
+                    uri.query(),
+                    Some("after=7&live=true&presence=false&include=hook_receipts")
+                );
+                axum::http::Response::builder()
+                    .header("content-type", "text/event-stream")
+                    .body(axum::body::Body::empty())
+                    .unwrap()
+            }),
+        );
+        let client = Client::embedded(EmbeddedClient::new(router));
+        let stream = client
+            .session_input_event_stream("ses_owner", 7, true)
             .await
             .unwrap();
         drop(stream);

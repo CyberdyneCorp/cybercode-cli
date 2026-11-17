@@ -5,7 +5,7 @@ use std::ffi::{CStr, CString, c_char, c_void};
 use serde_json::{Value, json};
 
 use super::{Backend, Capture, Health, Native, NativeTarget, Selector};
-use crate::{Action, Error, control::InputPermit};
+use crate::{Action, Error, capability::SelectorKind, control::InputPermit};
 
 unsafe extern "C" {
     fn cyber_computer_lease_acquire() -> i32;
@@ -30,7 +30,7 @@ unsafe extern "C" {
 fn error(code: i32) -> Error {
     match code {
         1 => Error::UnsupportedPlatform,
-        2 => Error::Consent("Screen Recording or Accessibility permission is missing"),
+        2 => Error::Consent(crate::consent::OS_PERMISSION_MISSING),
         3 => Error::StaleFrame,
         4 => Error::Input("native operation was cancelled"),
         5 => Error::Limit("native capture exceeds its byte limit"),
@@ -102,10 +102,10 @@ impl Backend for Native {
             .ok()
             .map(|path| path.display().to_string())
             .unwrap_or_default();
-        Ok(health)
+        Ok(health.normalize())
     }
     fn resolve(&self, selector: &Selector) -> Result<NativeTarget, Error> {
-        selector.validate()?;
+        selector.validate_for(&[SelectorKind::App, SelectorKind::Display])?;
         let request = encoded(selector)?;
         let mut output = std::ptr::null_mut();
         let target: NativeTarget = result(
@@ -274,5 +274,50 @@ mod pointer_policy_tests {
                 false, true, false, 42, 99, false, false
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod chord_parity_tests {
+    use crate::{
+        Modifier,
+        chord::{Platform, Scope, evaluate, grammar_chords},
+    };
+    unsafe extern "C" {
+        fn cyber_computer_chord_allowed(
+            app: bool,
+            flags: u64,
+            name: *const std::ffi::c_char,
+        ) -> bool;
+    }
+    // CGEventFlags modifier masks.
+    fn flags(modifiers: &[Modifier]) -> u64 {
+        modifiers
+            .iter()
+            .map(|modifier| match modifier {
+                Modifier::Shift => 0x0002_0000,
+                Modifier::Control => 0x0004_0000,
+                Modifier::Alt => 0x0008_0000,
+                Modifier::Command => 0x0010_0000,
+            })
+            .fold(0, |mask, bit| mask | bit)
+    }
+    #[test]
+    fn shared_policy_allows_and_refuses_exactly_what_the_native_adapter_does() {
+        let mut compared = 0;
+        for chord in grammar_chords() {
+            let name = std::ffi::CString::new(chord.key.clone()).unwrap();
+            for (app, scope) in [(true, Scope::Scoped), (false, Scope::Whole)] {
+                // SAFETY: pure policy over a mask and a NUL-terminated key; posts no
+                // event and reads no desktop or layout state.
+                let native = unsafe {
+                    cyber_computer_chord_allowed(app, flags(&chord.modifiers), name.as_ptr())
+                };
+                let shared = evaluate(Platform::Macos, scope, &chord).is_ok();
+                assert_eq!(shared, native, "{chord:?} app={app}");
+                compared += 1;
+            }
+        }
+        assert_eq!(compared, 2 * 16 * 76);
     }
 }

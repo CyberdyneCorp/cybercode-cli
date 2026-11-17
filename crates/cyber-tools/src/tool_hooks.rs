@@ -648,7 +648,7 @@ impl BuiltinHost {
             .run_handler(runner, runtime, definition, event, cancel)
             .await;
         match result {
-            Ok(report) => Ok(Some(report)),
+            Ok(report) => Ok(Some(redacted_report(runtime, event, report))),
             Err(error) => {
                 self.hook_notice(event, &error, &definition.digest);
                 if definition.handler.fail_closed {
@@ -770,6 +770,38 @@ impl BuiltinHost {
         }
         Ok(())
     }
+}
+
+/// `report` with the hook's own text (block/deny and stop reasons, diagnostics such as
+/// a failing command's stderr) redacted for the event's Location and bounded, before it
+/// becomes a tool result, a notice or a merged decision (`hooks` → Hook output
+/// redaction). The input rewrite is applied as returned.
+pub(crate) fn redacted_report(
+    runtime: &cyber_server::runtime::Runtime,
+    event: &HookEvent,
+    mut report: HookCommandReport,
+) -> HookCommandReport {
+    let directory = event.identity().location.directory.to_string_lossy();
+    report.decision = runtime.redact_hook_decision(&directory, report.decision);
+    report.diagnostic = report
+        .diagnostic
+        .map(|text| runtime.redact_hook_text(&directory, text));
+    report
+}
+
+/// Publish a hook notice for `event`'s Session, redacted for its Location and bounded.
+pub(crate) fn notice(
+    runtime: &cyber_server::runtime::Runtime,
+    event: &HookEvent,
+    hook_id: &str,
+    message: &str,
+) {
+    let identity = event.identity();
+    let message = runtime.redact_hook_text(
+        &identity.location.directory.to_string_lossy(),
+        message.into(),
+    );
+    runtime.hook_notice(&identity.session_id, hook_id, &message);
 }
 
 /// Longest rewritten input a transcript notice repeats; the call record keeps all of it.
@@ -1045,7 +1077,7 @@ impl BuiltinHost {
 
     fn hook_notice(&self, event: &HookEvent, message: &str, digest: &str) {
         if let Some(runtime) = self.runtime() {
-            runtime.hook_notice(&event.identity().session_id, digest, message);
+            notice(&runtime, event, digest, message);
         }
     }
 }

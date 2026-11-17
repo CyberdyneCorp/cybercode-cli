@@ -18009,6 +18009,80 @@
           },
           "binary": {
             "type": "string"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "1 for the macOS-only shape, 2 for the platform-neutral report.",
+            "default": 0
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ComputerMode",
+            "default": "unsupported"
+          },
+          "backend": {
+            "type": "string",
+            "default": ""
+          },
+          "capture": {
+            "$ref": "#/components/schemas/ComputerCapability",
+            "default": {
+              "available": false,
+              "reasons": []
+            }
+          },
+          "input": {
+            "$ref": "#/components/schemas/ComputerInputCapability",
+            "default": {
+              "available": false,
+              "reasons": [],
+              "assurance": "not_applicable"
+            }
+          },
+          "authority": {
+            "$ref": "#/components/schemas/ComputerAuthority",
+            "default": {
+              "kind": "owner_review_only",
+              "setup_available": false
+            }
+          },
+          "session": {
+            "$ref": "#/components/schemas/ComputerSessionFacts",
+            "default": {
+              "interactive": null,
+              "locked": null,
+              "remote": null,
+              "kind": null,
+              "reasons": []
+            }
+          },
+          "os": {
+            "$ref": "#/components/schemas/ComputerOsInfo",
+            "default": {
+              "family": "",
+              "version": null,
+              "build": null,
+              "architecture": ""
+            }
+          },
+          "selectors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComputerSelectorKind"
+            },
+            "default": []
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/ComputerEvidence",
+            "default": "unsupported"
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/ComputerDiagnostics",
+            "default": {
+              "interfaces": [],
+              "desktop": null
+            }
           }
         },
         "required": [
@@ -18018,6 +18092,264 @@
           "screen_capture",
           "accessibility",
           "binary"
+        ]
+      },
+      "ComputerMode": {
+        "type": "string",
+        "enum": [
+          "unsupported",
+          "capture_only",
+          "input_enabled"
+        ],
+        "description": "Derived from capture and input availability; never set independently."
+      },
+      "ComputerCapability": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComputerReasonCode"
+            },
+            "description": "Every code that applies, most actionable first; empty when available."
+          }
+        },
+        "required": [
+          "available",
+          "reasons"
+        ]
+      },
+      "ComputerReasonCode": {
+        "type": "string",
+        "enum": [
+          "feature_disabled",
+          "unsupported_platform",
+          "unsupported_os_version",
+          "unsupported_architecture",
+          "unsupported_build",
+          "evidence_pending",
+          "no_graphical_session",
+          "non_interactive_session",
+          "remote_session",
+          "session_locked",
+          "session_inactive",
+          "session_watch_unavailable",
+          "os_permission_missing",
+          "capture_policy_denied",
+          "controller_privilege_unsupported",
+          "picker_cancelled",
+          "interactive_review_required",
+          "capture_unavailable",
+          "input_unavailable",
+          "target_assurance_unavailable",
+          "selector_unsupported_on_platform",
+          "action_unsupported_on_platform",
+          "host_lease_busy",
+          "host_lease_unavailable",
+          "previous_holder_abandoned",
+          "target_gone",
+          "target_changed",
+          "target_protected",
+          "target_elevated",
+          "target_other_user",
+          "target_capture_excluded",
+          "target_not_foreground",
+          "secure_field",
+          "frame_stale",
+          "topology_changed",
+          "key_chord_refused",
+          "mode_forbids_input",
+          "supervisor_fence",
+          "limit_exceeded",
+          "owner_stop",
+          "session_interrupt",
+          "presence_lost",
+          "grant_expired",
+          "os_permission_revoked",
+          "server_restart"
+        ],
+        "description": "Stable snake_case code for every computer refusal, unavailability,\nrevocation and receipt reason.",
+        "x-extensible": true
+      },
+      "ComputerInputCapability": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComputerReasonCode"
+            }
+          },
+          "assurance": {
+            "$ref": "#/components/schemas/ComputerInputAssurance"
+          }
+        },
+        "required": [
+          "available",
+          "reasons",
+          "assurance"
+        ]
+      },
+      "ComputerInputAssurance": {
+        "type": "string",
+        "enum": [
+          "verified",
+          "unavailable",
+          "not_applicable"
+        ],
+        "description": "Whether the platform can prove the pre-dispatch target checks."
+      },
+      "ComputerAuthority": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ComputerAuthorityKind"
+          },
+          "setup_available": {
+            "type": "boolean",
+            "description": "Whether an explicit owner `setup` request can ask the OS for anything."
+          }
+        },
+        "required": [
+          "kind",
+          "setup_available"
+        ]
+      },
+      "ComputerAuthorityKind": {
+        "type": "string",
+        "enum": [
+          "os_permission",
+          "platform_picker",
+          "owner_review_only"
+        ],
+        "description": "What makes capture legitimate besides Cyber's owner review, which is always required."
+      },
+      "ComputerSessionFacts": {
+        "type": "object",
+        "properties": {
+          "interactive": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "locked": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "remote": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComputerReasonCode"
+            }
+          }
+        },
+        "required": [
+          "reasons"
+        ],
+        "description": "Interactive-session facts; `null` means the platform cannot tell and is never \"safe\"."
+      },
+      "ComputerOsInfo": {
+        "type": "object",
+        "properties": {
+          "family": {
+            "type": "string"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "build": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "architecture": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "family",
+          "architecture"
+        ]
+      },
+      "ComputerSelectorKind": {
+        "type": "string",
+        "enum": [
+          "app",
+          "display",
+          "window",
+          "pick"
+        ],
+        "description": "Selector kinds a platform may honor (design F4)."
+      },
+      "ComputerEvidence": {
+        "type": "string",
+        "enum": [
+          "unsupported",
+          "implemented",
+          "fixture_tested",
+          "accepted"
+        ],
+        "description": "Support evidence of the running configuration (design F12)."
+      },
+      "ComputerDiagnostics": {
+        "type": "object",
+        "properties": {
+          "interfaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComputerDiagnosticInterface"
+            }
+          },
+          "desktop": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "interfaces"
+        ],
+        "description": "Diagnostic values are never used for decisions."
+      },
+      "ComputerDiagnosticInterface": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
         ]
       },
       "Setup": {
@@ -18046,6 +18378,11 @@
       "ComputerStatus": {
         "type": "object",
         "properties": {
+          "schema_version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -18080,6 +18417,7 @@
           }
         },
         "required": [
+          "schema_version",
           "enabled",
           "health",
           "unknown_operations"
@@ -18088,6 +18426,13 @@
       "ComputerFrameInfo": {
         "type": "object",
         "properties": {
+          "schema_version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0,
+            "description": "1 for frames recorded before the platform-neutral contract.",
+            "default": 1
+          },
           "id": {
             "type": "string"
           },
@@ -18133,32 +18478,38 @@
         "type": "object",
         "properties": {
           "identity": {
-            "type": "string"
+            "type": "string",
+            "description": "Server-internal comparison string; never accepted from a caller."
           },
           "app": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "deprecated": true
           },
           "pid": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "deprecated": true
           },
           "window": {
             "type": "integer",
             "format": "uint32",
-            "minimum": 0
+            "minimum": 0,
+            "deprecated": true
           },
           "display": {
             "type": "integer",
             "format": "uint32",
-            "minimum": 0
+            "minimum": 0,
+            "deprecated": true
           },
           "launch_ms": {
             "type": "integer",
             "format": "uint64",
-            "minimum": 0
+            "minimum": 0,
+            "deprecated": true
           },
           "x": {
             "type": "number",
@@ -18191,6 +18542,28 @@
             "format": "uint16",
             "minimum": 0,
             "maximum": 65535
+          },
+          "target_id": {
+            "type": "string",
+            "description": "Server-issued, opaque, unique per review and meaningless after restart.",
+            "default": ""
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerTargetSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "topology_epoch": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "description": "Display-topology epoch observed when this target was resolved or captured.",
+            "default": 0
           }
         },
         "required": [
@@ -18207,6 +18580,43 @@
           "image_height",
           "rotation"
         ]
+      },
+      "ComputerTargetSource": {
+        "type": "object",
+        "properties": {
+          "platform": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ComputerSourceKind"
+          },
+          "backend": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          }
+        },
+        "required": [
+          "platform",
+          "kind",
+          "backend"
+        ],
+        "description": "Typed description of a target's source. `detail` is for owner display and\ndiagnostics only; clients never parse it for decisions, and it is never journaled."
+      },
+      "ComputerSourceKind": {
+        "type": "string",
+        "enum": [
+          "app",
+          "window",
+          "display",
+          "output"
+        ],
+        "description": "What kind of source a target is."
       },
       "ComputerUnknownOperation": {
         "type": "object",
@@ -18240,7 +18650,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "macOS application bundle ID."
           },
           "display": {
             "type": [
@@ -18248,9 +18659,37 @@
               "null"
             ],
             "format": "uint32",
-            "minimum": 0
+            "minimum": 0,
+            "description": "macOS display index."
+          },
+          "window": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short-lived candidate token from an owner-only target listing."
+          },
+          "pick": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerPickKind"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Let the platform picker choose the source."
           }
-        }
+        },
+        "description": "Exactly one of `app`, `display`, `window` or `pick`. A selector value is never\nreinterpreted as a different kind of identifier on another platform."
+      },
+      "ComputerPickKind": {
+        "type": "string",
+        "enum": [
+          "window",
+          "output"
+        ],
+        "description": "The platform's own picker chooses a window or a whole output (design F4)."
       },
       "Data_ComputerPreview": {
         "type": "object",
@@ -18266,6 +18705,11 @@
       "ComputerPreview": {
         "type": "object",
         "properties": {
+          "schema_version": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
           "id": {
             "type": "string"
           },
@@ -18287,15 +18731,26 @@
           },
           "warning": {
             "type": "string"
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/ComputerEvidence",
+            "description": "Support evidence of the running configuration, shown on the review card."
+          },
+          "re_resolvable": {
+            "type": "boolean",
+            "description": "Whether `allow` may re-run this selector; otherwise only this review can arm."
           }
         },
         "required": [
+          "schema_version",
           "id",
           "session_id",
           "target",
           "expires_at",
           "unknown_operations",
-          "warning"
+          "warning",
+          "evidence",
+          "re_resolvable"
         ]
       },
       "Allow": {
@@ -23724,13 +24179,21 @@
     "/api/v1/event": {
       "get": {
         "operationId": "v1.event.subscribe",
-        "summary": "Live events for a Location (scope=all for every Location)",
+        "summary": "Live events for a Location (scope=all for every Location; include=hook_receipts adds IO-free `session.hook.receipt` summaries)",
         "tags": [
           "event"
         ],
         "parameters": [
           {
             "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
             "in": "query",
             "required": false,
             "schema": {
@@ -28110,7 +28573,7 @@
     "/api/v1/sessions/{sessionID}/events": {
       "get": {
         "operationId": "v1.session.events",
-        "summary": "Replay durable events, then follow",
+        "summary": "Replay durable events, then follow (live=true adds live notices; include=hook_receipts adds this Session's IO-free `session.hook.receipt` summaries)",
         "tags": [
           "session"
         ],
@@ -28141,6 +28604,14 @@
           },
           {
             "name": "presence",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
             "in": "query",
             "required": false,
             "schema": {

@@ -29,11 +29,13 @@ impl Computer {
             .lock()
             .map_err(|_| ComputerError::Storage)?;
         let info = FrameInfo {
+            schema_version: cyber_computer::capability::SCHEMA_VERSION,
             id: frame.id,
             session_id: frame.session_id,
             grant_id: grant,
             captured_at: frame.captured_at,
-            target: capture.target,
+            // Owner-display source detail never reaches durable records.
+            target: capture.target.for_journal(),
             sha256: digest(&capture.png),
             bytes: capture.png.len() as u64,
             created_ms: wall_ms(),

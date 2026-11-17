@@ -487,10 +487,10 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/event",
             "v1.event.subscribe",
-            "Live events for a Location (scope=all for every Location)",
+            "Live events for a Location (scope=all for every Location; include=hook_receipts adds IO-free `session.hook.receipt` summaries)",
         )
         .located()
-        .query(&["scope"])
+        .query(&["scope", "include"])
         .stream(),
         op(
             "get",
@@ -986,9 +986,9 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             "get",
             "/sessions/{sessionID}/events",
             "v1.session.events",
-            "Replay durable events, then follow",
+            "Replay durable events, then follow (live=true adds live notices; include=hook_receipts adds this Session's IO-free `session.hook.receipt` summaries)",
         )
-        .query(&["after", "live", "presence"])
+        .query(&["after", "live", "presence", "include"])
         .stream(),
         op(
             "post",

@@ -13,6 +13,15 @@ struct Fake {
     host_lease: Arc<AtomicBool>,
     block_input: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
     block_resolve: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
+    resolves: AtomicUsize,
+    reviews: AtomicUsize,
+    lease_acquires: AtomicUsize,
+    health_override: Mutex<Option<Health>>,
+    partial: AtomicBool,
+    sink: Mutex<Option<cyber_computer::backend::RevocationSink>>,
+    /// Each end_scope records the identity and what the probe observed at that moment.
+    end_scopes: Mutex<Vec<(String, bool)>>,
+    probe: Mutex<Option<Box<dyn Fn() -> bool + Send>>>,
 }
 impl Default for Fake {
     fn default() -> Self {
@@ -31,6 +40,9 @@ impl Default for Fake {
                 image_width: 100,
                 image_height: 100,
                 rotation: 0,
+                target_id: String::new(),
+                source: None,
+                topology_epoch: 0,
             }),
             inputs: AtomicUsize::new(0),
             captures: AtomicUsize::new(0),
@@ -41,6 +53,14 @@ impl Default for Fake {
             host_lease: Arc::new(AtomicBool::new(false)),
             block_input: Mutex::new(None),
             block_resolve: Mutex::new(None),
+            resolves: AtomicUsize::new(0),
+            reviews: AtomicUsize::new(0),
+            lease_acquires: AtomicUsize::new(0),
+            health_override: Mutex::new(None),
+            partial: AtomicBool::new(false),
+            sink: Mutex::new(None),
+            end_scopes: Mutex::new(Vec::new()),
+            probe: Mutex::new(None),
         }
     }
 }
@@ -52,6 +72,7 @@ impl Drop for FakeLease {
 }
 impl Backend for Fake {
     fn acquire_lease(&self) -> std::result::Result<cyber_computer::backend::HostLease, Error> {
+        self.lease_acquires.fetch_add(1, Ordering::SeqCst);
         if self.host_lease.swap(true, Ordering::SeqCst) {
             return Err(Error::Busy);
         }
@@ -59,16 +80,21 @@ impl Backend for Fake {
     }
 
     fn health(&self, _prompt: bool) -> std::result::Result<Health, Error> {
+        if let Some(health) = self.health_override.lock().unwrap().clone() {
+            return Ok(health);
+        }
         Ok(Health {
             supported: true,
-            platform: "fixture".into(),
+            platform: "macos".into(),
             minimum_version: "fixture".into(),
             screen_capture: self.screen_consent.load(Ordering::SeqCst),
             accessibility: self.input_consent.load(Ordering::SeqCst),
             binary: "fixture".into(),
+            ..Health::default()
         })
     }
     fn resolve(&self, _: &Selector) -> std::result::Result<NativeTarget, Error> {
+        self.resolves.fetch_add(1, Ordering::SeqCst);
         let block = self.block_resolve.lock().unwrap().take();
         if let Some((ready, release)) = block {
             ready.wait();
@@ -98,11 +124,40 @@ impl Backend for Fake {
         if permit.cancelled() {
             return Err(Error::NotArmed);
         }
+        if self.partial.load(Ordering::SeqCst) {
+            return Err(Error::PartialInput {
+                requested: 2,
+                posted: 1,
+            });
+        }
         if self.fail.load(Ordering::SeqCst) {
             Err(Error::Native("fixture failure"))
         } else {
             Ok(())
         }
+    }
+    fn review(
+        &self,
+        selector: &Selector,
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> std::result::Result<NativeTarget, Error> {
+        self.reviews.fetch_add(1, Ordering::SeqCst);
+        self.resolve(selector)
+    }
+    fn end_scope(&self, target: &NativeTarget) {
+        let observed = self
+            .probe
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|probe| probe());
+        self.end_scopes
+            .lock()
+            .unwrap()
+            .push((target.identity.clone(), observed));
+    }
+    fn set_revocation_sink(&self, sink: cyber_computer::backend::RevocationSink) {
+        *self.sink.lock().unwrap() = Some(sink);
     }
 }
 struct Fixture {
@@ -156,6 +211,7 @@ impl Fixture {
                 Selector {
                     app: Some("test.fixture".into()),
                     display: None,
+                    ..Selector::default()
                 },
             )
             .unwrap();
@@ -395,6 +451,7 @@ fn stopping_invalidates_pending_review_and_private_frames_expire() {
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -432,6 +489,7 @@ fn stop_fences_an_owner_allow_already_resolving_its_target() {
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -463,6 +521,7 @@ fn presence_loss_fences_an_owner_allow_already_resolving_its_target() {
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -500,6 +559,7 @@ fn native_host_lease_excludes_a_second_runtime_until_explicit_stop() {
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -511,6 +571,7 @@ fn native_host_lease_excludes_a_second_runtime_until_explicit_stop() {
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -593,6 +654,7 @@ fn stopped_workers_keep_the_host_lease_until_native_exit_and_cannot_hide_unknown
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -611,6 +673,7 @@ fn stopped_workers_keep_the_host_lease_until_native_exit_and_cannot_hide_unknown
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -622,6 +685,7 @@ fn stopped_workers_keep_the_host_lease_until_native_exit_and_cannot_hide_unknown
             Selector {
                 app: Some("test.fixture".into()),
                 display: None,
+                ..Selector::default()
             },
         )
         .unwrap();
@@ -792,4 +856,457 @@ fn private_capture_storage_is_prepared_and_refuses_non_directory_roots() {
     let file = temporary.path().join("file");
     std::fs::write(&file, "owner fixture").unwrap();
     assert!(prepare_artifact_root(&file).is_err());
+}
+
+// ---- Platform-neutral foundation (add-computer-use-platform-foundation) ----
+
+fn key(modifiers: &[cyber_computer::Modifier], key: &str) -> Action {
+    Action::Key {
+        chord: cyber_computer::KeyChord {
+            modifiers: modifiers.to_vec(),
+            key: key.into(),
+        },
+    }
+}
+fn journal_rows(store: &Store, operation: &str) -> i64 {
+    let operation = operation.to_owned();
+    store
+        .read(move |db| {
+            db.query_row(
+                "SELECT COUNT(*) FROM computer_operation WHERE operation_key=?1",
+                [operation],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(Into::into)
+        })
+        .unwrap()
+}
+fn later_platform_health(evidence: Evidence, selectors: Vec<SelectorKind>) -> Health {
+    use cyber_computer::capability::{Assurance, Capability, InputCapability};
+    Health {
+        supported: true,
+        platform: "linux".into(),
+        minimum_version: "fixture desktop".into(),
+        binary: "fixture".into(),
+        schema_version: SCHEMA_VERSION,
+        backend: "fixture-portal".into(),
+        capture: Capability {
+            available: true,
+            reasons: Vec::new(),
+        },
+        input: InputCapability {
+            available: true,
+            reasons: Vec::new(),
+            assurance: Assurance::Verified,
+        },
+        selectors,
+        evidence,
+        ..Health::default()
+    }
+}
+use cyber_computer::capability::SelectorKind;
+use cyber_computer::{
+    Modifier,
+    backend::{PickKind, SourceKind, TargetSource},
+};
+
+#[test]
+fn blocked_chord_is_refused_before_intent_with_the_grant_left_armed() {
+    // F8c: before this change a chord the macOS adapter refuses was journaled,
+    // failed natively, settled unknown and stopped the grant.
+    let f = Fixture::new();
+    f.arm();
+    let frame = f.frame();
+    let (resolves, captures) = (
+        f.backend.resolves.load(Ordering::SeqCst),
+        f.backend.captures.load(Ordering::SeqCst),
+    );
+    for (operation, chord) in [
+        ("copy", key(&[Modifier::Command], "c")),
+        ("paste", key(&[Modifier::Command], "v")),
+        ("switch", key(&[Modifier::Control], "a")),
+        ("quit", key(&[Modifier::Command], "q")),
+    ] {
+        let error = f
+            .computer
+            .input("owner", operation, &frame.id, chord, true)
+            .expect_err("refused");
+        assert_eq!(
+            error.reason(),
+            Some(ReasonCode::KeyChordRefused),
+            "{operation}"
+        );
+        assert_eq!(
+            journal_rows(&f.store, operation),
+            0,
+            "no intent for {operation}"
+        );
+    }
+    assert_eq!(f.backend.inputs.load(Ordering::SeqCst), 0);
+    assert_eq!(f.backend.resolves.load(Ordering::SeqCst), resolves);
+    assert_eq!(f.backend.captures.load(Ordering::SeqCst), captures);
+    assert!(f.computer.status("owner").unwrap().grant.is_some());
+    assert!(f.computer.journal.unknown("owner").unwrap().is_empty());
+    let undo = f
+        .computer
+        .input(
+            "owner",
+            "undo",
+            &frame.id,
+            key(&[Modifier::Command], "z"),
+            true,
+        )
+        .unwrap();
+    assert_eq!(undo.outcome, "posted");
+    assert_eq!(f.backend.inputs.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn display_grants_keep_the_unrestricted_macos_chord_rules() {
+    let f = Fixture::new();
+    {
+        let mut target = f.backend.target.lock().unwrap();
+        target.app = None;
+        target.identity = "display:1".into();
+    }
+    let preview = f.computer.preview("owner", Selector::display(1)).unwrap();
+    f.computer.allow("owner", &preview.id, None, false).unwrap();
+    let frame = f.frame();
+    let receipt = f
+        .computer
+        .input(
+            "owner",
+            "tab",
+            &frame.id,
+            key(&[Modifier::Command], "tab"),
+            true,
+        )
+        .unwrap();
+    assert_eq!(receipt.outcome, "posted");
+}
+
+#[test]
+fn input_on_a_capture_only_host_is_refused_by_code_without_journal_or_native_calls() {
+    let f = Fixture::new();
+    *f.backend.health_override.lock().unwrap() = Some(later_platform_health(
+        Evidence::FixtureTested,
+        vec![SelectorKind::App],
+    ));
+    let health = f.computer.health(false).unwrap().health;
+    assert_eq!(health.mode, cyber_computer::capability::Mode::CaptureOnly);
+    assert_eq!(health.input.reasons, vec![ReasonCode::EvidencePending]);
+    f.arm();
+    let frame = f.frame();
+    let resolves = f.backend.resolves.load(Ordering::SeqCst);
+    let error = f
+        .computer
+        .input("owner", "click", &frame.id, motion(), true)
+        .err()
+        .unwrap();
+    assert_eq!(error.reason(), Some(ReasonCode::EvidencePending));
+    assert_eq!(journal_rows(&f.store, "click"), 0);
+    assert_eq!(f.backend.resolves.load(Ordering::SeqCst), resolves);
+    assert_eq!(f.backend.inputs.load(Ordering::SeqCst), 0);
+    assert!(
+        f.computer.status("owner").unwrap().grant.is_some(),
+        "capture grant stays armed"
+    );
+}
+
+#[test]
+fn topology_change_stales_frames_without_revoking_and_binding_loss_fences_before_teardown() {
+    let f = Fixture::new();
+    let backend = Arc::clone(&f.backend);
+    let store = Arc::clone(&f.store);
+    let computer = Arc::new(f.computer);
+    computer.install_revocation_sink();
+    let weak = Arc::downgrade(&computer);
+    *backend.probe.lock().unwrap() = Some(Box::new(move || {
+        weak.upgrade()
+            .is_some_and(|computer| computer.controller.has_authority(computer.now()))
+    }));
+    let preview = computer
+        .preview("owner", Selector::app("test.fixture"))
+        .unwrap();
+    computer.allow("owner", &preview.id, None, false).unwrap();
+    let old = computer
+        .screenshot("owner", "before")
+        .unwrap()
+        .frame
+        .unwrap();
+    let sink = backend.sink.lock().unwrap().clone().unwrap();
+    sink(Revocation {
+        class: EventClass::TopologyChange,
+        reason: ReasonCode::TopologyChanged,
+        identity: None,
+    });
+    let error = computer
+        .input("owner", "stale", &old.id, motion(), true)
+        .err()
+        .unwrap();
+    assert_eq!(error.reason(), Some(ReasonCode::FrameStale));
+    assert_eq!(journal_rows(&store, "stale"), 0);
+    assert!(computer.status("owner").unwrap().grant.is_some());
+    let fresh = computer
+        .screenshot("owner", "after")
+        .unwrap()
+        .frame
+        .unwrap();
+    assert_eq!(fresh.target.topology_epoch, 1);
+    assert_eq!(
+        computer
+            .input("owner", "fresh", &fresh.id, motion(), true)
+            .unwrap()
+            .outcome,
+        "posted"
+    );
+    sink(Revocation {
+        class: EventClass::BindingLoss,
+        reason: ReasonCode::TargetGone,
+        identity: Some("app:another".into()),
+    });
+    assert!(
+        computer.status("owner").unwrap().grant.is_some(),
+        "an unrelated binding does not revoke"
+    );
+    sink(Revocation::unclassified(ReasonCode::SessionLocked));
+    assert!(computer.status("owner").unwrap().grant.is_none());
+    let scopes = backend.end_scopes.lock().unwrap().clone();
+    assert_eq!(
+        scopes,
+        vec![(preview.target.identity.clone(), false)],
+        "teardown runs once, after the grant is fenced"
+    );
+    assert!(
+        computer
+            .input("owner", "after-lock", &fresh.id, motion(), true)
+            .is_err()
+    );
+}
+
+#[test]
+fn health_and_status_never_acquire_the_host_lease() {
+    let f = Fixture::new();
+    f.backend.host_lease.store(true, Ordering::SeqCst); // another home holds it
+    for _ in 0..3 {
+        f.computer.health(false).unwrap();
+        f.computer.status("owner").unwrap();
+    }
+    assert_eq!(f.backend.lease_acquires.load(Ordering::SeqCst), 0);
+    let health = f.computer.health(false).unwrap().health;
+    assert_eq!(health.schema_version, 2);
+    assert_eq!(health.mode, cyber_computer::capability::Mode::InputEnabled);
+    assert!(health.screen_capture && health.accessibility && health.supported);
+    f.enabled.store(false, Ordering::SeqCst);
+    let disabled = f.computer.health(false).unwrap().health;
+    assert_eq!(disabled.capture.reasons, vec![ReasonCode::FeatureDisabled]);
+    assert!(
+        disabled.screen_capture,
+        "legacy field keeps its macOS value"
+    );
+}
+
+#[test]
+fn unsupported_selectors_are_refused_before_any_native_call() {
+    let f = Fixture::new();
+    for selector in [
+        Selector {
+            pick: Some(PickKind::Window),
+            ..Selector::default()
+        },
+        Selector {
+            window: Some("cuc_candidate".into()),
+            ..Selector::default()
+        },
+    ] {
+        let error = f.computer.preview("owner", selector).err().unwrap();
+        assert_eq!(
+            error.reason(),
+            Some(ReasonCode::SelectorUnsupportedOnPlatform)
+        );
+    }
+    assert_eq!(f.backend.resolves.load(Ordering::SeqCst), 0);
+    assert_eq!(f.backend.reviews.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn pick_reviews_arm_only_by_review_identifier_and_tear_down_unconfirmed_scopes() {
+    let f = Fixture::new();
+    *f.backend.health_override.lock().unwrap() = Some(later_platform_health(
+        Evidence::FixtureTested,
+        vec![SelectorKind::Pick],
+    ));
+    let pick = Selector {
+        pick: Some(PickKind::Output),
+        ..Selector::default()
+    };
+    let preview = f.computer.preview("owner", pick.clone()).unwrap();
+    assert!(!preview.re_resolvable);
+    assert_eq!(preview.evidence, Evidence::FixtureTested);
+    assert_eq!(f.backend.reviews.load(Ordering::SeqCst), 1);
+    assert!(f.computer.allow("other", &preview.id, None, false).is_err());
+    assert!(
+        f.computer.allow("owner", &preview.id, None, false).is_err(),
+        "a consumed review cannot be confirmed again"
+    );
+    let preview = f.computer.preview("owner", pick.clone()).unwrap();
+    assert!(
+        f.computer
+            .allow("owner", "cup_missing", None, false)
+            .is_err()
+    );
+    f.computer.allow("owner", &preview.id, None, false).unwrap();
+    assert_eq!(
+        f.backend.reviews.load(Ordering::SeqCst),
+        2,
+        "allow never starts a review or opens a picker"
+    );
+    let superseded = f.computer.preview("owner", pick).unwrap();
+    f.computer.stop("owner");
+    assert!(
+        f.computer
+            .allow("owner", &superseded.id, None, false)
+            .is_err()
+    );
+    let ended = f.backend.end_scopes.lock().unwrap().len();
+    assert!(
+        ended >= 3,
+        "rejected, superseded and stopped scopes end: {ended}"
+    );
+}
+
+#[test]
+fn receipts_carry_version_two_references_but_no_owner_display_detail() {
+    let f = Fixture::new();
+    f.backend.target.lock().unwrap().source = Some(TargetSource {
+        platform: "macos".into(),
+        kind: SourceKind::App,
+        backend: "macos-screencapturekit".into(),
+        detail: std::collections::BTreeMap::from([(
+            "title".into(),
+            "Quarterly Secrets.numbers".into(),
+        )]),
+    });
+    let preview = f
+        .computer
+        .preview("owner", Selector::app("test.fixture"))
+        .unwrap();
+    assert!(preview.target.target_id.starts_with("cut_"));
+    assert_eq!(preview.schema_version, 2);
+    f.computer.allow("owner", &preview.id, None, false).unwrap();
+    let shot = f.computer.screenshot("owner", "shot").unwrap();
+    let frame = shot.frame.clone().unwrap();
+    assert_eq!(shot.schema_version, 2);
+    assert_eq!(shot.platform, "macos");
+    assert_eq!(shot.target_id, preview.target.target_id);
+    assert_eq!(shot.frame_id.as_deref(), Some(frame.id.as_str()));
+    assert_eq!(frame.schema_version, 2);
+    let receipt = f
+        .computer
+        .input(
+            "owner",
+            "typed",
+            &frame.id,
+            Action::Type {
+                text: "sentinel-secret".into(),
+            },
+            true,
+        )
+        .unwrap();
+    assert_eq!(receipt.grant_id, frame.grant_id);
+    assert_eq!(receipt.cleanup, Some(Cleanup::NotNeeded));
+    assert!(receipt.started_ms > 0 && receipt.settled_ms >= receipt.started_ms);
+    let rows = f
+        .store
+        .read(|db| {
+            let mut query = db.prepare(
+                "SELECT audit||COALESCE(receipt,'') FROM computer_operation UNION ALL SELECT metadata||native_target FROM computer_frame",
+            )?;
+            let rows = query
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows.join("\n"))
+        })
+        .unwrap();
+    assert!(!rows.contains("Quarterly Secrets"));
+    assert!(!rows.contains("sentinel-secret"));
+    assert!(rows.contains(&preview.target.target_id));
+}
+
+#[test]
+fn partial_delivery_settles_unknown_with_counts_and_uncertain_cleanup() {
+    let f = Fixture::new();
+    f.arm();
+    let frame = f.frame();
+    f.backend.partial.store(true, Ordering::SeqCst);
+    let receipt = f
+        .computer
+        .input("owner", "partial", &frame.id, motion(), true)
+        .unwrap();
+    assert_eq!(receipt.outcome, "unknown");
+    assert_eq!(
+        receipt.events,
+        Some(EventCounts {
+            requested: 2,
+            posted: 1
+        })
+    );
+    assert_eq!(receipt.cleanup, Some(Cleanup::Uncertain));
+    assert_eq!(receipt.reason, Some(ReasonCode::InputUnavailable));
+    let replayed = f
+        .computer
+        .input("owner", "partial", &frame.id, motion(), true)
+        .unwrap();
+    assert!(replayed.replayed);
+    assert_eq!(f.backend.inputs.load(Ordering::SeqCst), 1, "never repeated");
+}
+
+#[test]
+fn version_one_journal_rows_replay_as_written() {
+    let f = Fixture::new();
+    let written =
+        r#"{"operation_id":"v1-op","action":"click","outcome":"posted","replayed":false}"#;
+    let shot = r#"{"operation_id":"v1-shot","action":"screenshot","outcome":"captured","replayed":false,"frame":{"id":"cuf_01J00000000000000000000000","session_id":"owner","grant_id":"cug_1","captured_at":5,"target":{"identity":"app:test.fixture:42:100:7","app":"test.fixture","pid":42,"window":7,"display":1,"launch_ms":100,"x":0.0,"y":0.0,"width":10.0,"height":10.0,"image_width":10,"image_height":10,"rotation":0},"sha256":"00","bytes":24,"created_ms":1}}"#;
+    for (key, receipt) in [("v1-op", written), ("v1-shot", shot)] {
+        let (key, receipt) = (key.to_owned(), receipt.to_owned());
+        f.store
+            .transaction(move |tx| {
+                tx.execute("INSERT INTO computer_operation(operation_key,session_id,action,fingerprint,audit,status,started_ms,settled_ms,receipt) VALUES(?1,'owner','click','digest','{}','posted',1,2,?2)",rusqlite::params![key,receipt])?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    let replayed = f
+        .computer
+        .journal
+        .replay("owner", "v1-op", "digest")
+        .unwrap()
+        .unwrap();
+    assert!(replayed.replayed);
+    assert_eq!(replayed.schema_version, 1);
+    let mut expected: serde_json::Value = serde_json::from_str(written).unwrap();
+    expected["replayed"] = json!(true);
+    expected["schema_version"] = json!(1); // the version it was written with
+    assert_eq!(serde_json::to_value(&replayed).unwrap(), expected);
+    let shot = f
+        .computer
+        .journal
+        .replay("owner", "v1-shot", "digest")
+        .unwrap()
+        .unwrap();
+    let frame = shot.frame.unwrap();
+    assert_eq!(frame.schema_version, 1);
+    assert!(frame.target.target_id.is_empty());
+    let stored = f
+        .store
+        .read(|db| {
+            db.query_row(
+                "SELECT receipt FROM computer_operation WHERE operation_key='v1-op'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(Into::into)
+        })
+        .unwrap();
+    assert_eq!(stored, written, "replay never rewrites a version 1 row");
 }
