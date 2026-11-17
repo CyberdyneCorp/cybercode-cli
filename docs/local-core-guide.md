@@ -87,6 +87,20 @@ A retry waits the delay the server advises, taken from `retry-after-ms`, then `R
 
 A refusal is the model's answer: refusal text (Responses `response.refusal.delta`, Chat Completions `delta.refusal`) is shown as the answer's text. Each finished assistant message carries its `finish` reason in the messages API. When it is `content_filter`, the TUI shows `⚠ Stopped by the provider's safety filter…` under the answer, and `cyber exec` ends with `stop_reason: "refusal"` and prints a `warning:` line on stderr in text mode. When it is `length`, the TUI says the answer was cut off at the output limit, and exec reports `stop_reason: "max_tokens"`. Neither changes exec's exit code.
 
+### Network check
+
+`cyber doctor --network` runs only network checks, which is useful when requests fail and you cannot tell a bad key from a blocked host or a proxy problem:
+
+```text
+proxy: pass none set
+network chatgpt: pass chatgpt.com reachable: HTTP 404 in 357 ms
+network ollama: warn 127.0.0.1:11434 unreachable: cannot connect (Connection refused (os error 61))
+network openai: pass api.openai.com reachable: HTTP 404 in 333 ms
+network updates: pass github.com reachable: HTTP 404 in 266 ms
+```
+
+It probes every enabled provider with a key or a subscription login, every endpoint under `providers` that needs no credential, and the update channel. Each probe goes through the client model requests use (proxy variables, user agent, no redirects), sends no credentials and times out after 10 seconds. Any HTTP answer, even a 404, means the host is reachable. An unreachable keyed provider fails the run (exit 1); a local server that is not running and an unreachable update channel only warn. The `proxy` line shows the proxy variables in effect, with credentials in proxy URLs replaced by `***`. `--format json` prints the same checks as `{ ok, checks: [{ check, status, detail }] }`.
+
 ### Model fallback
 
 List backup models in `fallback_models`, and a Turn that fails on the Session's model is re-sent on the next one instead of failing:
@@ -315,7 +329,7 @@ For crash-recovery tests only, a debug-build server started with `CYBER_TEST_PRO
 
 ### Install script
 
-Each GitHub Release carries `install.sh`, a POSIX `sh` script (the latest stable one is `https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh`):
+Each GitHub Release carries `install.sh`, a POSIX `sh` script (the latest stable one is `https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh`). Until the first stable release, that URL does not resolve; use a tagged release's script with `--channel beta`, for example `curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/download/v0.1.0-beta.2/install.sh | sh -s -- --channel beta`:
 
 ```bash
 curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh | sh
@@ -711,7 +725,22 @@ cyber exec --output-schema findings.schema.json --format json "audit the depende
 - **Limits and errors:** a line is at most 1 MiB, at most 32 prompts may wait for an answer, at most 64 owned requests wait for a reply, and at most 16 parsed lines wait for the driver (a writer further ahead blocks on its pipe). A line that is not a valid envelope, an over-long line or a 33rd waiting prompt is a fatal protocol error: an `error` line, no more input, interruption of the driver's owned inputs, and exit 2. Error text is secret-safe: the `message` of `error` lines and the `error` of `input`, `result` and `end` lines pass through the built-in secret detectors, the configured `tool_output.redact` patterns and allow list, and the exact values of known secrets (secret-named environment variables, secret config entries such as provider keys, and the `--password` of an attached server), with the same `[REDACTED:<kind>]` markers as tool output, because they can carry provider error bodies, server responses or echoed stdin. This applies even when `tool_output.redact.enabled` is `false`, which only governs tool output. Answer text in `result` is not altered. The same policy covers the `error` of a `--format json` result and the `error:` lines exec prints to stderr in text mode; other stderr notes and the raw provider message the server records in `session.step.failed` are unchanged.
 - **Server loss:** if the server's event stream closes (the server stops, crashes or restarts), the driver writes one `error` line with `code: "server_lost"` and a `resume` object (`session_id` and the `command` that continues the Session, with `--attach <url>` when attached and never the password). Inputs still waiting get a `result` line with `not answered before the run ended`, and the run ends with exit 2 and an `end` line whose `error` is `the server closed the event stream`, with the same `error_code` and `resume`. The driver does not reconnect, even when a restarted server answers at the same URL; admitted inputs stay in the Session, and running the resume command against the restarted server drives the same Session.
 - **Exit code:** 130 after SIGINT, 2 after a fatal protocol error or a lost server, otherwise the first failed prompt's code in admission order (1), else 0. Failure to publish `--output-last-message` makes an otherwise successful run exit 1 and reports the error in `end`; per-input results remain available. Publication uses an exclusively created sibling file, replaces a destination symlink without writing its target, and removes its temporary file on failure. `--output-schema` applies to every prompt, whose `result` is then the validated object.
-- **Not combined with:** a prompt argument, `--command`, `--goal`, `--timeout`, `--max-cost` or `--max-tokens` (exit 2 before any Session). `--include-hook-events` is not available yet.
+- **Not combined with:** a prompt argument, `--command`, `--goal`, `--timeout`, `--max-cost` or `--max-tokens` (exit 2 before any Session). `--include-hook-events` works here too ([Hook events in exec](#hook-events-in-exec)).
+
+## Hook events in exec
+
+`cyber exec --format stream-json --include-hook-events` adds one `hook_event` line for each hook that ran for the run's Session, once it finished. It works for a single prompt and for `--input-format stream-json`:
+
+```json
+{"type":"hook_event","receipt_id":"hke_…","hook_id":"guard","event":"PreToolUse","scope":"project","outcome":"blocked","decision":"deny","duration_ms":14,"started_ms":1794660285453,"tool_name":"bash","call_id":"call_2","ts":…,"session_id":"ses_…"}
+```
+
+- **Fields:** `hook_id` is the handler's `id`, or its definition digest when it has none. `outcome` is `ok`, `blocked`, `error`, `timeout` or `skipped` (an untrusted or policy-refused handler). `decision` is the decision kind (`allow`, `ask`, `deny`, `block`, `retry`) or `null`. `tool_name` and `call_id` appear for tool events. `hook_id` and `tool_name` go through credential redaction.
+- **Never included:** the hook's stdin, stdout or stderr, its decision reason, rewritten input, added context and environment, even with `telemetry.log_hook_io` on. Use `cyber hooks history` or `GET /api/v1/sessions/{id}/hook-executions` to review recorded IO. A blocking hook's message still reaches the model, so it shows in that call's `tool_result` line (redacted like any tool output), and hook notices still go to stderr.
+- **Order:** lines follow the server's live receipts, so a hook's line comes before the line of what it gated: a `PreToolUse` line before that call's `tool_result`, a `Stop` line before `result`. Before each `result` (and `end`) exec also reads the durable receipt list and adds, once each, the receipts the live stream missed, such as a `SessionStart` hook that finished before exec subscribed or a line dropped while the stream lagged. Those lines arrive late but still before the `result`.
+- **Scope:** only the run's own Session. A reused Session (`--session`, `--continue`) reports only hooks admitted after the run attached. Subagents, delegated `@agent` prompts and Workflow agents run in other Sessions and get no lines, nor does an `async` hook still running when the run ends.
+- **Errors:** with `--format text` or `json`, or with `--workflow`, exec exits 2 before any Session exists. Without the flag the output is unchanged.
+- **API:** a single-prompt run reads `GET /api/v1/event?scope=all&include=hook_receipts`, which adds `session.hook.receipt` events (`{session_id, receipt}`, one at admission and one at settlement) to the instance stream. A driven run (`--input-format stream-json`) follows its Session with `GET /api/v1/sessions/{id}/events?…&include=hook_receipts`, which adds the same events for that Session only, never another Session's, in order with its other events. Without `include=hook_receipts` no stream carries them, and they are never replayed or in history.
 
 The API controls are `POST /sessions/{id}/interrupt-inputs` with
 `request_id` and `input_message_ids` (1–32 unique original user inputs), and
@@ -1436,6 +1465,8 @@ GET `/api/v1/hooks` inspects the current Location’s loaded definitions and unc
 Synchronous HTTP handlers now POST the protected event JSON with configured headers and application/json content type, parse a bounded JSON object decision, and use the same durable Session/synthetic receipts and once claims. Project/local/sandbox-all scopes honor network off/on/allowlist configuration. Every request uses an explicit owned proxy; redirects, automatic retries, ambient proxies and transport-header overrides are refused. Non-2xx, malformed/oversized bodies and transport errors are nonblocking unless `fail_closed` is enabled. Timeouts and cancellation close and join local request/proxy sockets; this acknowledges local transport disposal and cannot prove remote POST rollback. Raw event/response IO is omitted by default and bounded when explicitly enabled; header credentials are never recorded as IO. Remote MCP handlers, async scheduling and complete native acceptance remain open.
 
 On Unix, matching command handlers now run around built-in tools: `PreToolUse` before permission evaluation, followed by `PostToolUse` or `PostToolUseFailure` after settlement. A pre-hook denial blocks even in bypass mode; rewritten inputs are schema checked, and allow decisions retain permission denies and Mode ceilings. Project/local handlers require current checkout and individual digest approval. Errors and changes produce transient TUI/exec notices; durable execution receipts omit raw IO by default.
+
+**Hook output redaction.** A command hook blocks by exiting with code 2; its stderr is the reason, shown to the model as `blocked by hook <id>: <reason>`. That reason, a JSON `reason` or `stop_reason`, and the stderr of a failing hook (exit 1) pass through the same redaction as tool output (`tool_output.redact`: built-in detectors, secret-named environment variables, secret config entries and provider keys) before they reach the tool result, a live hook notice (TUI and `/api/v1/event`) or the hook receipt (`cyber hooks history`, `/hooks history`, `GET /api/v1/sessions/{sessionID}/hook-executions`). A secret shows as `[REDACTED:<kind>]` and the rest of the text stays as written. Each text is then cut to 4 KiB, ending in `… [hook output truncated]`. An `updated_input` is applied as the hook returned it, and opt-in raw IO (`telemetry.log_hook_io`) stays raw.
 
 Matching command `PermissionRequest` hooks now receive the final tool input and the current permission ask immediately before a user prompt. `allow` approves that request once without saving a rule; `deny` blocks without a prompt. Input rewrites are ignored for this event. Requests already allowed or denied by hard policy never reach this boundary; `PermissionDenied` retries remain open.
 

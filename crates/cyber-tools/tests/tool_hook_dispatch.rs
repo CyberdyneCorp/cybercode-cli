@@ -913,6 +913,124 @@ async fn exit_two_pre_tool_command_blocks_with_stderr_reason() {
     assert!(second.contains("rm on prod paths is forbidden"), "{second}");
 }
 
+/// Regression: a blocking hook's stderr is the block reason; a secret it prints is
+/// redacted before it reaches the tool result, the model, the stored history, live
+/// notices or the hook receipt, while the rest of the reason stays readable.
+#[tokio::test]
+async fn exit_two_block_reason_is_redacted_everywhere() {
+    let token = "ghp_abcdefghijklmnop0123456789";
+    let f = Flow::new(
+        vec![
+            call(
+                "call_bash",
+                "bash",
+                json!({"command":"printf ran > prod.txt"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    let script = format!("cat >/dev/null; printf 'deploy refused for {token}' >&2; exit 2");
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"bash","hooks":[{"type":"command","id":"prod","command":script}]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("bypass").await;
+    f.prompt(&session, "run it").await;
+    f.settle(&session).await;
+    assert!(!f.f.repo.join("prod.txt").exists(), "the call never ran");
+    let output = f.output(&session, "call_bash").await;
+    assert!(output.contains("deploy refused for"), "{output}");
+    assert!(output.contains("[REDACTED:github_token]"), "{output}");
+    assert!(!output.contains(token), "{output}");
+    let second = serde_json::to_string(&f.main.requests()[1].messages).unwrap();
+    assert!(!second.contains(token), "{second}");
+    let events =
+        serde_json::to_string(&f.f.store.read_events(&session, -1, 500).unwrap().events).unwrap();
+    assert!(!events.contains(token), "{events}");
+    let notices = hook_notices(&mut live);
+    assert!(
+        notices
+            .iter()
+            .any(|(_, message)| message.contains("deploy refused for")),
+        "{notices:?}"
+    );
+    assert!(
+        notices.iter().all(|(_, message)| !message.contains(token)),
+        "{notices:?}"
+    );
+    let receipts = f.runtime.hook_executions(&session, 10).unwrap();
+    let receipts = serde_json::to_string(&receipts).unwrap();
+    assert!(receipts.contains("deploy refused for"), "{receipts}");
+    assert!(!receipts.contains(token), "{receipts}");
+}
+
+/// Regression: a failing (non-blocking) command's stderr is shown as a live notice; a
+/// secret in it is redacted there too.
+#[tokio::test]
+async fn exit_one_diagnostic_notice_is_redacted() {
+    let token = "ghp_abcdefghijklmnop0123456789";
+    let f = Flow::new(
+        vec![
+            call("call_read", "read", json!({"path":"a.txt"})),
+            text("done"),
+        ],
+        false,
+    );
+    f.f.write("a.txt", "safe");
+    let script = format!("cat >/dev/null; printf 'audit push failed for {token}' >&2; exit 1");
+    hooks(
+        &f,
+        json!({"PostToolUse":[{"matcher":"read","hooks":[{"type":"command","id":"audit","command":script}]}]}),
+    );
+    let mut live = f.runtime.subscribe();
+    let session = f.session("default").await;
+    f.prompt(&session, "read").await;
+    f.settle(&session).await;
+    let notices = hook_notices(&mut live);
+    assert!(
+        notices
+            .iter()
+            .any(|(_, message)| message.contains("audit push failed for [REDACTED:github_token]")),
+        "{notices:?}"
+    );
+    assert!(
+        notices.iter().all(|(_, message)| !message.contains(token)),
+        "{notices:?}"
+    );
+}
+
+/// A block reason is bounded before it reaches the model; the hook's own capture
+/// limit is far larger than a useful reason.
+#[tokio::test]
+async fn exit_two_block_reason_is_bounded() {
+    let f = Flow::new(
+        vec![
+            call(
+                "call_bash",
+                "bash",
+                json!({"command":"printf ran > prod.txt"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    hooks(
+        &f,
+        json!({"PreToolUse":[{"matcher":"bash","hooks":[{"type":"command","id":"prod","command":"cat >/dev/null; { printf 'refused '; head -c 200000 /dev/zero | tr '\\0' x; } >&2; exit 2"}]}]}),
+    );
+    let session = f.session("bypass").await;
+    f.prompt(&session, "run it").await;
+    f.settle(&session).await;
+    let output = f.output(&session, "call_bash").await;
+    assert!(output.contains("refused xxxx"), "{output}");
+    assert!(output.len() < 16 * 1024, "{}", output.len());
+    let receipts =
+        serde_json::to_string(&f.runtime.hook_executions(&session, 10).unwrap()).unwrap();
+    assert!(receipts.len() < 32 * 1024, "{}", receipts.len());
+}
+
 #[tokio::test]
 async fn post_tool_command_exit_one_warns_with_hook_id_and_continues() {
     let f = Flow::new(

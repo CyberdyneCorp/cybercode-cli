@@ -66,6 +66,7 @@ impl Runtime {
         let presence = self.inner.presence.clone();
         computer.set_presence_epoch(Arc::new(move |session| presence.native_epoch(session)));
         let computer = Arc::new(computer);
+        computer.install_revocation_sink();
         self.inner
             .computer
             .set(Arc::clone(&computer))

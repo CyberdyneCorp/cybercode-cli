@@ -147,6 +147,13 @@ pub enum Format {
     Html,
 }
 
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Only check network access: proxy settings, each usable provider and the update channel.
+    #[arg(long)]
+    pub network: bool,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Open the project file in the owner hex/ASCII workspace without inference.
@@ -314,7 +321,7 @@ pub enum Command {
         cmd: crate::commands::messages::MessagesCmd,
     },
     /// Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server.
-    Doctor,
+    Doctor(DoctorArgs),
     /// Usage statistics: activity, streaks, tokens, cost and per-model totals.
     Stats(StatsArgs),
     /// The server's OpenTelemetry export status: settings, sources and counters.

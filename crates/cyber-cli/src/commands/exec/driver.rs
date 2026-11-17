@@ -21,6 +21,7 @@ use tokio::io::AsyncBufReadExt;
 use tokio::sync::mpsc;
 
 use super::frames::{self, Frame, MAX_LINE};
+use super::hook_lines::HookLines;
 use super::inputs::{Input, Inputs};
 use super::report::{Out, Run};
 use super::{EXIT_ERROR, EXIT_INTERRUPTED, ExecArgs, NO_APPROVER, api, safe_id};
@@ -75,6 +76,7 @@ struct Driver<'a> {
     /// Each new control must cover a previously uncovered pending input, so
     /// the 32-input capacity also bounds retained overlapping controls to 32.
     interruptions: VecDeque<interruption::Pending>,
+    hooks: HookLines,
     inputs: Inputs,
     /// Exact message identities of promoted inputs whose answer is in progress.
     answering: Vec<String>,
@@ -108,19 +110,26 @@ pub async fn execute(
     out.init_version(client, session, 2).await;
     let mut events = Box::pin(
         client
-            .session_input_event_stream(&id, baseline["data"]["seq"].as_i64().unwrap_or(-1))
+            .session_input_event_stream(
+                &id,
+                baseline["data"]["seq"].as_i64().unwrap_or(-1),
+                args.include_hook_events,
+            )
             .await
             .map_err(api)?,
     );
+    let hooks = HookLines::start(client, args, &id, &out).await;
     // At most this many parsed lines (each at most 1 MiB) wait for the control loop;
     // a writer that runs further ahead blocks on its stdin pipe.
     let (sender, mut lines) = mpsc::channel(16);
     tokio::spawn(read_stdin(sender));
     let mut driver = Driver::new(client, &id, args, &mut out, run);
+    driver.hooks = hooks;
     driver.seen_seq = baseline["data"]["seq"].as_i64();
     driver.attach().await;
     driver.drive(&mut events, &mut lines).await;
     driver.release().await;
+    driver.hooks.reconcile(client, driver.out).await;
     Ok(driver.finish())
 }
 
@@ -175,6 +184,7 @@ impl<'a> Driver<'a> {
             args,
             out,
             run,
+            hooks: HookLines::disabled(),
             step: None,
             seen_seq: None,
             background_failed: false,
@@ -362,6 +372,8 @@ impl<'a> Driver<'a> {
                 );
             }
             Err(error) => {
+                // A refusal can come from a `UserPromptSubmit` hook: its line goes first.
+                self.hooks.reconcile(self.client, self.out).await;
                 input.error = Some(error.to_string());
                 self.out.stream_line(
                     "input",
@@ -478,6 +490,8 @@ impl<'a> Driver<'a> {
     }
 
     async fn event(&mut self, event: Event) {
+        // Receipt summaries (opt-in) are live and only ever for this Session.
+        self.hooks.live(&event, self.out);
         if self.routed_here(&event) {
             return self.descendant(&event).await;
         }
@@ -596,6 +610,8 @@ impl<'a> Driver<'a> {
 
     async fn became_idle(&mut self) {
         self.idle = true;
+        // Settled receipts the live stream missed go before any `result` line.
+        self.hooks.reconcile(self.client, self.out).await;
         if !self.answer_done && !self.answering.is_empty() {
             for id in &self.answering {
                 if let Some(input) = self.inputs.get_mut(id)
