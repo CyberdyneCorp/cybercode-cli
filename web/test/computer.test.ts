@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ComputerControls, type ComputerContext, type NativePreview, type NativeReport } from "../src/computer.js";
+import { capabilitySummary, ComputerControls, receiptNote, type ComputerContext, type NativePreview, type NativeReport } from "../src/computer.js";
 import type { Port, RequestOptions } from "../src/transport.js";
 const report: NativeReport = { enabled: true, health: { supported: true, platform: "fixture", minimum_version: "fixture", screen_capture: true, accessibility: true, binary: "fixture" }, grant: { id: "grant", session_id: "other-session", target: { identity: "app:fixture" }, expires_at: 1_000_000 } };
 const preview: NativePreview = { id: "review", session_id: "owner", expires_at: 1000, target: { identity: "app:fixture", app: "fixture", display: 1, pid: 42, window: 7, x: 0, y: 0, width: 100, height: 100, image_width: 100, image_height: 100 }, unknown_operations: [], warning: "fixture" };
@@ -39,4 +39,12 @@ test("emergency Stop survives logout transport cleanup and stale replies cannot 
 
 test("global health and emergency Stop work without a selected Session", async (t) => {
  const f=fixture(t);f.context({session:"",directory:"/empty",actionable:false,signal:new AbortController().signal});await f.model.refresh();assert.equal(f.model.active?.session_id,"other-session");assert.equal(f.calls.filter(call=>call.path.startsWith("/sessions/")).length,0);await f.model.stop();assert.ok(f.calls.some(call=>call.path==="/tools/computer/stop"));
+});
+
+test("version 2 health and receipt reasons are summarized; version 1 reports render as before", () => {
+ assert.equal(capabilitySummary(report.health), undefined);
+ assert.equal(capabilitySummary({ ...report.health, schema_version: 2, mode: "capture_only", capture: { available: true, reasons: [] }, input: { available: false, reasons: ["evidence_pending", "a_code_from_a_newer_server"] }, evidence: "fixture_tested" }), "Mode: capture_only · Reasons: evidence_pending, a_code_from_a_newer_server · Evidence: fixture_tested");
+ assert.equal(receiptNote(JSON.stringify({ outcome: "unknown", reason: "input_unavailable", cleanup: "uncertain", events: { requested: 2, posted: 1 } })), "unknown · reason input_unavailable · cleanup uncertain · 1/2 events posted");
+ assert.equal(receiptNote(JSON.stringify({ outcome: "posted", cleanup: "not_needed" })), undefined);
+ assert.equal(receiptNote("Native computer use is disabled"), undefined);
 });

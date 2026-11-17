@@ -3682,18 +3682,20 @@ async fn hook_notices_follow_session_and_location_without_durable_replay() {
     );
 }
 
-/// `LiveEvent::HookReceipt` is internal to the telemetry exporter: the Location, all
-/// Locations and Session streams never forward it, while the hook notice after it still
-/// arrives.
-#[tokio::test]
-async fn event_stream_never_forwards_hook_receipts() {
+/// A skipped `PreToolUse` hook of Session `id` whose receipt the runtime records on
+/// demand (`record_skipped_hook`), for the hook receipt stream tests.
+fn skipped_pre_tool_hook(
+    h: &Harness,
+    id: &str,
+) -> (
+    cyber_core::hooks::HookEvent,
+    cyber_core::hooks::HookDefinition,
+) {
     use cyber_core::{
         config::{self, LoadRequest},
         hooks::{HookCatalog, HookEvent, HookIdentity, HookLocation},
         paths::Paths,
     };
-    let h = Harness::new(Setup::default());
-    let id = h.session().await;
     let env = std::collections::HashMap::from([(
         "CYBER_HOME".into(),
         h.dir.path().join("hooks-config").display().to_string(),
@@ -3718,7 +3720,7 @@ async fn event_stream_never_forwards_hook_receipts() {
     let event = HookEvent::new(
         "PreToolUse",
         HookIdentity {
-            session_id: id.clone(),
+            session_id: id.to_owned(),
             location: HookLocation {
                 directory: h.repo.clone(),
                 workspace: None,
@@ -3736,6 +3738,19 @@ async fn event_stream_never_forwards_hook_receipts() {
             .clone(),
     )
     .unwrap();
+    (event, definition)
+}
+
+/// `LiveEvent::HookReceipt` reaches a client only on a stream that asks for it with
+/// `include=hook_receipts`: the default Location, all Locations and Session streams
+/// without the opt-in never forward it, while the hook notice after it still arrives.
+/// The opted-in stream carries the admitted and the settled summary, before the notice
+/// and without IO.
+#[tokio::test]
+async fn event_stream_forwards_hook_receipts_only_when_asked() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let (event, definition) = skipped_pre_tool_hook(&h, &id);
     let cursor = h.state(&id).await.last_seq;
     let base = tcp(&h, "pw").await;
     let client = reqwest::Client::new();
@@ -3756,6 +3771,14 @@ async fn event_stream_never_forwards_hook_receipts() {
     for stream in streams.iter_mut().take(2) {
         read_sse_until(stream, "server.connected").await;
     }
+    let mut opted = client
+        .get(format!("{base}/event?scope=all&include=hook_receipts"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap()
+        .bytes_stream();
+    read_sse_until(&mut opted, "server.connected").await;
     let mut live = h.runtime.subscribe();
     h.runtime
         .record_skipped_hook(&event, &definition, "untrusted")
@@ -3776,6 +3799,106 @@ async fn event_stream_never_forwards_hook_receipts() {
             "{buffer}"
         );
     }
+    let buffer = read_sse_until(&mut opted, "after the receipts").await;
+    let receipts: Vec<Value> = buffer
+        .split("\n\n")
+        .filter(|event| event.contains("event: session.hook.receipt"))
+        .filter_map(|event| event.lines().find_map(|line| line.strip_prefix("data: ")))
+        .map(|data| serde_json::from_str(data).unwrap())
+        .collect();
+    assert_eq!(receipts.len(), 2, "{buffer}");
+    let notice = buffer.find("after the receipts").unwrap();
+    assert!(
+        buffer.rfind("session.hook.receipt").unwrap() < notice,
+        "{buffer}"
+    );
+    let settled = &receipts[1]["data"];
+    assert_eq!(settled["session_id"], id.as_str(), "{buffer}");
+    assert_eq!(settled["receipt"]["id"], receipt.as_str(), "{buffer}");
+    assert_eq!(settled["receipt"]["hook_id"], "guard", "{buffer}");
+    assert_eq!(settled["receipt"]["outcome"], "skipped", "{buffer}");
+    assert!(
+        receipts[0]["data"]["receipt"]["outcome"].is_null(),
+        "{buffer}"
+    );
+    assert!(
+        receipts[1]["durable"].is_null() && !buffer.contains("\"io\""),
+        "{buffer}"
+    );
+}
+
+/// A Session stream opted in with `include=hook_receipts` (`exec --include-hook-events`
+/// in a driven run) carries that Session's receipt summaries in order with its other
+/// live events, and never another Session's: an opted-in stream of a second Session
+/// sees the notice but no receipt. Any other `include` value is refused.
+#[tokio::test]
+async fn session_stream_carries_only_its_own_hook_receipts_when_asked() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let other = h.session().await;
+    let (event, definition) = skipped_pre_tool_hook(&h, &id);
+    let base = tcp(&h, "pw").await;
+    let client = reqwest::Client::new();
+    let refused = client
+        .get(format!("{base}/sessions/{id}/events?include=receipts"))
+        .basic_auth("cyber", Some("pw"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    let mut streams = Vec::new();
+    for session in [&id, &other] {
+        let cursor = h.state(session).await.last_seq;
+        let response = client
+            .get(format!(
+                "{base}/sessions/{session}/events?after={cursor}&live=true&presence=false&include=hook_receipts"
+            ))
+            .basic_auth("cyber", Some("pw"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        streams.push(response.bytes_stream());
+    }
+    let mut live = h.runtime.subscribe();
+    h.runtime
+        .record_skipped_hook(&event, &definition, "untrusted")
+        .await
+        .unwrap();
+    let receipt = loop {
+        if let cyber_server::runtime::LiveEvent::HookReceipt { receipt, .. } =
+            live.recv().await.unwrap()
+        {
+            break receipt.id;
+        }
+    };
+    h.runtime.hook_notice(&id, "guard", "after the receipts");
+    h.runtime.hook_notice(&other, "guard", "after the receipts");
+    let own = read_sse_until(&mut streams[0], "after the receipts").await;
+    let receipts: Vec<Value> = own
+        .split("\n\n")
+        .filter(|event| event.contains("event: session.hook.receipt"))
+        .filter_map(|event| event.lines().find_map(|line| line.strip_prefix("data: ")))
+        .map(|data| serde_json::from_str(data).unwrap())
+        .collect();
+    assert_eq!(receipts.len(), 2, "{own}");
+    assert!(
+        own.rfind("session.hook.receipt").unwrap() < own.find("after the receipts").unwrap(),
+        "{own}"
+    );
+    let settled = &receipts[1]["data"];
+    assert_eq!(settled["session_id"], id.as_str(), "{own}");
+    assert_eq!(settled["receipt"]["id"], receipt.as_str(), "{own}");
+    assert_eq!(settled["receipt"]["outcome"], "skipped", "{own}");
+    assert!(
+        receipts[1]["durable"].is_null() && !own.contains("\"io\""),
+        "{own}"
+    );
+    let foreign = read_sse_until(&mut streams[1], "after the receipts").await;
+    assert!(
+        !foreign.contains(&receipt) && !foreign.contains("hook.receipt"),
+        "{foreign}"
+    );
 }
 
 #[tokio::test]

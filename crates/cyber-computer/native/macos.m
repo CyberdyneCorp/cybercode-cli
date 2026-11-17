@@ -356,6 +356,16 @@ static int type_text(NSDictionary *expected, NSString *text, Cancel cancel, cons
     }
     return 0;
 }
+// An app grant cannot switch applications or invoke host-wide shortcuts.
+static bool chord_allowed(bool app, CGEventFlags flags, NSString *name) {
+    if (!app) return true;
+    if (flags & kCGEventFlagMaskControl) return false;
+    return !flags || [@[@"a",@"z",@"y",@"s",@"left",@"right",@"up",@"down",@"home",@"end",@"backspace",@"delete"] containsObject:name];
+}
+// Pure policy for the cross-language parity test; posts nothing and reads no desktop state.
+bool cyber_computer_chord_allowed(bool app, uint64_t flags, const char *name) {
+    @autoreleasepool { return name && chord_allowed(app, (CGEventFlags)flags, [[NSString stringWithUTF8String:name] lowercaseString]); }
+}
 static int key(NSDictionary *expected, NSDictionary *chord, Cancel cancel, const void *context, uint64_t deadline) {
     static NSDictionary *codes; static dispatch_once_t once;
     dispatch_once(&once, ^{ codes = @{ @"a":@0,@"s":@1,@"d":@2,@"f":@3,@"h":@4,@"g":@5,@"z":@6,@"x":@7,@"c":@8,@"v":@9,@"b":@11,@"q":@12,@"w":@13,@"e":@14,@"r":@15,@"y":@16,@"t":@17,@"1":@18,@"2":@19,@"3":@20,@"4":@21,@"6":@22,@"5":@23,@"9":@25,@"7":@26,@"8":@28,@"0":@29,@"o":@31,@"u":@32,@"i":@34,@"p":@35,@"enter":@36,@"l":@37,@"j":@38,@"k":@40,@"n":@45,@"m":@46,@"tab":@48,@"space":@49,@"backspace":@51,@"escape":@53,@"home":@115,@"page_up":@116,@"delete":@117,@"end":@119,@"page_down":@121,@"left":@123,@"right":@124,@"down":@125,@"up":@126 }; });
@@ -388,9 +398,8 @@ static int key(NSDictionary *expected, NSDictionary *chord, Cancel cancel, const
     }
     if (!code) return 6;
 
-    // An app grant cannot switch applications or invoke host-wide shortcuts.
-    if ([expected[@"app"] isKindOfClass:NSString.class] && (flags & kCGEventFlagMaskControl)) return 3;
-    if ([expected[@"app"] isKindOfClass:NSString.class] && flags && ![@[@"a",@"z",@"y",@"s",@"left",@"right",@"up",@"down",@"home",@"end",@"backspace",@"delete"] containsObject:name]) return 3;
+    // Second line behind the shared Rust chord policy, which refuses first.
+    if (!chord_allowed([expected[@"app"] isKindOfClass:NSString.class], flags, name)) return 3;
     int status = checkpoint(expected, cancel, context, deadline); if (status) return status;
     bool posted = keyboard(code.unsignedShortValue, true, flags, NULL, 0); bool released = keyboard(code.unsignedShortValue, false, 0, NULL, 0); return posted && released ? 0 : 6;
 }

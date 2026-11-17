@@ -291,15 +291,82 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
     }
     if let Some(diff) = metadata["diff"].as_str() {
         lines.push(Line::default());
-        for l in diff.lines().take(12) {
-            lines.push(Line::from(vec![
+        lines.extend(diff.lines().map(|l| {
+            Line::from(vec![
                 Span::raw("  "),
                 Span::styled(l.to_owned(), super::messages::diff_style(t, l)),
-            ]));
-        }
+            ])
+        }));
     }
     lines.push(Line::default());
+    let title = app.trf("Permission: {action}", &[("action", action)]);
+    let controls = step_lines(app, step, action, patterns);
+    let inner = rect.inner(Margin::new(1, 1));
+    let rows = |lines: &[Line<'_>]| {
+        Paragraph::new(lines.to_vec())
+            .wrap(Wrap { trim: false })
+            .line_count(inner.width) as u16
+    };
+    f.render_widget(Clear, rect);
+    if rows(&lines) + rows(&controls) > inner.height {
+        long_permission(f, app, step, lines, controls, (rect, &title));
+        return;
+    }
     let options = lines.len();
+    lines.extend(controls);
+    // Only the choice step takes clicks: saving approvals and the feedback take keys.
+    if let PermStep::Choose(_) = step {
+        push_wrapped_rows(app, &lines, inner, options, 3, List::Permission);
+    }
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(frame(app, &title)),
+        rect,
+    );
+}
+
+/// Details too long for the prompt, such as a large edit's diff, scroll with PgUp/PgDn
+/// above choices that stay in view (`tui` → Permission prompt).
+fn long_permission(
+    f: &mut Frame,
+    app: &App,
+    step: &PermStep,
+    details: Vec<Line<'static>>,
+    mut controls: Vec<Line<'static>>,
+    (rect, title): (Rect, &str),
+) {
+    controls.push(Line::from(Span::styled(
+        app.tr("PgUp/PgDn review details · Home return to top")
+            .to_owned(),
+        Style::default().fg(app.theme.text_muted),
+    )));
+    let block = frame(app, title);
+    let inner = block.inner(rect);
+    let height = Paragraph::new(controls.clone())
+        .wrap(Wrap { trim: false })
+        .line_count(inner.width) as u16;
+    let panels = Layout::vertical([Constraint::Min(1), Constraint::Length(height)]).split(inner);
+    if let PermStep::Choose(_) = step {
+        push_wrapped_rows(app, &controls, panels[1], 0, 3, List::Permission);
+    }
+    f.render_widget(block, rect);
+    f.render_widget(
+        Paragraph::new(details)
+            .wrap(Wrap { trim: false })
+            .scroll((app.permission_scroll, 0)),
+        panels[0],
+    );
+    f.render_widget(
+        Paragraph::new(controls).wrap(Wrap { trim: false }),
+        panels[1],
+    );
+}
+
+/// The choices, the approvals to save, or the feedback field of a permission prompt.
+fn step_lines(app: &App, step: &PermStep, action: &str, patterns: &[String]) -> Vec<Line<'static>> {
+    let t = &app.theme;
+    let mut lines = Vec::new();
     match step {
         PermStep::Choose(i) => {
             for (n, label) in PERMISSION_CHOICES.iter().enumerate() {
@@ -308,40 +375,27 @@ pub fn permission(f: &mut Frame, app: &App, step: &PermStep, area: Rect) {
         }
         PermStep::ConfirmAlways => {
             lines.push(Line::from(Span::styled(
-                app.tr("Save these approvals for this project:"),
+                app.tr("Save these approvals for this project:").to_owned(),
                 Style::default().fg(t.warning),
             )));
             for p in patterns {
                 lines.push(Line::from(format!("  {action} {p}")));
             }
             lines.push(Line::from(Span::styled(
-                app.tr("Enter to confirm · Esc to go back"),
+                app.tr("Enter to confirm · Esc to go back").to_owned(),
                 Style::default().fg(t.text_muted),
             )));
         }
         PermStep::Feedback(text) => {
             lines.push(Line::from(Span::styled(
-                app.tr("Tell the model what to do instead (optional), then Enter:"),
+                app.tr("Tell the model what to do instead (optional), then Enter:")
+                    .to_owned(),
                 Style::default().fg(t.warning),
             )));
             lines.push(Line::from(format!("› {text}")));
         }
     }
-    // Only the choice step takes clicks: saving approvals and the feedback take keys.
-    if let PermStep::Choose(_) = step {
-        let inner = rect.inner(Margin::new(1, 1));
-        push_wrapped_rows(app, &lines, inner, options, 3, List::Permission);
-    }
-    f.render_widget(Clear, rect);
-    f.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(frame(
-                app,
-                &app.trf("Permission: {action}", &[("action", action)]),
-            )),
-        rect,
-    );
+    lines
 }
 
 pub fn question(f: &mut Frame, app: &App, form: &QuestionForm, area: Rect) {

@@ -2443,10 +2443,13 @@ fn doctor_warns_about_an_instruction_file_outside_the_project() {
     assert_eq!(row["status"], "warn", "{row}");
     let detail = row["detail"].as_str().unwrap();
     assert!(detail.starts_with("no instruction files"), "{detail}");
-    assert!(
-        detail.contains("CYBER.md resolves outside the project and was not loaded"),
-        "{detail}"
-    );
+    // Listed once, as a typed withheld entry, not again as a repeated warning.
+    let listed = detail
+        .split("; ")
+        .find(|part| part.starts_with("withheld (outside_project): "))
+        .unwrap_or_else(|| panic!("{detail}"));
+    assert!(listed.ends_with("CYBER.md"), "{detail}");
+    assert!(!detail.contains("resolves outside the project"), "{detail}");
 }
 
 /// Regression: doctor (like the runtime) loaded `@.env` imports of project instruction
@@ -2468,6 +2471,7 @@ fn doctor_refuses_protected_imports_and_project_files_under_a_broken_config() {
         detail.contains("import @.env is not allowed by the read permission rules"),
         "{detail}"
     );
+    assert!(detail.contains("withheld (read_denied): "), "{detail}");
     std::fs::write(repo.join("CLAUDE.md"), "claude").unwrap();
     std::fs::write(repo.join("cyber.json"), "{ not json").unwrap();
     let row = doctor_instructions(&env, &repo);

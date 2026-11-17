@@ -4452,3 +4452,28 @@ writer re-attests both owners and notifies only after COMMIT; journal
 acknowledgement only after the observed commit; per-exchange authorization and parent
 route checks; intent-slot identity checks; ordinary/resolution cleanup ownership,
 inventory and pins; plan/delete/complete ordering; record, listing and request bounds.
+
+## Rules and context inspection audit (2026-11-16, local)
+
+Branch `feat/context-rules`, stacked on `feat/managed-recovery-owner` (PR #123).
+Tasks 4.1–4.4 were compared clause by clause with the `system-context`,
+`configuration` and `tui` deltas. The implementation and tests listed in the task
+notes already covered rule discovery, precedence, overrides, validated globs,
+bounded assembly, delivery fencing, withdrawal, restart and the inspection
+route/TUI/doctor. Two gaps were closed:
+
+- Hook `additional_context` was counted inside `history`, and context queued by
+  background hook handlers or a compaction requested during a turn was invisible
+  to inspection. Inspection now reports a `hook_context` source (origin `hook`),
+  pending hook context with its estimate (added to `next_request`) and
+  `compaction_pending`, never the hook text. A new delta scenario states this.
+- Project instruction files and imports refused outside the project or by read
+  rules were warnings only; they are now typed withheld entries
+  (`outside_project`, `read_denied`) shown by inspection and doctor.
+
+Evidence: `cyber-server` library and `context_compaction`/`http` suites,
+`cyber-tui` context tests, `cyber-cli` doctor tests and `cyber-app --test
+instructions` under nextest `ci` on macOS arm64; OpenAPI/SDK regenerated. Hook
+context is not a rule, so once-per-Epoch delivery, approval fencing and withdrawal
+do not apply, and the redaction requirement (tool output) does not cover it.
+Native platform acceptance is not claimed and stays with 7.2.

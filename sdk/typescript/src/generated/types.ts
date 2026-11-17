@@ -608,7 +608,38 @@ export type CompactBody = {
   instructions?: string | null;
 };
 
+export type ComputerAuthority = {
+  kind: ComputerAuthorityKind;
+  /** Whether an explicit owner `setup` request can ask the OS for anything. */
+  setup_available: boolean;
+};
+
+/** What makes capture legitimate besides Cyber's owner review, which is always required. */
+export type ComputerAuthorityKind = "os_permission" | "platform_picker" | "owner_review_only";
+
+export type ComputerCapability = {
+  available: boolean;
+  /** Every code that applies, most actionable first; empty when available. */
+  reasons: ComputerReasonCode[];
+};
+
+export type ComputerDiagnosticInterface = {
+  name: string;
+  version: string;
+};
+
+/** Diagnostic values are never used for decisions. */
+export type ComputerDiagnostics = {
+  interfaces: ComputerDiagnosticInterface[];
+  desktop?: string | null;
+};
+
+/** Support evidence of the running configuration (design F12). */
+export type ComputerEvidence = "unsupported" | "implemented" | "fixture_tested" | "accepted";
+
 export type ComputerFrameInfo = {
+  /** 1 for frames recorded before the platform-neutral contract. */
+  schema_version?: number;
   id: string;
   session_id: string;
   grant_id: string;
@@ -633,6 +664,18 @@ export type ComputerHealth = {
   screen_capture: boolean;
   accessibility: boolean;
   binary: string;
+  /** 1 for the macOS-only shape, 2 for the platform-neutral report. */
+  schema_version?: number;
+  mode?: ComputerMode;
+  backend?: string;
+  capture?: ComputerCapability;
+  input?: ComputerInputCapability;
+  authority?: ComputerAuthority;
+  session?: ComputerSessionFacts;
+  os?: ComputerOsInfo;
+  selectors?: ComputerSelectorKind[];
+  evidence?: ComputerEvidence;
+  diagnostics?: ComputerDiagnostics;
 };
 
 export type ComputerHealthReport = {
@@ -641,7 +684,20 @@ export type ComputerHealthReport = {
   health: ComputerHealth;
 };
 
+/** Whether the platform can prove the pre-dispatch target checks. */
+export type ComputerInputAssurance = "verified" | "unavailable" | "not_applicable";
+
+export type ComputerInputCapability = {
+  available: boolean;
+  reasons: ComputerReasonCode[];
+  assurance: ComputerInputAssurance;
+};
+
+/** Derived from capture and input availability; never set independently. */
+export type ComputerMode = "unsupported" | "capture_only" | "input_enabled";
+
 export type ComputerNativeTarget = {
+  /** Server-internal comparison string; never accepted from a caller. */
   identity: string;
   app?: string | null;
   pid: number;
@@ -655,23 +711,75 @@ export type ComputerNativeTarget = {
   image_width: number;
   image_height: number;
   rotation: number;
+  /** Server-issued, opaque, unique per review and meaningless after restart. */
+  target_id?: string;
+  source?: ComputerTargetSource | null;
+  /** Display-topology epoch observed when this target was resolved or captured. */
+  topology_epoch?: number;
 };
 
+export type ComputerOsInfo = {
+  family: string;
+  version?: string | null;
+  build?: string | null;
+  architecture: string;
+};
+
+/** The platform's own picker chooses a window or a whole output (design F4). */
+export type ComputerPickKind = "window" | "output";
+
 export type ComputerPreview = {
+  schema_version: number;
   id: string;
   session_id: string;
   target: ComputerNativeTarget;
   expires_at: number;
   unknown_operations: ComputerUnknownOperation[];
   warning: string;
+  /** Support evidence of the running configuration, shown on the review card. */
+  evidence: ComputerEvidence;
+  /** Whether `allow` may re-run this selector; otherwise only this review can arm. */
+  re_resolvable: boolean;
 };
 
+/**
+ * Stable snake_case code for every computer refusal, unavailability,
+ * revocation and receipt reason.
+ */
+export type ComputerReasonCode = "feature_disabled" | "unsupported_platform" | "unsupported_os_version" | "unsupported_architecture" | "unsupported_build" | "evidence_pending" | "no_graphical_session" | "non_interactive_session" | "remote_session" | "session_locked" | "session_inactive" | "session_watch_unavailable" | "os_permission_missing" | "capture_policy_denied" | "controller_privilege_unsupported" | "picker_cancelled" | "interactive_review_required" | "capture_unavailable" | "input_unavailable" | "target_assurance_unavailable" | "selector_unsupported_on_platform" | "action_unsupported_on_platform" | "host_lease_busy" | "host_lease_unavailable" | "previous_holder_abandoned" | "target_gone" | "target_changed" | "target_protected" | "target_elevated" | "target_other_user" | "target_capture_excluded" | "target_not_foreground" | "secure_field" | "frame_stale" | "topology_changed" | "key_chord_refused" | "mode_forbids_input" | "supervisor_fence" | "limit_exceeded" | "owner_stop" | "session_interrupt" | "presence_lost" | "grant_expired" | "os_permission_revoked" | "server_restart";
+
+/**
+ * Exactly one of `app`, `display`, `window` or `pick`. A selector value is never
+ * reinterpreted as a different kind of identifier on another platform.
+ */
 export type ComputerSelector = {
+  /** macOS application bundle ID. */
   app?: string | null;
+  /** macOS display index. */
   display?: number | null;
+  /** Short-lived candidate token from an owner-only target listing. */
+  window?: string | null;
+  /** Let the platform picker choose the source. */
+  pick?: ComputerPickKind | null;
 };
+
+/** Selector kinds a platform may honor (design F4). */
+export type ComputerSelectorKind = "app" | "display" | "window" | "pick";
+
+/** Interactive-session facts; `null` means the platform cannot tell and is never "safe". */
+export type ComputerSessionFacts = {
+  interactive?: boolean | null;
+  locked?: boolean | null;
+  remote?: boolean | null;
+  kind?: string | null;
+  reasons: ComputerReasonCode[];
+};
+
+/** What kind of source a target is. */
+export type ComputerSourceKind = "app" | "window" | "display" | "output";
 
 export type ComputerStatus = {
+  schema_version: number;
   enabled: boolean;
   latest_frame?: ComputerFrameInfo | null;
   health: ComputerHealth;
@@ -682,6 +790,19 @@ export type ComputerStatus = {
 export type ComputerTarget = {
   /** Bundle/display identity resolved by the native backend, never by a model. */
   identity: string;
+};
+
+/**
+ * Typed description of a target's source. `detail` is for owner display and
+ * diagnostics only; clients never parse it for decisions, and it is never journaled.
+ */
+export type ComputerTargetSource = {
+  platform: string;
+  kind: ComputerSourceKind;
+  backend: string;
+  detail?: {
+    [key: string]: string;
+  };
 };
 
 export type ComputerUnknownOperation = {
@@ -838,6 +959,18 @@ export type ContextInspection = {
   epoch_pending: boolean;
   queued_inputs: number;
   held_inputs: number;
+  /**
+   * Hook `additional_context` from background handlers, queued to be committed
+   * before the next request. Its text is never returned.
+   */
+  pending_hook_contexts: number;
+  /** Estimated tokens of the queued hook context; included in `next_request`. */
+  pending_hook_context_tokens: number;
+  /**
+   * A compaction was requested while the Session was running and applies at the
+   * next Safe Boundary.
+   */
+  compaction_pending: boolean;
   delivered_rule_count: number;
   /**
    * Rules delivered in this Context Epoch, in delivery order, with their current
@@ -1472,7 +1605,7 @@ export type ErrorBody = {
 };
 
 /** Why a next-request estimate can differ from the request actually sent. */
-export type EstimateAssumption = "tool_schemas_from_last_request" | "model_changed" | "epoch_rebuild_pending" | "sources_changed_on_disk" | "excludes_turn_instructions" | "delivered_rules_changed";
+export type EstimateAssumption = "tool_schemas_from_last_request" | "model_changed" | "epoch_rebuild_pending" | "sources_changed_on_disk" | "excludes_turn_instructions" | "delivered_rules_changed" | "compaction_pending";
 
 /** `session.goal.evaluated.1`. */
 export type Evaluated = {
@@ -5971,7 +6104,7 @@ export type WithheldContextSource = {
 };
 
 /** Why a definition that applies to the Location was left out of context. */
-export type WithheldReason = "trust_held" | "read_denied" | "invalid_frontmatter" | "compat_disabled" | "bound_exceeded";
+export type WithheldReason = "trust_held" | "read_denied" | "invalid_frontmatter" | "compat_disabled" | "bound_exceeded" | "outside_project";
 
 /** A definition left out of context, without its content or size. */
 export type WithheldSource = {

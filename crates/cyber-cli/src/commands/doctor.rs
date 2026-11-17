@@ -2,6 +2,7 @@
 //! exit 1 when any check fails.
 
 mod computer;
+mod network;
 
 use cyber_core::paths::DatabaseLocation;
 use cyber_llm::catalog::{
@@ -9,7 +10,7 @@ use cyber_llm::catalog::{
 };
 use serde_json::{Value, json};
 
-use crate::cli::GlobalArgs;
+use crate::cli::{DoctorArgs, GlobalArgs};
 use crate::context::Context;
 use crate::error::CliError;
 use crate::output;
@@ -35,8 +36,11 @@ fn check(name: impl Into<String>, status: Status, detail: impl Into<String>) -> 
     }
 }
 
-pub fn run(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+pub fn run(args: &DoctorArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     let rt = super::serve::runtime()?;
+    if args.network {
+        return report(global, &rt.block_on(network_checks(ctx)));
+    }
     let config = ctx.config();
     let mut checks = vec![match &config {
         Ok(_) => check("config", Status::Pass, "parsed and valid"),
@@ -170,7 +174,7 @@ fn instructions(ctx: &Context, config: Option<&cyber_core::config::Resolved>) ->
 }
 
 /// Baseline files, path-scoped rule definitions discovered for later attachment, and
-/// withheld rule definitions grouped by reason. A loader warning that only repeats a
+/// withheld rule definitions and instruction files grouped by reason. A loader warning that only repeats a
 /// withheld definition is not listed twice.
 fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions) -> Check {
     let files: Vec<String> = loaded
@@ -201,10 +205,7 @@ fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions
         detail.push_str(&format!("; withheld ({reason}): {}", paths.join(", ")));
     }
     if withheld.omitted > 0 {
-        detail.push_str(&format!(
-            "; {} more withheld rule definitions",
-            withheld.omitted
-        ));
+        detail.push_str(&format!("; {} more withheld definitions", withheld.omitted));
     }
     let warnings: Vec<&String> = loaded
         .warnings
@@ -213,7 +214,7 @@ fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions
             !withheld
                 .entries
                 .iter()
-                .any(|entry| warning.starts_with(&format!("{}: ", entry.path)))
+                .any(|entry| repeats(warning, &entry.path))
         })
         .collect();
     for warning in &warnings {
@@ -225,6 +226,16 @@ fn instructions_check(loaded: &cyber_server::runtime::instructions::Instructions
         Status::Warn
     };
     check("instructions", status, detail)
+}
+
+/// The warning names `path` as its subject (`<path>: ...` or `<path> resolves ...`),
+/// so it only repeats that withheld definition.
+fn repeats(warning: &str, path: &str) -> bool {
+    warning.strip_prefix(path).is_some_and(|rest| {
+        rest.starts_with(": ")
+            || rest.starts_with(" resolves ")
+            || rest.starts_with(" is not allowed ")
+    })
 }
 
 fn lsp_checks(ctx: &Context, config: &Value) -> Vec<Check> {
@@ -266,17 +277,45 @@ fn lsp_detail(installed: bool, disabled: bool, auto_install: bool) -> &'static s
     }
 }
 
-async fn catalog_checks(ctx: &Context, config: &Value) -> Vec<Check> {
+/// `--network`: the proxy settings, then one probe per usable provider and the update
+/// channel.
+async fn network_checks(ctx: &Context) -> Vec<Check> {
+    let config = ctx.config().map(|c| c.value).unwrap_or(Value::Null);
+    let mut checks = vec![network::proxy(&ctx.env)];
+    match load_catalog(ctx, &config).await {
+        Ok((_, catalog)) => {
+            checks.extend(network::probe_all(network::targets(&catalog, &config, &ctx.env)).await);
+        }
+        Err(failed) => checks.push(failed),
+    }
+    checks
+}
+
+/// The catalog as the app builds it for this Location, without fetching.
+async fn load_catalog(ctx: &Context, config: &Value) -> Result<(Origin, Catalog), Check> {
     let mut source = SourceOptions::from_env(&ctx.env, &ctx.paths.cache);
     source.allow_fetch = false;
     let Ok(loaded) = load_source(&source).await else {
-        return vec![check(
+        return Err(check(
             "catalog",
             Status::Fail,
             "no model catalog could be loaded",
-        )];
+        ));
     };
-    let freshness = match loaded.origin {
+    let catalog = Catalog::build(&BuildInputs {
+        data: &loaded.data,
+        config,
+        env: &ctx.env,
+    });
+    Ok((loaded.origin, catalog))
+}
+
+async fn catalog_checks(ctx: &Context, config: &Value) -> Vec<Check> {
+    let (origin, catalog) = match load_catalog(ctx, config).await {
+        Ok(loaded) => loaded,
+        Err(failed) => return vec![failed],
+    };
+    let freshness = match origin {
         Origin::FreshCache | Origin::Fetched | Origin::Path => {
             check("catalog", Status::Pass, "fresh")
         }
@@ -291,11 +330,6 @@ async fn catalog_checks(ctx: &Context, config: &Value) -> Vec<Check> {
             "using the bundled snapshot; run `cyber models refresh`",
         ),
     };
-    let catalog = Catalog::build(&BuildInputs {
-        data: &loaded.data,
-        config,
-        env: &ctx.env,
-    });
     vec![freshness, credentials(&catalog)]
 }
 

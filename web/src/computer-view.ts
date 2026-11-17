@@ -1,4 +1,4 @@
-import type { ComputerControls, NativeReport } from "./computer.js";
+import { capabilitySummary, type ComputerControls, type NativeReport } from "./computer.js";
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, text = ""): HTMLElementTagNameMap[K] { const element = document.createElement(tag); element.textContent = text; return element; }
 function button(label: string, action: () => void, disabled = false): HTMLButtonElement { const element = node("button", label); element.type = "button"; element.className = "button"; element.disabled = disabled; element.addEventListener("click", action); return element; }
 function checkbox(label: string, checked: boolean, action: (value: boolean) => void): HTMLElement { const wrap = node("label"); const input = node("input"); input.type = "checkbox"; input.checked = checked; input.addEventListener("change", () => action(input.checked)); wrap.append(input, document.createTextNode(label)); return wrap; }
@@ -26,7 +26,9 @@ export function computerBanner(model: ComputerControls): HTMLElement | undefined
 function healthControls(details: HTMLElement, model: ComputerControls, report: NativeReport): void {
   const health = report.health;
   const message = !report.enabled ? "Disabled. Enable computer_use in trusted global configuration and restart the server." : !health.supported ? `Unsupported: requires ${health.minimum_version}; host is ${health.platform}.` : `Screen Recording: ${health.screen_capture ? "granted" : "missing"}; Accessibility: ${health.accessibility ? "granted" : "missing"}.`;
-  details.append(node("p", message), node("p", `Running server binary: ${health.binary}`));
+  details.append(node("p", message));
+  const capability = capabilitySummary(health); if (capability) details.append(node("p", capability));
+  details.append(node("p", `Running server binary: ${health.binary}`));
   if (!report.enabled || !health.supported) return;
   details.append(button("Request OS consent (opens prompts on the host)", () => { void model.setup(); }, model.busy));
   const input = node("input"); input.value = model.selector; input.placeholder = "com.apple.TextEdit"; input.setAttribute("aria-label", "Application bundle ID or display ID"); input.dataset.focus = "computer-target"; input.addEventListener("input", () => { model.selector = input.value; });
@@ -40,7 +42,9 @@ function captureEvidence(details: HTMLElement, model: ComputerControls): void {
 }
 function targetReview(details: HTMLElement, model: ComputerControls): void {
   const preview = model.preview; if (!preview) return;
-  details.append(node("p", preview.warning), node("pre", JSON.stringify(preview.target, null, 2)), node("p", `Review expires ${new Date(preview.expires_at).toLocaleTimeString()}. Grant lasts ${model.ttl} seconds.`));
+  details.append(node("p", preview.warning));
+  if (preview.evidence) details.append(node("p", `Support evidence for this host: ${preview.evidence}`));
+  details.append(node("pre", JSON.stringify(preview.target, null, 2)), node("p", `Review expires ${new Date(preview.expires_at).toLocaleTimeString()}. Grant lasts ${model.ttl} seconds.`));
   if (preview.unknown_operations.length) { details.append(node("pre", JSON.stringify(preview.unknown_operations, null, 2)), checkbox("I checked these unresolved operations on the host; they may already have happened", model.acknowledgeUnknown, (value) => { model.acknowledgeUnknown = value; model.changed(); })); }
   details.append(checkbox("I reviewed this exact target and authorize native capture/input", model.reviewed, (value) => { model.reviewed = value; model.changed(); }), button("Arm reviewed target", () => { void model.allow(); }, !model.canAllow));
 }

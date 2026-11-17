@@ -25,6 +25,14 @@
 - **AND** it lists each assumption that can make the estimate differ: tool schemas taken from the last request, a changed model, a pending Epoch rebuild, sources changed on disk, and excluded turn-only instructions
 - **AND** before any request is prepared the next-request estimate is absent rather than omitting tool schemas silently
 
+#### Scenario: Hook context and queued updates in inspection
+- **GIVEN** a Session whose conversation holds hook `additional_context`, while background hook context waits for the next Safe Boundary and a compaction was requested during a turn
+- **WHEN** an owner inspects context
+- **THEN** committed hook context is reported as its own source with origin `hook`, apart from the history estimate, until compaction summarizes it
+- **AND** the queued hook context is reported as a pending update with its count and estimated tokens and is included in the next-request estimate
+- **AND** the requested compaction is reported as pending and listed as a next-request assumption
+- **AND** inspection never returns hook context text
+
 #### Scenario: Delivered rules with changed or revoked approval
 - **GIVEN** scoped rules delivered in the current Context Epoch
 - **WHEN** one rule's checkout approval is withdrawn and an owner inspects context
