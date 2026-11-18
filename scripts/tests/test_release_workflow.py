@@ -1,7 +1,10 @@
 """`.github/workflows/release.yml` (`installation-upgrade` → Release targets "Not on pull
 requests"), checked as text: YAML 1.1 parsers read the `on` key as a boolean."""
 
+import json
 import re
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -10,6 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import release_assets as ra  # noqa: E402
 
 WORKFLOW = ra.ROOT / ".github" / "workflows" / "release.yml"
+CI = ra.ROOT / ".github" / "workflows" / "ci.yml"
+BUILD_TARGETS = ra.ROOT / ".github" / "build-targets.json"
+
+
+def build_targets() -> list[dict]:
+    """The CI build matrix (`ci.yml` → platforms), before the pull-request filter."""
+    return json.loads(BUILD_TARGETS.read_text())
 
 
 def top_level_block(text: str, key: str) -> str:
@@ -55,13 +65,34 @@ class ReleaseWorkflow(unittest.TestCase):
         sign = publish[publish.index("name: Sign") :]
         self.assertLess(sign.index("shopt -s nullglob"), sign.index("dist/*.zip"))
 
-    def test_ci_builds_every_release_target_on_pull_requests(self):
+    def test_ci_builds_every_release_target(self):
         """Regression: a target only the release builds fails after the tag is pushed."""
-        ci = (ra.ROOT / ".github" / "workflows" / "ci.yml").read_text()
-        platforms = jobs(ci)["platforms"]
-        targets = re.findall(r"^\s+target: ([a-z0-9_-]+)$", platforms, re.M)
-        self.assertEqual(targets, ra.ALL_TARGETS)
+        platforms = jobs(CI.read_text())["platforms"]
+        self.assertIn("include: ${{ fromJSON(needs.changes.outputs.platforms) }}", platforms)
         self.assertIn("--release --workspace --bins", platforms)
+        self.assertEqual([e["target"] for e in build_targets()], ra.ALL_TARGETS)
+
+    def test_pull_requests_skip_only_intel_mac(self):
+        """macOS Intel runners queue for hours, so only that target waits for main."""
+        later = [e["target"] for e in build_targets() if e.get("post_merge_only")]
+        self.assertEqual(later, ["x86_64-apple-darwin"])
+
+    @unittest.skipUnless(shutil.which("jq"), "jq not installed")
+    def test_ci_filter_drops_intel_mac_on_pull_requests_only(self):
+        changes = jobs(CI.read_text())["changes"]
+        program = re.search(r"jq -c --arg event \"\$EVENT\" '([^']+)' \.github/build-targets\.json", changes)
+        self.assertTrue(program, "the changes job does not filter .github/build-targets.json")
+
+        def matrix(event: str) -> list[dict]:
+            out = subprocess.run(["jq", "-c", "--arg", "event", event, program[1], str(BUILD_TARGETS)],
+                                 capture_output=True, text=True, check=True).stdout
+            return json.loads(out)
+
+        on_main = matrix("push")
+        self.assertEqual([e["target"] for e in on_main], ra.ALL_TARGETS)
+        self.assertTrue(all("post_merge_only" not in e for e in on_main))
+        self.assertEqual([e["target"] for e in matrix("pull_request")],
+                         [t for t in ra.ALL_TARGETS if t != "x86_64-apple-darwin"])
 
     def test_actions_are_pinned_by_commit(self):
         uses = re.findall(r"uses: (\S+)", self.text)

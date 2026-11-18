@@ -30,6 +30,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-15, macos-15-intel]
+        # macOS Intel runners queue for hours: pull requests skip them, main and
+        # workflow_dispatch still run them.
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'macos-15-intel' || 'none' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
