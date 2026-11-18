@@ -217,7 +217,7 @@ fn print_status(
 }
 
 fn refreshed(at: Option<i64>) -> String {
-    at.and_then(|ms| chrono::DateTime::from_timestamp_millis(ms))
+    at.and_then(chrono::DateTime::from_timestamp_millis)
         .map_or_else(|| "never".into(), |time| time.to_rfc3339())
 }
 
