@@ -31,7 +31,7 @@ It SHALL also exclude by default:
 - files larger than `repo_map.max_file_bytes`;
 - files with a NUL byte in their first 8 KiB.
 
-Each excluded file SHALL keep one reason: `ignored`, `default_exclude`, `generated`, `vendored`, `too_large`, `binary` or `config_exclude`. Symlinks whose canonical target is outside the Location SHALL NOT be followed.
+Each excluded file SHALL keep one reason: `default_exclude`, `generated`, `vendored`, `too_large`, `binary` or `config_exclude`. Files hidden by ignore files are not walked, so they are not recorded. A default-excluded directory that no `include` glob can reach SHALL NOT be descended; it is recorded once, as its path with a trailing `/`, under `default_exclude`. Symbolic links SHALL NOT be followed, so no link reaches outside the Location.
 
 #### Scenario: Generated protobuf skipped
 - **WHEN** the Location contains `api/user.pb.go` and `api/user.go`
@@ -54,7 +54,9 @@ Each excluded file SHALL keep one reason: `ignored`, `default_exclude`, `generat
 - Comments and docstrings SHALL NOT be part of a signature.
 
 **References:**
+- A query's `@reference.<kind>` captures (calls, type names, imported names) SHALL be the file's references; local variables and parameters are not references.
 - For a language whose query has no reference captures, identifier leaf nodes whose text equals a defined name SHALL count as references.
+- A definition's own name SHALL NOT count as a reference.
 
 **Files without symbols:**
 - Files in other languages SHALL be indexed by path only, with no symbols.
@@ -134,13 +136,13 @@ The index SHALL NOT be written inside the checkout or into the session store.
 
 **Edges:**
 - For each name `x` that file A references and file B defines, with A different from B, there SHALL be one edge from A to B with weight `m(x) × sqrt(number of references to x in A)`.
-- `m(x)` SHALL be 1.0, multiplied by 10 when `x` is a focus symbol, by 0.1 when `x` starts with `_` and by 0.1 when `x` is defined in more than 5 files.
+- `m(x)` SHALL be 1.0, multiplied by 10 when `x` is a focus symbol, by 10 when `x` is distinctive (at least 8 characters, in snake_case or camelCase), by 0.1 when `x` starts with `_`, by 0.1 when `x` is defined in more than 5 files and by 0.1 when `x` is ubiquitous (referenced from at least 20 files and more than 5% of the indexed files).
 - Names shorter than 3 characters, and names defined in more than 200 files, SHALL be ignored.
 - At most 2 000 000 edges SHALL be kept, dropping the lowest-weight names first.
 
 **Personalization:**
-- Weight 1.0 for each focus path, and 0.5 for each of the Session's 20 most recently read or edited distinct paths.
-- A uniform vector when there are neither.
+- Weight 1.0 for each focus path and each file defining a focus symbol, and 0.5 for each file referencing a focus symbol and each of the Session's 20 most recently read or edited distinct paths; a file takes its largest weight.
+- A uniform vector when there are none of these.
 
 **PageRank:**
 - Damping SHALL be 0.85, with at most 100 iterations, stopping when the L1 change is below 1e-6.
@@ -165,7 +167,7 @@ The index SHALL NOT be written inside the checkout or into the session store.
 
 **Format:**
 - The system SHALL render a map as one `<path>:` line per file, followed by one `  <line>: <signature>` row per selected definition in line order.
-- Files SHALL be ordered by their best definition rank.
+- Files SHALL be ordered by their best definition rank, except that definitions of focus-path files come before all others.
 - A selected member SHALL be preceded by its enclosing container's row when that row is not itself selected, indented 4 spaces per nesting level, up to 2 levels.
 - Files without selected rows SHALL follow under `other files:`, one path per line, in file rank order, while budget remains.
 - Paths SHALL be Location-relative with forward slashes.
@@ -180,7 +182,7 @@ The index SHALL NOT be written inside the checkout or into the session store.
 
 #### Scenario: Container line shown
 - **WHEN** method `start` of `impl Server` in `src/server/mod.rs` is selected but the `impl Server` row is not
-- **THEN** the output shows the `impl Server {` row and then `start` indented 4 spaces under it
+- **THEN** the output shows the `88: impl Server` row and then `start` indented 4 spaces under it
 
 ### Requirement: repo_map tool
 (P1) The `repo_map` tool SHALL accept these arguments:
