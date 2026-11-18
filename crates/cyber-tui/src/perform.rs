@@ -1028,7 +1028,8 @@ pub async fn perform_owned(
         | Action::RepoMap(_)
         | Action::LoadUpdate
         | Action::ResumeAtReset
-        | Action::Export(_) => scheduled(client, session, action).await,
+        | Action::Export(_)
+        | Action::ModelPrompt { .. } => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
         | Action::SavePreference { .. }
@@ -1041,7 +1042,7 @@ pub async fn perform_owned(
 }
 
 /// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team`, `/login`
-/// and the update check; and the branch tree (`/tree`, `/label`).
+/// and the update check; the branch tree (`/tree`, `/label`); and `/model <m> <prompt>`.
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Hex(request) => Ok(crate::hex::perform(client, session, request).await),
@@ -1067,6 +1068,11 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),
+        Action::ModelPrompt {
+            model,
+            text,
+            delivery,
+        } => model_prompt(client, session, &model, &text, delivery).await,
         _ => Ok(Msg::Done),
     }
 }
@@ -1221,11 +1227,6 @@ async fn converse(
             delivery,
             chips,
         } => Ok(prompt(client, session, text, chips, delivery, context).await),
-        Action::ModelPrompt {
-            model,
-            text,
-            delivery,
-        } => model_prompt(client, session, &model, &text, delivery).await,
         Action::Subtask(prompt) => {
             crate::admissions::start(
                 client,
