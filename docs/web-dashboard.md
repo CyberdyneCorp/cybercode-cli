@@ -56,6 +56,22 @@ The hostname must resolve to an address on this server. You can instead bind `0.
 
 The separate peer listener does not serve the dashboard and does not accept the owner password. Cyber Account and project-hub membership are separate features and do not authenticate this owner dashboard.
 
+### Local IDE tokens
+
+The owner password is one of two local credentials. The other is a **local IDE token**, a narrower credential for editor clients such as the VS Code extension:
+
+```sh
+cyber ide token create --client vscode   # writes <state>/ide/vscode.token (0600); prints only the ID and expiry
+cyber ide token list                     # ID, client, name, created, expires, last used, revoked
+cyber ide token revoke itk_…             # the next request gets 401 and open event streams close within a second
+```
+
+- A token (`cyi_…`) is sent as `Authorization: Bearer`. The server stores only its SHA-256. It expires after 30 days by default (`--expires 1` to `90`), and each client has one active token: creating another revokes the previous one.
+- It is accepted only on the Unix socket or from a loopback address on the main listener. The peer listener, the collaboration hub, LAN addresses (a TLS `0.0.0.0` bind) and the `auth_token` query parameter refuse it with `401`.
+- It authorizes only the routes an editor chat panel needs: Session list, create and show, prompt, interrupt, Mode and model, messages, events, diff, presence leases, permission and question requests and replies, models and service identity. Every other route answers `403` `ForbiddenError` with `reason: "ide_token_scope"`, and so do minting, listing or revoking tokens, switching to `bypass` or `dont-ask`, and creating a Session with those Modes or with its own rules. Permission rules, Modes, sandbox and trust apply exactly as for the owner.
+- `cyber service password <value>` revokes every IDE token and deletes the token files, because replacing the password is the "credentials may be compromised" action. A server restart does not revoke tokens. Revoked and expired records stay listable for 30 days.
+- The server logs the token's `itk_` ID with each request it authorizes, never the value. `<state>/ide/` is private owner state: model tools and sandboxed commands cannot read it.
+
 Use **Older messages** to browse transcript pages and **Latest messages** to return to live activity. Refresh and lease renewal retain the selected page. If a rewind removes that page, the view returns to the current transcript.
 
 ## Approval and disconnect behavior
