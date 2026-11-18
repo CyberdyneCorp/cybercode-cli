@@ -1,11 +1,19 @@
 ## ADDED Requirements
 
 ### Requirement: Gemini API key
-(P1) The `google` provider SHALL be authorized by a Gemini API key from Google AI Studio, resolved by Credential precedence: `providers.google.api.settings.api_key`, then a stored `google` connection, then `GEMINI_API_KEY`, then `GOOGLE_GENERATIVE_AI_API_KEY`. As for `openai` and `anthropic` under Catalog source integrity, the downloaded catalog SHALL NOT change the `google` endpoint (`https://generativelanguage.googleapis.com/v1beta`) or the variables it reads, and no other catalog provider SHALL read `GEMINI_API_KEY` or `GOOGLE_GENERATIVE_AI_API_KEY`. The user's own `providers.google` configuration MAY change them. `cyber providers login google` SHALL offer only the API key method (masked input) and SHALL validate a new key with `GET <base>/models` before storing it. The key SHALL be redacted from logs, errors and exports like every other provider key.
+(P1) The `google` provider SHALL be authorized by a Gemini API key from Google AI Studio, resolved by Credential precedence: `providers.google.api.settings.api_key`, then a stored `google` connection, then the environment variables `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` and `GOOGLE_API_KEY`, in that order, the first one set winning. As for `openai` and `anthropic` under Catalog source integrity, the downloaded catalog SHALL NOT change the `google` endpoint (`https://generativelanguage.googleapis.com/v1beta`) or the variables it reads, and no other catalog provider SHALL read `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or `GOOGLE_API_KEY`. The user's own `providers.google` configuration MAY change them. `cyber providers login google` SHALL offer only the API key method (masked input) and SHALL validate a new key with `GET <base>/models` before storing it. The key SHALL be redacted from logs, errors and exports like every other provider key.
 
 #### Scenario: Environment key
 - **WHEN** only `GEMINI_API_KEY` is set
 - **THEN** `cyber providers list` shows `google  GEMINI_API_KEY` under `Environment`, and Gemini models are available
+
+#### Scenario: Variable order
+- **WHEN** `GOOGLE_API_KEY` and `GOOGLE_GENERATIVE_AI_API_KEY` are set, `GEMINI_API_KEY` is not, and no key is configured or stored
+- **THEN** the `google` provider uses `GOOGLE_GENERATIVE_AI_API_KEY`, and `cyber providers list` shows `google  GOOGLE_GENERATIVE_AI_API_KEY` under `Environment`
+
+#### Scenario: Generic Google key alone
+- **WHEN** only `GOOGLE_API_KEY` is set
+- **THEN** the `google` provider uses it, and no other catalog provider receives it
 
 #### Scenario: Tampered catalog endpoint
 - **WHEN** a downloaded catalog sets the `google` provider's `api` to another host

@@ -29,8 +29,10 @@ Where we stand (`main` at `386a49cc`):
 ### D1. Protocol, endpoint and authentication
 - `ApiKind::Gemini`, `as_str` `gemini`; `parse` accepts `gemini`, `google` and `google-genai`; `from_npm("@ai-sdk/google")`. `@ai-sdk/google-vertex` stays unmapped (`adapter_unsupported`).
 - `default_url` is `https://generativelanguage.googleapis.com/v1beta`. A configured base URL is normalized: a trailing `/` is removed, and `/v1beta` is appended when the path is empty, so both `https://generativelanguage.googleapis.com` and `…/v1beta/` work. Any other path (a proxy prefix) is kept as written. A non-loopback URL must be `https://`; plain `http://` is accepted only for loopback (tests, local proxies).
+- Key variables, first set wins after config and stored keys: `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `GOOGLE_API_KEY`. `GOOGLE_API_KEY` is generic, so it comes last, and the catalog pinning keeps any other catalog provider from reading it.
 - Request: `POST {base}/models/{api_id}:streamGenerateContent?alt=sse`. The key goes in `x-goog-api-key`, never in the query string, so it cannot appear in a logged URL. No redirects are followed (existing P0 rule).
 - `generateContent` is stateless, which matches our full-history replay; nothing is stored server side.
+- **Experimental gate.** The feature registry entry `gemini` (maturity `experimental`, off by default) gates the protocol until the live coding baseline from "Additional native provider adapters" is published. While it is off, `gemini`-protocol models are unavailable with the existing reason `experimental` and the hint `enable with features.gemini`. The change that records the baseline moves the entry to `stable`, which turns it on by default.
 - `with_http_client` is implemented, so interruption can verify transport termination as for the other adapters. `prepare_reserved` keeps the default refusal.
 
 ### D2. Request shape
@@ -61,7 +63,8 @@ Where we stand (`main` at `386a49cc`):
   - a reasoning item's signature goes back on the part it came on: the last part of the model content, as `{text, thoughtSignature}` (empty text when it arrived on an empty part);
   - a signed part is never merged with an unsigned one, and two text parts are never concatenated when either is signed.
 - **Profile.** The `gemini` protocol defaults to `reasoning_carrier: gemini_signature`, `reasoning_replay: always`. Google only validates the current turn, but returning every signature keeps the history bytes identical from request to request, which implicit caching needs (D6). `tool_loop` would drop older signatures after each user prompt and change the prefix.
-- **Cross-model history.** Under `session-runtime` → Reasoning lowering, calls from another model carry no Gemini signature. In earlier turns that is accepted. In the current turn (from the latest user message with text content; a `functionResponse` does not start a turn) an unsigned `functionCall` would be a 400 on Gemini 3/4, so the adapter lowers that turn's foreign calls and their responses to text parts (`[tool call <name> <json args>]`, `[tool result <name>] <output>`) before the first native signed call. The documented bypass values (`skip_thought_signature_validator`, `context_engineering_is_the_way_to_go`) are not used: Google discourages them and they hide our own bugs. Config `providers.<p>.models.<m>.profile.signature_bypass: true` is the escape hatch (open decision O3).
+- **Cross-model history.** Under `session-runtime` → Reasoning lowering, calls from another model carry no Gemini signature. In earlier turns that is accepted. In the current turn (from the latest user message with text content; a `functionResponse` does not start a turn) an unsigned `functionCall` would be a 400 on Gemini 3/4, so the adapter lowers that turn's foreign calls and their responses to text parts (`[tool call <name> <json args>]`, `[tool result <name>] <output>`) before the first native signed call. The documented bypass values (`skip_thought_signature_validator`, `context_engineering_is_the_way_to_go`) are not used by default: Google discourages them and they hide our own bugs.
+- **`signature_bypass`.** A per-model profile option (`providers.<p>.models.<m>.profile.signature_bypass`), `false` by default and documented as discouraged. When `true`, those foreign current-turn calls are sent as `functionCall` parts with `thoughtSignature: "skip_thought_signature_validator"` instead of text, and one `warn` line per Session names the model and the option. It exists for users whose tool loops depend on structured calls surviving a model switch.
 - Gemini 2.5 does not require signatures; the same code path runs, and nothing is lowered for 2.5 because a missing signature is accepted there.
 
 ### D4. Thinking
@@ -94,7 +97,11 @@ Classification, first match wins:
 
 `QuotaExceeded` is already a reason the fallback chain moves on for. The messages above are what the TUI and `exec` show.
 
-**Retry wait cap.** `RetryPolicy.retry_after_cap` becomes per provider: `providers.<p>.retry.max_wait_ms`, default 60,000, and 240,000 for the `gemini` protocol. When the advised delay is longer than the cap, the step does not wait a shortened time (that retries before the window opens and spends an attempt); it fails at once with that `RateLimit` error, so the fallback chain or the usage limit wait can take over.
+**Retry wait cap.** `RetryPolicy.retry_after_cap` becomes per provider: `providers.<p>.retry.max_wait_ms`, default 60,000, and 240,000 for the `gemini` protocol. When the advised delay is longer than the cap, the step never waits a shortened time (that retries before the window opens and spends an attempt). What happens instead depends on whether anyone is waiting for the answer:
+- **Interactive Session:** fail at once with the `RateLimit` error naming the advised delay, so the fallback chain applies and the user can decide.
+- **Unattended run:** wait the full advised delay, then retry. The wait is one Retry policy attempt, announced by `session.retry` with the full delay. It is bounded by `usage_limit.max_wait` (default 6 h) and by every wall deadline of the Session (Goal, loop iteration, Workflow Run); a wait that would cross either fails at once instead.
+
+**Unattended** reuses the existing definition so there is one notion in the product: `usage_limit.mode` is `always`, or it is `unattended` (default) and the Session is unattended under `session-runtime` → Usage limit wait (non-interactive server, `unattended: true` as `cyber exec` sets it, Workflow agent, active Goal, loop iteration in flight, non-lead team member, or a subagent of an unattended parent). In addition, a Session running as a background Job (`kind` `subagent` or `workflow`) counts as unattended for this rule, since nobody watches it directly and its parent is not blocked. `usage_limit.mode: never` turns the full wait off everywhere. The rule lives in `retry.rs`, which receives an `unattended` flag and the deadline from the runtime; the adapter only reports `retry_after`.
 
 ### D6. Usage and implicit caching
 `usageMetadata` arrives on the last chunk (and sometimes on earlier ones; the last one wins):
@@ -109,7 +116,7 @@ Implicit caching hits when a request shares a long prefix with a recent one. The
 ### D7. Tool declarations
 - Each tool is a `functionDeclaration` with `parametersJsonSchema`, which takes JSON Schema as written. The OpenAPI-subset `parameters` field is not used.
 - Before sending, keys Gemini rejects or ignores (`$schema`, `$id`, `examples`, `default` on objects) are removed; `$defs`/`$ref` are kept.
-- Schema size and nesting limits are not published as numbers; an oversized declaration answers 400 `INVALID_ARGUMENT`. The error is `InvalidRequest` naming the tool when known. Mitigation, documented in the guide: turn on MCP tool search (deferred tool loading) or disable large MCP servers for Gemini agents. Automatic schema shrinking is not done in the MVP (open decision O5).
+- Schema size and nesting limits are not published as numbers; an oversized declaration answers 400 `INVALID_ARGUMENT`. The error is `InvalidRequest` naming the tool when known. Mitigation, documented in the guide: turn on MCP tool search (deferred tool loading) or disable large MCP servers for Gemini agents. Tool schemas and descriptions are never shrunk or rewritten automatically; MCP tool search is the supported mitigation. Automatic shrinking is a possible follow-up only.
 - Tool names already satisfy Gemini's `^[a-zA-Z_][a-zA-Z0-9_.:-]{0,63}$`-style limit through the registry's name rules; a name that does not is an `InvalidRequest` before sending.
 
 ### D8. Finish reasons and safety
@@ -129,10 +136,13 @@ Implicit caching hits when a request shares a long prefix with a recent one. The
 - **Idle window.** `Endpoint.idle_timeout` defaults to 600 s for the `gemini` protocol (300 s elsewhere); `providers.<p>.timeout.idle_ms` still overrides it. Gemini sends no keep-alive while thinking, and high-effort answers can be silent for more than 5 minutes.
 - **Stale connection.** When sending fails before any response header because a pooled connection was closed or reset (HTTP/2 `GOAWAY`, connection reset, broken pipe on write), the request is sent once more at once on a new connection. That resend is not a Retry policy attempt and publishes no `session.retry`; a second such failure is an ordinary `Transport` failure. Waiting for headers is covered by the existing request timeout and is retried as `Transport`.
 
-### D10. Vertex AI (later phase, note only)
+### D10. Default model
+Default model resolution falls back to "the newest available tool-capable model of a provider with a credential" (`catalog/roles.rs` → `default_model`). For `google` that could select a lightweight or special-purpose model, so the `google` provider contributes only its Pro tier to that step: API IDs containing `-pro`, plus a built-in tier rule list for models whose names carry no tier. Gemini 4 names have no tier (`gemini-4-carbon`, `-argon`, `-hydrogen`); AI Studio describes Carbon as the strongest reasoning model, so the list starts with `gemini-4-carbon`. Within that set the choice is unchanged: newest `released_at`, ties by ID. With no available Pro-tier model, the provider's other tool-capable models take part. Configured, recent and explicit choices are unaffected.
+
+### D11. Vertex AI (later phase, note only)
 Vertex serves the same `generateContent` body at `https://{location}-aiplatform.googleapis.com/v1/projects/{p}/locations/{l}/publishers/google/models/{m}:streamGenerateContent?alt=sse`, authorized by an OAuth access token from Application Default Credentials (`provider-credentials` → cloud IAM chain). The adapter keeps request building, decoding and error parsing independent of the URL and auth header, so a `google-vertex` protocol can reuse them with a different `Endpoint` and token source. Not in this change.
 
-### D11. Interactions API (future option)
+### D12. Interactions API (future option)
 The Interactions API keeps state server side (`store: true`) or returns `thought` steps to resend. It would cut request size on long Sessions, but it duplicates our event-sourced history, complicates fork, rewind and compaction, and is not needed for correctness. Revisit if request size or latency on long Sessions becomes a problem.
 
 ## Provenance
@@ -150,11 +160,10 @@ Clean-room. Behaviour comes from Google's public documentation and the Antigravi
 
 No data migration. Sessions that ran Gemini through an OpenAI-compatible provider keep signatures stamped with that provider's id. Native state goes back only to the same provider and model, so switching such a Session to `google/<model>` lowers its earlier reasoning to text, and the current turn's calls follow the cross-model rule in D3.
 
-## Open decisions (owner)
+## Follow-ups
 
-- **O1. Provider id and variables.** Use models.dev's `google` id, reading `GEMINI_API_KEY` then `GOOGLE_GENERATIVE_AI_API_KEY`. Should `GOOGLE_API_KEY` also be read (Gemini CLI does), at the risk of picking up a key meant for another Google API?
-- **O2. Retry cap.** 240 s for Gemini, and failing at once when the advised delay is longer. Alternative: wait the full advised delay for unattended runs (`exec`, Goals) only.
-- **O3. Signature bypass.** Keep the documented bypass value off with only a profile escape hatch (proposed), or drop the escape hatch entirely.
-- **O4. Default model.** Whether a `google` key alone should make a Gemini model the default when no OpenAI/Anthropic key is present, and which one.
-- **O5. Schema shrinking.** Whether to add automatic description trimming for oversized tool schemas later, or rely on MCP tool search.
-- **O6. Release gate.** The existing P1 requirement requires a published live coding baseline before Gemini is listed as supported. Ship behind "experimental" until that baseline exists, or hold the release.
+- Automatic shrinking of oversized tool schemas, if MCP tool search proves insufficient (D7).
+- Vertex AI with Application Default Credentials (D11).
+- The Interactions API (D12).
+- Planner/executor routing through model roles and the fallback chain.
+- Moving the `gemini` feature to `stable` once the live coding baseline is published (task 6.3).

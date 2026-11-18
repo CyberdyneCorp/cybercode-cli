@@ -12,23 +12,25 @@ The compatible endpoint is a lossy translation layer for an agent loop:
 
 ## What Changes
 
-- **New protocol `gemini`** (`provider-catalog`, added "Gemini API adapter"). `ApiKind::Gemini` (`gemini`, aliases `google` and `google-genai`), mapped from the models.dev package `@ai-sdk/google`. The adapter streams `POST {base}/models/{model}:streamGenerateContent?alt=sse` with the key in `x-goog-api-key`, replays the full history statelessly (as every other adapter does), and decodes through the shared `decode_sse` with a new `Decoder`.
-- **Thought signatures** (`provider-catalog`, added "Gemini thought signatures"). Signatures are stored as `OpaqueKind::Signature` on the call (`Content::ToolCall.opaque`) or on a reasoning item, returned byte-exact in the same part, never merged across parts, with the parallel-call order `FC1(+sig), FC2, FR1, FR2`. History from another model is sent as text; the documented bypass value is not used by default.
+- **New protocol `gemini`** (`provider-catalog`, added "Gemini API adapter"). `ApiKind::Gemini` (`gemini`, aliases `google` and `google-genai`), mapped from the models.dev package `@ai-sdk/google`. The adapter streams `POST {base}/models/{model}:streamGenerateContent?alt=sse` with the key in `x-goog-api-key`, replays the full history statelessly (as every other adapter does), and decodes through the shared `decode_sse` with a new `Decoder`. It ships behind the experimental feature `gemini` (off by default) until the live coding baseline is published.
+- **Thought signatures** (`provider-catalog`, added "Gemini thought signatures"). Signatures are stored as `OpaqueKind::Signature` on the call (`Content::ToolCall.opaque`) or on a reasoning item, returned byte-exact in the same part, never merged across parts, with the parallel-call order `FC1(+sig), FC2, FR1, FR2`. History from another model is sent as text. The documented bypass placeholder is used only when a model's profile sets `signature_bypass: true`, an option that is off by default and documented as discouraged.
 - **Thinking configuration** (`provider-catalog`, added "Gemini thinking configuration"). Effort maps to `thinkingLevel` on Gemini 3+/4 and a budget maps to `thinkingBudget` on 2.5, never both; thinking stays on where it cannot be turned off; `maxOutputTokens` defaults to the model limit, at most 65,535.
-- **Errors and quota** (`provider-catalog`, added "Gemini error and quota classification"). Parse `google.rpc` `ErrorInfo`, `QuotaFailure` and `RetryInfo`: per-minute and capacity limits wait the server's delay (up to a per-provider cap of 240 s) and retry; daily or weekly quotas, spend caps and 402 prepaid balance stop at once with a clear message. A per-provider `retry.max_wait_ms` replaces the fixed 60 s cap for this protocol.
+- **Errors and quota** (`provider-catalog`, added "Gemini error and quota classification"). Parse `google.rpc` `ErrorInfo`, `QuotaFailure` and `RetryInfo`: per-minute and capacity limits wait the server's delay (up to a per-provider cap of 240 s) and retry; daily or weekly quotas, spend caps and 402 prepaid balance stop at once with a clear message. A per-provider `retry.max_wait_ms` replaces the fixed 60 s cap for this protocol. When the server asks for longer than the cap, an interactive Session fails at once, and an unattended run (`exec`, workflows, background Jobs, Goals, loops) waits the full delay within `usage_limit.max_wait` and its wall deadlines.
 - **Finish reasons and safety** (`provider-catalog`, added "Gemini finish reasons and safety blocks").
 - **Usage and implicit caching** (`provider-catalog`, added "Gemini usage and implicit caching").
-- **Tool declarations** (`provider-catalog`, added "Gemini tool declarations"): `parametersJsonSchema`, deterministic order, a clear error when a schema is too large.
+- **Tool declarations** (`provider-catalog`, added "Gemini tool declarations"): `parametersJsonSchema`, deterministic order, a clear error when a schema is too large, with MCP tool search as the mitigation; no automatic schema shrinking.
 - **Stream resilience** (`provider-catalog`, added "Gemini stream resilience"): a 600 s idle default for this protocol, and one immediate retry on a fresh connection when a pooled HTTP/2 connection turns out stale.
-- **Credentials** (`provider-credentials`, added "Gemini API key" and "Google subscription login refused"). `GEMINI_API_KEY`, then `GOOGLE_GENERATIVE_AI_API_KEY`, or config/stored key; the `google` provider's endpoint is pinned like `openai`/`anthropic`; `/login google` stays refused, and the reason is recorded.
+- **Credentials** (`provider-credentials`, added "Gemini API key" and "Google subscription login refused"). Config or a stored key, then `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` and `GOOGLE_API_KEY`, in that order; the `google` provider's endpoint is pinned like `openai`/`anthropic`; `/login google` stays refused, and the reason is recorded.
+- **Default model** (`provider-catalog`, added "Gemini default model choice"). With only a Google key, the default is the newest available Gemini Pro-tier model, chosen by the same newest-`released_at` rule as for other providers.
 - **Profile defaults.** The `gemini` protocol defaults to `reasoning_carrier: gemini_signature` and `reasoning_replay: always`, so the prefix stays byte-stable for implicit caching; the `gemini-3`/`gemini-4` name rules for the compatible path stay as they are.
 
 ## Non-goals (follow-up changes)
 
-- **Vertex AI and Application Default Credentials.** Same wire format at a different host with OAuth access tokens; design note only (design.md D10). It belongs with the planned `google-vertex` adapter.
+- **Vertex AI and Application Default Credentials.** Same wire format at a different host with OAuth access tokens; design note only (design.md D11). It belongs with the planned `google-vertex` adapter.
 - **Consumer subscriptions.** Google AI Pro/Ultra, Gemini Code Assist for individuals and Antigravity OAuth stay refused (see "Google subscription login refused").
 - **Explicit context caching** (`cachedContents`). It is not offered on Gemini 4; implicit caching covers the MVP.
-- **The Interactions API.** Server-side state does not fit our full-history replay and event-sourced Sessions. Recorded as a future option (design.md D11).
+- **The Interactions API.** Server-side state does not fit our full-history replay and event-sourced Sessions. Recorded as a future option (design.md D12).
+- **Automatic tool-schema shrinking.** Not done; MCP tool search is the mitigation. A possible follow-up.
 - **Planner/executor routing** like the Antigravity Orchestrator. If wanted, it is a follow-up on top of model roles and the fallback chain, not part of an adapter.
 - **Reserved budgets.** `prepare_reserved` keeps refusing for this protocol, as for every adapter except OpenAI Responses.
 - Gemini Live, image/audio/video output, code execution, Google Search grounding and URL context tools.
@@ -43,7 +45,7 @@ None.
 
 All requirements are ADDED. No existing requirement is modified, so this change cannot conflict with open changes.
 
-- `provider-catalog`: "Gemini API adapter", "Gemini thought signatures", "Gemini thinking configuration", "Gemini error and quota classification", "Gemini finish reasons and safety blocks", "Gemini usage and implicit caching", "Gemini tool declarations" and "Gemini stream resilience". They implement the Gemini part of "Additional native provider adapters".
+- `provider-catalog`: "Gemini API adapter", "Gemini thought signatures", "Gemini thinking configuration", "Gemini error and quota classification", "Gemini finish reasons and safety blocks", "Gemini usage and implicit caching", "Gemini tool declarations", "Gemini default model choice" and "Gemini stream resilience". They implement the Gemini part of "Additional native provider adapters".
 - `provider-credentials`: "Gemini API key" and "Google subscription login refused".
 
 ## Impact
@@ -53,6 +55,7 @@ All requirements are ADDED. No existing requirement is modified, so this change 
   - `error.rs`: a Gemini error parser feeding the existing `ErrorKind`s; `retry.rs`: per-provider `retry_after_cap`.
   - `catalog/profile.rs` (protocol defaults), `catalog/credentials.rs` and the catalog source integrity check (pinned `google` endpoint and variables), `catalog/family.rs` unchanged.
   - `scripts/refresh_models_snapshot.py` (`@ai-sdk/google` in `SUPPORTED_NPM`) and a refreshed `snapshot/models.json.gz`.
+  - The feature registry (`gemini`, experimental), `catalog/roles.rs` (`default_model` Pro-tier filter) and the runtime's retry path (unattended full wait).
   - `crates/cyber-tui/src/login.rs`: the refusal text no longer says Gemini awaits an adapter.
 - **Data:** none new. Signatures use the existing optional `opaque` fields of `session.tool.called.1` and `session.reasoning.ended.1`.
 - **API, SDK and CLI:** `api.type: "gemini"` becomes valid in `providers`; `cyber models` lists `google/*`. No new route or event.

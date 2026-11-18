@@ -1,7 +1,3 @@
-## 0. Owner decisions
-
-- [ ] 0.1 Settle design.md → Open decisions O1–O6 (extra key variable, retry cap behaviour, signature bypass escape hatch, default model, schema shrinking, release gate) before section 2.
-
 ## 1. Protocol and catalog
 
 - [ ] 1.1 `ApiKind::Gemini` in `crates/cyber-llm/src/adapters/mod.rs`: `parse` (`gemini`, `google`, `google-genai`), `from_npm("@ai-sdk/google")`, `default_url`, `as_str`, and the `adapter()` arm.
@@ -10,15 +6,19 @@
   - Unit tests: "Base URL with a version suffix", "Plain HTTP to a remote host", a proxy prefix kept as written.
 - [ ] 1.3 Add `@ai-sdk/google` to `SUPPORTED_NPM` in `scripts/refresh_models_snapshot.py`; refresh `crates/cyber-llm/snapshot/models.json.gz`.
   - Test in `tests/catalog.rs`: the snapshot lists `google` models and they resolve to `ApiKind::Gemini`.
-- [ ] 1.4 Profile defaults in `catalog/profile.rs`: the `gemini` protocol gets `reasoning_carrier: gemini_signature`, `reasoning_replay: always`; add `thinking_param` and `signature_bypass` profile fields with config overrides. Keep the `gemini-3` (and, once PR #144 lands, `gemini-4`) compatible-path rules unchanged.
+- [ ] 1.4 Feature registry entry `gemini` (maturity `experimental`, off by default); while off, `gemini`-protocol models are unavailable with reason `experimental` and the hint `enable with features.gemini`.
+  - Tests: "Experimental feature off", "Key enables Gemini once the feature is on", `cyber features list` shows `gemini experimental off (default)`.
+- [ ] 1.5 Default model choice in `catalog/roles.rs`: the `google` provider contributes only Pro-tier models (`-pro` IDs plus the built-in tier list, starting with `gemini-4-carbon`) to the newest-model step, falling back to its other tool-capable models when none is available.
+  - Tests: "Only a Google key", "Configured model wins", and an unchanged choice when OpenAI and Anthropic keys are present.
+- [ ] 1.6 Profile defaults in `catalog/profile.rs`: the `gemini` protocol gets `reasoning_carrier: gemini_signature`, `reasoning_replay: always`; add `thinking_param` and `signature_bypass` (default `false`) profile fields with config overrides. Keep the `gemini-3` (and, once PR #144 lands, `gemini-4`) compatible-path rules unchanged.
   - Tests: the native and compatible profiles for the same model ID differ only where intended.
 
 ## 2. Adapter: requests
 
 - [ ] 2.1 `adapters/gemini.rs`: request builder (`systemInstruction`, `contents`, `inlineData`, `functionCall`/`functionResponse` with ids, `toolConfig`, `generationConfig`), `x-goog-api-key` header, `stream`, `with_http_client`; `prepare_reserved` keeps the default refusal.
   - Golden request fixtures in `tests/adapters.rs` pinning the exact JSON for: a text Turn, a tool loop, images and a PDF.
-- [ ] 2.2 Thought signature replay: same-part replay, the `FC1(+sig), FC2, FR1, FR2` order, no merge of signed parts, `always` replay, foreign current-turn calls lowered to text, no placeholder unless `signature_bypass`.
-  - Golden fixtures: "Parallel calls keep one signature", "Signature in an empty final part" (replay side), "Model switch inside a tool loop", a sequential two-step loop where both signatures are returned.
+- [ ] 2.2 Thought signature replay: same-part replay, the `FC1(+sig), FC2, FR1, FR2` order, no merge of signed parts, `always` replay, foreign current-turn calls lowered to text, no placeholder unless `signature_bypass`; with it, `skip_thought_signature_validator` on foreign current-turn calls and one `warn` line per Session.
+  - Golden fixtures: "Parallel calls keep one signature", "Signature in an empty final part" (replay side), "Model switch inside a tool loop", a sequential two-step loop where both signatures are returned, "Signature bypass enabled".
 - [ ] 2.3 Thinking: `thinkingLevel` vs `thinkingBudget` by generation and `thinking_param`, budget→level conversion with one `info` line, reasoning off per model, `includeThoughts`, `maxOutputTokens` default and 65,535 ceiling, temperature only when set.
   - Golden fixtures: "Level for Gemini 4", "Budget for Gemini 2.5", "Default output limit"; a test that no request ever holds both fields.
 - [ ] 2.4 Tool declarations with `parametersJsonSchema`, key stripping, deterministic order.
@@ -43,8 +43,8 @@
 - [ ] 4.1 Gemini error body parser (`ErrorInfo`, `QuotaFailure`, `RetryInfo`) and the classification table in design.md D5, in `error.rs` or the adapter, without changing `classify` for other protocols.
   - Fixture tests for each 429 variant (per-minute with `RetryInfo`, per-minute without details, per-day, spend cap), 402 prepaid balance, 400 missing signature, 400 token overflow, 400 schema, 400 `FAILED_PRECONDITION`, 403, 503.
   - Scenario tests: "Per-minute limit waits and recovers", "Daily quota stops at once", "Prepaid balance exhausted".
-- [ ] 4.2 Per-provider `retry_after_cap` (`providers.<id>.retry.max_wait_ms`, 60 s default, 240 s for `gemini`) in `retry.rs`, failing at once when the advised delay is over the cap. Regression test for the old behaviour (shortened wait) on main first, then the fix.
-  - Test "Advised delay beyond the cap"; existing retry tests unchanged.
+- [ ] 4.2 Per-provider `retry_after_cap` (`providers.<id>.retry.max_wait_ms`, 60 s default, 240 s for `gemini`) in `retry.rs`. Over the cap: fail at once in interactive Sessions; in unattended runs wait the full delay as one announced attempt, bounded by `usage_limit.max_wait` and wall deadlines. The runtime passes an `unattended` flag (the `session-runtime` → Usage limit wait definition plus background `subagent`/`workflow` Jobs, honouring `usage_limit.mode`) and the nearest deadline. Regression test for the old behaviour (shortened wait) on main first, then the fix.
+  - Tests: "Advised delay beyond the cap in an interactive Session", "… in exec", "Background subagent Job waits", "Unattended wait past a deadline", "Waiting turned off"; a Workflow agent and a loop iteration wait as in exec; existing retry tests unchanged.
 - [ ] 4.3 600 s idle default for `gemini`; `timeout.idle_ms` still overrides.
   - Test "Long silent thinking" with a paused-clock mock server.
 - [ ] 4.4 One immediate resend on a stale pooled connection, not counted as a retry.
@@ -52,8 +52,8 @@
 
 ## 5. Credentials and login
 
-- [ ] 5.1 Pin the `google` endpoint and key variables in the catalog source integrity check; `GEMINI_API_KEY` then `GOOGLE_GENERATIVE_AI_API_KEY`.
-  - Tests "Environment key", "Tampered catalog endpoint", and another catalog provider declaring `GEMINI_API_KEY` gets no credential.
+- [ ] 5.1 Pin the `google` endpoint and key variables in the catalog source integrity check; `GEMINI_API_KEY`, then `GOOGLE_GENERATIVE_AI_API_KEY`, then `GOOGLE_API_KEY`.
+  - Tests "Environment key", "Variable order", "Generic Google key alone", "Tampered catalog endpoint", and another catalog provider declaring any of the three variables gets no credential.
 - [ ] 5.2 `cyber providers login google`: API key method only, validated with `GET <base>/models`.
   - Tests "API key login accepted", "Invalid Gemini key".
 - [ ] 5.3 Update the `/login google` refusal text in `crates/cyber-tui/src/login.rs` (no longer "await a native Gemini adapter"; point to the AI Studio key) and its test in `crates/cyber-tui/src/tests.rs`.
@@ -68,10 +68,15 @@
   - a forced per-minute 429 (burst requests on a free-tier key) waits the advised delay and recovers; record the quota ids and `RetryInfo` seen;
   - `cachedContentTokenCount` is non-zero by the third request of a Session;
   - the stale-connection resend is exercised by restarting a local proxy between requests.
-- [ ] 6.3 Publish the live coding baseline required by "Additional native provider adapters" (`harness-evaluation`) before Gemini is listed as supported.
+- [ ] 6.3 Publish the live coding baseline required by "Additional native provider adapters" (`harness-evaluation`), then move the `gemini` feature to `stable` in the same change.
 
-## 7. Docs and checks
+## 7. Follow-ups (not in this change)
 
-- [ ] 7.1 `docs/local-core-guide.md`: a "Gemini API" section beside the subscription sections (key setup, base URL, thinking levels and budgets, quota errors and what each message means, the 600 s idle default, the schema-size mitigation, why subscription login is refused).
-- [ ] 7.2 `docs/features.md`: a Models row update for the native Gemini adapter; README provider table, the "no native Gemini adapter yet" sentence and Known gaps; `ROADMAP.md` status.
-- [ ] 7.3 Run the gate: `cargo fmt`, workspace clippy with `-D warnings`, `cargo nextest run --workspace --profile ci`, OpenAPI/SDK/CLI doc checks, `openspec validate --all --strict`, `python3 scripts/spec_lint.py` (0 errors), `python3 scripts/spec_inventory.py` (no diff). Keep cognitive complexity ≤ 15 per function; the decoder's part dispatch is the likely hotspot.
+- Automatic tool-schema shrinking, only if MCP tool search proves insufficient.
+- Vertex AI with Application Default Credentials; the Interactions API; planner/executor routing.
+
+## 8. Docs and checks
+
+- [ ] 8.1 `docs/local-core-guide.md`: a "Gemini API" section beside the subscription sections (key setup, base URL, thinking levels and budgets, quota errors and what each message means, the 600 s idle default, the schema-size mitigation through MCP tool search, the experimental `features.gemini` switch, the key variable order, the unattended full wait, `signature_bypass` as a discouraged option, why subscription login is refused).
+- [ ] 8.2 `docs/features.md`: a Models row update for the native Gemini adapter; README provider table, the "no native Gemini adapter yet" sentence and Known gaps; `ROADMAP.md` status.
+- [ ] 8.3 Run the gate: `cargo fmt`, workspace clippy with `-D warnings`, `cargo nextest run --workspace --profile ci`, OpenAPI/SDK/CLI doc checks, `openspec validate --all --strict`, `python3 scripts/spec_lint.py` (0 errors), `python3 scripts/spec_inventory.py` (no diff). Keep cognitive complexity ≤ 15 per function; the decoder's part dispatch is the likely hotspot.
