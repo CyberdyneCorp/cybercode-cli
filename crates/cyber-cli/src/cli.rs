@@ -310,6 +310,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: crate::commands::collab::CollabCmd,
     },
+    /// Editor integration: local IDE tokens for the VS Code extension.
+    Ide {
+        #[command(subcommand)]
+        cmd: crate::commands::ide::IdeCmd,
+    },
     /// Pair with other machines' cyber servers to message their Sessions.
     Peers {
         #[command(subcommand)]
