@@ -731,6 +731,12 @@ async fn execute_child(
     let mut spawn = spawn;
     let reservation = reserve_child(ctx, &runtime, &parent, &mut spawn).await?;
     let id = spawn.child_id.clone();
+    // A foreground child is this call's work while the call waits for it, so its
+    // requests carry the call's input cohort; the link ends with the call.
+    let _foreground = reservation
+        .as_ref()
+        .filter(|_| !spawn.background)
+        .map(|reservation| reservation.lend_foreground(&id));
     let execution = match execution {
         Some(execution) => execution,
         None => runtime

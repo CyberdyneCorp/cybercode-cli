@@ -10803,7 +10803,7 @@
               "string",
               "null"
             ],
-            "description": "Root Session of a descendant (subagent) request whose every ancestor link is a\nbackground subagent Job with one complete, bounded input cohort."
+            "description": "Root Session of a descendant (subagent) request whose every ancestor link is a\nrunning background subagent Job or a running foreground subagent call with one\ncomplete, bounded input cohort."
           },
           "root_input_message_ids": {
             "type": "array",

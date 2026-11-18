@@ -137,6 +137,18 @@ pub struct JobAdmission {
     _guard: tokio::sync::OwnedMutexGuard<()>,
 }
 
+impl JobAdmission {
+    pub(super) fn origin(&self) -> Option<&JobInputOrigin> {
+        self.input_origin.as_ref()
+    }
+    pub(super) fn parent(&self) -> &str {
+        &self.parent
+    }
+    pub(super) fn runtime(&self) -> WeakRuntime {
+        self.runtime.clone()
+    }
+}
+
 pub(super) struct Control {
     pub(super) stop: CancellationToken,
     pub(super) done: CancellationToken,

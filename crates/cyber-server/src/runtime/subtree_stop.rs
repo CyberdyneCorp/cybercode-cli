@@ -173,6 +173,17 @@ impl Runtime {
         sweep: &str,
     ) -> Result<Vec<String>, RuntimeError> {
         let ids: HashSet<String> = ids.iter().cloned().collect();
+        // Withdraw waiting requests before cancelling: a call held at its permission
+        // request has not run, and receiving the withdrawal first lets it settle as
+        // refused rather than with an unknown outcome. Best effort and bounded, so the
+        // signal always follows; the sweep withdraws again and reports failures.
+        let withdraw = async {
+            for id in &ids {
+                self.inner.abandon_requests(id).await?;
+            }
+            Ok::<_, RuntimeError>(())
+        };
+        let _ = tokio::time::timeout(Duration::from_millis(500), withdraw).await;
         self.inner.signal_subtree(&ids, &self.jobs(None)?);
         let attempt = async {
             for id in &ids {

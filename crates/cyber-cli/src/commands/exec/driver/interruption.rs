@@ -154,7 +154,7 @@ impl Driver<'_> {
         }
         self.answering.retain(|id| self.inputs.contains(id));
         if self.answering.is_empty() {
-            self.step = None;
+            self.set_step(None);
             self.run.retire_driver_answer();
             self.answer_done = false;
         }

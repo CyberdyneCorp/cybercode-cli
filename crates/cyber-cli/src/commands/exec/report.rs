@@ -7,7 +7,7 @@ use std::io::Write;
 use std::time::Instant;
 
 use cyber_client::{Client, ClientError};
-use cyber_core::redact::Redactor;
+use cyber_core::redact::{RedactSettings, Redactor};
 use cyber_core::review::{Counts, ErrorCode, Findings, Target, TargetError};
 use cyber_core::untrusted::UntrustedRecord;
 use serde_json::{Value, json};
@@ -310,7 +310,26 @@ pub struct Out {
     delegation: Option<(String, String)>,
     admission: Option<(String, String)>,
     review: Option<Review>,
+    /// Hides secrets in diagnostic fields; the built-in detectors until
+    /// [`Out::redact_errors`] supplies the run's configured policy.
+    redactor: Option<std::sync::Arc<Redactor>>,
+    /// The input cohort of the driven step whose lines are being written
+    /// ([`Out::correlate`]).
+    correlation: Option<Value>,
 }
+
+/// The lines a driven step produces, which name the inputs that step answers.
+const STEP_LINES: [&str; 9] = [
+    "assistant_text",
+    "reasoning",
+    "tool_use",
+    "tool_result",
+    "permission_denied",
+    "retry",
+    "text_delta",
+    "reasoning_delta",
+    "usage_limit",
+];
 
 /// The `retry` stream-json payload of a `session.retry` event.
 fn retry_payload(data: &Value) -> Value {
@@ -358,7 +377,24 @@ impl Out {
             delegation: None,
             admission: None,
             review: None,
+            redactor: None,
+            correlation: None,
         }
+    }
+
+    /// Mark the lines of the step being written with the exact input cohort it
+    /// answers (`input_message_ids`), or stop marking them with `None`.
+    pub(super) fn correlate(&mut self, inputs: Option<&[String]>) {
+        self.correlation = inputs.map(|ids| json!(ids));
+    }
+
+    /// Redact diagnostic fields with `redactor` instead of the built-in detectors only.
+    pub fn redact_errors(&mut self, redactor: Redactor) {
+        self.redactor = Some(std::sync::Arc::new(redactor));
+    }
+
+    fn redactor(&self) -> &Redactor {
+        self.redactor.as_deref().unwrap_or(Redactor::builtin())
     }
 
     /// Report this run as `cyber review` of `target`.
@@ -546,7 +582,13 @@ impl Out {
         if self.format != Format::StreamJson {
             return;
         }
-        secret_safe(&mut payload);
+        secret_safe(self.redactor(), &mut payload);
+        if let Some(inputs) = &self.correlation
+            && STEP_LINES.contains(&kind)
+            && payload.get("input_message_ids").is_none()
+        {
+            payload["input_message_ids"] = inputs.clone();
+        }
         payload["type"] = json!(kind);
         payload["ts"] = json!(now_ms());
         payload["session_id"] = json!(self.session_id);
@@ -593,7 +635,7 @@ impl Out {
     pub fn error(&self, message: &str) {
         self.line("error", json!({ "message": message }));
         if self.format != Format::StreamJson && !self.quiet {
-            eprintln!("error: {message}");
+            eprintln!("error: {}", self.redactor().redact(message).text);
         }
     }
 
@@ -817,7 +859,11 @@ impl Out {
     fn emit(&self, result: Value, text: &str, args: &ExecArgs, session: &Value) {
         match self.format {
             Format::StreamJson => self.line("result", result),
-            Format::Json => println!("{result}"),
+            Format::Json => {
+                let mut result = result;
+                secret_safe(self.redactor(), &mut result);
+                println!("{result}");
+            }
             _ => {
                 if !text.is_empty() {
                     println!("{}", text.trim_end());
@@ -1118,17 +1164,40 @@ fn summary(input: &Value) -> String {
     String::new()
 }
 
-/// The diagnostic fields of a stream line (`error`, `message`) with every built-in
-/// secret shape replaced by its marker: they carry provider, server and stdin text,
+/// The diagnostic fields of a stream line (`error`, `message`) with every secret the
+/// redactor finds replaced by its marker: they carry provider, server and stdin text,
 /// which is not otherwise filtered before it reaches the JSONL consumer.
-fn secret_safe(payload: &mut Value) {
+fn secret_safe(redactor: &Redactor, payload: &mut Value) {
     for field in ["error", "message"] {
         if let Some(text) = payload.get(field).and_then(Value::as_str)
-            && let Cow::Owned(redacted) = Redactor::builtin().redact(text).text
+            && let Cow::Owned(redacted) = redactor.redact(text).text
         {
             payload[field] = json!(redacted);
         }
     }
+}
+
+/// The policy for diagnostic fields of a run: the built-in detectors (on even when
+/// `tool_output.redact.enabled` is `false`, which governs tool output only), the
+/// configured `tool_output.redact` patterns and allow list, and the exact values of
+/// known secrets: secret-named environment variables, secret config entries (provider
+/// keys, MCP environment and headers) and `extra` (the attach password). An unreadable
+/// redaction section keeps the defaults, so a broken config still redacts.
+pub fn error_redactor(config: Option<&Value>, extra: Option<&str>) -> Redactor {
+    let mut settings = config
+        .and_then(|config| RedactSettings::from_config(config).ok())
+        .unwrap_or_default();
+    settings.enabled = true;
+    let vars = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)));
+    let mut known = cyber_core::redact::env_secrets(vars);
+    known.extend(
+        config
+            .map(cyber_core::redact::config_secrets)
+            .unwrap_or_default(),
+    );
+    known.extend(extra.map(str::to_owned));
+    Redactor::new(&settings, known)
 }
 
 /// The `tool_result` stream line of a settlement, with its `redactions` when any.
@@ -1167,7 +1236,7 @@ mod tests {
             json!({"id": "one", "result": "kept AKIAZZZZEXAMPLE7QXYZ", "error": raw}),
             json!({"exit_code": 1, "error": format!("Background ownership could not be reconciled; inspect Session ses_1: {raw}")}),
         ] {
-            secret_safe(&mut line);
+            secret_safe(Redactor::builtin(), &mut line);
             let text = line.to_string();
             assert!(!text.contains("sk-test-0123456789abcdef"), "{text}");
             assert!(text.contains("[REDACTED:"), "{text}");
@@ -1175,14 +1244,47 @@ mod tests {
             assert!(!field.as_str().unwrap().contains("AKIAZZZZEXAMPLE7QXYZ"));
         }
         let mut answer = json!({"result": "AKIAZZZZEXAMPLE7QXYZ", "error": null});
-        secret_safe(&mut answer);
+        secret_safe(Redactor::builtin(), &mut answer);
         assert_eq!(
             answer["result"], "AKIAZZZZEXAMPLE7QXYZ",
             "the answer is not an error"
         );
         let mut plain = json!({"message": "unknown type \"shell\""});
-        secret_safe(&mut plain);
+        secret_safe(Redactor::builtin(), &mut plain);
         assert_eq!(plain["message"], "unknown type \"shell\"");
+    }
+
+    #[test]
+    fn error_fields_hide_configured_patterns_and_known_secret_values() {
+        let config = json!({
+            "tool_output": {"redact": {"enabled": false, "patterns": ["corp-[0-9]{6}"]}},
+            "providers": {"corp": {"api": {"api_key": "plainvalue-without-shape"}}},
+        });
+        let redactor = error_redactor(Some(&config), Some("attach-password-1"));
+        let raw = "id corp-123456 key plainvalue-without-shape pw attach-password-1 aws AKIAZZZZEXAMPLE7QXYZ";
+        let mut line = json!({"code": "protocol", "message": raw, "error": raw});
+        secret_safe(&redactor, &mut line);
+        for field in ["message", "error"] {
+            let text = line[field].as_str().unwrap();
+            for secret in [
+                "corp-123456",
+                "plainvalue-without-shape",
+                "attach-password-1",
+                "AKIAZZZZEXAMPLE7QXYZ",
+            ] {
+                assert!(!text.contains(secret), "{field}: {text}");
+            }
+        }
+        // An unreadable section keeps the built-in detectors.
+        let broken = json!({"tool_output": {"redact": {"patterns": "not a list"}}});
+        let mut line = json!({"message": raw});
+        secret_safe(&error_redactor(Some(&broken), None), &mut line);
+        assert!(
+            !line["message"]
+                .as_str()
+                .unwrap()
+                .contains("AKIAZZZZEXAMPLE7QXYZ")
+        );
     }
 
     #[test]

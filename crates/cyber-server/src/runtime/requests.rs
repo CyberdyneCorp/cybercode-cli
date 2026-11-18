@@ -105,7 +105,8 @@ pub struct PendingRequest {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input_message_ids: Vec<String>,
     /// Root Session of a descendant (subagent) request whose every ancestor link is a
-    /// background subagent Job with one complete, bounded input cohort.
+    /// running background subagent Job or a running foreground subagent call with one
+    /// complete, bounded input cohort.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_session_id: Option<String>,
     /// That root link's immutable input cohort; scoped attendance uses it instead of
@@ -468,9 +469,10 @@ impl Inner {
             return Ok(());
         }
         let session = asker.session_id.clone();
+        let foreground = self.foreground_children.lent();
         if let Some(root) = self
             .store
-            .read(move |db| descendant_inputs::recorded(db, &session))?
+            .read(move |db| descendant_inputs::recorded(db, &session, &foreground))?
         {
             request.root_session_id = Some(root.session_id);
             request.root_input_message_ids = root.input_message_ids;

@@ -3997,7 +3997,8 @@ export type PendingRequest = {
   input_message_ids?: string[];
   /**
    * Root Session of a descendant (subagent) request whose every ancestor link is a
-   * background subagent Job with one complete, bounded input cohort.
+   * running background subagent Job or a running foreground subagent call with one
+   * complete, bounded input cohort.
    */
   root_session_id?: string | null;
   /**
