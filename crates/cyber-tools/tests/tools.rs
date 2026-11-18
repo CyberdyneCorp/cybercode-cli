@@ -323,6 +323,7 @@ async fn bash_reports_output_and_exit_code() {
 }
 
 /// Editor and pager variables every model-run command gets.
+#[cfg(unix)]
 const NONINTERACTIVE: [&str; 10] = [
     "GIT_EDITOR",
     "JJ_EDITOR",
