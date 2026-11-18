@@ -46,7 +46,7 @@ async fn mount(server: &MockServer, model: &str, response: ResponseTemplate) {
         .and(path(stream_path(model)))
         .and(query_param("alt", "sse"))
         .respond_with(response)
-        .mount(&server)
+        .mount(server)
         .await;
 }
 

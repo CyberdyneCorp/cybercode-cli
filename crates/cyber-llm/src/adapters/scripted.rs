@@ -25,6 +25,10 @@ pub enum ScriptStep {
     UsageLimit {
         resets_at: i64,
     },
+    /// A rate limit whose server advises waiting `retry_after_ms`.
+    RateLimit {
+        retry_after_ms: u64,
+    },
 }
 
 /// Each `stream` call plays the next turn of the script. A turn whose first step is an
@@ -93,8 +97,11 @@ impl Adapter for ScriptedAdapter {
         Box::pin(async move {
             let turn =
                 turn.ok_or_else(|| LlmError::new(ErrorKind::InvalidRequest, "script exhausted"))?;
-            if let Some(step @ (ScriptStep::Error { .. } | ScriptStep::UsageLimit { .. })) =
-                turn.first()
+            if let Some(
+                step @ (ScriptStep::Error { .. }
+                | ScriptStep::UsageLimit { .. }
+                | ScriptStep::RateLimit { .. }),
+            ) = turn.first()
             {
                 return Err(step_error(step.clone()));
             }
@@ -114,6 +121,11 @@ fn step_error(step: ScriptStep) -> LlmError {
     match step {
         ScriptStep::UsageLimit { resets_at } => LlmError::usage_limit(Some(resets_at)),
         ScriptStep::Error { error, message } => LlmError::new(error, message),
+        ScriptStep::RateLimit { retry_after_ms } => {
+            let mut e = LlmError::new(ErrorKind::RateLimit, "rate limited");
+            e.retry_after = Some(std::time::Duration::from_millis(retry_after_ms));
+            e
+        }
         ScriptStep::Event(_) => LlmError::new(ErrorKind::InvalidRequest, "not an error step"),
     }
 }
