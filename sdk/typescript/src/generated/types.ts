@@ -3795,6 +3795,13 @@ export type ModelProfile = {
   /** Reasoning efforts the model accepts, lowest first. */
   efforts: string[];
   effort_clamp: EffortClamp;
+  /** The Gemini thinking field; unset reads it from the model ID. */
+  thinking_param?: ThinkingParam | null;
+  /**
+   * Send Gemini's documented placeholder signature on current-turn calls another
+   * model made, instead of lowering them to text. Discouraged.
+   */
+  signature_bypass: boolean;
 };
 
 /** One provider and model of the Session tree. */
@@ -5847,6 +5854,12 @@ export type TelemetryStatus = {
   restart_required: boolean;
   product: ProductTelemetry;
 };
+
+/**
+ * Which `thinkingConfig` field a Gemini model takes
+ * (`provider-catalog` → Gemini thinking configuration).
+ */
+export type ThinkingParam = "level" | "budget";
 
 export type ThreadStatus = "running" | "waiting" | "completed" | "failed";
 

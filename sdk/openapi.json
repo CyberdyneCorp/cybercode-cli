@@ -11430,6 +11430,21 @@
           },
           "effort_clamp": {
             "$ref": "#/components/schemas/EffortClamp"
+          },
+          "thinking_param": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ThinkingParam"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Gemini thinking field; unset reads it from the model ID."
+          },
+          "signature_bypass": {
+            "type": "boolean",
+            "description": "Send Gemini's documented placeholder signature on current-turn calls another\nmodel made, instead of lowering them to text. Discouraged."
           }
         },
         "required": [
@@ -11441,7 +11456,8 @@
           "edit_tool",
           "tool_output",
           "efforts",
-          "effort_clamp"
+          "effort_clamp",
+          "signature_bypass"
         ],
         "description": "A model's resolved behavior profile."
       },
@@ -11554,6 +11570,21 @@
           "fail"
         ],
         "description": "What happens to a derived effort the model does not list."
+      },
+      "ThinkingParam": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "level",
+            "description": "`thinkingLevel`, as Gemini 3 and later take."
+          },
+          {
+            "type": "string",
+            "const": "budget",
+            "description": "`thinkingBudget`, as Gemini 2.5 takes."
+          }
+        ],
+        "description": "Which `thinkingConfig` field a Gemini model takes\n(`provider-catalog` → Gemini thinking configuration)."
       },
       "Located_PluginList": {
         "type": "object",

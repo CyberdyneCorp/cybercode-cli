@@ -185,6 +185,22 @@ async fn reasoning_tool_loop(
     model: &str,
     reasoning: Option<Reasoning>,
 ) -> LoopReport {
+    tool_loop(catalog, model, reasoning, SEQUENTIAL).await
+}
+
+/// Two dependent clock readings: one call per step.
+const SEQUENTIAL: &str = "Read the clock for zone UTC first. Then, depending on that reading, read it for \
+     zone UTC+2. Finally tell me both times.";
+/// Two independent clock readings, asked for in one step: parallel calls.
+const PARALLEL: &str = "Read the clock for zones UTC and UTC+2 at the same time, with two clock calls in \
+     the same step. Then tell me both times.";
+
+async fn tool_loop(
+    catalog: &Catalog,
+    model: &str,
+    reasoning: Option<Reasoning>,
+    prompt: &str,
+) -> LoopReport {
     let model_ref = ModelRef::parse(model).unwrap();
     let target = catalog.resolve(&model_ref, None).unwrap();
     let adapter = target.adapter();
@@ -192,20 +208,14 @@ async fn reasoning_tool_loop(
     if reasoning.is_some() {
         request.reasoning = reasoning;
     }
-    request.system = vec![
-        "Use the clock tool for every time reading. Call it once per zone, one call per step."
-            .into(),
-    ];
+    request.system = vec!["Use the clock tool for every time reading, one call per zone.".into()];
     request.tools = vec![ToolSpec {
         name: "clock".into(),
         description: "Return the current time in one zone.".into(),
         input_schema: json!({ "type": "object", "required": ["zone"],
             "properties": { "zone": { "type": "string" } } }),
     }];
-    request.messages.push(Message::user_text(
-        "Read the clock for zone UTC first. Then, depending on that reading, read it for \
-         zone UTC+2. Finally tell me both times.",
-    ));
+    request.messages.push(Message::user_text(prompt));
     let mut report = LoopReport::default();
     for step in 0..MAX_STEPS {
         let mut items = Vec::new();
@@ -397,4 +407,107 @@ async fn gemini_3_tool_loop_through_the_compatible_endpoint() {
         report.replayed.contains(&OpaqueKind::Signature),
         "{model} sent no thought signature"
     );
+}
+
+/// The catalog with the experimental native Gemini protocol on.
+async fn gemini_catalog() -> Catalog {
+    live_catalog(json!({ "features": { "gemini": true } })).await
+}
+
+#[tokio::test]
+#[ignore = "calls Gemini; needs GEMINI_API_KEY"]
+async fn gemini_4_native_tool_loop_with_parallel_calls() {
+    if live_key("GEMINI_API_KEY").is_none() {
+        return;
+    }
+    let model = model_from("CYBER_LIVE_GEMINI_NATIVE_MODEL", "google/gemini-4-carbon");
+    let catalog = gemini_catalog().await;
+    let report = tool_loop(&catalog, &model, None, PARALLEL).await;
+    assert!(report.tool_steps >= 1, "{model} called no tool");
+    assert!(
+        report.answer.contains("12:34"),
+        "{model}: {}",
+        report.answer
+    );
+    assert!(
+        report.replayed.contains(&OpaqueKind::Signature),
+        "{model} sent no thought signature"
+    );
+    eprintln!("{model}: ok, replayed {:?}", report.replayed);
+}
+
+#[tokio::test]
+#[ignore = "calls Gemini; needs GEMINI_API_KEY"]
+async fn gemini_2_5_native_tool_loop_with_a_budget() {
+    if live_key("GEMINI_API_KEY").is_none() {
+        return;
+    }
+    let model = model_from("CYBER_LIVE_GEMINI_25_MODEL", "google/gemini-2.5-flash");
+    let catalog = gemini_catalog().await;
+    let report = reasoning_tool_loop(&catalog, &model, Some(Reasoning::BudgetTokens(1024))).await;
+    assert_loop(&model, &report);
+}
+
+/// Another provider makes the first call; Gemini continues the same tool loop, with the
+/// foreign call and its result sent as text.
+#[tokio::test]
+#[ignore = "calls Gemini and OpenAI or Anthropic; needs GEMINI_API_KEY and one of their keys"]
+async fn a_model_switch_to_gemini_inside_a_tool_loop() {
+    if live_key("GEMINI_API_KEY").is_none() {
+        return;
+    }
+    let first = if ProcessEnv.get("ANTHROPIC_API_KEY").is_some() {
+        model_from("CYBER_LIVE_ANTHROPIC_MODEL", "anthropic/claude-haiku-4-5")
+    } else if live_key("OPENAI_API_KEY").is_some() {
+        model_from("CYBER_LIVE_OPENAI_MODEL", "openai/gpt-6-luna")
+    } else {
+        return;
+    };
+    let catalog = gemini_catalog().await;
+    let target = catalog
+        .resolve(&ModelRef::parse(&first).unwrap(), None)
+        .unwrap();
+    let mut request = target.request.clone();
+    request.system = vec!["Use the clock tool for every time reading, one call per zone.".into()];
+    request.tools = vec![ToolSpec {
+        name: "clock".into(),
+        description: "Return the current time in one zone.".into(),
+        input_schema: json!({ "type": "object", "required": ["zone"],
+            "properties": { "zone": { "type": "string" } } }),
+    }];
+    request.messages.push(Message::user_text(SEQUENTIAL));
+    let adapter = target.adapter();
+    let stream = open_with_retry(adapter.as_ref(), &request, &RetryPolicy::default(), |_| {})
+        .await
+        .unwrap();
+    let out = collect(stream, |_| {}).await.unwrap();
+    assert_eq!(
+        out.finish,
+        Some(FinishReason::ToolCalls),
+        "{first} called no tool"
+    );
+    // The runtime drops another model's state; the call carries none.
+    let mut foreign = out.clone();
+    for call in &mut foreign.tool_calls {
+        call.opaque = None;
+    }
+    let (assistant, results) = replay(&foreign, Vec::new(), &ModelRef::parse(&first).unwrap(), 0);
+    let gemini = model_from("CYBER_LIVE_GEMINI_NATIVE_MODEL", "google/gemini-4-carbon");
+    let target = catalog
+        .resolve(&ModelRef::parse(&gemini).unwrap(), None)
+        .unwrap();
+    let mut next = target.request.clone();
+    next.system = request.system.clone();
+    next.tools = request.tools.clone();
+    next.messages = request.messages.clone();
+    next.messages.extend([assistant, results]);
+    let adapter = target.adapter();
+    let stream = open_with_retry(adapter.as_ref(), &next, &RetryPolicy::default(), |_| {})
+        .await
+        .unwrap_or_else(|e| panic!("{gemini} rejected the switched history: {e:?}"));
+    let out = collect(stream, |_| {})
+        .await
+        .unwrap_or_else(|e| panic!("{gemini}: {e:?}"));
+    assert!(out.finish.is_some(), "{gemini} gave no answer");
+    eprintln!("{first} -> {gemini}: ok ({:?})", out.finish);
 }

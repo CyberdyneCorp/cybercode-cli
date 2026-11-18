@@ -185,15 +185,20 @@ fn report(global: &GlobalArgs, login: &Login, models: &[String]) -> Result<(), C
 }
 
 /// Past `copilot`, login exists only for `chatgpt`; others are told which variables carry
-/// their key.
+/// their key. Google consumer plans are refused for good (`provider-credentials` → Google
+/// subscription login refused): their terms forbid third-party use of their OAuth.
 fn only_chatgpt(provider: &str, ctx: &Context) -> Result<(), CliError> {
     if provider == chatgpt::PROVIDER_ID {
         return Ok(());
     }
-    let error = CliError::usage(format!(
-        "Provider login is not available for {provider} yet"
-    ));
-    let names = key_variables(provider, ctx);
+    let google = matches!(provider, "google" | "gemini");
+    let error = CliError::usage(if google {
+        "Google subscription login is not supported; use a Gemini API key from AI Studio"
+            .to_string()
+    } else {
+        format!("Provider login is not available for {provider} yet")
+    });
+    let names = key_variables(if google { "google" } else { provider }, ctx);
     Err(if names.is_empty() {
         error.with_hint("configure its key under providers in cyber.jsonc")
     } else {

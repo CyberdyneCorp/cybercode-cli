@@ -263,6 +263,89 @@ fn other_providers_are_told_to_use_their_key_variable() {
     );
 }
 
+/// `provider-credentials` → Google subscription login refused: no OAuth method, and the
+/// Gemini key variables in their order instead.
+#[test]
+fn google_login_is_refused_and_points_to_a_gemini_key() {
+    let env = Env::new();
+    for name in ["google", "gemini"] {
+        let output = env
+            .command("https://auth.openai.com", &["login", name])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{name}");
+        let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(
+            error["error"]["message"],
+            "Google subscription login is not supported; use a Gemini API key from AI Studio"
+        );
+        assert_eq!(
+            error["error"]["hint"],
+            "set GEMINI_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY or GOOGLE_API_KEY"
+        );
+    }
+}
+
+/// `provider-catalog` → "Experimental feature off": a Gemini key alone lists `google`
+/// models as experimental with the hint; `--features gemini` makes them available, and
+/// `cyber features list` shows the feature.
+#[test]
+fn gemini_models_are_experimental_until_the_feature_is_on() {
+    let env = Env::new();
+    let catalog = json!({"google": {"id": "google", "npm": "@ai-sdk/google", "env": ["GEMINI_API_KEY"],
+        "models": {"gemini-4-carbon": {"id": "gemini-4-carbon", "tool_call": true, "release_date": "2026-11-10"}}}});
+    std::fs::write(env.root.join("models.json"), catalog.to_string()).unwrap();
+    let cyber = |args: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_cyber"))
+            .args(args)
+            .env_clear()
+            .env("HOME", env.root.join("home"))
+            .env("CYBER_HOME", env.root.join("cyber"))
+            .env("CYBER_MODELS_PATH", env.root.join("models.json"))
+            .env("GEMINI_API_KEY", "gm-key")
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .current_dir(&env.root)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    };
+    let listed: Value =
+        serde_json::from_str(&cyber(&["--format", "json", "models", "google"])).unwrap();
+    let row = &listed["models"][0];
+    assert_eq!(
+        (&row["ref"], &row["available"], &row["reason"], &row["hint"]),
+        (
+            &json!("google/gemini-4-carbon"),
+            &json!(false),
+            &json!("experimental"),
+            &json!("enable with features.gemini")
+        )
+    );
+    assert_eq!(
+        cyber(&["models", "google"]).trim(),
+        "google/gemini-4-carbon  (experimental; enable with features.gemini)"
+    );
+    let on: Value = serde_json::from_str(&cyber(&[
+        "--features",
+        "gemini",
+        "--format",
+        "json",
+        "models",
+        "google",
+    ]))
+    .unwrap();
+    assert_eq!(on["models"][0]["available"], true);
+    assert_eq!(on["default"], "google/gemini-4-carbon");
+    let features = cyber(&["features", "list"]);
+    let line = features.lines().find(|l| l.starts_with("gemini")).unwrap();
+    assert_eq!(
+        line.split_whitespace().collect::<Vec<_>>(),
+        ["gemini", "experimental", "off", "(default)"]
+    );
+}
+
 /// A `cyber serve --register` of `env`, killed on drop.
 struct Server(std::process::Child);
 
