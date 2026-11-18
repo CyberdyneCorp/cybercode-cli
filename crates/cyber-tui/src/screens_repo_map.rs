@@ -19,8 +19,13 @@ fn typed(app: &mut App, text: &str) -> Vec<Action> {
     press(app, KeyCode::Enter)
 }
 
-/// Perform the map requests through the real server.
+/// Perform the map requests through the real server, at its real directory; the App
+/// shows a stable one for snapshots.
 async fn drive(server: &Server, app: &mut App, mut actions: Vec<Action>) {
+    let shown = std::mem::replace(
+        &mut app.session.directory,
+        server.root().display().to_string(),
+    );
     while !actions.is_empty() {
         let action = actions.remove(0);
         if !matches!(action, Action::RepoMap(_)) {
@@ -29,6 +34,7 @@ async fn drive(server: &Server, app: &mut App, mut actions: Vec<Action>) {
         let msg = crate::perform::perform_owned(&server.client, &app.session, action, None).await;
         actions.extend(crate::runner::apply(app, msg, &mut Default::default()));
     }
+    app.session.directory = shown;
 }
 
 fn source(server: &Server) {
@@ -86,8 +92,10 @@ async fn inspect_the_map() {
             .iter()
             .any(|a| matches!(a, Action::SearchFiles(path) if path == "src/auth/session.rs"))
     );
+    app.overlay = Overlay::None;
     let actions = typed(&mut app, "/map");
     drive(&server, &mut app, actions).await;
+    assert!(matches!(app.overlay, Overlay::RepoMap(_)));
     press(&mut app, KeyCode::Esc);
     assert!(matches!(app.overlay, Overlay::None));
 }
