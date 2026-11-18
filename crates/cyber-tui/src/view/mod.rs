@@ -16,6 +16,7 @@ mod output_styles;
 pub(crate) mod overlays;
 pub(crate) mod progress;
 mod rename;
+mod repo_map;
 mod rewind;
 pub(crate) mod settings;
 pub(crate) mod sidebar;
@@ -170,6 +171,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         Overlay::ConfirmStopTasks => overlays::confirm_stop_tasks(f, app, area),
         Overlay::ConfirmExport(request) => overlays::confirm_export(f, app, request, area),
         Overlay::OutputStyles(picker) => output_styles::draw(f, app, picker, area),
+        Overlay::RepoMap(view) => repo_map::draw(f, app, view, area),
         Overlay::Language(picker) => language::draw(f, app, picker, area),
         Overlay::Sounds(view) => sounds::draw(f, app, view, area),
         Overlay::ConfirmBypass => overlays::confirm_bypass(f, app, area),

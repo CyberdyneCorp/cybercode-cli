@@ -68,6 +68,7 @@
   "branches of this session; check one out": "ramas de esta sesión; haz checkout de una",
   "branches: check one out (c restores code, l labels); /label --clear <name>": "ramas: haz checkout de una (c restaura código, l etiqueta); /label --clear <name>",
   "browse and preview project files": "explorar y previsualizar archivos del proyecto",
+  "repository map of files and definitions; /map <path> focuses it": "mapa del repositorio con archivos y definiciones; /map <ruta> lo enfoca",
   "browse child and parent threads": "explorar hilos hijo y padre",
   "browse project files": "explorar archivos del proyecto",
   "change this session's title to resume it later": "cambia el título de esta sesión para reanudarla luego",
