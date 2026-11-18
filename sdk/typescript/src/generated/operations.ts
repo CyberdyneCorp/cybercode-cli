@@ -1216,6 +1216,30 @@ export interface Operations {
     body: undefined;
     response: void;
   };
+  "v1.session.constructionDiscardConfirm": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.ConstructionDiscardConfirmation;
+    response: S.ConstructionDiscardReceipt;
+  };
+  "v1.session.constructionDiscardLookup": {
+    path: { sessionID: string; requestID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.ConstructionDiscardReceipt;
+  };
+  "v1.session.constructionDiscardReview": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: S.ConstructionDiscardSelection;
+    response: S.ConstructionDiscardReview;
+  };
+  "v1.session.constructionInventory": {
+    path: { sessionID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.ConstructionInventory;
+  };
   "v1.session.context": {
     path: { sessionID: string };
     query: {
@@ -4138,6 +4162,54 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.session.constructionDiscardConfirm": {
+    tag: "session",
+    name: "constructionDiscardConfirm",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/constructions/discard/confirm",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.constructionDiscardLookup": {
+    tag: "session",
+    name: "constructionDiscardLookup",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/constructions/discard/requests/{requestID}",
+    pathParams: ["sessionID", "requestID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.constructionDiscardReview": {
+    tag: "session",
+    name: "constructionDiscardReview",
+    method: "POST",
+    path: "/api/v1/sessions/{sessionID}/rewind/constructions/discard/review",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.session.constructionInventory": {
+    tag: "session",
+    name: "constructionInventory",
+    method: "GET",
+    path: "/api/v1/sessions/{sessionID}/rewind/constructions",
+    pathParams: ["sessionID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.session.context": {
     tag: "session",
     name: "context",
@@ -6248,6 +6320,18 @@ export function createGroups(caller: Caller) {
       /** Revoke this Session's native grant (`POST /api/v1/sessions/{sessionID}/computer/stop`) */
       computerStop: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.computerStop"]["response"]> =>
         caller.call("v1.session.computerStop", { path: { sessionID } }, options),
+      /** Owner only: discard one fingerprint-confirmed construction stage after fencing its activity; a repeated request ID resumes or returns its receipt (`POST /api/v1/sessions/{sessionID}/rewind/constructions/discard/confirm`) */
+      constructionDiscardConfirm: (sessionID: string, body: Operations["v1.session.constructionDiscardConfirm"]["body"], options?: RequestOptions): Promise<Operations["v1.session.constructionDiscardConfirm"]["response"]> =>
+        caller.call("v1.session.constructionDiscardConfirm", { path: { sessionID }, body }, options),
+      /** Look up a construction discard receipt without acting (`GET /api/v1/sessions/{sessionID}/rewind/constructions/discard/requests/{requestID}`) */
+      constructionDiscardLookup: (sessionID: string, requestID: string, options?: RequestOptions): Promise<Operations["v1.session.constructionDiscardLookup"]["response"]> =>
+        caller.call("v1.session.constructionDiscardLookup", { path: { sessionID, requestID } }, options),
+      /** Owner only: review one construction stage read-only and return its confirmation fingerprint (`POST /api/v1/sessions/{sessionID}/rewind/constructions/discard/review`) */
+      constructionDiscardReview: (sessionID: string, body: Operations["v1.session.constructionDiscardReview"]["body"], options?: RequestOptions): Promise<Operations["v1.session.constructionDiscardReview"]["response"]> =>
+        caller.call("v1.session.constructionDiscardReview", { path: { sessionID }, body }, options),
+      /** List unpublished construction stages and discards that still owe an unlink (`discard pending`); listing grants no discard authority (`GET /api/v1/sessions/{sessionID}/rewind/constructions`) */
+      constructionInventory: (sessionID: string, options?: RequestOptions): Promise<Operations["v1.session.constructionInventory"]["response"]> =>
+        caller.call("v1.session.constructionInventory", { path: { sessionID } }, options),
       /** Inspect recorded context and estimates. Use include_content to return baseline, summary and task text. (`GET /api/v1/sessions/{sessionID}/context`) */
       context: (sessionID: string, query?: Operations["v1.session.context"]["query"], options?: RequestOptions): Promise<Operations["v1.session.context"]["response"]> =>
         caller.call("v1.session.context", { path: { sessionID }, query }, options),

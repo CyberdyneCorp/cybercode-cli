@@ -11,8 +11,9 @@ mod setup;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use activity::CheckoutRetirementGuard;
 pub use activity::{
-    CheckoutAcknowledgement, CheckoutActivity, CheckoutBinding, CheckoutLease, CheckoutOwner,
-    SnapshotClaim, SnapshotConstruction, SnapshotConstructionKind,
+    CheckoutAcknowledgement, CheckoutActivity, CheckoutBinding, CheckoutConstructionFence,
+    CheckoutConstructionReview, CheckoutLease, CheckoutOwner, SnapshotClaim, SnapshotConstruction,
+    SnapshotConstructionKind,
 };
 pub use activity::{CheckoutRetirementFile, CheckoutRetirementPlan};
 pub use changes::{ChangedFile, Changes};

@@ -2,12 +2,14 @@
 use super::{Managed, UseRecord, invalid};
 pub(super) mod acknowledgement;
 pub(super) mod constructions;
+mod discard;
 mod publication;
 mod retirement;
 pub use acknowledgement::CheckoutAcknowledgement;
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
 pub use constructions::{SnapshotConstruction, SnapshotConstructionKind};
+pub use discard::{CheckoutConstructionFence, CheckoutConstructionReview};
 pub(super) use publication::publish;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use retirement::CheckoutRetirementGuard;

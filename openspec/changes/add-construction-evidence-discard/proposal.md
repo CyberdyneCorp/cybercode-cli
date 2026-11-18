@@ -22,10 +22,12 @@ path, model tool or remote client cleanup authority.
 - The same command covers the construction stages and stale Location metadata left for
   a Session whose Location directory was removed, but never deletes restore journals,
   payload images or published claims/acknowledgements.
-- Surfaces: `POST /api/v1/sessions/{id}/rewind/constructions/discard/review`,
+- Surfaces: `GET /api/v1/sessions/{id}/rewind/constructions` (read-only listing of
+  stages and `discard pending` requests), `POST .../rewind/constructions/discard/review`,
   `.../discard/confirm`, `GET .../discard/requests/{request_id}`; SDK methods;
-  `cyber sessions recovery-discard`; the TUI recovery panel (**C**/**P**) under an
-  explicit key with a typed confirmation.
+  `cyber sessions recovery-discard` and `cyber sessions recovery-discard-request`. The
+  TUI recovery panel lists the evidence and shows the exact CLI command; it has no
+  discard action in this revision (owner decision 2026-11-15).
 - No change to automatic maintenance, reclamation or worktree removal: they keep
   refusing while any construction evidence remains.
 
@@ -33,6 +35,7 @@ path, model tool or remote client cleanup authority.
 
 `crates/cyber-core` (worktree activity stages), `crates/cyber-snapshot` (cancellation
 record stages), `crates/cyber-server` (runtime command, events, HTTP/OpenAPI),
-`sdk/`, `crates/cyber-cli`, `crates/cyber-tui`, `docs/rewind.md`. A new durable event
+`sdk/`, `crates/cyber-cli` (including `cyber doctor`), `crates/cyber-tui`,
+`docs/rewind.md`. A new durable event
 `session.snapshot.construction_discarded.1`. Security-relevant: it is the first path
 allowed to delete fenced recovery evidence, so it needs owner approval before any code.

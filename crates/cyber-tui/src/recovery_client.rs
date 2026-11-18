@@ -47,7 +47,17 @@ pub async fn perform(
             if journals.len() > 4096 {
                 return Err("Recovery journal limit exceeded".into());
             }
-            Ok(Reply::Journals(journals))
+            // Best effort: construction evidence is shown, never acted on, here.
+            let constructions = client
+                .get(&format!(
+                    "/sessions/{}/rewind/constructions",
+                    segment(&request.session)
+                ))
+                .await
+                .ok()
+                .and_then(|reply| data(reply).ok())
+                .unwrap_or_default();
+            Ok(Reply::Journals(journals, Box::new(constructions)))
         }
         Command::Discover(journal) => {
             let requests: Vec<cyber_server::runtime::SnapshotRecoveryConfirmation> = data(

@@ -379,6 +379,10 @@ impl App {
                 .map_err(|error| error.to_string())?;
         }
         host.attach(runtime.clone());
+        if opts.snapshots {
+            // Owner-confirmed construction discards whose unlink failed are retried forever.
+            cyber_server::runtime::construction_discard::spawn_retry(runtime.clone());
+        }
         // One fair scheduler of the slots of every Workflow agent of this server
         // (`workflows.max_concurrent`, reduced to the core count), fixed at startup like the
         // listener settings.

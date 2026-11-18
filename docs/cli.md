@@ -322,6 +322,8 @@ cyber sessions [OPTIONS] <COMMAND>
 - [`recovery-request`](#cyber-sessions-recovery-request): Look up a retained recovery request; optionally reconcile its native acknowledgement
 - [`recovery-preparation`](#cyber-sessions-recovery-preparation): Review or cancel an exited snapshot preparation before source effects were admitted
 - [`recovery-preparation-request`](#cyber-sessions-recovery-preparation-request): Look up a committed preparation cancellation; optionally reconcile its native metadata
+- [`recovery-discard`](#cyber-sessions-recovery-discard): List, review or discard one unpublished construction stage (local owner only)
+- [`recovery-discard-request`](#cyber-sessions-recovery-discard-request): Look up a construction discard request by its request ID, without acting
 - [`label`](#cyber-sessions-label): Set or remove a branch label
 - [`export`](#cyber-sessions-export): Write a Session as JSON (default), Markdown (--format md) or one self-contained HTML page (--format html): its info, messages, tool calls, goals and workflow runs
 - [`import`](#cyber-sessions-import): Import a JSON export (`cyber sessions export`) as a new Session in this Location, with fresh IDs and its attachments, which are verified before anything is written
@@ -498,6 +500,38 @@ cyber sessions recovery-preparation-request [OPTIONS] <SESSION> <ACTIVITY> <REQU
 **Options:**
 
 - `--acknowledge`: Reconcile the committed receipt's native metadata without source-file access or replay.
+
+## `cyber sessions recovery-discard`
+
+List, review or discard one unpublished construction stage (local owner only)
+
+```text
+cyber sessions recovery-discard [OPTIONS] <SESSION> [STAGE]
+```
+
+**Arguments:**
+
+- `<SESSION>`: Session ID, exact title or unique ID prefix.
+- `[STAGE]`: Exact construction stage name from the listing; omit to list stages and pending discards.
+
+**Options:**
+
+- `--activity <ACTIVITY>`: Review the only construction stage of this snapshot activity instead of naming it.
+- `--confirm <CONFIRM>`: Discard only the reviewed stage; requires the stage name and --request-id.
+- `--request-id <REQUEST_ID>`: Stable request identity; repeat it to resume after an interruption or a lost reply.
+
+## `cyber sessions recovery-discard-request`
+
+Look up a construction discard request by its request ID, without acting
+
+```text
+cyber sessions recovery-discard-request [OPTIONS] <SESSION> <REQUEST_ID>
+```
+
+**Arguments:**
+
+- `<SESSION>`: Session ID, exact title or unique ID prefix.
+- `<REQUEST_ID>`: Exact request ID used to confirm the discard.
 
 ## `cyber sessions label`
 

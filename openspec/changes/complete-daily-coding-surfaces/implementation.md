@@ -3957,14 +3957,14 @@ macOS arm64; no Linux, macOS Intel or Windows result is claimed.
 | Cut | Process-death evidence | Gap |
 | --- | --- | --- |
 | Before intent (reservation/lifetime before origin) | storage: `real_process_death_before_publication_retains_stage_without_poisoning_the_owner_name`, `real_process_death_releases_only_the_exact_worker_lifetime_lock`; real service: `exited_pre_origin_preparation_is_reviewed_cancelled_and_lookup_only_after_restart` | none locally for file-copy |
-| After intent (origin published, before source admission) | real service: `exited_origin_preparation_before_source_admission_is_cancelled_after_real_kill` | the real-service cut does not assert that intent publication was absent |
+| After intent (origin published, before source admission) | real service: `exited_origin_preparation_before_source_admission_is_cancelled_after_real_kill`; fixture points (2026-11-16): `restore_killed_after_origin_before_intent_is_cancelled_without_source_effects` (no `intent.json`), `restore_killed_after_intent_before_staging_is_cancelled_without_source_effects` (intent, no staged image) | none locally for file-copy |
 | Stage preparation | storage: `process_kill_at_parent_and_file_cuts_recovers_ownership_without_progress_or_replay` (parent cuts); real service: `fully_prepared_pre_effect_cancellation_reclaims_only_persisted_target_inodes`, `copy_cancelled_deletion_preparation_retires_zero_payload` | partial target-image construction is not cut by a real service kill |
 | Every exchange | storage: `process_kill_at_parent_and_file_cuts_recovers_ownership_without_progress_or_replay`, `process_kill_at_link_parent_and_exchange_cuts_preserves_typed_inode_evidence` (each exchange of a small fixture); real service: `managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay` (one sampled partial exchange, keep and rollback) | real-service kills sample one partial window; they are not placed at each exchange |
-| Progress | none | **gap**: storage cuts write no progress record and the sampled real kill does not assert which progress record existed; no cut directly after a progress write |
-| Filesystem completion (completed intent, before writer commit) | real service: `copy_kept_creation_after_completed_source_kill_retires_zero_payload` (writer held off by a SQLite write lock) | **gap**: covered for a zero-payload creation only, not for displaced payload images |
-| Writer commit (committed Session writer, unacknowledged journal) | real service: `ordinary_restore_killed_after_writer_commit_before_journal_ack_reconciles_without_replay` (new; debug-only `ordinary-restore-writer-commit` fixture point) | **gap**: the paired keep/rollback recovery commit is only simulated by resetting acknowledgement metadata (`managed_keep_and_rollback_after_real_partial_restore_kill_preserve_owner_files_and_never_replay`) |
-| Journal acknowledgement | storage: `process_death_during_spare_write_preserves_active_intent_and_reopens_without_replay` (the intent-slot write the acknowledgement uses); managed checkout claim: `killed_acknowledgement_resumes_without_rewriting_claim_or_deleting_partial_stage`, `killed_construction_keeps_locked_complete_stage_and_never_creates_or_replays_stable_claim` | **gap**: no real-service SIGKILL after the ordinary journal acknowledgement and before the HTTP reply; only service stop/restart lookups |
-| Reclaim | real service fixture + separate maintenance process: `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan` (new; after the durable plan and the first unlink, inside the deletion transaction); App: `actual_process_death_preserves_plan_and_resumes_without_source_replay` (before deletion and after all deletions); collection: `process_death_after_last_manifest_unlink_resumes_from_durable_policy_provenance` | **gap**: paired keep/rollback payload cleanup is interrupted in-process only (`managed_native_recovery_after_partial_kill`, `native_retirement_resumes_before_and_after_deletion_without_rewriting_acknowledgement`); managed Git paired/prepared metadata retirement now has App SIGKILL cuts (see the section below), paired/prepared payload reclaim still does not |
+| Progress | real service (2026-11-16, `copy-restore-progress-recorded`): `restore_killed_after_a_progress_record_is_kept_without_replay`, `..._is_rolled_back_without_replay`, `interrupted_staged_undo_with_an_inactive_branch_is_kept`/`_rolled_back`, and inside a resolution `interrupted_resolution_is_retained_and_resolved_as_independent_evidence` | none locally for file-copy (first progress record only) |
+| Filesystem completion (completed intent, before writer commit) | real service: `copy_kept_creation_after_completed_source_kill_retires_zero_payload`; fixture point (2026-11-16, `copy-restore-filesystem-completed`): `restore_killed_after_filesystem_completion_with_payloads_is_kept`/`_rolled_back` (four displaced images) | none locally for file-copy |
+| Writer commit (committed Session writer, unacknowledged journal) | real service: `ordinary_restore_killed_after_writer_commit_before_journal_ack_reconciles_without_replay`; paired recovery (2026-11-16, `recovery-pair-writer-commit`): `paired_recovery_killed_after_writer_commit_reconciles_without_replay` | none locally for file-copy |
+| Journal acknowledgement | storage: `process_death_during_spare_write_preserves_active_intent_and_reopens_without_replay`; managed checkout claim: `killed_acknowledgement_resumes_without_rewriting_claim_or_deleting_partial_stage`, `killed_construction_keeps_locked_complete_stage_and_never_creates_or_replays_stable_claim`; after the acknowledgement, before the reply (2026-11-16): `ordinary_restore_killed_after_journal_acknowledgement_never_replays` (`ordinary-restore-journal-acknowledged`), `paired_recovery_killed_after_journal_acknowledgement_returns_the_receipt` (`recovery-journal-acknowledged`) | none locally for file-copy |
+| Reclaim | real service fixture + separate maintenance process: `ordinary_restore_killed_during_payload_reclaim_resumes_frozen_plan`; paired and prepared (2026-11-16, `restore_cuts::cleanup`): `kept_recovery_payload_cleanup_killed_mid_deletion_resumes_frozen_plan`, `rolled_back_recovery_payload_cleanup_killed_mid_deletion_resumes_frozen_plan`, `cancelled_preparation_payload_cleanup_killed_mid_deletion_resumes_frozen_plan`; App: `actual_process_death_preserves_plan_and_resumes_without_source_replay`; collection: `process_death_after_last_manifest_unlink_resumes_from_durable_policy_provenance`; metadata retirement: `paired_managed_metadata_process_death_resumes_both_owner_bindings`, `prepared_cancellation_metadata_process_death_resumes_frozen_plan` | none locally for file-copy |
 
 New in this increment (`crates/cyber-cli/tests/support/ordinary_cuts.rs`, part of
 the `branches_cli` test binary):
@@ -4255,6 +4255,203 @@ the evidence is gone). No code changed; construction evidence keeps no cleanup
 authority until that change is approved and implemented. A separate change validates
 cleanly and keeps the security-relevant protocol revision reviewable on its own.
 
+
+## Managed recovery fixture-point cuts and recovery scenarios (2026-11-16, local)
+
+Branch `feat/managed-recovery-resolution` (stacked on `feat/construction-evidence-discard`
+and `feat/managed-recovery-owner`). Test-only evidence plus debug-only fixture points;
+no recovery protocol or product behavior changed and no defect was found.
+
+New `cyber_core::process_cut::pause` points (compiled out of release builds):
+`copy-restore-origin-published` and `copy-restore-intent-published` (journal
+construction in `cyber-snapshot` `copy/restore.rs::execute_journal`),
+`copy-restore-progress-recorded` (after each exchange's progress record, so the first
+one stops the process; it also fires inside a keep/rollback resolution) and
+`copy-restore-filesystem-completed` (after the completed intent, before the writer),
+plus `recovery-pair-writer-commit`, `recovery-journal-acknowledged` and
+`ordinary-restore-journal-acknowledged` in `cyber-server` `runtime/snapshot_work.rs`.
+
+Real-binary cases in `crates/cyber-cli/tests/support/restore_cuts.rs` (part of
+`branches_cli`; non-Git Location with four displaced images; the service started with
+the point is SIGKILLed once the marker appears; every case checks that the transcript
+does not move and the scripted model gets no request):
+
+- M2/M8 journal construction: `restore_killed_after_origin_before_intent_is_cancelled_without_source_effects`
+  (journal directory without `intent.json`) and
+  `restore_killed_after_intent_before_staging_is_cancelled_without_source_effects`.
+  New input is refused, the exited preparation is reviewed and cancelled through
+  `sessions recovery-preparation`, a repeated confirmation returns the same receipt,
+  sources are unchanged and the next prompt is admitted.
+- M2: `binary_document_activity_never_grants_snapshot_recovery_authority`
+  (`cyber-server` unit): a binary-document owner can neither publish a snapshot origin
+  nor pass recovery review, and the refusal writes nothing.
+- M3: `replaced_private_journal_namespace_refuses_recovery_without_effects`: after a
+  partial restore and a reviewed rollback, the private `journals` directory is replaced
+  by an equal-content copy (refused: `Intent slot identity changed`) and then by a
+  symlink alias to the original (refused: `Not a directory`, never followed). No
+  source changes and no resolution journal appears; once the original directory is
+  back the same request succeeds.
+- M4: `restore_killed_after_a_progress_record_is_kept_without_replay` /
+  `..._is_rolled_back_without_replay` (exactly the recorded path holds restored bytes;
+  keep/rollback through the CLI; a repeated confirmation is lookup only over a later
+  owner edit). `interrupted_staged_undo_with_an_inactive_branch_is_kept` /
+  `_rolled_back`: a staged code undo is killed after its first progress record in a
+  Session with an inactive branch; recovery neither stages nor commits it, the branch
+  stays inactive and exportable, and a new staged undo and clear work afterwards.
+  `interrupted_resolution_is_retained_and_resolved_as_independent_evidence`: a
+  rollback resolution killed after its first progress record leaves a separate
+  `restore_resolution_*` journal; the interrupted request stays `pending` and a
+  repeat is not redispatched (an owner edit survives); keep on the resolution journal
+  settles it and the request reports `resolved_by_another_request`; new input stays
+  fenced until the original journal gets its own reviewed keep.
+- M5: `paired_recovery_killed_after_writer_commit_reconciles_without_replay` replaces
+  the simulated paired writer-commit cut: both owners are committed (`snapshot_recovery_committed`
+  with the receipt) and both journals are unacknowledged; lookup does not acknowledge;
+  `--acknowledge` publishes only metadata (`settled_by` names the resolution) over
+  later owner edits; a repeated confirmation is lookup only.
+- M8: `restore_killed_after_filesystem_completion_with_payloads_is_kept` /
+  `_rolled_back` (completed intent, four retained images, no writer commit);
+  `ordinary_restore_killed_after_journal_acknowledgement_never_replays` (the rewind is
+  committed once; lookup returns the receipt; the retained confirmation is refused and
+  changes nothing); `paired_recovery_killed_after_journal_acknowledgement_returns_the_receipt`.
+
+Verification (local macOS arm64 only): the 15 new `restore_cuts` cases and the full
+`branches_cli` binary under nextest `ci` (`--test-threads 4`); `cyber-server`
+`snapshot_recovery` unit tests. No Linux, macOS Intel or Windows result is claimed.
+Still open: paired/prepared payload-reclaim process death, real kills at later
+progress records and in Git (`native-git-acceptance`) equivalents of these cuts,
+HTTP route tests and a real-server SDK test for recovery, a TUI path from
+"Code unavailable" into journal recovery, and the platform matrix.
+
+### Paired and prepared payload-cleanup process death (2026-11-16, local)
+
+`crates/cyber-cli/tests/support/cleanup_cuts.rs` (submodule of `restore_cuts`) settles
+a partial restore with a real keep or rollback, or cancels a restore killed at the new
+debug-only `copy-restore-images-prepared` point (all four target images and their
+ownership durable, no exchange), ages the owner, and runs production reclamation in a
+separate test process that blocks inside the deletion transaction once any planned
+payload is unlinked (`Maintenance::reclaim_until_any_killed`). After SIGKILL some, but
+not all, payloads are gone and the durable plan is uncompleted. A later owner symlink
+edit survives; a fresh owner completes the identical frozen plan once and a second pass
+reclaims nothing; intents (and `preparation.json`) keep their bytes; a fresh service
+returns the same receipt through lookup/acknowledgement, with no transcript movement
+or inference. No defect was found.
+
+### Managed Git equivalents and damaged intents (2026-11-16, local)
+
+`restore_cuts` now builds the same four-file fixture in a managed Git worktree
+(`Fixture::managed`, tracked files, `native-git-acceptance`) and runs the file-copy
+scenarios unchanged there (`restore_cuts::managed::git_*`): keep and rollback after a
+kill directly after a progress record, a staged undo beside an inactive branch killed
+mid-restore (keep and rollback), private journal namespace replacement by a copy and
+by a symlink alias, a damaged retained intent, rollback after filesystem completion
+with displaced images, the paired writer-commit cut and an interrupted resolution
+retained as independent evidence. All refusals and outcomes match the file-copy
+backend.
+
+`damaged_retained_intent_refuses_recovery_without_effects` (both backends): after a
+partial restore and a reviewed rollback, `intent.json` is overwritten with invalid
+JSON and then moved away. Listing, review and the already reviewed confirmation all
+refuse (exit 2: the parse error, then `No such file or directory`) with no source
+effect and no resolution journal; with the exact record back in place (same inode)
+the reviewed request settles. Review finding, not changed: one damaged journal makes
+the whole Session listing fail closed, so its sibling journals cannot be listed until
+the record is repaired.
+
+CI: `non-git-snapshot-proof.yml` gains a "Restore and recovery process-death cuts"
+step (`restore_cuts::` and `ordinary_cuts::` with `native-git-acceptance`) on
+ubuntu-24.04, ubuntu-24.04-arm, macos-15 and macos-15-intel; its log is retained as
+`recovery-cut-proof.log`. Platform results are claimed only from those runs.
+
+### Recovery routes and a real-server SDK client (2026-11-16, local)
+
+`recovery_routes_refuse_stale_and_foreign_requests_without_effects` (`restore_cuts`,
+real service, every route called directly through `cyber api`): after a real partial
+restore, `POST .../recovery/review` returns a fingerprint; a stale confirmation
+(`ConflictError` "stale"), a foreign Session's review and confirmation (`ConflictError`
+"different Session/checkout"), a request ID reused with different content
+(`ConflictError`) and unknown or foreign lookups (`RequestNotFoundError`) are refused
+with no source change and no resolution journal. The exact confirmation settles; lookup,
+the repeated confirmation and acknowledgement return the same receipt over a later
+owner edit; discovery returns exactly the request for its Session and `[]` for another;
+the transcript and inference count do not change. Review finding (not changed): a
+foreign Session's `POST .../requests/{id}/acknowledge` refuses as `InvalidRequestError`
+"No retained recovery request" while the same lookup is `RequestNotFoundError`.
+
+`sdk/typescript/test/recovery.e2e.test.ts` (runs with `CYBER_BIN`, so in CI's SDK job):
+the CLI produces a non-Git Session, a fresh service is started with the debug
+`copy-restore-progress-recorded` point and SIGKILLed through its registration, and the
+SDK (`Cyber.start({mode:"spawn"})`) lists the journal, reviews rollback, gets a 409
+`ConflictError` for a stale fingerprint and for a foreign Session, confirms
+(`acknowledged`, `journal_acknowledged: true`), and gets the same receipt from lookup
+and a repeated confirmation over a later owner edit, a 404 for a foreign lookup, an
+unchanged transcript and no inference. Local macOS arm64 pass; the SDK suite passes
+(139 pass, 11 skipped without `CYBER_BIN`).
+
+## M8 substantive code and security review of the recovery path (2026-11-16, local)
+
+Scope: review/confirm/lookup/acknowledge, the paired Store commit, journal
+acknowledgement, payload and metadata reclamation, and their HTTP routes
+(`cyber-server` `runtime/snapshot_*`, `activity.rs`, `http/sessions.rs`; `cyber-snapshot`
+`copy/{restore,resolution*,ownership,storage,intent_slots,preparation,lifetime,orphaned}.rs`
+and `copy/reclamation/`; `cyber-store` `append_pair_checked`), checked against
+managed-recovery.md. Lens: origin/ownership proof, TOCTOU, mutation on repeated
+lookup, deletion of unresolved evidence, commit ordering, route authorization, silent
+error paths, resource bounds.
+
+Defects fixed, each with a regression test:
+
+1. **Keep cleanup could unlink an owner file** (`copy/reclamation/paired.rs`
+   `original_payloads`). Paired cleanup deleted whatever inode the keep outcome had
+   observed in the original journal's private slot, without checking it against the
+   restore's own ownership record. An owner write that races an exchange can leave the
+   owner's file there; review reports it `foreign`, keep is allowed, and after retention
+   cleanup deleted it. Ordinary and resolution cleanup already required
+   `verify_original`. The slot inode must now be the recorded original source or the
+   prepared target (`Ownership::owns_slot`); otherwise cleanup refuses and keeps the
+   bytes. Regression: `kept_recovery_cleanup_never_unlinks_an_unowned_slot_inode`
+   (failed before: 35 bytes reclaimed).
+2. **Repeated acknowledgement rewrote acknowledged intents**
+   (`copy/resolution.rs` `acknowledge_resolution_authorized`,
+   `reconcile_restore_receipt`). Every repeated `--acknowledge`/`POST .../acknowledge`
+   rewrote both intents, swapping slot inodes, so identities pinned by a planned
+   but interrupted metadata retirement no longer matched and resumed retirement
+   would refuse forever. Already published metadata is now left untouched.
+   Regression: `repeated_acknowledgement_never_rewrites_acknowledged_intents`
+   (recovery and ordinary restore; failed before on changed inodes).
+3. **Hardening:** a new resolution was admitted when the existence check of its
+   journal failed for any reason (`symlink_metadata(..).is_ok()`); only `NotFound`
+   now admits creation, other errors refuse (`resolve_recovery`).
+
+Recorded, not changed (need design or verification):
+
+- A failed consuming paired commit drops the moved checkout claims inside the writer
+  callback before disposal records the activity `unknown` (`activity.rs`
+  `commit_recovery`); the lifetime lock still blocks reacquisition. Needs a
+  verification test before any change.
+- A keep that sees a harmless owner edit after `execute_journal` marks the resolution
+  complete leaves a permanently `unknown` request that the owner must resolve as its
+  own journal (`resolution.rs` keep `verify_unchanged_slots` order). Fail-closed;
+  changing the order touches the approved protocol, so it is left for the owner.
+- The cleanup protection query compares the canonical origin directory with the
+  stored `session.directory` (`snapshot_reclamation.rs`); a Session stored through a
+  symlinked path might not protect its journal. Not confirmed.
+- One damaged `intent.json` makes the whole Session listing fail closed; a foreign
+  acknowledge refuses as `InvalidRequestError` while lookup refuses as
+  `RequestNotFoundError`; with TCP and no password any local process can call the
+  owner routes (general server policy); `retention_days` defaults to 7 when the
+  `snapshots` object exists without it; request discovery scans events with
+  `json_extract` (bounded at 4096).
+- Owner question still open: while an interrupted keep/rollback is pending, the
+  original journal can be re-reviewed under a new request ID, while the refusal hint
+  says not to choose a new ID.
+
+Reviewed and sound: request ownership bound to Session creation; lookup-only reuse and
+changed-content refusal; fingerprints recomputed under locks before effects; the
+writer re-attests both owners and notifies only after COMMIT; journal
+acknowledgement only after the observed commit; per-exchange authorization and parent
+route checks; intent-slot identity checks; ordinary/resolution cleanup ownership,
+inventory and pins; plan/delete/complete ordering; record, listing and request bounds.
 
 ## Rules and context inspection audit (2026-11-16, local)
 

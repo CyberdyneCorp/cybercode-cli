@@ -327,11 +327,18 @@ impl Store {
             return Err("Original intent differs from consuming resolution acknowledgement".into());
         }
         // The child acknowledgement is durable before publishing the parent's
-        // settlement link. A cut between writes stays fenced and is idempotent.
-        authorize()?;
-        self.verify_worker_namespace(origin)?;
-        journal.acknowledged = true;
-        Self::record(&dir, &journal)?;
+        // settlement link. A cut between writes stays fenced and is idempotent;
+        // metadata that is already published is never rewritten, so identities
+        // pinned by a planned metadata retirement survive a repeated request.
+        if !journal.acknowledged {
+            authorize()?;
+            self.verify_worker_namespace(origin)?;
+            journal.acknowledged = true;
+            Self::record(&dir, &journal)?;
+        }
+        if parent.acknowledged && parent.settled_by.is_some() {
+            return Ok(());
+        }
         authorize()?;
         self.verify_worker_namespace(&resolution.original)?;
         parent.acknowledged = true;
@@ -366,6 +373,9 @@ impl Store {
             || immutable_digest(&journal)? != receipt.intent_digest
         {
             return Err("Ordinary restore intent differs from its committed receipt".into());
+        }
+        if journal.acknowledged {
+            return Ok(());
         }
         authorize()?;
         self.verify_worker_namespace(origin)?;
@@ -578,7 +588,13 @@ impl Store {
             .ok_or_else(|| RestoreError::Failed("Recovery requires exact native origin".into()))?;
         let id = resolution_id(&original, &request.request_id).map_err(RestoreError::Failed)?;
         // A durable prior request is lookup-only, including failed/partial outcomes.
-        if self.journals.symlink_metadata(&id).is_ok() {
+        // Only a definite absence admits a new resolution; any other error refuses.
+        let existing = match self.journals.symlink_metadata(&id) {
+            Ok(_) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(RestoreError::Failed(error.to_string())),
+        };
+        if existing {
             return self
                 .lookup_resolution(&id, request, &original)
                 .map_err(RestoreError::Failed);

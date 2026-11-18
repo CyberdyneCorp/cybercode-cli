@@ -8261,6 +8261,341 @@
           "data"
         ]
       },
+      "Data_ConstructionInventory": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConstructionInventory"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ConstructionInventory": {
+        "type": "object",
+        "properties": {
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConstructionStageEntry"
+            }
+          },
+          "pending": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConstructionDiscardReceipt"
+            },
+            "description": "Requests whose stage is not unlinked yet (`discard pending`)."
+          }
+        },
+        "required": [
+          "stages",
+          "pending"
+        ]
+      },
+      "ConstructionStageEntry": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConstructionStageKind"
+          },
+          "activity_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The constructing activity; absent when the name has no derivable owner."
+          },
+          "location": {
+            "$ref": "#/components/schemas/ConstructionLocation"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "location"
+        ],
+        "description": "One listed stage. Listing grants no discard authority."
+      },
+      "ConstructionStageKind": {
+        "type": "string",
+        "enum": [
+          "checkout_claim",
+          "checkout_acknowledgement",
+          "cancellation_record"
+        ]
+      },
+      "ConstructionLocation": {
+        "type": "string",
+        "enum": [
+          "present",
+          "removed"
+        ]
+      },
+      "ConstructionDiscardReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/ConstructionStage"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "recorded_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConstructionDiscardStatus"
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "request_id",
+          "session_id",
+          "confirmation",
+          "stage",
+          "actor",
+          "recorded_ms",
+          "status"
+        ],
+        "description": "The audit receipt of one request, as last recorded."
+      },
+      "ConstructionStage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConstructionStageKind"
+          },
+          "activity_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "worktree_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "journal_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "$ref": "#/components/schemas/StageEvidence"
+          },
+          "fences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Operations that refuse while this stage exists."
+          },
+          "location": {
+            "$ref": "#/components/schemas/ConstructionLocation"
+          },
+          "source": {
+            "type": "string",
+            "description": "The private directory that holds the stage."
+          },
+          "namespace": {
+            "type": "string",
+            "description": "The namespace whose `discarded/` quarantine receives it."
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "activity_id",
+          "session_id",
+          "evidence",
+          "fences",
+          "location",
+          "source",
+          "namespace"
+        ],
+        "description": "A reviewed stage, frozen into the discard receipt."
+      },
+      "StageEvidence": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "device": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "inode": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "size": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "modified_ns": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Modification time in nanoseconds since the Unix epoch."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Lowercase hex SHA-256 of the stage bytes."
+          }
+        },
+        "required": [
+          "device",
+          "inode",
+          "size",
+          "modified_ns",
+          "sha256"
+        ],
+        "description": "Native identity and contents of one stage at review."
+      },
+      "ConstructionDiscardStatus": {
+        "oneOf": [
+          {
+            "type": "string",
+            "const": "intent",
+            "description": "Recorded before any filesystem change; the plan is frozen."
+          },
+          {
+            "type": "string",
+            "const": "pending",
+            "description": "Moved into the quarantine, unlink not yet done (`discard pending`)."
+          },
+          {
+            "type": "string",
+            "const": "completed",
+            "description": "The stage is gone."
+          },
+          {
+            "type": "string",
+            "const": "changed",
+            "description": "A different file holds the name; nothing was deleted."
+          }
+        ]
+      },
+      "ConstructionDiscardSelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact stage name, from the construction listing."
+          },
+          "activity_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An activity with exactly one stage."
+          }
+        }
+      },
+      "Data_ConstructionDiscardReview": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConstructionDiscardReview"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ConstructionDiscardReview": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string"
+          },
+          "session_sequence": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/ConstructionStage"
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "warning": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "session_sequence",
+          "stage",
+          "confirmation",
+          "warning"
+        ]
+      },
+      "ConstructionDiscardConfirmation": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "type": "string",
+            "description": "The reviewed stage name; one stage per confirmation."
+          },
+          "confirmation": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "confirmation",
+          "request_id"
+        ]
+      },
+      "Data_ConstructionDiscardReceipt": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ConstructionDiscardReceipt"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
       "RewindSelection": {
         "type": "object",
         "additionalProperties": false,
@@ -27241,6 +27576,234 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Data_SnapshotPreparationReceipt"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/constructions": {
+      "get": {
+        "operationId": "v1.session.constructionInventory",
+        "summary": "List unpublished construction stages and discards that still owe an unlink (`discard pending`); listing grants no discard authority",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ConstructionInventory"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/constructions/discard/review": {
+      "post": {
+        "operationId": "v1.session.constructionDiscardReview",
+        "summary": "Owner only: review one construction stage read-only and return its confirmation fingerprint",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ConstructionDiscardReview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ForbiddenError: delegated, browser, peer or model callers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConstructionDiscardSelection"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/constructions/discard/confirm": {
+      "post": {
+        "operationId": "v1.session.constructionDiscardConfirm",
+        "summary": "Owner only: discard one fingerprint-confirmed construction stage after fencing its activity; a repeated request ID resumes or returns its receipt",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ConstructionDiscardReceipt"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "ForbiddenError: delegated, browser, peer or model callers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConstructionDiscardConfirmation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionID}/rewind/constructions/discard/requests/{requestID}": {
+      "get": {
+        "operationId": "v1.session.constructionDiscardLookup",
+        "summary": "Look up a construction discard receipt without acting",
+        "tags": [
+          "session"
+        ],
+        "parameters": [
+          {
+            "name": "sessionID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "requestID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ConstructionDiscardReceipt"
                 }
               }
             }

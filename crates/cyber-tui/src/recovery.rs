@@ -35,6 +35,8 @@ pub struct View {
     pub preparation: preparation::View,
     pub discovered: bool,
     pub journals: Vec<SnapshotRecovery>,
+    /// Construction evidence and pending discards; the TUI only shows the CLI command.
+    pub constructions: cyber_server::runtime::ConstructionInventory,
     pub requests: Vec<Confirmation>,
     pub selected: usize,
     pub journal: Option<String>,
@@ -55,7 +57,10 @@ pub enum Command {
 #[derive(Debug, Clone)]
 pub enum Reply {
     Preparation(Box<preparation::Reply>),
-    Journals(Vec<SnapshotRecovery>),
+    Journals(
+        Vec<SnapshotRecovery>,
+        Box<cyber_server::runtime::ConstructionInventory>,
+    ),
     Requests(Vec<Confirmation>),
     Review(Box<Review>),
     Outcome(Box<Outcome>),
@@ -299,8 +304,9 @@ fn accept(view: &mut View, request: &rewind::Request, reply: Reply) -> Result<()
         return Err("Foreign recovery command".into());
     };
     match (command, reply) {
-        (Command::List, Reply::Journals(journals)) => {
+        (Command::List, Reply::Journals(journals, constructions)) => {
             view.journals = journals;
+            view.constructions = *constructions;
             view.phase = Phase::Journals;
             view.selected = 0;
         }

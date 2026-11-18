@@ -61,7 +61,7 @@ fn open(app: &mut App) {
         &mut Default::default(),
         req,
         Ok(rewind::Reply::Recovery(Box::new(
-            recovery::Reply::Journals(vec![]),
+            recovery::Reply::Journals(vec![], Default::default()),
         ))),
     );
     let req = request(app.recovery_key(KeyCode::Char('p')));
@@ -263,7 +263,7 @@ fn interrupted_checkout_construction_is_listed_as_unresolved_fenced_evidence() {
         &mut Default::default(),
         req,
         Ok(rewind::Reply::Recovery(Box::new(
-            recovery::Reply::Journals(vec![]),
+            recovery::Reply::Journals(vec![], Default::default()),
         ))),
     );
     let journals = recovery::lines(&app);
@@ -290,7 +290,8 @@ fn interrupted_checkout_construction_is_listed_as_unresolved_fenced_evidence() {
     assert!(
         shown.iter().any(|line| line.contains(&stage)
             && line.contains("Unresolved checkout construction evidence")
-            && line.contains("worktree removal refuses")),
+            && line.contains("worktree removal refuses")
+            && line.contains(&format!("cyber sessions recovery-discard ses_one {stage}"))),
         "{shown:#?}"
     );
     assert_eq!(app.composer.text(), "owner draft");

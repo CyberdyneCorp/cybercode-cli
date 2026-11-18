@@ -810,6 +810,18 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
             .ok::<Data<crate::runtime::SnapshotPreparationReceipt>>(g),
         op("post", "/sessions/{sessionID}/rewind/preparations/{activityID}/requests/{requestID}/acknowledge", "v1.session.snapshotPreparationAcknowledge", "Reconcile native metadata acknowledgement of an exact committed pre-effect cancellation without source changes")
             .ok::<Data<crate::runtime::SnapshotPreparationReceipt>>(g),
+        op("get", "/sessions/{sessionID}/rewind/constructions", "v1.session.constructionInventory", "List unpublished construction stages and discards that still owe an unlink (`discard pending`); listing grants no discard authority")
+            .ok::<Data<crate::runtime::ConstructionInventory>>(g),
+        op("post", "/sessions/{sessionID}/rewind/constructions/discard/review", "v1.session.constructionDiscardReview", "Owner only: review one construction stage read-only and return its confirmation fingerprint")
+            .body::<crate::runtime::ConstructionDiscardSelection>(g)
+            .ok::<Data<crate::runtime::ConstructionDiscardReview>>(g)
+            .error::<ErrorBody>(g, 403, "ForbiddenError: delegated, browser, peer or model callers"),
+        op("post", "/sessions/{sessionID}/rewind/constructions/discard/confirm", "v1.session.constructionDiscardConfirm", "Owner only: discard one fingerprint-confirmed construction stage after fencing its activity; a repeated request ID resumes or returns its receipt")
+            .body::<crate::runtime::ConstructionDiscardConfirmation>(g)
+            .ok::<Data<crate::runtime::ConstructionDiscardReceipt>>(g)
+            .error::<ErrorBody>(g, 403, "ForbiddenError: delegated, browser, peer or model callers"),
+        op("get", "/sessions/{sessionID}/rewind/constructions/discard/requests/{requestID}", "v1.session.constructionDiscardLookup", "Look up a construction discard receipt without acting")
+            .ok::<Data<crate::runtime::ConstructionDiscardReceipt>>(g),
         op("post", "/sessions/{sessionID}/rewind/restores/{activityID}/acknowledge", "v1.session.snapshotRestoreAcknowledge", "Acknowledge the immutable ordinary restore intent after its paired Session commit without replaying source files")
             .ok::<Data<crate::runtime::SnapshotRestoreReceipt>>(g),
         op("post", "/sessions/{sessionID}/rewind/preview", "v1.session.rewindPreview", "Review a rewind without changing files or the active conversation")

@@ -53,9 +53,13 @@ fn recovery_drops_stale_generations_and_foreign_sessions_without_changing_drafts
     let mut app = app();
     let old = request(app.open_snapshot_recovery());
     let current = request(app.open_snapshot_recovery());
-    deliver(&mut app, old, Reply::Journals(vec![]));
+    deliver(&mut app, old, Reply::Journals(vec![], Default::default()));
     assert!(app.rewind.recovery.busy);
-    deliver(&mut app, current.clone(), Reply::Journals(vec![]));
+    deliver(
+        &mut app,
+        current.clone(),
+        Reply::Journals(vec![], Default::default()),
+    );
     assert!(!app.rewind.recovery.busy);
     app.set_session(Session {
         id: "ses_foreign".into(),
@@ -63,7 +67,11 @@ fn recovery_drops_stale_generations_and_foreign_sessions_without_changing_drafts
         ..Default::default()
     });
     app.composer.set_text("foreign draft");
-    deliver(&mut app, current, Reply::Journals(vec![]));
+    deliver(
+        &mut app,
+        current,
+        Reply::Journals(vec![], Default::default()),
+    );
     assert_eq!(app.composer.text(), "foreign draft");
     assert_ne!(app.rewind.phase, rewind::Phase::Recovery);
 }
@@ -71,7 +79,11 @@ fn recovery_drops_stale_generations_and_foreign_sessions_without_changing_drafts
 fn ambiguous_confirmation_retains_exact_lookup_and_never_reuses_enter_to_mutate() {
     let mut app = app();
     let initial = request(app.open_snapshot_recovery());
-    deliver(&mut app, initial, Reply::Journals(vec![]));
+    deliver(
+        &mut app,
+        initial,
+        Reply::Journals(vec![], Default::default()),
+    );
     app.rewind.recovery.phase = Phase::Requests;
     app.rewind.recovery.discovered = true;
     app.rewind.recovery.journal = Some("restore_one".into());
@@ -117,13 +129,16 @@ fn failed_discovery_does_not_license_a_fresh_attempt() {
     deliver(
         &mut app,
         load,
-        Reply::Journals(vec![SnapshotRecovery {
-            id: "restore_one".into(),
-            filesystem_complete: false,
-            paths: vec![],
-            applied: vec![],
-            location_removed: false,
-        }]),
+        Reply::Journals(
+            vec![SnapshotRecovery {
+                id: "restore_one".into(),
+                filesystem_complete: false,
+                paths: vec![],
+                applied: vec![],
+                location_removed: false,
+            }],
+            Default::default(),
+        ),
     );
     let discovery = request(app.recovery_key(KeyCode::Enter));
     deliver(&mut app, discovery, Reply::Requests(vec![]));
@@ -463,13 +478,16 @@ fn a_removed_location_journal_is_listed_read_only() {
     deliver(
         &mut app,
         load,
-        Reply::Journals(vec![SnapshotRecovery {
-            id: "restore_one".into(),
-            filesystem_complete: true,
-            paths: vec!["a.txt".into()],
-            applied: vec!["a.txt".into()],
-            location_removed: true,
-        }]),
+        Reply::Journals(
+            vec![SnapshotRecovery {
+                id: "restore_one".into(),
+                filesystem_complete: true,
+                paths: vec!["a.txt".into()],
+                applied: vec!["a.txt".into()],
+                location_removed: true,
+            }],
+            Default::default(),
+        ),
     );
     let shown = lines(&app)
         .iter()
@@ -484,5 +502,50 @@ fn a_removed_location_journal_is_listed_read_only() {
     assert!(app.recovery_key(KeyCode::Enter).is_empty());
     assert!(app.recovery_key(KeyCode::Char('k')).is_empty());
     assert!(app.recovery_key(KeyCode::Char('b')).is_empty());
+    assert_eq!(app.composer.text(), "owner draft");
+}
+
+/// Owner decision 2026-11-15 (`snapshots-checkpoints` → Owner-only discard of
+/// construction evidence: "Terminal recovery panel points to the command"): the
+/// panel lists construction evidence and pending discards with the exact CLI
+/// command, and no key discards anything.
+#[test]
+fn construction_evidence_is_listed_with_the_cli_command_only() {
+    use cyber_server::runtime::{
+        ConstructionInventory, ConstructionLocation, ConstructionStageEntry, ConstructionStageKind,
+    };
+    let mut app = app();
+    let load = request(app.open_snapshot_recovery());
+    let stage = format!("preparing_6_op_one_{}", "0".repeat(26));
+    deliver(
+        &mut app,
+        load,
+        Reply::Journals(
+            vec![],
+            Box::new(ConstructionInventory {
+                stages: vec![ConstructionStageEntry {
+                    name: stage.clone(),
+                    kind: ConstructionStageKind::CheckoutClaim,
+                    activity_id: Some("op_one".into()),
+                    location: ConstructionLocation::Present,
+                }],
+                pending: vec![],
+            }),
+        ),
+    );
+    let shown = lines(&app)
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        shown.contains(&format!(
+            "discard with: cyber sessions recovery-discard ses_one {stage}"
+        )),
+        "{shown}"
+    );
+    for key in [KeyCode::Enter, KeyCode::Char('d'), KeyCode::Char('x')] {
+        assert!(app.recovery_key(key).is_empty(), "{key:?}");
+    }
     assert_eq!(app.composer.text(), "owner draft");
 }

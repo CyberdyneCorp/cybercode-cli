@@ -7,6 +7,7 @@ pub mod browser;
 pub mod budget;
 pub mod commands;
 pub mod config;
+pub mod construction_discard;
 pub mod env;
 pub mod eval;
 pub mod features;

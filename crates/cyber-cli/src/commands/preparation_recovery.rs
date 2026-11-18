@@ -131,7 +131,7 @@ pub async fn run(
     let base = format!("/sessions/{}/rewind/preparations", encode(&session));
     let Some(activity) = args.activity else {
         let list: Vec<SnapshotPreparation> = data(client.get(&base).await.map_err(api)?)?;
-        return list_output(&list, global);
+        return list_output(&list, &session, global);
     };
     let base = format!("{base}/{}", encode(&activity));
     if let Some(confirmation) = args.confirm {
@@ -190,7 +190,11 @@ pub async fn request(
         .map_err(|error| error.with_hint(&lookup))?;
     receipt_output(&receipt, global, args.acknowledge)
 }
-fn list_output(list: &[SnapshotPreparation], global: &GlobalArgs) -> Result<(), CliError> {
+fn list_output(
+    list: &[SnapshotPreparation],
+    session: &str,
+    global: &GlobalArgs,
+) -> Result<(), CliError> {
     if output::is_json(global.format) {
         return output::json(&list);
     }
@@ -205,7 +209,7 @@ fn list_output(list: &[SnapshotPreparation], global: &GlobalArgs) -> Result<(), 
             item.lifetime_available
         );
         for stage in &item.checkout_constructions {
-            println!("  {}", construction_line(stage));
+            println!("  {}", construction_line(session, stage));
         }
     }
     println!(
@@ -214,10 +218,11 @@ fn list_output(list: &[SnapshotPreparation], global: &GlobalArgs) -> Result<(), 
     Ok(())
 }
 /// One unresolved checkout construction stage, with what the operator can do.
-pub(super) fn construction_line(stage: &str) -> String {
+pub(super) fn construction_line(session: &str, stage: &str) -> String {
     format!(
-        "unresolved checkout construction evidence {}: the worker died before publishing its claim or acknowledgement. Cancelling this preparation restores prompt admission; the stage stays fenced (worktree removal refuses) until construction recovery is available.",
-        clean(stage)
+        "unresolved checkout construction evidence {}: the worker died before publishing its claim or acknowledgement. Cancelling this preparation restores prompt admission; the stage stays fenced (worktree removal refuses) until the owner discards it with {}",
+        clean(stage),
+        super::discard_recovery::command(session, stage)
     )
 }
 /// Best-effort text-only pointer from journal recovery to unresolved
@@ -246,7 +251,7 @@ fn print_unresolved(list: &[SnapshotPreparation], session: &str) {
         shell_words::quote(session)
     );
     for stage in list.iter().flat_map(|item| &item.checkout_constructions) {
-        println!("  {}", construction_line(stage));
+        println!("  {}", construction_line(session, stage));
     }
 }
 fn review_output(review: &SnapshotPreparationReview, global: &GlobalArgs) -> Result<(), CliError> {

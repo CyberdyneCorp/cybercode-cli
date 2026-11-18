@@ -1059,6 +1059,29 @@ pub trait ToolHost: Send + Sync {
         Ok(vec![])
     }
 
+    /// Read-only native review of one checkout claim or acknowledgement stage of this
+    /// Session's managed checkout; `None` when it has none by that name. Nothing is
+    /// opened for writing, locked or adopted.
+    fn snapshot_construction_stage(
+        &self,
+        _info: &SessionInfo,
+        _name: &str,
+    ) -> Result<Option<super::NativeConstructionStage>, String> {
+        Ok(None)
+    }
+
+    /// Fence one reviewed checkout stage for an owner-confirmed discard: its
+    /// constructor lock is held exclusively and its published records are checked.
+    fn fence_snapshot_construction(
+        &self,
+        _info: &SessionInfo,
+        _stage: &super::NativeConstructionStage,
+    ) -> Result<Box<dyn super::ConstructionFence>, super::ConstructionFenceError> {
+        Err(super::ConstructionFenceError::Refused(
+            "Checkout construction discard is unavailable on this host".into(),
+        ))
+    }
+
     /// Reacquire only original snapshot evidence, without creating or settling claims.
     /// The caller retains the matching lifetime lock independently.
     fn reacquire_snapshot_location(
@@ -1711,6 +1734,36 @@ pub trait Snapshots: Send + Sync {
     ) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async {
             Err("Native snapshot acknowledgement reconciliation is unavailable".into())
+        })
+    }
+    /// Names of the file-copy cancellation-record stages retained beside the
+    /// journal of `origin`. Inventory only; it grants no discard authority.
+    fn cancellation_stages(
+        &self,
+        _origin: super::SnapshotOrigin,
+    ) -> BoxFuture<'_, Result<Vec<String>, String>> {
+        Box::pin(async { Ok(vec![]) })
+    }
+    /// Read-only native review of one cancellation-record stage of `origin`'s journal.
+    fn cancellation_stage(
+        &self,
+        _origin: super::SnapshotOrigin,
+        _name: String,
+    ) -> BoxFuture<'_, Result<Option<super::NativeConstructionStage>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+    /// Fence one reviewed cancellation-record stage: the namespace lock and the
+    /// owner's lifetime lock are held and its published record is checked.
+    fn fence_cancellation_stage(
+        &self,
+        _origin: super::SnapshotOrigin,
+        _stage: super::NativeConstructionStage,
+    ) -> BoxFuture<'_, Result<Box<dyn super::ConstructionFence>, super::ConstructionFenceError>>
+    {
+        Box::pin(async {
+            Err(super::ConstructionFenceError::Refused(
+                "Cancellation-record discard is unavailable on this host".into(),
+            ))
         })
     }
     /// Only synchronous filesystem hosts retaining runtime-issued worker ownership.

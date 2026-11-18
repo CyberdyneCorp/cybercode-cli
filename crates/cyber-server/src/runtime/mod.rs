@@ -137,6 +137,7 @@ pub use memory::{
     MemoryRecoveryRequestStatus, MemoryRequestStatus, MemoryWrite, MemoryWriteOwner,
     memory_http_request_id,
 };
+pub mod construction_discard;
 pub mod deferred_tools;
 mod model;
 mod requests;
@@ -144,6 +145,12 @@ mod rewind;
 mod rewind_preview;
 mod snapshot_lifetime;
 mod snapshot_preparation;
+pub use construction_discard::{
+    ConstructionDiscardConfirmation, ConstructionDiscardReceipt, ConstructionDiscardReview,
+    ConstructionDiscardSelection, ConstructionDiscardStatus, ConstructionFence,
+    ConstructionFenceError, ConstructionInventory, ConstructionLocation, ConstructionStage,
+    ConstructionStageEntry, ConstructionStageKind, NativeConstructionStage,
+};
 pub use snapshot_preparation::{
     SnapshotPreparation, SnapshotPreparationConfirmation, SnapshotPreparationReceipt,
     SnapshotPreparationReview,

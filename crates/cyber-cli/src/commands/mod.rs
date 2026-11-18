@@ -8,6 +8,7 @@ pub mod collab;
 pub mod computer;
 pub mod db;
 pub mod debug;
+mod discard_recovery;
 pub mod doctor;
 pub mod eval;
 pub mod exec;

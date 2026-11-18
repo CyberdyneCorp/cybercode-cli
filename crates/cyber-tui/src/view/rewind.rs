@@ -247,4 +247,62 @@ mod tests {
         );
         assert!(text.contains("2 conversation"), "{text}");
     }
+
+    /// A code preview refused because a retained restore needs owned recovery shows
+    /// the recovery hint, and C opens journal recovery instead of another preview.
+    #[test]
+    fn code_unavailable_preview_enters_journal_recovery_with_c() {
+        const FENCED: &str = "Snapshot worker outcome requires owned recovery before new input";
+        let mut app = App::new(
+            Session {
+                id: "ses_one".into(),
+                directory: "/project".into(),
+                ..Default::default()
+            },
+            vec![],
+            "cyber",
+        );
+        app.open_rewind(Intent::Menu);
+        app.rewind.boundaries = vec![Boundary {
+            id: "msg_first".into(),
+            text: "first prompt".into(),
+        }];
+        let selection = RewindSelection {
+            action: RewindAction::Commit,
+            message_id: "msg_first".into(),
+            target: RevertTarget::Code,
+            expected_directory: "/project".into(),
+        };
+        let Some(Action::Rewind(request)) = app.rewind_request(Command::Preview(selection)).pop()
+        else {
+            panic!("expected a rewind preview request");
+        };
+        crate::rewind::apply(
+            &mut app,
+            &mut Default::default(),
+            request,
+            Err(FENCED.into()),
+        );
+        let text = screen(&app);
+        assert!(
+            text.contains(&format!(
+                "Code unavailable/conflicting: {FENCED} · C inspects retained recovery"
+            )),
+            "{text}"
+        );
+        let mut actions = app.rewind_key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('c'),
+        ));
+        assert_eq!(app.rewind.phase, Phase::Recovery);
+        let Some(Action::Rewind(request)) = actions.pop() else {
+            panic!("expected a recovery listing request");
+        };
+        assert!(actions.is_empty());
+        assert_eq!(request.session, "ses_one");
+        assert!(matches!(
+            request.command,
+            Command::Recovery(crate::recovery::Command::List)
+        ));
+        assert!(app.rewind.preview.is_none());
+    }
 }

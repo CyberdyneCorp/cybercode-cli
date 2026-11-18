@@ -10,12 +10,21 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+#[cfg(all(
+    feature = "native-git-acceptance",
+    any(target_os = "macos", target_os = "linux")
+))]
+#[path = "support/construction_discard.rs"]
+mod construction_discard;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "support/ordinary_cuts.rs"]
 mod ordinary_cuts;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "support/reclamation.rs"]
 mod reclamation_support;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "support/restore_cuts.rs"]
+mod restore_cuts;
 #[path = "../../cyber-app/tests/support/scripted_model.rs"]
 mod scripted_model;
 #[cfg(any(target_os = "macos", target_os = "linux"))]

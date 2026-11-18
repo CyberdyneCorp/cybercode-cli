@@ -69,6 +69,7 @@ const ALL: &[&str] = &[
     super::admission_authority::FENCED,
     super::activity::CHANGED,
     super::snapshot_preparation::CANCELLED,
+    super::construction_discard::DISCARDED,
     super::child_ownership::CHANGED,
     super::subtree_stop::SETTLED,
     super::subtree_stop::STARTED,
@@ -617,6 +618,12 @@ pub fn registry() -> EventRegistry {
             super::snapshot_preparation::validate_event,
         )
         .expect("valid snapshot preparation cancellation receipt");
+    registry
+        .register_with(
+            super::construction_discard::DISCARDED,
+            super::construction_discard::validate_event,
+        )
+        .expect("valid construction discard receipt");
     registry
         .register_with(MESSAGING_UPDATED, |data| {
             serde_json::from_value::<MessagingUpdated>(data.clone())

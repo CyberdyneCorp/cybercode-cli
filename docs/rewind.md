@@ -134,7 +134,12 @@ runtime and checks that subtree stop reports retained unknown evidence, keeps
 admission closed and does not replay restoration. This is not a native
 partial-replacement crash test. The file-copy suite additionally kills a real
 worker between native file replacements, then verifies retained preimages, an incomplete journal and refusal
-to replay. Broader cut-point/metadata/platform acceptance and managed resolution
+to replay. Real-binary cases also kill the service at debug-only fixture points:
+after origin and before intent publication, after the intent and before staging,
+directly after a progress record (for an ordinary rewind, a staged undo beside an
+inactive branch, and inside a keep/rollback), after filesystem completion with
+displaced images, after the paired recovery writer commit, and after a journal
+acknowledgement whose reply was never sent. Broader cut-point/metadata/platform acceptance and managed resolution
 remain required. Git restore has not gained this new journal.
 
 ## Non-Git storage and retained restore intents
@@ -438,9 +443,30 @@ cyber sessions recovery-request ses_example recovery-one --acknowledge
 
 This verifies the exact retained worker/checkout receipts and writes only native
 acknowledgement metadata; it does not reinstall source files or change the
-conversation. Confirmation/reconciliation exits 1 if the returned state does not
+conversation. Metadata that is already acknowledged is left untouched, so repeating
+the command writes nothing. Cleanup after `keep` deletes a retained private image
+only when it is the restore's own recorded original or target; any other inode
+(for example an owner file that raced the interrupted restore) refuses cleanup and
+keeps its bytes. Confirmation/reconciliation exits 1 if the returned state does not
 establish the requested acknowledgement. Lookup itself can return an unresolved
 state with exit 0 because the read succeeded. Both commands support `--format json`.
+
+If the keep/rollback itself is interrupted (for example the service dies between
+its file exchanges), its resolution journal (`restore_resolution_...`) is listed as
+a separate journal next to the original. The interrupted request stays `pending`;
+repeating it never resumes or replays it. Review and confirm keep or rollback for
+the resolution journal first. The interrupted request then reports
+`resolved_by_another_request`, and the original journal still needs its own review
+and a new request ID before new input is admitted:
+
+```sh
+cyber sessions recovery ses_example restore_resolution_example --action keep
+cyber sessions recovery ses_example restore_resolution_example --action keep \
+  --confirm <fingerprint> --request-id resolution-keep
+cyber sessions recovery ses_example restore_example --action keep
+cyber sessions recovery ses_example restore_example --action keep \
+  --confirm <fingerprint> --request-id original-keep
+```
 
 These commands expose the implemented managed file-copy recovery path on admitted
 Linux/macOS hosts. Ordinary managed Git source recovery remains disabled by default
@@ -530,19 +556,85 @@ points to the unresolved preparation, and `recovery-preparation` lists the stage
 under its activity (JSON `checkout_constructions`); the TUI recovery panel (**C**,
 then **P**) shows the same line. Cancelling that pre-effect preparation restores
 prompt admission. The stage itself is fenced by design: it is never adopted as a
-claim, it is not deleted, and removing the worktree refuses with a
+claim, nothing deletes it automatically, and removing the worktree refuses with a
 `same-owner unknown constructor` error naming it. An interrupted acknowledgement
-stage behaves the same way for metadata retirement. Cleaning up construction
-evidence needs a separate recovery protocol that does not exist yet; do not delete
-the stage by hand to force removal.
+stage behaves the same way for metadata retirement. Only the owner's explicit
+discard (below) removes construction evidence; do not delete the stage by hand.
 
-Recovery clients show a stage only under the preparation whose activity owns it.
-A stage with a malformed name, an acknowledgement stage whose owner has no listed
-preparation, and any stage after its preparation was cancelled (the default
-listing drops cancelled candidates; the TUI history view still shows them) appear
-only in the worktree removal or metadata retirement refusal, which always names
-them. The name inventory is advisory: if it cannot be read, the listing still
-returns its preparations without stage names.
+Recovery clients show a checkout stage under the preparation whose activity owns
+it while that preparation is unresolved. Every stage, including one whose
+preparation was cancelled, a cancellation-record stage and one with a malformed
+name, is listed by `cyber sessions recovery-discard <session>` (and in the text of
+`cyber sessions recovery` and the TUI recovery panel, with the exact discard
+command). The preparation listing's name inventory is advisory: if it cannot be
+read, the listing still returns its preparations without stage names.
+
+### Discarding construction evidence (local owner only)
+
+A construction stage is a private file a constructor flushed but never published: a
+checkout claim stage (`preparing_*`), a checkout acknowledgement stage
+(`ack_preparing_*`) or a file-copy cancellation-record stage (`tmp_*` beside a
+journal's `preparation.json`). The local owner can discard exactly one reviewed stage
+per confirmation:
+
+```sh
+cyber sessions recovery-discard ses_example
+cyber sessions recovery-discard ses_example preparing_10_op_example_01J...
+cyber sessions recovery-discard ses_example preparing_10_op_example_01J... \
+  --confirm <review-fingerprint> --request-id discard-one
+cyber sessions recovery-discard-request ses_example discard-one
+```
+
+The first command lists the stages (kind, owner activity, Location state) and every
+`discard pending` request; `--activity <op>` reviews the only stage of an activity.
+Review is read-only: it reports the stage's kind, owner activity, device and inode,
+size, modification time, SHA-256 (stages over 1 MiB, links and special files are
+refused), the operations it fences and whether the Location is present or removed,
+plus a fingerprint over all of that and the Session revision.
+
+Confirmation refuses, leaving every stage, journal and record unchanged, when:
+
+- the fingerprint is stale (the stage or the Session changed since review);
+- the Session is not idle, has background work or an admitted snapshot worker, or
+  still has an unresolved snapshot preparation (cancel it first);
+- the stage's constructor lock or the activity's snapshot lifetime lock is still
+  held (`busy:`), or the snapshot namespace is busy;
+- the stage name has no derivable owner, or its owner is not a snapshot activity of
+  the Session;
+- a claim stage's activity already published a claim; an acknowledgement stage's
+  claim has no `.snapshot-ack` published from another stage yet, or a
+  cancellation-record stage's journal has no `preparation.json` yet (run
+  `recovery-preparation-request --acknowledge` once first);
+- the caller is not the authenticated local owner (`403`): a bearer or peer
+  identity, a peer attachment, a browser, an MCP client label or a model tool;
+- the Session is a managed checkout whose Location was removed.
+
+Restore journals, payload images and every published claim, acknowledgement and
+cancellation record are never discarded by this command, and it never removes the
+worktree. Once the last stage is gone, worktree removal and metadata retirement are
+admitted again.
+
+A confirmed discard first records a `session.snapshot.construction_discarded.1`
+intent in the Session's history, then moves the stage with a no-replace rename into
+a private `discarded/<key>/` directory of the same namespace, flushes it and unlinks
+it there; the receipt is completed last. Every step re-checks the reviewed identity:
+a file that differs is reported (`changed`) and never deleted. Repeating the
+confirmation with the same request ID resumes an interrupted discard or returns the
+receipt; `recovery-discard-request` (or
+`GET .../rewind/constructions/discard/requests/<request-id>`) only reads it. A stage
+that was moved but not unlinked is `discard pending`: maintenance retries the unlink
+a minute after start and then hourly without a time limit, `cyber doctor` and the
+recovery listings report it, and file-copy stages count toward the snapshot storage
+cap until removed. Receipts are never removed by retention.
+
+The API equivalents are `GET /sessions/<id>/rewind/constructions`,
+`POST /sessions/<id>/rewind/constructions/discard/review` (`{"stage": ...}` or
+`{"activity_id": ...}`), `POST .../discard/confirm`
+(`{"stage", "confirmation", "request_id"}`) and
+`GET .../discard/requests/<request-id>`; the SDK exposes `constructionInventory`,
+`constructionDiscardReview`, `constructionDiscardConfirm` and
+`constructionDiscardLookup` on `client.session`. The TUI only shows the command in
+this revision.
 
 Confirm only a reviewed fingerprint and retain your stable cancellation ID:
 
@@ -565,5 +657,5 @@ Cancellation preserves files, transcript, retained intents, private payloads and
 independent process/checkout uncertainty. Older receipts can remain inspectable
 without gaining newer native acknowledgement authority. If source effects may
 have been admitted, use the journal's keep/rollback review instead. No force-clear
-or evidence deletion option exists. The TUI preparation path and remaining partial
+option exists; construction stages are discarded only as described above. The TUI preparation path and remaining partial
 constructor/native-platform acceptance are still unfinished.

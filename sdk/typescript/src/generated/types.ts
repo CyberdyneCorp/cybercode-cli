@@ -818,6 +818,79 @@ export type Configured = {
   source: string;
 };
 
+export type ConstructionDiscardConfirmation = {
+  /** The reviewed stage name; one stage per confirmation. */
+  stage: string;
+  confirmation: string;
+  request_id: string;
+};
+
+/** The audit receipt of one request, as last recorded. */
+export type ConstructionDiscardReceipt = {
+  request_id: string;
+  session_id: string;
+  confirmation: string;
+  stage: ConstructionStage;
+  actor: string;
+  recorded_ms: number;
+  status: ConstructionDiscardStatus;
+  detail?: string | null;
+};
+
+export type ConstructionDiscardReview = {
+  session_id: string;
+  session_sequence: number;
+  stage: ConstructionStage;
+  confirmation: string;
+  warning: string;
+};
+
+export type ConstructionDiscardSelection = {
+  /** The exact stage name, from the construction listing. */
+  stage?: string | null;
+  /** An activity with exactly one stage. */
+  activity_id?: string | null;
+};
+
+export type ConstructionDiscardStatus = "intent" | "pending" | "completed" | "changed";
+
+export type ConstructionInventory = {
+  stages: ConstructionStageEntry[];
+  /** Requests whose stage is not unlinked yet (`discard pending`). */
+  pending: ConstructionDiscardReceipt[];
+};
+
+export type ConstructionLocation = "present" | "removed";
+
+/** A reviewed stage, frozen into the discard receipt. */
+export type ConstructionStage = {
+  name: string;
+  kind: ConstructionStageKind;
+  activity_id: string;
+  session_id: string;
+  worktree_id?: string | null;
+  journal_id?: string | null;
+  evidence: StageEvidence;
+  /** Operations that refuse while this stage exists. */
+  fences: string[];
+  location: ConstructionLocation;
+  /** The private directory that holds the stage. */
+  source: string;
+  /** The namespace whose `discarded/` quarantine receives it. */
+  namespace: string;
+};
+
+/** One listed stage. Listing grants no discard authority. */
+export type ConstructionStageEntry = {
+  name: string;
+  kind: ConstructionStageKind;
+  /** The constructing activity; absent when the name has no derivable owner. */
+  activity_id?: string | null;
+  location: ConstructionLocation;
+};
+
+export type ConstructionStageKind = "checkout_claim" | "checkout_acknowledgement" | "cancellation_record";
+
 /** One part of a message. Tool results travel in user messages. */
 export type Content = {
   text: string;
@@ -1163,6 +1236,18 @@ export type Data_ComputerPreview = {
 
 export type Data_ComputerStatus = {
   data: ComputerStatus;
+};
+
+export type Data_ConstructionDiscardReceipt = {
+  data: ConstructionDiscardReceipt;
+};
+
+export type Data_ConstructionDiscardReview = {
+  data: ConstructionDiscardReview;
+};
+
+export type Data_ConstructionInventory = {
+  data: ConstructionInventory;
 };
 
 export type Data_CreatedTeam = {
@@ -5398,6 +5483,17 @@ export type SpawnedMember = {
   isolation: Isolation;
   directory: string;
   branch?: string | null;
+};
+
+/** Native identity and contents of one stage at review. */
+export type StageEvidence = {
+  device: number;
+  inode: number;
+  size: number;
+  /** Modification time in nanoseconds since the Unix epoch. */
+  modified_ns: number;
+  /** Lowercase hex SHA-256 of the stage bytes. */
+  sha256: string;
 };
 
 export type StartBody = {

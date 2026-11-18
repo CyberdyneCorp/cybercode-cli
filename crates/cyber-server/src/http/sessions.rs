@@ -415,6 +415,22 @@ pub fn routes() -> Router<AppState> {
             &format!("{s}/rewind/preparations/{{activity_id}}/requests/{{request_id}}/acknowledge"),
             post(snapshot_preparation_acknowledge),
         )
+        .route(
+            &format!("{s}/rewind/constructions"),
+            get(construction_inventory),
+        )
+        .route(
+            &format!("{s}/rewind/constructions/discard/review"),
+            post(construction_discard_review),
+        )
+        .route(
+            &format!("{s}/rewind/constructions/discard/confirm"),
+            post(construction_discard_confirm),
+        )
+        .route(
+            &format!("{s}/rewind/constructions/discard/requests/{{request_id}}"),
+            get(construction_discard_lookup),
+        )
         .route(&format!("{s}/rewind/confirm"), post(rewind_confirm))
         .route(&format!("{s}/revert/stage"), post(stage))
         .route(&format!("{s}/revert/clear"), post(clear))
@@ -1479,6 +1495,81 @@ async fn snapshot_preparation_acknowledge(
             .runtime
             .snapshot_preparation_acknowledge(&id, &activity, &request)
             .await?,
+    }))
+}
+/// Construction discard is the local owner's alone. The main listener already
+/// requires the owner credential; requests that present another identity (a
+/// peer or relay bearer, a peer attachment, a browser, an MCP client label) are
+/// refused before any work. Model tools never reach this route.
+fn owner_only(headers: &axum::http::HeaderMap) -> Result<()> {
+    let bearer = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .is_some_and(|value| !value.as_bytes().starts_with(b"Basic "));
+    let browser =
+        headers.contains_key(axum::http::header::ORIGIN) || headers.contains_key("sec-fetch-mode");
+    let delegated = headers.contains_key("x-cyber-attach")
+        || headers
+            .get("x-cyber-client")
+            .is_some_and(|value| value.as_bytes().starts_with(b"mcp:"));
+    if bearer || browser || delegated {
+        return Err(ApiError::forbidden(
+            "Construction evidence discard is reserved for the authenticated local owner",
+        )
+        .with_reason("owner_only"));
+    }
+    Ok(())
+}
+async fn construction_inventory(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Data<crate::runtime::ConstructionInventory>>> {
+    Ok(Json(Data {
+        data: state.runtime.construction_inventory(&id).await?,
+    }))
+}
+async fn construction_discard_review(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(selection): Json<crate::runtime::ConstructionDiscardSelection>,
+) -> Result<Json<Data<crate::runtime::ConstructionDiscardReview>>> {
+    owner_only(&headers)?;
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .construction_discard_review(&id, &selection)
+            .await?,
+    }))
+}
+async fn construction_discard_confirm(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(confirmation): Json<crate::runtime::ConstructionDiscardConfirmation>,
+) -> Result<Json<Data<crate::runtime::ConstructionDiscardReceipt>>> {
+    owner_only(&headers)?;
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .construction_discard_confirm(&id, &confirmation)
+            .await?,
+    }))
+}
+async fn construction_discard_lookup(
+    State(state): State<AppState>,
+    Path((id, request)): Path<(String, String)>,
+) -> Result<Json<Data<crate::runtime::ConstructionDiscardReceipt>>> {
+    Ok(Json(Data {
+        data: state
+            .runtime
+            .construction_discard_lookup(&id, &request)
+            .await?
+            .ok_or_else(|| {
+                ApiError::not_found(
+                    "ConstructionDiscardNotFoundError",
+                    "No construction discard request with this ID",
+                )
+            })?,
     }))
 }
 async fn rewind_preview(

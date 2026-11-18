@@ -4,6 +4,7 @@ pub(crate) fn object_digest(bytes: &[u8]) -> String {
     storage::digest(bytes)
 }
 mod collection;
+pub(crate) mod discard;
 pub(crate) mod generated_rules;
 mod git;
 pub(crate) mod git_capture;
@@ -355,6 +356,12 @@ impl Store {
         for name in storage::names(&self.namespace, ENTRY_LIMIT)? {
             let metadata = self.namespace.symlink_metadata(&name).map_err(fail)?;
             if metadata.is_dir() {
+                if name == cyber_core::construction_discard::QUARANTINE {
+                    size = size
+                        .checked_add(discard::pending_bytes(&self.namespace)?)
+                        .ok_or("Snapshot storage overflow")?;
+                    continue;
+                }
                 if !matches!(
                     name.as_str(),
                     "files" | "manifests" | "journals" | "workers"

@@ -490,6 +490,13 @@ impl Ownership {
             .get(index)
             .and_then(|file| file.source.as_deref())
     }
+    /// Whether `identity` is the original source or the prepared target recorded for
+    /// change `index`: the only inodes a restore may leave in its private slot.
+    pub(super) fn owns_slot(&self, index: usize, identity: &str) -> bool {
+        self.files.get(index).is_some_and(|file| {
+            [file.source.as_deref(), file.stage.as_deref()].contains(&Some(identity))
+        })
+    }
     pub(super) fn verify_original(&self, index: usize, file: &std::fs::File) -> Result<()> {
         if self.files.get(index).and_then(|file| file.source.as_ref())
             != Some(&storage::identity(file)?)

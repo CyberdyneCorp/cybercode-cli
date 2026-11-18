@@ -323,6 +323,25 @@ impl ToolHost for AppHost {
         self.builtin.snapshot_checkout_constructions(info)
     }
 
+    fn snapshot_construction_stage(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        name: &str,
+    ) -> Result<Option<cyber_server::runtime::NativeConstructionStage>, String> {
+        self.builtin.snapshot_construction_stage(info, name)
+    }
+
+    fn fence_snapshot_construction(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        stage: &cyber_server::runtime::NativeConstructionStage,
+    ) -> Result<
+        Box<dyn cyber_server::runtime::ConstructionFence>,
+        cyber_server::runtime::ConstructionFenceError,
+    > {
+        self.builtin.fence_snapshot_construction(info, stage)
+    }
+
     fn reacquire_snapshot_location(
         &self,
         info: &cyber_server::runtime::SessionInfo,

@@ -1468,6 +1468,86 @@ impl ToolHost for BuiltinHost {
         }
     }
 
+    fn snapshot_construction_stage(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        name: &str,
+    ) -> Result<Option<cyber_server::runtime::NativeConstructionStage>, String> {
+        let Some(worktree) = info.worktree_id.as_deref() else {
+            return Ok(None);
+        };
+        let review = match cyber_core::worktrees::Repository::review_snapshot_construction(
+            std::path::Path::new(&info.directory),
+            worktree,
+            name,
+        ) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            result => result.map_err(|error| error.to_string())?,
+        };
+        Ok(
+            review.map(|review| cyber_server::runtime::NativeConstructionStage {
+                name: review.stage.name,
+                kind: match review.stage.kind {
+                    cyber_core::worktrees::SnapshotConstructionKind::CheckoutClaim => {
+                        cyber_server::runtime::ConstructionStageKind::CheckoutClaim
+                    }
+                    cyber_core::worktrees::SnapshotConstructionKind::CheckoutAcknowledgement => {
+                        cyber_server::runtime::ConstructionStageKind::CheckoutAcknowledgement
+                    }
+                },
+                activity_id: review.stage.owner_id,
+                worktree_id: Some(review.stage.worktree_id),
+                journal_id: None,
+                evidence: review.evidence,
+                source: review.source,
+                namespace: review.namespace,
+            }),
+        )
+    }
+
+    fn fence_snapshot_construction(
+        &self,
+        info: &cyber_server::runtime::SessionInfo,
+        stage: &cyber_server::runtime::NativeConstructionStage,
+    ) -> Result<
+        Box<dyn cyber_server::runtime::ConstructionFence>,
+        cyber_server::runtime::ConstructionFenceError,
+    > {
+        use cyber_server::runtime::ConstructionFenceError;
+        let refused = |message: &str| ConstructionFenceError::Refused(message.into());
+        let worktree = info
+            .worktree_id
+            .as_deref()
+            .ok_or_else(|| refused("This Session has no managed checkout"))?;
+        let owner = stage
+            .activity_id
+            .as_deref()
+            .ok_or_else(|| refused("Construction stage name has no derivable owner"))?;
+        let reviewed = self
+            .snapshot_construction_stage(info, &stage.name)
+            .map_err(|error| refused(&error))?;
+        if reviewed.as_ref().is_some_and(|reviewed| {
+            reviewed.source != stage.source || reviewed.namespace != stage.namespace
+        }) {
+            return Err(refused("Checkout construction stage moved since review"));
+        }
+        cyber_core::worktrees::Repository::fence_snapshot_construction(
+            std::path::Path::new(&info.directory),
+            worktree,
+            &stage.name,
+            owner,
+            &stage.evidence,
+        )
+        .map(|fence| {
+            Box::new(CheckoutConstruction(fence))
+                as Box<dyn cyber_server::runtime::ConstructionFence>
+        })
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::WouldBlock => ConstructionFenceError::Busy(error.to_string()),
+            _ => ConstructionFenceError::Refused(error.to_string()),
+        })
+    }
+
     fn reacquire_snapshot_location(
         &self,
         info: &cyber_server::runtime::SessionInfo,
@@ -3046,5 +3126,13 @@ impl BuiltinHost {
             let outcome = self.run_builtin(tool.as_ref(), &ctx).await;
             self.settle_call(&ctx, outcome, started).await
         })
+    }
+}
+
+/// A fenced checkout construction stage, held until it is moved or dropped.
+struct CheckoutConstruction(cyber_core::worktrees::CheckoutConstructionFence);
+impl cyber_server::runtime::ConstructionFence for CheckoutConstruction {
+    fn quarantine(&mut self, key: &str) -> Result<(), String> {
+        self.0.quarantine(key).map_err(|error| error.to_string())
     }
 }
