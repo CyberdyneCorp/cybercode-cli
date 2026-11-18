@@ -151,7 +151,7 @@ src/server/mod.rs:
 **Walk:** the same walker as `grep`/`glob`. It honors `.gitignore`, `.ignore`, `.git/info/exclude` and the global git excludes, skips `.git/`, and does not descend into nested repositories or submodules.
 
 **Default excludes:**
-- the directories `node_modules/`, `vendor/`, `third_party/`, `target/`, `dist/`, `build/`, `.venv/` and `__pycache__/`;
+- the directories `.cyber/` (agent configuration, not code), `node_modules/`, `vendor/`, `third_party/`, `target/`, `dist/`, `build/`, `.venv/` and `__pycache__/`;
 - `*.min.js`, `*.min.css`, `*.map`, `*.lock`, `package-lock.json`, `*.pb.go`, `*_pb2.py` and `*.generated.*`;
 - files whose first 5 lines contain `@generated` or `DO NOT EDIT`;
 - paths marked `linguist-generated` or `linguist-vendored` in `.gitattributes`;

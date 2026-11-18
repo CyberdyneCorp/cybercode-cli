@@ -11,6 +11,7 @@ use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
 /// Directories excluded by default at any depth.
 const DEFAULT_DIRS: &[&str] = &[
+    ".cyber",
     "node_modules",
     "vendor",
     "third_party",

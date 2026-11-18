@@ -255,6 +255,9 @@ impl Server {
         let model = scripted_model::ScriptedModel::start(answer);
         let mut config = model.config();
         config["providers"]["test"]["models"] = models;
+        // The scripted model answers by keywords anywhere in the request, so the baseline
+        // keeps no repository map (`repo_map` screens use the tool and the API).
+        config["repo_map"] = json!({ "context": false });
         if let (Some(config), Value::Object(extra)) = (config.as_object_mut(), extra) {
             config.extend(extra);
         }

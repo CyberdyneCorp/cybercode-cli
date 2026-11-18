@@ -24,7 +24,7 @@ An invalid value SHALL be ignored with a warning naming the key, and the default
 - it SHALL skip `.git/`, and SHALL NOT descend into nested repositories or submodules.
 
 It SHALL also exclude by default:
-- the directories `node_modules/`, `vendor/`, `third_party/`, `target/`, `dist/`, `build/`, `.venv/` and `__pycache__/`;
+- the directories `.cyber/` (agent configuration, not code), `node_modules/`, `vendor/`, `third_party/`, `target/`, `dist/`, `build/`, `.venv/` and `__pycache__/`;
 - the patterns `*.min.js`, `*.min.css`, `*.map`, `*.lock`, `package-lock.json`, `*.pb.go`, `*_pb2.py` and `*.generated.*`;
 - files whose first 5 lines contain `@generated` or `DO NOT EDIT`;
 - paths with `linguist-generated` or `linguist-vendored` set in `.gitattributes`;

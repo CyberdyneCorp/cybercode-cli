@@ -195,6 +195,7 @@ pub fn valid_name(name: &str) -> bool {
 pub const BUILTIN: &[(&str, &str)] = &[
     ("compact", "Summarize older history to free context"),
     ("context", "Inspect the current Session context"),
+    ("map", "Show the repository map of files and definitions"),
     (
         "resume-at-reset",
         "Retry the Turn a usage limit failed once the limit resets",

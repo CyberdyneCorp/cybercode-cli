@@ -6,10 +6,11 @@
 
 ## 1. Grammars and extraction
 
-- [ ] 1.1 Add pinned grammar crates for Rust, TypeScript/TSX, Go, C, C++, Java and Solidity to `crates/cyber-tools/Cargo.toml`. They must be ABI-compatible with `tree-sitter` 0.27.
+- [x] 1.1 Add pinned grammar crates for Rust, TypeScript/TSX, Go, C, C++, Java and Solidity to `crates/cyber-tools/Cargo.toml`. They must be ABI-compatible with `tree-sitter` 0.27.
   - Add a CI step that compares the stripped release binary with `main` and fails above +12 MiB.
   - Add the MIT notices to the third-party notices file.
   - Test: `grammars_load_for_every_bundled_language` parses one fixture per language.
+  - Evidence: the `Binary size` CI job on PR #149 measured +10 082 272 bytes (9.6 MiB) for the stripped Linux release binary; NOTICE lists the adapted MIT queries.
 - [x] 1.2 Add `repo_map/queries/<lang>.scm`, starting from each grammar's upstream `tags.scm` and writing our own for Bash and Solidity, and `repo_map/extract.rs`:
   - kinds and container;
   - signature up to the `body` field, collapsed and capped at 160 characters;
