@@ -21,6 +21,7 @@ Start with the [project README](../README.md) for setup, the feature mindmap and
 | Inspect product contracts | [OpenSpec specifications](../openspec/specs) |
 | Enable native screenshots and input with owner grants | [Native computer use](computer-use.md) |
 | Use the browser dashboard and remote approvals | [Dashboard guide](web-dashboard.md) |
+| Chat, review diffs and approve from VS Code | [VS Code extension](vscode-extension.md) |
 | Configure reserved budgets and reconcile uncertain usage | [Reserved budgets](reserved-budgets.md) |
 | Compare independent patches with tests and a judge | [Verified solve workflows](verified-workflows.md) |
 | Combine complementary commits and explicitly publish a PR | [Verified integration queue](verified-integrations.md) |

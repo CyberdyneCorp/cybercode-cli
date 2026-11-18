@@ -134,6 +134,7 @@ mindmap
       Terminal UI
       Exec and public API
       Local web dashboard
+      VS Code extension preview
       TypeScript SDK
       Signed releases and cyber upgrade
     Agents and automation
@@ -171,9 +172,9 @@ Cyber Code has working features in each area below, but it is not at full featur
 
 | Compared with | What their documentation provides | What remains in Cyber Code |
 |---|---|---|
-| **OpenCode** | A broad [provider catalog](https://opencode.ai/docs/providers/), [IDE integration](https://opencode.ai/docs/ide/) and [web UI](https://opencode.ai/docs/web/). | Native provider coverage is narrower; dedicated IDE/desktop clients are planned. The web dashboard is implemented, but full TUI-equivalent browser controls remain unfinished. |
-| **Claude Code CLI** | The CLI is part of a [terminal/IDE/desktop/web offering](https://code.claude.com/docs/en/overview), with [plugin marketplaces](https://code.claude.com/docs/en/discover-plugins). | IDE/desktop clients, plugin marketplaces and complete cross-tool configuration/plugin compatibility remain unfinished. A plugin host, SDK, skills and hooks already exist. |
-| **Codex CLI** | A [terminal coding agent](https://learn.chatgpt.com/docs/codex/cli), related IDE/cloud surfaces, and a [native Windows sandbox](https://learn.chatgpt.com/docs/windows/windows-sandbox). | Windows confinement remains partial. Dedicated editor/desktop clients, hosted runners and paired-device Relay access are planned. Private HTTPS/SSH dashboard access already works. |
+| **OpenCode** | A broad [provider catalog](https://opencode.ai/docs/providers/), [IDE integration](https://opencode.ai/docs/ide/) and [web UI](https://opencode.ai/docs/web/). | Native provider coverage is narrower. A [VS Code extension](docs/vscode-extension.md) ships as a `.vsix` on each release; Marketplace publication, ACP for other editors and desktop clients are planned. The web dashboard is implemented, but full TUI-equivalent browser controls remain unfinished. |
+| **Claude Code CLI** | The CLI is part of a [terminal/IDE/desktop/web offering](https://code.claude.com/docs/en/overview), with [plugin marketplaces](https://code.claude.com/docs/en/discover-plugins). | A [VS Code extension](docs/vscode-extension.md) ships as an unsigned `.vsix`, without Marketplace publication, per-hunk review or other IDEs; desktop clients, plugin marketplaces and complete cross-tool configuration/plugin compatibility remain unfinished. A plugin host, SDK, skills and hooks already exist. |
+| **Codex CLI** | A [terminal coding agent](https://learn.chatgpt.com/docs/codex/cli), related IDE/cloud surfaces, and a [native Windows sandbox](https://learn.chatgpt.com/docs/windows/windows-sandbox). | Windows confinement remains partial. The VS Code extension is a first slice (no Marketplace, no ACP); desktop clients, hosted runners and paired-device Relay access are planned. Private HTTPS/SSH dashboard access already works. |
 | **Pi** | A deliberately small [terminal harness with TypeScript extensions, packages and an SDK](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). | Cyber ships its own plugin host and SDK; package marketplaces and broader extension compatibility remain unfinished. Pi intentionally leaves features such as subagents and plan mode to extensions/packages, so its smaller core is a design choice. |
 
 Other limits to consider:
@@ -188,7 +189,7 @@ Use the [feature reference](docs/features.md), [P1 evidence](docs/implementation
 
 ## Architecture
 
-The TUI, web dashboard, CLI, SDK and MCP clients call one server. That server enforces permissions, schedules agents, streams events and owns durable state. See the [architecture diagrams](docs/architecture.md) and [storage decision](docs/decisions/0001-storage-architecture.md).
+The TUI, web dashboard, VS Code extension, CLI, SDK and MCP clients call one server. That server enforces permissions, schedules agents, streams events and owns durable state. See the [architecture diagrams](docs/architecture.md) and [storage decision](docs/decisions/0001-storage-architecture.md).
 
 ## Guides and development
 
@@ -197,6 +198,7 @@ The TUI, web dashboard, CLI, SDK and MCP clients call one server. That server en
 | Configure providers, permissions, MCP or Sessions | [Local core guide](docs/local-core-guide.md) |
 | Send traces, metrics and logs to my OpenTelemetry collector | [OpenTelemetry export](docs/local-core-guide.md#opentelemetry-export) · `cyber telemetry show` |
 | Use the browser dashboard and remote approvals | [Dashboard guide](docs/web-dashboard.md) |
+| Chat, review diffs and approve from VS Code | [VS Code extension](docs/vscode-extension.md) |
 | Inspect binary file bytes without inference | [Binary workspace](docs/binary-editor.md) |
 | Enable native screenshots and input | [Native computer use](docs/computer-use.md) |
 | Run agents across machines or a group project | [Direct peers](docs/peers.md) · [Project hub](docs/collaboration.md) |
