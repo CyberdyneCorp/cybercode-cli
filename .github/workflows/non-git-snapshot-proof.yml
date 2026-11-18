@@ -182,8 +182,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Intel's complete matrix can exceed 45 minutes while compiling the final
     # structured-result binaries after all native recovery checks have passed.
-    # With the recovery crash-cut cases it took 56 minutes and hit 60 twice.
-    timeout-minutes: 90
+    # With the recovery crash-cut cases it took 56 minutes and hit 60 twice; with
+    # a cold cache and the restore cuts the post-merge run of 386a49cc reached 90.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -318,6 +319,7 @@ jobs:
           mkdir -p "$TMPDIR"
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli restore_cuts:: -- --nocapture --test-threads=2 2>&1 | tee recovery-cut-proof.log
           cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli ordinary_cuts:: -- --nocapture --test-threads=1 2>&1 | tee -a recovery-cut-proof.log
+          cargo test --locked -p cyber-cli --features native-git-acceptance --test branches_cli storage_privacy:: -- --nocapture 2>&1 | tee -a recovery-cut-proof.log
       - name: JSONL driver and atomic last-message regressions
         if: ${{ !cancelled() && (runner.os != 'Linux' || steps.sandbox.outcome == 'success') }}
         env:

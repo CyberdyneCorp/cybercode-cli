@@ -28,6 +28,9 @@ mod restore_cuts;
 #[path = "../../cyber-app/tests/support/scripted_model.rs"]
 mod scripted_model;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "support/storage_privacy.rs"]
+mod storage_privacy;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[path = "support/zero_payload.rs"]
 mod zero_payload;
 

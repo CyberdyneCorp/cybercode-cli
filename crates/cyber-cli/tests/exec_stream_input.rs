@@ -312,21 +312,42 @@ impl Driven {
         self.stdin.take();
     }
 
+    /// The first line of each of `kinds`, in whatever order they arrive.
+    fn until_each(&self, kinds: &[&str], seen: &mut Vec<Value>) -> Vec<Value> {
+        let start = seen.len();
+        loop {
+            let found: Vec<Value> = kinds
+                .iter()
+                .filter_map(|kind| seen[start..].iter().find(|l| l["type"] == *kind))
+                .cloned()
+                .collect();
+            if found.len() == kinds.len() {
+                return found;
+            }
+            self.next_line(&kinds.join(" and "), seen);
+        }
+    }
+
     /// The next line of `kind`, collecting the ones before it.
     fn until(&self, kind: &str, seen: &mut Vec<Value>) -> Value {
         loop {
-            let line = self
-                .lines
-                .recv_timeout(Duration::from_secs(60))
-                .unwrap_or_else(|_| {
-                    let stderr = std::fs::read_to_string(self._root.join("exec.stderr"));
-                    panic!("no {kind} line; saw {seen:#?}\nstderr: {stderr:?}")
-                });
-            seen.push(line.clone());
+            let line = self.next_line(kind, seen);
             if line["type"] == kind {
                 return line;
             }
         }
+    }
+
+    fn next_line(&self, kind: &str, seen: &mut Vec<Value>) -> Value {
+        let line = self
+            .lines
+            .recv_timeout(Duration::from_secs(60))
+            .unwrap_or_else(|_| {
+                let stderr = std::fs::read_to_string(self._root.join("exec.stderr"));
+                panic!("no {kind} line; saw {seen:#?}\nstderr: {stderr:?}")
+            });
+        seen.push(line.clone());
+        line
     }
 
     fn exit(mut self) -> Option<i32> {
@@ -1903,6 +1924,9 @@ fn interrupt_stops_an_owned_subagent_and_keeps_stdin_live() {
     run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
     let input = run.until("input", &mut seen);
     approve_delegation(&mut run, &input, &mut seen);
+    // The parent's own turn must have answered, or the interrupt stops that
+    // provider turn instead of the owned subagent (seen on a slow runner).
+    run.until("assistant_text", &mut seen);
     provider.wait_for_gate();
     run.send(r#"{"type":"interrupt"}"#);
     let stopped = run.until("result", &mut seen);
@@ -2086,8 +2110,11 @@ fn interrupt_stops_an_owned_subagent_awaiting_permission() {
     run.send(r#"{"type":"user","id":"delegate","text":"delegate it"}"#);
     let input = run.until("input", &mut seen);
     approve_delegation(&mut run, &input, &mut seen);
-    let asked = run.until("permission_request", &mut seen);
-    assert_descendant(&asked, &input);
+    // Wait for the parent's own answer too, so the interrupt cannot land in its
+    // provider turn instead of the owned subagent.
+    let asked = run.until_each(&["permission_request", "assistant_text"], &mut seen);
+    let asked = &asked[0];
+    assert_descendant(asked, &input);
     run.send(r#"{"type":"interrupt"}"#);
     let stopped = run.until("result", &mut seen);
     assert_eq!(stopped["id"], "delegate", "{seen:#?}");
