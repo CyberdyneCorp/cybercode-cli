@@ -306,6 +306,8 @@ jobs:
           export CARGO_TARGET_DIR="$PWD/target"
           (cd ../base && cargo build --locked --release -p cyber-cli --bin cyber)
           strip -o base-cyber target/release/cyber
+          # Workspace crates are fingerprinted by mtime, not path: make the head's newer.
+          find crates -type f -exec touch {} +
           cargo build --locked --release -p cyber-cli --bin cyber
           strip -o head-cyber target/release/cyber
           base=$(stat -c %s base-cyber)
