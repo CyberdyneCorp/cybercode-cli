@@ -255,3 +255,11 @@ test-group = "isolated-subagents"
 [[profile.ci-windows.overrides]]
 filter = "binary_id(cyber-cli::branches_cli) & test(reviewed_recovery_code_stages_survive_kill_restage_and_clear_without_adopting_owner_files)"
 slow-timeout = { period = "60s", terminate-after = 20 }
+
+# The peers tests start two real servers; on the Windows runner the second one sometimes
+# misses the 5 s health wait ("the server did not become healthy"), issue #136. Retry
+# them with a pause until the startup delay is found on a Windows machine; a test that
+# fails every attempt still fails the job.
+[[profile.ci-windows.overrides]]
+filter = "binary_id(cyber-cli::peers_cli)"
+retries = { backoff = "fixed", count = 3, delay = "10s" }
