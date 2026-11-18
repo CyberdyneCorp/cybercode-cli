@@ -329,7 +329,7 @@ For crash-recovery tests only, a debug-build server started with `CYBER_TEST_PRO
 
 ### Install script
 
-Each GitHub Release carries `install.sh`, a POSIX `sh` script (the latest stable one is `https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh`). Until the first stable release, that URL does not resolve; use a tagged release's script with `--channel beta`, for example `curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/download/v0.1.0-beta.2/install.sh | sh -s -- --channel beta`:
+Each GitHub Release carries `install.sh`, a POSIX `sh` script (the latest stable one is `https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh`). Only a `v<version>` release can be GitHub's latest: the rolling `channel-<channel>` releases hold just the channel manifest and are published as prereleases, never latest. Prereleases are never latest either, so until the first stable release that URL does not resolve; use a tagged release's script with `--channel beta`, for example `curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/download/v0.1.0-beta.2/install.sh | sh -s -- --channel beta`:
 
 ```bash
 curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/latest/download/install.sh | sh

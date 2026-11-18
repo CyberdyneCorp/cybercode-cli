@@ -32,7 +32,7 @@ Examples below use the built binary. If you installed it on your PATH, use `cybe
 
 ## Install a release
 
-Pre-releases are published on the beta channel: the newest is [`v0.1.0-beta.2`](https://github.com/CyberdyneCorp/cybercode-cli/releases/tag/v0.1.0-beta.2). There is no stable release yet, so `releases/latest/download/install.sh` does not resolve; install from the beta channel below. Releases publish signed archives for macOS and Linux (glibc and musl) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary. Windows builds are not released yet (the Windows sandbox is still partial); build from source on Windows.
+Pre-releases are published on the beta channel: the newest is [`v0.1.0-beta.2`](https://github.com/CyberdyneCorp/cybercode-cli/releases/tag/v0.1.0-beta.2). There is no stable release yet, so `releases/latest/download/install.sh` does not resolve (GitHub never treats a prerelease, including the rolling `channel-beta` manifest release, as latest); install from the beta channel below. Releases publish signed archives for macOS and Linux (glibc and musl) to [GitHub Releases](https://github.com/CyberdyneCorp/cybercode-cli/releases). The install script checks each archive's SHA-256 (and its Sigstore signature when `cosign` is installed); `cyber upgrade` always verifies both before replacing the binary. Windows builds are not released yet (the Windows sandbox is still partial); build from source on Windows.
 
 ```bash
 curl -fsSL https://github.com/CyberdyneCorp/cybercode-cli/releases/download/v0.1.0-beta.2/install.sh | sh -s -- --channel beta

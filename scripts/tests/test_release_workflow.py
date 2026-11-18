@@ -119,6 +119,38 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertIn("if: steps.order.outputs.newer == 'true'", channel_step)
         self.assertIn("kind=--latest=false", publish)
 
+    def test_the_rolling_channel_release_is_never_latest(self):
+        """Regression: `channel-beta`, created with `--latest=false` but not a prerelease,
+        was GitHub's fallback latest, so `releases/latest/download/install.sh` 404ed."""
+        publish = jobs(self.text)["publish"]
+        channel_lines = [line.strip() for line in publish.splitlines() if '"channel-$CHANNEL"' in line]
+        create = [line for line in channel_lines if line.startswith('gh release create "channel-$CHANNEL"')]
+        edit = [line for line in channel_lines if line.startswith('gh release edit "channel-$CHANNEL"')]
+        self.assertEqual(len(create), 1)
+        self.assertEqual(len(edit), 1, "an existing channel release must be converted too")
+        for line in create + edit:
+            self.assertIn("--prerelease", line)
+            self.assertIn("--latest=false", line)
+        for line in channel_lines:
+            self.assertNotRegex(line, r"--latest(?!=false)")
+        upload = publish.index('gh release upload "channel-$CHANNEL"')
+        self.assertLess(publish.index(edit[0]), upload)
+
+    def test_latest_resolves_only_to_a_version_release_with_the_install_script(self):
+        """`releases/latest/download/install.sh` (README, `installation-upgrade` → Install
+        script): only the `v<version>` release may become latest, and it carries install.sh."""
+        publish = jobs(self.text)["publish"]
+        self.assertIn("cp scripts/install.sh dist/install.sh", publish)
+        self.assertIn("install.sh", ra.release_assets("1.4.0"))
+        creates = re.findall(r"^\s*gh release create (\S+)(.*)$", publish, re.M)
+        self.assertEqual([tag for tag, _ in creates], ['"v$VERSION"', '"channel-$CHANNEL"'])
+        version_create = creates[0][1]
+        self.assertIn('"$kind"', version_create)
+        self.assertTrue(version_create.rstrip().endswith("dist/*"), "install.sh must ship on the version release")
+        self.assertIn("kind=--prerelease", publish)
+        self.assertIn('elif [ "$NEWER" = true ]; then kind=--latest\n', publish)
+        self.assertNotIn("install.sh", "\n".join(line for line in publish.splitlines() if "channel-$CHANNEL" in line))
+
 
 if __name__ == "__main__":
     unittest.main()
