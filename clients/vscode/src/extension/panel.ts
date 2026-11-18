@@ -69,8 +69,9 @@ export class ChatController implements vscode.WebviewViewProvider {
     private readonly hooks: Hooks = {},
   ) {}
 
+  /** The state the webview is shown, with the current cards. */
   get state(): ViewState {
-    return this.#state;
+    return { ...this.#state, cards: this.table.cards() };
   }
 
   get client(): CyberClient | undefined {
