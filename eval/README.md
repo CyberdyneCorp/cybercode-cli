@@ -160,3 +160,12 @@ python3 scripts/check_eval_graders.py --root /tmp/cyber-repo-inputs \
 The [pilot protocol](../openspec/changes/add-real-repository-evaluations/design.md)
 defines the trial counts, budgets, exclusions and interpretation limits. Live calls are opt-in
 and never part of ordinary PR CI. Preserve historical benchmark files unchanged.
+
+## Harness comparison pilots
+
+`pilots/` holds configurations for paired runs of Cyber against another harness on the same
+model. `pilots/claude-code-pilot.json` drives `scripts/claude_code_pilot.py`, which compares
+Cyber with Claude Code CLI on both suites using one Anthropic API key, isolated configuration
+directories and command networking off in both. `--dry-run` validates inputs, graders,
+binaries, flags and the isolated configuration without calling a model; paid modes require
+`--confirm-spend`. See the [measurement plan](../docs/measurements/claude-code-pilot-plan.md).

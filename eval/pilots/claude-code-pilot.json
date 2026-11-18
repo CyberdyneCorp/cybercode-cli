@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "id": "fable52-claude-code-pilot",
+  "purpose": "Same-model native-harness pilot: Cyber vs Claude Code CLI; not a coding-quality parity claim",
+  "model": {
+    "id": "claude-fable-5-2",
+    "effort": "high",
+    "cyber_ref": "anthropic/claude-fable-5-2#high",
+    "prices_usd_per_mtok": {
+      "input": 8.0,
+      "output": 40.0,
+      "cache_read": 0.2,
+      "cache_write": 10.0
+    },
+    "prices_source": "Anthropic first-party API list prices for claude-fable-5-2 (cache_write is the 5-minute write rate, 1.25x input), cross-checked against the models.dev catalog Cyber resolves"
+  },
+  "suites": [
+    "eval/manifests/suite-coding-v1.json",
+    "eval/manifests/suite-coding-hard-v1.json"
+  ],
+  "expected_tasks_per_suite": 20,
+  "trials_per_task": 1,
+  "max_total_usd": 150.0,
+  "smoke_task": {
+    "suite": "eval/manifests/suite-coding-v1.json",
+    "task": "fix-slugify"
+  },
+  "runtime": {
+    "python_min": "3.10",
+    "node_major": 22
+  },
+  "cyber": {
+    "binary": null,
+    "sandbox_helper": null,
+    "eval_flags": ["--task", "--trials", "--trial-start", "--jobs", "--keep-workspaces", "--model", "--output"],
+    "config": {
+      "sandbox": {"network": "off"},
+      "permissions": {"webfetch": "deny", "websearch": "deny"},
+      "tools": {"websearch": {"enabled": false}},
+      "memory": {"enabled": false},
+      "autoupdate": false
+    }
+  },
+  "claude_code": {
+    "binary": "claude",
+    "version": "2.1.327",
+    "bare": false,
+    "required_flags": [
+      "--print", "--output-format", "--verbose", "--model", "--effort", "--permission-mode",
+      "--permission-prompts", "--settings", "--setting-sources", "--strict-mcp-config",
+      "--disallowedTools", "--max-budget-usd", "--bare"
+    ],
+    "permission_mode": "acceptEdits",
+    "disallowed_tools": ["WebFetch", "WebSearch"],
+    "settings": {
+      "permissions": {
+        "deny": ["WebFetch", "WebSearch"],
+        "denyInsteadOfPrompting": true,
+        "blockReadsOutsideWorkingDirectories": true,
+        "blockWritesOutsideWorkingDirectories": true
+      },
+      "sandbox": {
+        "enabled": true,
+        "autoAllowBashIfSandboxed": true,
+        "allowUnsandboxedCommands": false,
+        "failIfUnavailable": true,
+        "network": {"allowedDomains": [], "strictAllowlist": true}
+      },
+      "autoMemoryEnabled": false,
+      "cleanupPeriodDays": 365
+    },
+    "env": {
+      "DISABLE_AUTOUPDATER": "1",
+      "DISABLE_UPDATES": "1",
+      "DISABLE_TELEMETRY": "1",
+      "DISABLE_ERROR_REPORTING": "1",
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+      "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+      "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+      "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+      "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+      "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"
+    },
+    "model_pin_env": [
+      "ANTHROPIC_MODEL",
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+      "ANTHROPIC_DEFAULT_SONNET_MODEL",
+      "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      "CLAUDE_CODE_SUBAGENT_MODEL"
+    ],
+    "managed_settings_paths": [
+      "/Library/Application Support/ClaudeCode/managed-settings.json",
+      "/etc/claude-code/managed-settings.json"
+    ]
+  },
+  "reference_reports": {
+    "hard": "eval/results/suite-coding-hard-v1/anthropic-claude-sonnet-5-5-medium/report.json",
+    "standard_upper": "eval/results/suite-coding-v1/anthropic-claude-haiku-4-5/report.json",
+    "standard_hard_ratio_source": [
+      "docs/measurements/gpt61-sol-chatgpt-pilot/cyber-standard.json",
+      "docs/measurements/gpt61-sol-chatgpt-pilot/cyber-hard.json"
+    ]
+  }
+}
