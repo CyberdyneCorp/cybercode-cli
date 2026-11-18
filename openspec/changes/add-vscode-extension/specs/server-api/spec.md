@@ -24,7 +24,7 @@
 - **THEN** the read is denied even with ordinary read permission or an explicit readable-path grant; owner credentials and their exact environment-value aliases are not inherited through environment allow/set overrides
 
 #### Scenario: IDE token is not an owner credential
-- **WHEN** a request with a valid IDE token as `Authorization: Bearer` calls `GET /api/v1/config`
+- **WHEN** a request with a valid IDE token as `Authorization: Bearer` calls `GET /api/v1/config/language`
 - **THEN** the server responds `403` `ForbiddenError` with `reason: "ide_token_scope"` and the route handler does not run
 
 
@@ -33,7 +33,7 @@
 
 - `text { text }`
 - `image { media_type, data, name? }` and `document { media_type, data, name? }`, where `data` is base64
-- `file { path, name?, range? }`, read by the server. (P1) `range` is `{ start_line, end_line }`, 1-based and inclusive, with `1 <= start_line <= end_line`; only those lines SHALL be admitted, after the same checks as the whole file. A range past the end of the file SHALL be clamped to the last line, and a malformed range SHALL be refused with `InvalidRequestError`.
+- `file { path, name?, range? }`, read by the server. (P1) A file whose content is UTF-8 text and not a supported media type SHALL be admitted as a text part `<file path="…">…</file>` (with `lines="<start>-<end>"` for a range); other files follow the media handling below. `range` is `{ start_line, end_line }`, 1-based and inclusive, with `1 <= start_line <= end_line`; only those lines SHALL be admitted, after the same checks as the whole file. A range past the end of the file SHALL be clamped to the last line, and a malformed range, or a range on a file that is not text, SHALL be refused with `InvalidRequestError`.
 - `attachment { sha256 }`, naming a blob this Session already stores
 
 Any other part type SHALL be refused with `InvalidRequestError`. The route SHALL accept request bodies up to 64 MiB. Each prompt SHALL carry at most 20 media parts.
@@ -105,7 +105,7 @@ A token SHALL be `cyi_` followed by 32 random bytes in base64url. The server SHA
 - **THEN** each record has its ID, client, name, timestamps and revocation time, and no token value or hash
 
 ### Requirement: Local IDE token scope
-(P1) The server SHALL accept an IDE token only as `Authorization: Bearer cyi_…`, and only on the Unix socket or on the main TCP listener from a loopback peer address (`127.0.0.0/8` or `::1`). It SHALL answer `401` `UnauthorizedError` when the token arrives:
+(P1) The server SHALL accept an IDE token only as `Authorization: Bearer cyi_…`, and only on the Unix socket or on the main TCP listener from a loopback peer address (`127.0.0.0/8` or `::1`). It SHALL answer `401` (`UnauthorizedError`, or the hub's `UnauthenticatedError` on the collaboration listener) when the token arrives:
 - on the peer listener;
 - on the collaboration listener;
 - from any other peer address;
@@ -118,15 +118,27 @@ A valid token SHALL authorize exactly these routes, plus the public health route
 - `GET /api/v1/permissions/requests` and `POST /api/v1/sessions/:sessionID/permissions/:requestID/reply`
 - `GET /api/v1/questions/requests` and `POST /api/v1/sessions/:sessionID/questions/:requestID/reply`
 
-Any other route, including the IDE token routes, and `POST .../mode` with `bypass` or `dont-ask`, SHALL be refused with `403` `ForbiddenError` `{ reason: "ide_token_scope" }` before the handler runs. Permission rules, Modes, sandbox, workspace trust and `file` part checks SHALL apply to an IDE token request exactly as to an owner request. The server SHALL log the token `id`, never its value, with every authorized request, and SHALL update `last_used_at` at most once per minute.
+Any other route, including the IDE token routes, `POST .../mode` with `bypass` or `dont-ask`, and `POST /api/v1/sessions` with `mode` `bypass` or `dont-ask`, a Session `rules` set, a `parent_id` or `unattended: true`, SHALL be refused with `403` `ForbiddenError` `{ reason: "ide_token_scope" }` before the handler runs. A Session created with an IDE token SHALL never run without human approval, whatever sets its Mode: its Mode SHALL be resolved at creation (the requested Mode, else the agent's `permission_mode`), and a creation that would resolve to `bypass` or `dont-ask` SHALL be refused the same way. An IDE token SHALL NOT prompt a Session whose selected, pending or running Mode is `bypass` or `dont-ask` (`403` `ide_token_scope`). A prompt is never interpreted as a slash command, and an `always` reply saves only the request's own `always_patterns`, as for a person approving in a client. Permission rules, Modes, sandbox, workspace trust and `file` part checks SHALL apply to an IDE token request exactly as to an owner request. The server SHALL log the token `id`, never its value, with every authorized request, and SHALL update `last_used_at` at most once per minute.
 
 #### Scenario: Out-of-scope route
-- **WHEN** an IDE token calls `PUT /api/v1/credentials/openai`
-- **THEN** the response is `403` with `reason: "ide_token_scope"` and no credential changes
+- **WHEN** an IDE token calls `POST /api/v1/providers/chatgpt/login`
+- **THEN** the response is `403` with `reason: "ide_token_scope"` and no sign-in starts
 
 #### Scenario: Bypass mode refused
 - **WHEN** an IDE token calls `POST /api/v1/sessions/ses_abc/mode` with `bypass`
 - **THEN** the response is `403` with `reason: "ide_token_scope"` and the Mode does not change
+
+#### Scenario: Session create cannot remove approval
+- **WHEN** an IDE token calls `POST /api/v1/sessions` with `mode: "bypass"`, with `rules: { "*": "allow" }`, with a `parent_id` or with `unattended: true`
+- **THEN** the response is `403` with `reason: "ide_token_scope"` and no Session is created
+
+#### Scenario: Agent default cannot make a token Session unattended
+- **WHEN** the agent's `permission_mode` is `bypass` and an IDE token calls `POST /api/v1/sessions` without a `mode`
+- **THEN** the response is `403` with `reason: "ide_token_scope"` and no Session is created, while the owner's same request still creates a `bypass` Session
+
+#### Scenario: A token cannot drive an unattended Session
+- **WHEN** the owner switched a Session to `dont-ask` and an IDE token posts a prompt to it
+- **THEN** the response is `403` with `reason: "ide_token_scope"` and nothing is admitted
 
 #### Scenario: Token from the LAN refused
 - **WHEN** the server listens on `0.0.0.0` with TLS and a request from `192.168.1.20` carries a valid IDE token

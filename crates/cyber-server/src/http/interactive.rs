@@ -3,10 +3,11 @@
 use super::{
     ApiError, AppState,
     envelope::{Data, location},
+    ide::IdeCaller,
 };
 use crate::runtime::presence::{InteractiveClient, InteractiveClientError};
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{Path, State},
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
@@ -89,6 +90,7 @@ async fn binding(state: &AppState, id: &str, parts: &Parts) -> Result<String, Ap
 async fn create(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    caller: Option<Extension<IdeCaller>>,
     parts: Parts,
 ) -> Result<Response, ApiError> {
     let directory = binding(&state, &id, &parts).await?;
@@ -97,6 +99,19 @@ async fn create(
         .add_interactive_client(&id, &directory)
         .await
         .map_err(error)?;
+    // A lease an IDE token creates ends with the token (`server-api` → Local IDE token
+    // revocation and expiry); one created as the token was revoked ends now.
+    if let Some(Extension(caller)) = caller
+        && !state
+            .ide
+            .add_lease(&caller.token_id, &id, &directory, &receipt.client_id)
+    {
+        let _ = state
+            .runtime
+            .release_interactive_client(&id, &directory, &receipt.client_id)
+            .await;
+        return Err(ApiError::unauthorized());
+    }
     Ok((
         StatusCode::CREATED,
         [("cache-control", "no-store")],

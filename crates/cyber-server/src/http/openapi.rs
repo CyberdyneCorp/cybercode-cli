@@ -314,6 +314,29 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .ok::<ServiceInfo>(g),
         op(
+            "post",
+            "/ide/tokens",
+            "v1.ide.tokenCreate",
+            "Issue a local IDE token (owner only); the cyi_ value appears only in this response, and the client's previous token is revoked",
+        )
+        .body::<super::ide::CreateIdeToken>(g)
+        .ok::<Data<super::ide::IssuedIdeToken>>(g)
+        .status(201),
+        op(
+            "get",
+            "/ide/tokens",
+            "v1.ide.tokenList",
+            "Local IDE token records within retention, without token values or hashes (owner only)",
+        )
+        .ok::<Data<Vec<super::ide::IdeTokenView>>>(g),
+        op(
+            "delete",
+            "/ide/tokens/{tokenID}",
+            "v1.ide.tokenRevoke",
+            "Revoke a local IDE token (idempotent): its next request gets 401, its event streams close and its presence leases end (owner only)",
+        )
+        .ok::<Data<super::ide::IdeTokenView>>(g),
+        op(
             "get",
             "/service/update",
             "v1.service.update",
@@ -2048,6 +2071,7 @@ pub fn document(version: &str) -> Value {
             "securitySchemes": {
                 "basic": { "type": "http", "scheme": "basic" },
                 "peerBearer": { "type": "http", "scheme": "bearer", "description": "A peer grant's cyp_ token, on the peer listener only" },
+                "ideBearer": { "type": "http", "scheme": "bearer", "description": "A local IDE token (cyi_), on the Unix socket or from a loopback peer only, for the operations that list it; other operations answer 403 ForbiddenError with reason ide_token_scope" },
             },
             "schemas": schemas,
         },
@@ -2131,6 +2155,8 @@ fn operation(o: &Op, error: &Schema, envelope: &Schema) -> Value {
     }
     if o.id == "v1.health.get" {
         out["security"] = json!([]);
+    } else if super::ide::SCOPE.iter().any(|(_, _, id)| *id == o.id) {
+        out["security"] = json!([{ "basic": [] }, { "ideBearer": [] }]);
     }
     out
 }

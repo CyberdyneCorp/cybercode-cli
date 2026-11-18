@@ -717,6 +717,24 @@ export interface Operations {
     body: S.HubMutation15;
     response: S.HubMutationResult11;
   };
+  "v1.ide.tokenCreate": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.CreateIdeToken;
+    response: S.IssuedIdeToken;
+  };
+  "v1.ide.tokenList": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.IdeTokenView[];
+  };
+  "v1.ide.tokenRevoke": {
+    path: { tokenID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.IdeTokenView;
+  };
   "v1.job.get": {
     path: { id: string };
     query: Record<string, never>;
@@ -3247,6 +3265,42 @@ export const operations = {
     body: "required",
     located: false,
     unwrap: false,
+    stream: false,
+  },
+  "v1.ide.tokenCreate": {
+    tag: "ide",
+    name: "tokenCreate",
+    method: "POST",
+    path: "/api/v1/ide/tokens",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.ide.tokenList": {
+    tag: "ide",
+    name: "tokenList",
+    method: "GET",
+    path: "/api/v1/ide/tokens",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.ide.tokenRevoke": {
+    tag: "ide",
+    name: "tokenRevoke",
+    method: "DELETE",
+    path: "/api/v1/ide/tokens/{tokenID}",
+    pathParams: ["tokenID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
     stream: false,
   },
   "v1.job.get": {
@@ -6060,6 +6114,17 @@ export function createGroups(caller: Caller) {
       /** Assignee updates a task using revision and claim generation (`PATCH /api/v1/hub/projects/{projectID}/tasks/{taskID}`) */
       updateTask: (projectID: string, taskID: string, body: Operations["v1.hub.updateTask"]["body"], options?: RequestOptions): Promise<Operations["v1.hub.updateTask"]["response"]> =>
         caller.call("v1.hub.updateTask", { path: { projectID, taskID }, body }, options),
+    },
+    ide: {
+      /** Issue a local IDE token (owner only); the cyi_ value appears only in this response, and the client's previous token is revoked (`POST /api/v1/ide/tokens`) */
+      tokenCreate: (body: Operations["v1.ide.tokenCreate"]["body"], options?: RequestOptions): Promise<Operations["v1.ide.tokenCreate"]["response"]> =>
+        caller.call("v1.ide.tokenCreate", { body }, options),
+      /** Local IDE token records within retention, without token values or hashes (owner only) (`GET /api/v1/ide/tokens`) */
+      tokenList: (options?: RequestOptions): Promise<Operations["v1.ide.tokenList"]["response"]> =>
+        caller.call("v1.ide.tokenList", {}, options),
+      /** Revoke a local IDE token (idempotent): its next request gets 401, its event streams close and its presence leases end (owner only) (`DELETE /api/v1/ide/tokens/{tokenID}`) */
+      tokenRevoke: (tokenID: string, options?: RequestOptions): Promise<Operations["v1.ide.tokenRevoke"]["response"]> =>
+        caller.call("v1.ide.tokenRevoke", { path: { tokenID } }, options),
     },
     job: {
       /** Read a background task (`GET /api/v1/jobs/{id}`) */

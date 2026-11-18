@@ -212,8 +212,28 @@ fn password(
     let restart = rt
         .block_on(cyber_app::replace_password(&ctx.paths, &value))
         .map_err(CliError::runtime)?;
+    // Replacing the owner password revokes every IDE token (`server-api` → Local IDE token
+    // revocation and expiry). The server is stopped here, so the database is ours.
+    revoke_ide_tokens(ctx)?;
     if restart {
         rt.block_on(start(ctx))?;
+    }
+    Ok(())
+}
+
+fn revoke_ide_tokens(ctx: &Context) -> Result<(), CliError> {
+    let store = cyber_store::Store::open(cyber_store::StoreOptions::new(
+        ctx.database(),
+        cyber_server::runtime::Runtime::registry(),
+    ))?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let revoked = cyber_server::runtime::ide_tokens::revoke_all(&store, now)?;
+    super::ide::remove_token_files(&ctx.paths.state)?;
+    if !revoked.is_empty() {
+        eprintln!(
+            "Revoked {} IDE token(s); create a new one with `cyber ide token create --client vscode`",
+            revoked.len()
+        );
     }
     Ok(())
 }

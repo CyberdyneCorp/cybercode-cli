@@ -369,7 +369,7 @@ async fn a_mention_from_a_location_below_the_project_root_is_relative_to_it() {
     select(&mut app, "crates/cyber-tui/src/app.rs");
     press(&mut app, KeyCode::Char('@'));
     assert_eq!(app.composer.text(), "@src/app.rs ");
-    let attached = crate::perform::parts(&app.composer.text(), &app.session.directory);
+    let attached = crate::perform::parts(&app.composer.text(), &app.session.directory, true);
     assert_eq!(attached.len(), 2, "the mention names a file: {attached:?}");
     assert!(
         attached[1]["text"]
@@ -388,7 +388,7 @@ async fn a_mention_from_a_location_below_the_project_root_is_relative_to_it() {
     let readme = crate::sidebar::display_path(&f.work.join("README.md").display().to_string())
         .replace('\\', "/");
     assert_eq!(app.composer.text(), format!("@{readme} "));
-    let attached = crate::perform::parts(&app.composer.text(), &app.session.directory);
+    let attached = crate::perform::parts(&app.composer.text(), &app.session.directory, true);
     assert!(
         attached[1]["text"].as_str().unwrap().contains("# Work"),
         "{attached:?}"

@@ -50,6 +50,7 @@ async fn serve(h: &Harness) -> String {
     let state = AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime: h.runtime.clone(),
         remote_tools: Arc::default(),
         store: Arc::clone(&h.store),

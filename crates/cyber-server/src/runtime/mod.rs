@@ -78,6 +78,7 @@ pub use hooks::{
 };
 pub mod goals;
 mod handoff;
+pub mod ide_tokens;
 mod import;
 pub use import::{ImportDocument, ImportedMessage, ImportedSession};
 mod host;

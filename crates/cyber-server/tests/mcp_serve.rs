@@ -107,6 +107,7 @@ impl Server {
         let state = AppState {
             service: None,
             telemetry: None,
+            ide: Default::default(),
             runtime: h.runtime.clone(),
             remote_tools: Arc::default(),
             store: Arc::clone(&h.store),
@@ -359,6 +360,7 @@ async fn a_tcp_request_from_a_lan_peer_is_refused_before_any_mcp_session() {
     let state = AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime: server.h.runtime.clone(),
         remote_tools: Arc::default(),
         store: Arc::clone(&server.h.store),
@@ -704,6 +706,7 @@ async fn same_user_unix_socket_requires_the_owner_password() {
     let state = AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime: server.h.runtime.clone(),
         remote_tools: Arc::default(),
         store: Arc::clone(&server.h.store),

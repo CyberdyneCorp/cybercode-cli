@@ -75,6 +75,7 @@ cyber [OPTIONS] [COMMAND]
 - [`service`](#cyber-service): Manage the background server
 - [`api`](#cyber-api): Send one request to the server API
 - [`collab`](#cyber-collab): Work with people and their locally running agents through a project hub
+- [`ide`](#cyber-ide): Editor integration: local IDE tokens for the VS Code extension
 - [`peers`](#cyber-peers): Pair with other machines' cyber servers to message their Sessions
 - [`messages`](#cyber-messages): Send messages between Sessions and read their message history
 - [`doctor`](#cyber-doctor): Check configuration, skills, commands, credentials, catalog, database, sandbox, tools and server
@@ -2747,6 +2748,66 @@ cyber collab leave [OPTIONS] --project <PROJECT>
 **Options:**
 
 - `--project <PROJECT>`
+
+## `cyber ide`
+
+Editor integration: local IDE tokens for the VS Code extension
+
+```text
+cyber ide [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`token`](#cyber-ide-token): Local IDE tokens: scoped, revocable credentials for editor clients
+
+## `cyber ide token`
+
+Local IDE tokens: scoped, revocable credentials for editor clients
+
+```text
+cyber ide token [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`create`](#cyber-ide-token-create): Issue a token for an editor client and write it to `<state>/ide/<client>.token`; the client's previous token is revoked. Prints only the token's ID and expiry
+- [`list`](#cyber-ide-token-list): Token records: ID, client, name, creation, expiry, last use and revocation
+- [`revoke`](#cyber-ide-token-revoke): Revoke a token: its next request is refused and its event streams close
+
+## `cyber ide token create`
+
+Issue a token for an editor client and write it to `<state>/ide/<client>.token`; the client's previous token is revoked. Prints only the token's ID and expiry
+
+```text
+cyber ide token create [OPTIONS] --client <CLIENT>
+```
+
+**Options:**
+
+- `--client <CLIENT>`: The editor client the token is for. Values: `vscode`.
+- `--name <NAME>`: A label shown by `cyber ide token list`.
+- `--expires <DAYS>`: Days until the token expires: 1 to 90 (default 30)
+
+## `cyber ide token list`
+
+Token records: ID, client, name, creation, expiry, last use and revocation
+
+```text
+cyber ide token list [OPTIONS]
+```
+
+## `cyber ide token revoke`
+
+Revoke a token: its next request is refused and its event streams close
+
+```text
+cyber ide token revoke [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`: The token's `itk_…` ID, from `cyber ide token list`.
 
 ## `cyber peers`
 

@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,6 +14,7 @@ use serde_json::Value;
 use super::AppState;
 use super::envelope::{Cursor, Data, Located, LocationInfo, Page, location};
 use super::error::ApiError;
+use super::ide::{self, IdeCaller};
 use super::prompt_parts;
 pub use super::prompt_parts::PromptPart;
 use crate::runtime::{
@@ -533,11 +534,15 @@ pub(super) fn list_page(
 
 async fn create(
     State(state): State<AppState>,
+    caller: Option<Extension<IdeCaller>>,
     parts: Parts,
     body: Option<Json<CreateBody>>,
 ) -> Result<Response> {
     let directory = location(&parts, &state.options.default_directory)?;
-    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let mut body = body.map(|Json(b)| b).unwrap_or_default();
+    if caller.is_some() {
+        body.mode = Some(ide_create_mode(&state, &directory, &body)?);
+    }
     if let Some(style) = &body.output_style
         && body.parent_id.is_none()
     {
@@ -585,6 +590,36 @@ async fn create(
         }),
     )
         .into_response())
+}
+
+/// The Mode a Session an IDE token creates starts in, resolved now rather than at the first
+/// Safe Boundary: the requested Mode, else the agent's `permission_mode` (which includes
+/// the Location's configured default). One that removes human approval is refused, so a
+/// Session created with an IDE token never runs unattended, whatever set its Mode.
+fn ide_create_mode(
+    state: &AppState,
+    directory: &std::path::Path,
+    body: &CreateBody,
+) -> Result<String> {
+    if body.parent_id.is_some() || body.rules.is_some() || body.unattended {
+        return Err(ide::scope_error("an IDE token cannot create this Session"));
+    }
+    let mode = match &body.mode {
+        Some(mode) => mode.clone(),
+        None => state
+            .runtime
+            .agent_permission_mode(
+                &directory.display().to_string(),
+                body.agent.as_deref().unwrap_or("build"),
+            )?
+            .unwrap_or_else(|| "default".into()),
+    };
+    if ide::unattended(&mode) {
+        return Err(ide::scope_error(format!(
+            "the new Session would run in {mode} mode, which an IDE token cannot select"
+        )));
+    }
+    Ok(mode)
 }
 
 pub(crate) async fn show(
@@ -732,10 +767,31 @@ async fn stop_delegation(
 async fn prompt(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    caller: Option<Extension<IdeCaller>>,
     body: std::result::Result<Json<PromptBody>, JsonRejection>,
 ) -> Result<Response> {
     let Json(body) = body.map_err(prompt_parts::rejected)?;
+    if caller.is_some() {
+        refuse_unattended_session(&state, &id).await?;
+    }
     submit_prompt(&state, &id, body).await
+}
+
+/// An IDE token cannot drive a Session that runs without human approval: its selected,
+/// pending or running Mode is `bypass` or `dont-ask`.
+async fn refuse_unattended_session(state: &AppState, id: &str) -> Result<()> {
+    let session = session(state, state.runtime.state(id).await?);
+    let modes = [
+        Some(session.info.mode.as_str()),
+        Some(session.effective_mode.as_str()),
+        session.pending_mode.as_deref(),
+    ];
+    if modes.into_iter().flatten().any(ide::unattended) {
+        return Err(ide::scope_error(
+            "this Session runs without human approval; use the Cyber CLI or dashboard",
+        ));
+    }
+    Ok(())
 }
 
 /// Store the prompt's media as references, then admit it; a refused admission removes
@@ -888,8 +944,15 @@ async fn model(
 async fn mode(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    caller: Option<Extension<IdeCaller>>,
     Json(b): Json<ModeBody>,
 ) -> Result<Json<Data<Session>>> {
+    if caller.is_some() && ide::unattended(&b.mode) {
+        return Err(ide::scope_error(format!(
+            "an IDE token cannot select the {} mode",
+            b.mode
+        )));
+    }
     const MODES: [&str; 6] = [
         "default",
         "accept-edits",

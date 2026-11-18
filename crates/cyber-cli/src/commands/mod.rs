@@ -16,6 +16,7 @@ pub mod features;
 pub mod git;
 pub mod hex;
 pub mod hooks;
+pub mod ide;
 pub mod import;
 pub mod intelligence;
 pub mod mcp;
@@ -142,6 +143,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Messages { cmd } => messages::run(cmd, &ctx, &cli.global),
         Command::Collab { cmd } => collab::run(cmd, &ctx, &cli.global),
         Command::Peers { cmd } => peers::run(cmd, &ctx, &cli.global),
+        Command::Ide { cmd } => ide::run(cmd, &ctx, &cli.global),
         Command::Attach(args) => attach::run(&args, &ctx),
         Command::Exec(args) => exec::run(*args, &ctx, &cli.global),
         Command::Review(args) => review::run(*args, &ctx, &cli.global),

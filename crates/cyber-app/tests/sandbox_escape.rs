@@ -346,14 +346,21 @@ async fn sandboxed_commands_cannot_read_owner_password_after_rotation() {
         let replacement = state.join("password-replacement");
         std::fs::write(&replacement, &marker).unwrap();
         std::fs::rename(&replacement, &password).unwrap();
+        // The local IDE token lives in the same private state (`server-api` → Local IDE
+        // token issuance).
+        let ide_token = state.join("ide").join("vscode.token");
+        let ide_marker = format!("cyi_{}", ulid::Ulid::new());
+        std::fs::create_dir_all(ide_token.parent().unwrap()).unwrap();
+        std::fs::write(&ide_token, &ide_marker).unwrap();
         let session = bypass_session(&app).await;
         let public = app.repo.join("public-owner-control.txt");
         std::fs::write(&public, "OWNER_PUBLIC_CONTROL").unwrap();
         app.run(
             &session,
             &format!(
-                "RUN<<cat '{}'; echo owner-read-attempted; cat '{}'>>",
+                "RUN<<cat '{}'; cat '{}'; echo owner-read-attempted; cat '{}'>>",
                 password.display(),
+                ide_token.display(),
                 public.display()
             ),
         )
@@ -365,6 +372,10 @@ async fn sandboxed_commands_cannot_read_owner_password_after_rotation() {
         assert!(
             !outputs[0].contains(&marker),
             "private owner credential escaped sandbox"
+        );
+        assert!(
+            !outputs[0].contains(&ide_marker),
+            "the IDE token escaped sandbox"
         );
         assert_eq!(std::fs::read_to_string(password).unwrap(), marker);
     }

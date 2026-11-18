@@ -33,7 +33,8 @@ cargo run -p cyber-cli -- exec --format stream-json --ephemeral "explain this re
 cargo run -p cyber-cli -- --worktree fix-login                   # TUI in a managed checkout
 cargo run -p cyber-cli -- exec --worktree fix-login "fix login"  # reuse checkout, new Session
 cargo run -p cyber-cli -- exec --worktree -- "fix login"         # generated worktree name
-cargo run -p cyber-cli -- service status   # the background server; also start|stop|restart|password
+cargo run -p cyber-cli -- service status   # the background server; also start|stop|restart|password (replacing it revokes IDE tokens)
+cargo run -p cyber-cli -- ide token create --client vscode       # scoped local IDE token (see docs/web-dashboard.md)
 cargo run -p cyber-cli -- api v1.session.list                    # any API operation
 cargo run -p cyber-cli -- doctor           # config, keys, catalog, database, sandbox, tools, server
 cargo run -p cyber-cli -- db backup ~/cyber-backup --artifacts   # online backup bundle with a manifest

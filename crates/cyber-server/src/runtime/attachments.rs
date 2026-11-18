@@ -111,8 +111,13 @@ pub enum InputPart {
     },
     /// A blob this Session already stores.
     Stored { sha256: String },
-    /// A path the server reads at admission ([`Runtime::attach_files`]).
-    File { path: String, name: Option<String> },
+    /// A path the server reads at admission ([`Runtime::attach_files`]), with an optional
+    /// 1-based inclusive line range, already validated.
+    File {
+        path: String,
+        name: Option<String>,
+        range: Option<(u32, u32)>,
+    },
 }
 
 /// A `file` part to read at admission, inserted before the admitted part at `index`.
@@ -121,6 +126,9 @@ pub struct FilePart {
     pub index: usize,
     pub path: String,
     pub name: Option<String>,
+    /// Part of the retry digest when present; absent keeps earlier digests unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<(u32, u32)>,
 }
 
 impl InputPart {
@@ -403,10 +411,11 @@ impl AttachmentStore {
             InputPart::Stored { sha256 } => out
                 .parts
                 .push(Content::Attachment(self.existing(session_id, &sha256)?)),
-            InputPart::File { path, name } => out.files.push(FilePart {
+            InputPart::File { path, name, range } => out.files.push(FilePart {
                 index: out.parts.len(),
                 path,
                 name,
+                range,
             }),
             InputPart::Inline { bytes, name } => {
                 check_size(bytes.len() as u64, self.settings.max_bytes)?;
@@ -590,16 +599,23 @@ impl Runtime {
                 )
                 .await
                 .map_err(|error| read_error(error, limit))?;
-            let name = file.name.clone().or_else(|| file_name(&file.path));
-            let input = vec![InputPart::Inline { bytes, name }];
-            let (writer, id) = (Arc::clone(&store), turn.session_id.clone());
-            let stored = tokio::task::spawn_blocking(move || writer.store_parts(&id, input))
-                .await
-                .map_err(|error| AttachmentError::Storage(error.to_string()))??;
-            blobs.blobs.extend(stored.created);
+            let admitted = match text_block(file, &bytes)? {
+                Some(block) => vec![block],
+                None => {
+                    let name = file.name.clone().or_else(|| file_name(&file.path));
+                    let input = vec![InputPart::Inline { bytes, name }];
+                    let (writer, id) = (Arc::clone(&store), turn.session_id.clone());
+                    let stored =
+                        tokio::task::spawn_blocking(move || writer.store_parts(&id, input))
+                            .await
+                            .map_err(|error| AttachmentError::Storage(error.to_string()))??;
+                    blobs.blobs.extend(stored.created);
+                    stored.parts
+                }
+            };
             let at = (file.index + inserted).min(parts.len());
-            inserted += stored.parts.len();
-            parts.splice(at..at, stored.parts);
+            inserted += admitted.len();
+            parts.splice(at..at, admitted);
         }
         Ok(parts)
     }
@@ -641,6 +657,45 @@ impl Runtime {
             store.remove(id, created);
         }
     }
+}
+
+/// A text file as a `<file>` block, only its range when it has one; `None` for media,
+/// which is stored as an attachment. A range on anything but UTF-8 text is refused.
+fn text_block(file: &FilePart, bytes: &[u8]) -> Result<Option<Content>, AttachmentError> {
+    let text = match (sniff(bytes), std::str::from_utf8(bytes)) {
+        (None, Ok(text)) => text,
+        _ if file.range.is_some() => {
+            return Err(AttachmentError::Invalid(format!(
+                "{}: a line range applies to text files only",
+                file.path
+            )));
+        }
+        _ => return Ok(None),
+    };
+    let path = file.path.replace('"', "&quot;");
+    let text = match file.range {
+        None => format!("<file path=\"{path}\">\n{text}\n</file>"),
+        Some((start, end)) => {
+            let (start, end, body) = lines(text, start, end);
+            format!("<file path=\"{path}\" lines=\"{start}-{end}\">\n{body}\n</file>")
+        }
+    };
+    Ok(Some(Content::Text { text }))
+}
+
+/// Lines `start..=end` (1-based) of `text`, clamped to its last line, with the clamped
+/// bounds.
+fn lines(text: &str, start: u32, end: u32) -> (usize, usize, String) {
+    let count = text.lines().count().max(1);
+    let end = (end as usize).min(count);
+    let start = (start as usize).min(end).max(1);
+    let body = text
+        .lines()
+        .skip(start - 1)
+        .take(end + 1 - start)
+        .collect::<Vec<_>>()
+        .join("\n");
+    (start, end, body)
 }
 
 impl Handle {

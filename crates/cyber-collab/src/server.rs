@@ -112,6 +112,14 @@ impl Hub {
             .ok_or_else(|| {
                 Error::new("UnauthenticatedError", "Bearer authentication is required")
             })?;
+        // A local IDE token belongs to the owner's main API only (`server-api` → Local IDE
+        // token scope); it is never validated as an account credential here.
+        if token.starts_with("cyi_") {
+            return Err(Error::new(
+                "UnauthenticatedError",
+                "local IDE tokens are not accepted by the collaboration hub",
+            ));
+        }
         if token.starts_with("ccap_") {
             let digest = hash(token.as_bytes());
             let cap=self.db.read(move|db|{

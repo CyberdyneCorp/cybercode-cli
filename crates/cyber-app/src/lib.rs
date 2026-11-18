@@ -484,6 +484,7 @@ impl App {
         let state = AppState {
             service: None,
             telemetry: None,
+            ide: Default::default(),
             runtime: runtime.clone(),
             remote_tools,
             store: Arc::clone(&store),
@@ -506,6 +507,7 @@ impl App {
                     "event",
                     "workflow",
                     "goals",
+                    "ide",
                 ]
                 .map(str::to_string)
                 .to_vec(),

@@ -20,6 +20,7 @@ mod files;
 mod goals;
 mod guard;
 mod hooks;
+pub mod ide;
 mod idempotency;
 pub mod integrations;
 mod intelligence;
@@ -706,6 +707,8 @@ pub struct AppState {
     pub options: Arc<HttpOptions>,
     /// The OpenTelemetry export status; set by the host that owns the server listeners.
     pub telemetry: Option<telemetry::TelemetryHandle>,
+    /// What each IDE token holds open, so a revocation can end it.
+    pub ide: Arc<ide::IdeLive>,
 }
 
 /// Log each request with a request ID, also returned as `x-request-id`.
@@ -778,6 +781,7 @@ pub fn router_with(state: AppState, mcp_serve: Arc<McpServeSessions>) -> Router 
         .merge(events::routes())
         .merge(catalog::routes())
         .merge(service::routes())
+        .merge(ide::routes())
         .route("/ws", axum::routing::get(rpc::upgrade))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

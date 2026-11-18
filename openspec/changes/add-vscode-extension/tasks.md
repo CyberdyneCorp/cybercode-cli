@@ -6,26 +6,29 @@ Specification only (2026-11-18). The owner decided all open questions on 2026-11
 
 ## 1. Server: local IDE tokens
 
-- [ ] 1.1 Storage: a migration adding the IDE token table (`id` `itk_…`, `client`, `name`, `sha256`, `created_at`, `expires_at`, `last_used_at`, `revoked_at`), with one active row per client, and deletion of revoked or expired rows after 30 days.
+- [x] 1.1 Storage: a migration adding the IDE token table (`id` `itk_…`, `client`, `name`, `sha256`, `created_at`, `expires_at`, `last_used_at`, `revoked_at`), with one active row per client, and deletion of revoked or expired rows after 30 days.
   - Tests: the migration from the previous schema; an old database opens; retention deletes only rows older than 30 days.
-- [ ] 1.2 Issuance routes in the `ide` group (`POST|GET /api/v1/ide/tokens`, `DELETE /api/v1/ide/tokens/:tokenID`), owner Basic only. The token is `cyi_` plus 32 random bytes in base64url, returned once and stored as SHA-256. Expiry defaults to 30 days, 1–90 allowed. Issuing for the same client rotates in one transaction. Unknown `client` is refused.
+- [x] 1.2 Issuance routes in the `ide` group (`POST|GET /api/v1/ide/tokens`, `DELETE /api/v1/ide/tokens/:tokenID`), owner Basic only. The token is `cyi_` plus 32 random bytes in base64url, returned once and stored as SHA-256. Expiry defaults to 30 days, 1–90 allowed. Issuing for the same client rotates in one transaction. Unknown `client` is refused.
   - Tests: "Issue a token" (server side), "Reissue rotates", "A token cannot mint tokens", "Listing hides secrets"; `expires_in_days: 0` and `91` are refused; idempotent DELETE.
-- [ ] 1.3 Authentication middleware: recognize `Bearer cyi_…` before account JWT validation; compare in constant time; accept only on the Unix socket or from a loopback peer on the main listener; refuse on the peer and collaboration listeners, from non-loopback peers and in `auth_token`.
+- [x] 1.3 Authentication middleware: recognize `Bearer cyi_…` before account JWT validation; compare in constant time; accept only on the Unix socket or from a loopback peer on the main listener; refuse on the peer and collaboration listeners, from non-loopback peers and in `auth_token`.
   - Tests: "Token from the LAN refused"; the peer listener returns `401`; an `auth_token` carrying a `cyi_` value returns `401`; a malformed token returns `401` without touching the database beyond one indexed lookup.
-- [ ] 1.4 Scope enforcement: one allowlist table of operation IDs checked before handler dispatch, refusing others with `403 ForbiddenError { reason: "ide_token_scope" }`; refuse `POST .../mode` with `bypass` or `dont-ask`.
+- [x] 1.4 Scope enforcement: one allowlist table of operation IDs checked before handler dispatch, refusing others with `403 ForbiddenError { reason: "ide_token_scope" }`; refuse `POST .../mode` with `bypass` or `dont-ask`.
   - Tests: "Out-of-scope route", "Bypass mode refused", "IDE token is not an owner credential". A table-driven test walks every operation in `sdk/openapi.json` and asserts that exactly the allowlisted operations accept a token. "Approval with an IDE token" (the log names the `itk_` ID and never the value).
-- [ ] 1.5 Revocation and expiry: `401` on the next request; open event streams of the token closed within 1 s; presence leases created by it ended; `last_used_at` throttled to once per minute; `cyber service password <value>` revokes all tokens.
+  - Spec update made during implementation: `POST /api/v1/sessions` with `mode` `bypass`/`dont-ask` or with a Session `rules` set is refused too ("Session create cannot remove approval"); the scenario routes are now ones the server has (`GET /api/v1/config/language`, `POST /api/v1/providers/chatgpt/login`).
+- [x] 1.5 Revocation and expiry: `401` on the next request; open event streams of the token closed within 1 s; presence leases created by it ended; `last_used_at` throttled to once per minute; `cyber service password <value>` revokes all tokens.
   - Tests: "Revocation closes streams", "Expiry" (injected clock), "Password replacement revokes IDE tokens", tokens survive restart.
-- [ ] 1.6 CLI `cyber ide token create|list|revoke`: atomic 0600 write to `<state>/ide/<client>.token` in a 0700 directory; print only the ID and expiry; `revoke` deletes the file when it holds the revoked token; `list --format json`.
+  - Evidence: `crates/cyber-server/tests/ide_tokens.rs`, `runtime::ide_tokens` unit tests (injected clock, reopened database), `crates/cyber-cli/tests/ide_cli.rs` (password replacement).
+- [x] 1.6 CLI `cyber ide token create|list|revoke`: atomic 0600 write to `<state>/ide/<client>.token` in a 0700 directory; print only the ID and expiry; `revoke` deletes the file when it holds the revoked token; `list --format json`.
   - Tests: "Issue a token" (CLI), "IDE token subcommands"; file and directory modes; no token value in stdout, stderr or logs; `<state>/ide/` unreadable from a sandboxed `bash` call (extends the existing private-state test).
-- [ ] 1.7 OpenAPI entries for the token routes and the `ForbiddenError` reason; regenerate the SDK.
+- [x] 1.7 OpenAPI entries for the token routes and the `ForbiddenError` reason; regenerate the SDK.
   - Test: `python3 scripts/generate_sdk.py --check`.
 
 ## 2. Server: ranged `file` parts
 
-- [ ] 2.1 Accept the optional `range { start_line, end_line }` on `file` prompt parts. Apply the `read` tool's checks to the whole path first, then admit only the range (clamp past EOF, refuse malformed). Refuse it on the peer listener as for any `file` part.
+- [x] 2.1 Accept the optional `range { start_line, end_line }` on `file` prompt parts. Apply the `read` tool's checks to the whole path first, then admit only the range (clamp past EOF, refuse malformed). Refuse it on the peer listener as for any `file` part.
   - Tests: "Ranged file part", "Malformed range", a `read` deny with a range still denies, and the idempotency digest includes the range.
-- [ ] 2.2 Update OpenAPI (`PromptPart` → `file.range`), regenerate the SDK, and make the TUI's `@path#Lx-y` mentions send ranged `file` parts when the server is local.
+  - Spec update made during implementation: `file` parts of UTF-8 text files are admitted as `<file path="…" lines="a-b">` text blocks (until now only media files were accepted), and a range on a media file is refused.
+- [x] 2.2 Update OpenAPI (`PromptPart` → `file.range`), regenerate the SDK, and make the TUI's `@path#Lx-y` mentions send ranged `file` parts when the server is local.
   - Tests: `generate_sdk.py --check`; the TUI `parts()` tests updated.
 
 ## 3. Package scaffold and build
