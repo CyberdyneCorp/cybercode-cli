@@ -54,6 +54,7 @@ mod store;
 mod switcher;
 mod team;
 mod theme;
+mod title_command;
 mod turns;
 mod update;
 mod usage_wait;
