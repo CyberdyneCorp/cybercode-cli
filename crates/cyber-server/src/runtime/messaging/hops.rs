@@ -278,6 +278,7 @@ mod tests {
                 untrusted: None,
                 output_schema: None,
                 structured: None,
+                model: None,
             });
             if let Some(hops) = hops {
                 let chain = MessageChain {

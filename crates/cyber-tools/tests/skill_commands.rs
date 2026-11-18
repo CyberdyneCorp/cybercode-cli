@@ -312,3 +312,44 @@ async fn unavailable_command_model_preserves_pending_input_without_using_the_bas
     assert!(flow.main.requests().is_empty());
     flow.runtime.shutdown().await;
 }
+
+/// `session-runtime` → per-prompt model: a prompt's `model` answers that prompt, tool loop
+/// included, and the next prompt runs on the Session's model again.
+#[tokio::test]
+async fn prompt_model_answers_one_prompt_then_the_session_model_returns() {
+    let flow = Flow::with_models(
+        support::Fixture::new(),
+        vec![text("base answer")],
+        false,
+        Arc::new(NoSnapshots),
+        vec![(
+            "other/once",
+            vec![
+                call("read", "read", json!({"path":"notes.txt"})),
+                text("once answer"),
+            ],
+        )],
+    );
+    flow.f.write("notes.txt", "notes");
+    let id = flow.session("default").await;
+    let mut once = cyber_server::runtime::Admission::text("look", Delivery::Queue);
+    once.model = Some("other/once".into());
+    flow.runtime.admit_user(&id, once).await.unwrap();
+    flow.settle(&id).await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert!(format!("{:?}", state.entries).contains("once answer"));
+    assert_eq!(state.info.model, "test/main");
+    assert!(flow.main.requests().is_empty());
+
+    let again = cyber_server::runtime::Admission::text("again", Delivery::Queue);
+    flow.runtime.admit_user(&id, again).await.unwrap();
+    flow.settle(&id).await;
+    let entries = format!("{:?}", flow.runtime.state(&id).await.unwrap().entries);
+    assert!(entries.contains("base answer"), "{entries}");
+    assert_eq!(flow.main.requests().len(), 1);
+
+    let mut unknown = cyber_server::runtime::Admission::text("x", Delivery::Queue);
+    unknown.model = Some("missing/model".into());
+    assert!(flow.runtime.admit_user(&id, unknown).await.is_err());
+    flow.runtime.shutdown().await;
+}

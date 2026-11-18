@@ -388,6 +388,7 @@ impl Outgoing {
             source: "session".into(),
             resume: true,
             output_schema: None,
+            model: None,
         }
     }
 

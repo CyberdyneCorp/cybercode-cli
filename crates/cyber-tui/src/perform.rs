@@ -845,6 +845,27 @@ async fn submit_prompt(
     Ok(Msg::Done)
 }
 
+/// `/model <provider/model> <prompt>`: the prompt's `model` answers it alone.
+async fn model_prompt(
+    client: &Client,
+    session: &Session,
+    model: &str,
+    text: &str,
+    delivery: &str,
+) -> Result<Msg, String> {
+    let id = session.id.as_str();
+    let body = json!({
+        "parts": parts(text, &session.directory),
+        "delivery": delivery,
+        "model": model,
+    });
+    client
+        .post(&format!("/sessions/{id}/prompt"), body)
+        .await
+        .map_err(prompt_refusal)?;
+    Ok(Msg::Done)
+}
+
 /// A refused prompt as the server words it, without the error tag.
 fn prompt_refusal(e: cyber_client::ClientError) -> String {
     match e {
@@ -1200,6 +1221,11 @@ async fn converse(
             delivery,
             chips,
         } => Ok(prompt(client, session, text, chips, delivery, context).await),
+        Action::ModelPrompt {
+            model,
+            text,
+            delivery,
+        } => model_prompt(client, session, &model, &text, delivery).await,
         Action::Subtask(prompt) => {
             crate::admissions::start(
                 client,

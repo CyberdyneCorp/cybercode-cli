@@ -2721,6 +2721,8 @@ export type InboxRow = {
   output_schema?: unknown;
   /** The structured result or error of a prompt with `output_schema`, once settled. */
   structured?: StructuredOutcome | null;
+  /** `provider/model` for this prompt's Turn only. */
+  model?: string | null;
 };
 
 /** An iteration that was admitted and has not ended. */
@@ -4314,6 +4316,11 @@ export type PromptBody = {
   source?: string | null;
   /** A structured answer for this root prompt (`session-runtime` → Structured output). */
   format?: PromptFormat | null;
+  /**
+   * `provider/model` that answers this prompt only; later prompts use the Session's
+   * model again.
+   */
+  model?: string | null;
 };
 
 /**

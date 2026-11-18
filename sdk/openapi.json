@@ -7034,6 +7034,13 @@
               }
             ],
             "description": "A structured answer for this root prompt (`session-runtime` → Structured output)."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`provider/model` that answers this prompt only; later prompts use the Session's\nmodel again."
           }
         },
         "required": [
@@ -10441,6 +10448,13 @@
               }
             ],
             "description": "The structured result or error of a prompt with `output_schema`, once settled."
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`provider/model` for this prompt's Turn only."
           }
         },
         "required": [

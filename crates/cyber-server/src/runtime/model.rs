@@ -54,6 +54,19 @@ pub struct InboxRow {
     /// The structured result or error of a prompt with `output_schema`, once settled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structured: Option<super::StructuredOutcome>,
+    /// `provider/model` for this prompt's Turn only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+impl InboxRow {
+    /// The model this row's Turn runs on instead of the Session's: the prompt's own
+    /// `model`, else its command's.
+    pub fn turn_model(&self) -> Option<&str> {
+        self.model
+            .as_deref()
+            .or_else(|| self.skill_command.as_ref()?.model.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -741,6 +754,15 @@ impl SessionState {
             .find(|row| row.message_id == message && row.skill_command.is_some())
     }
 
+    /// The current user prompt's row when it names a model for its Turn: a prompt
+    /// `model` or a command's `model`.
+    fn current_model_row(&self) -> Option<&InboxRow> {
+        let message = self.current_user_message()?;
+        self.inbox
+            .iter()
+            .find(|row| row.message_id == message && row.turn_model().is_some())
+    }
+
     pub(crate) fn boundary_command_model(&self, continue_tools: bool) -> Option<&str> {
         let pending = self.pending(Delivery::Steer).last().or_else(|| {
             (!continue_tools)
@@ -748,14 +770,15 @@ impl SessionState {
                 .flatten()
         });
         match pending {
-            Some(row) => row.skill_command.as_ref()?.model.as_deref(),
+            Some(row) => row.turn_model(),
             None => self.command_model(),
         }
     }
 
-    /// A command model applies through its tool loop, then expires at its final text reply.
+    /// A prompt or command model applies through its tool loop, then expires at its
+    /// final text reply.
     pub fn command_model(&self) -> Option<&str> {
-        let row = self.current_command_row()?;
+        let row = self.current_model_row()?;
         let user = self
             .entries
             .iter()
@@ -772,7 +795,7 @@ impl SessionState {
         if last.is_some_and(|assistant| assistant.finished && assistant.calls.is_empty()) {
             return None;
         }
-        row.skill_command.as_ref()?.model.as_deref()
+        row.turn_model()
     }
 
     pub fn child_worktree_setup_pending(&self) -> bool {
@@ -1336,6 +1359,7 @@ impl SessionState {
             untrusted: a.untrusted,
             output_schema: a.output_schema,
             structured: None,
+            model: a.model,
         });
     }
 

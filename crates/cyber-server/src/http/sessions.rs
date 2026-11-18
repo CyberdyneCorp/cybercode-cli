@@ -200,6 +200,9 @@ pub struct PromptBody {
     pub source: Option<String>,
     /// A structured answer for this root prompt (`session-runtime` → Structured output).
     pub format: Option<PromptFormat>,
+    /// `provider/model` that answers this prompt only; later prompts use the Session's
+    /// model again.
+    pub model: Option<String>,
 }
 
 /// `{ type: "json_schema", schema }`: the answer is a JSON object the schema validates,
@@ -820,6 +823,7 @@ pub(crate) async fn submit_prompt(
         output_schema: body
             .format
             .map(|PromptFormat::JsonSchema { schema }| schema),
+        model: body.model,
     };
     let receipt: Receipt = match state
         .runtime
@@ -1680,6 +1684,7 @@ mod tests {
             untrusted,
             output_schema: None,
             structured: None,
+            model: None,
         }
     }
 

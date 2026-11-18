@@ -664,6 +664,7 @@ impl CommandPlan {
             source: self.source.into(),
             resume: true,
             output_schema: None,
+            model: None,
         }
     }
 }
@@ -708,6 +709,8 @@ pub struct Admission {
     pub output_schema: Option<serde_json::Value>,
     /// Bind this original input to a dedicated client; absent keeps legacy presence.
     pub input_client: Option<InputClient>,
+    /// `provider/model` for this prompt's Turn only; the Session's model is unchanged.
+    pub model: Option<String>,
 }
 
 impl Admission {
@@ -728,9 +731,13 @@ impl Admission {
             ),
             None => base,
         };
-        // A retry with another schema is another prompt.
-        match &self.output_schema {
+        // A retry with another schema or model is another prompt.
+        let base = match &self.output_schema {
             Some(schema) => format!("{base}+schema:{:x}", Sha256::digest(schema.to_string())),
+            None => base,
+        };
+        match &self.model {
+            Some(model) => format!("{base}+model:{model}"),
             None => base,
         }
     }
@@ -746,6 +753,7 @@ impl Admission {
             source: "user".into(),
             resume: true,
             output_schema: None,
+            model: None,
         }
     }
 }
@@ -1737,7 +1745,7 @@ impl Runtime {
         check: PromptCheck,
         extra: Vec<NewEvent>,
     ) -> Result<Receipt, RuntimeError> {
-        self.check_output_schema(session_id, &admission).await?;
+        self.check_prompt_options(session_id, &admission).await?;
         self.admit_recorded(session_id, admission, attempt, check, extra, None)
             .await
     }
@@ -1768,7 +1776,26 @@ impl Runtime {
 
     /// A prompt's `output_schema` is for root Sessions and must pass the root schema
     /// bounds (`session-runtime` → Structured output).
-    pub(crate) async fn check_output_schema(
+    /// Refuse a prompt's `output_schema` or `model` before anything is admitted.
+    pub(crate) async fn check_prompt_options(
+        &self,
+        session_id: &str,
+        admission: &Admission,
+    ) -> Result<(), RuntimeError> {
+        self.check_output_schema(session_id, admission).await?;
+        let Some(model) = &admission.model else {
+            return Ok(());
+        };
+        cyber_llm::catalog::ModelRef::parse(model)
+            .map_err(|error| RuntimeError::Invalid(error.to_string()))?;
+        let handle = self.inner.handle(session_id).await?;
+        let info = handle.state.lock().await.info.clone();
+        self.inner
+            .resolve_selection(&info, &selection::ModelSelection::explicit(model.clone()))
+            .map(drop)
+    }
+
+    async fn check_output_schema(
         &self,
         session_id: &str,
         admission: &Admission,
@@ -1866,6 +1893,7 @@ impl Runtime {
                 resources: attachments.resources,
                 untrusted: untrusted_input::merged([untrusted, attachments.untrusted]),
                 output_schema: admission.output_schema,
+                model: admission.model,
             };
             let mut events = Vec::new();
             if let Some(attempt) = attempt {

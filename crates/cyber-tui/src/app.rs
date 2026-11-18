@@ -104,6 +104,13 @@ pub enum Action {
         /// The draft's chips whose labels are in `text`, in label order.
         chips: Vec<crate::attachments::Chip>,
     },
+    /// `/model <provider/model> <prompt>`: one prompt answered by `model`; the Session
+    /// keeps its own model.
+    ModelPrompt {
+        model: String,
+        text: String,
+        delivery: &'static str,
+    },
     Shell(String),
     /// `& cmd`: start a user shell command as a background Job of the Session.
     BackgroundShell(String),
@@ -1794,6 +1801,30 @@ impl App {
         }]
     }
 
+    /// `/model` opens the picker; `/model <provider/model> <prompt>` sends one prompt to
+    /// that model, and the Session's model answers the next one again.
+    fn model_command(&mut self, args: &str) -> Vec<Action> {
+        let Some((model, prompt)) = args.split_once(char::is_whitespace) else {
+            return vec![Action::LoadModels];
+        };
+        let prompt = prompt.trim();
+        if !model.contains('/') || prompt.is_empty() {
+            self.toast("Usage: /model <provider/model> <prompt>");
+            return Vec::new();
+        }
+        let delivery = if self.session.running {
+            "queue"
+        } else {
+            "steer"
+        };
+        self.hide_recap();
+        vec![Action::ModelPrompt {
+            model: model.to_string(),
+            text: prompt.to_string(),
+            delivery,
+        }]
+    }
+
     /// `/memory [global]` opens the review panel; `/memory on|off|readonly` saves the
     /// toggle, which Sessions apply at their next Safe Boundary.
     fn memory_command(&mut self, args: &str) -> Vec<Action> {
@@ -1886,7 +1917,7 @@ impl App {
                 self.overlay = Overlay::ConfirmStopTasks;
                 Vec::new()
             }
-            "model" | "models" => vec![Action::LoadModels],
+            "model" | "models" => self.model_command(args),
             "skills" => vec![Action::LoadSkills],
             "plugins" => vec![Action::LoadPlugins { reload: false }],
             "reload-plugins" => vec![Action::LoadPlugins { reload: true }, Action::LoadCommands],
