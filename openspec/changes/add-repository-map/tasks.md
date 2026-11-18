@@ -150,7 +150,7 @@
   - `docs/local-core-guide.md`: the repository map, epoch-pinned sources, `core/repo-map` and the limits table;
   - a row in `docs/features.md`;
   - the ROADMAP entry.
-- [ ] 10.2 Run the gate:
+- [x] 10.2 Run the gate:
   - `cargo fmt`;
   - workspace clippy with `-D warnings`;
   - `cargo nextest run --workspace --profile ci`;
@@ -160,3 +160,4 @@
   - the binary-size gate from 1.1.
   
   Keep cognitive complexity ≤ 15 per function. The graph and the renderer must stay within that limit.
+  - Evidence: PR #149 CI is green on Linux, macOS and Windows (workspace nextest, clippy `-D warnings`, fmt, OpenAPI/SDK/CLI doc checks, OpenSpec strict, binary-size gate); `spec_lint` has 0 errors and the same warnings as `main`; clippy enforces cognitive complexity ≤ 15.
