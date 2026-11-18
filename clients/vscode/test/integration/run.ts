@@ -4,7 +4,7 @@
  * that the IDE token appears nowhere in the profile (settings, extension storage, logs)
  * and removes everything.
  */
-import { readdir, readFile, mkdtemp, rm, stat } from "node:fs/promises";
+import { readdir, readFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { runTests } from "@vscode/test-electron";
@@ -38,8 +38,15 @@ async function launch(fixture: Fixture, suite: "chat" | "restricted", profile: s
   }
 }
 
-async function runSuite(fixture: Fixture, suite: "chat" | "restricted", profile: string, report: string): Promise<void> {
+async function runSuite(fixture: Fixture, suite: "chat" | "restricted", root: string, report: string): Promise<void> {
+  const profile = join(root, suite);
   const trust = suite === "chat" ? ["--disable-workspace-trust"] : [];
+  if (suite === "restricted") {
+    // A fresh profile that has trusted nothing, opening untrusted folders in Restricted
+    // Mode without the startup prompt.
+    await mkdir(join(profile, "user/User"), { recursive: true });
+    await writeFile(join(profile, "user/User/settings.json"), JSON.stringify({ "security.workspace.trust.enabled": true, "security.workspace.trust.startupPrompt": "never", "security.workspace.trust.untrustedFiles": "open" }));
+  }
   await runTests({
     version: process.env.VSCODE_VERSION ?? "stable",
     cachePath: join(extension, ".vscode-test"),
