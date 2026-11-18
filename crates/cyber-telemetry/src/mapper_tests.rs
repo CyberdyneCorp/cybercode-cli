@@ -962,3 +962,45 @@ fn opaque_reasoning_state_never_reaches_a_signal() {
     assert!(f.spans().iter().any(|span| span.name == "cyber.tool"));
     assert!(!format!("{:?}", f.spans()).contains("gAAAA-opaque-blob"));
 }
+
+#[test]
+fn telemetry_without_code() {
+    let mut f = fixture(Content::default());
+    f.feed([LiveEvent::RepoMapBuilt {
+        build: cyber_server::runtime::RepoMapBuild {
+            status: "complete".into(),
+            files: 120,
+            symbols: 900,
+            parsed: 40,
+            duration_ms: 350,
+        },
+    }]);
+    let span = f.span("repo_map.build");
+    assert_eq!(span.parent_span_id, SpanId::INVALID);
+    assert_eq!(
+        attr_text(&span, "cyber.repo_map.files").as_deref(),
+        Some("120")
+    );
+    assert_eq!(
+        attr_text(&span, "cyber.repo_map.symbols").as_deref(),
+        Some("900")
+    );
+    assert_eq!(
+        attr_text(&span, "cyber.repo_map.duration_ms").as_deref(),
+        Some("350")
+    );
+    assert_eq!(
+        attr_text(&span, "cyber.repo_map.status").as_deref(),
+        Some("complete")
+    );
+    let keys: Vec<String> = span
+        .attributes
+        .iter()
+        .map(|kv| kv.key.to_string())
+        .collect();
+    assert_eq!(keys.len(), 5, "counts, duration and status only: {keys:?}");
+    assert!(
+        keys.iter()
+            .all(|key| !key.contains("path") && !key.contains("name"))
+    );
+}

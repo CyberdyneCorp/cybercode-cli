@@ -836,7 +836,8 @@ impl Inner {
         resolved: &ResolvedModel,
     ) -> Result<(), RuntimeError> {
         let mut state = handle.state.lock().await;
-        let observed = self.observe(&state).await;
+        let mut observed = self.observe(&state).await;
+        self.observe_pinned(&state, resolved, &mut observed).await;
         let previous = state.epoch.as_ref().map(|epoch| &epoch.snapshot);
         let snapshot = context::epoch_snapshot(previous, &observed.sources)
             .map_err(RuntimeError::ContextBlocked)?;
@@ -943,6 +944,31 @@ impl Inner {
         drop(state);
         self.instructions_loaded(handle, loaded, "changed").await;
         Ok(())
+    }
+
+    /// Epoch-pinned sources, for a baseline only: a source that does not load within
+    /// the bound, or is not a value, is omitted from this Epoch and never blocks it.
+    async fn observe_pinned(
+        &self,
+        state: &SessionState,
+        resolved: &ResolvedModel,
+        observed: &mut context::Observation,
+    ) {
+        let turn = turn_context_for(state, false);
+        let pinned = self
+            .options
+            .tools
+            .pinned_context_observations(&turn, &resolved.profile);
+        let Ok(values) = tokio::time::timeout(context::PINNED_LOAD_BOUND, pinned).await else {
+            return;
+        };
+        for (key, value) in values {
+            if let context::Observed::Value(text) = value {
+                observed.origins.insert(key.clone(), "tool_host".into());
+                observed.pinned.insert(key.clone());
+                observed.sources.insert(key, context::Observed::Value(text));
+            }
+        }
     }
 
     /// Built-in sources plus those the tool host contributes.
@@ -1820,6 +1846,7 @@ impl Inner {
                             .dispatch(handle, &turn, message_id, call, &def, input)
                             .await?;
                         invocation.tool_output = resolved.profile.tool_output;
+                        invocation.repo_map = resolved.profile.repo_map;
                         runs.push(self.run_tool(handle, def, invocation, cancel.child_token()));
                     }
                 }
@@ -2077,6 +2104,7 @@ impl Inner {
         let inner = self.me.upgrade().expect("runtime alive");
         Ok(Invocation {
             tool_output: Default::default(),
+            repo_map: Default::default(),
             registration: def.registration.clone(),
             session_id: turn.session_id.clone(),
             directory: turn.directory.clone(),

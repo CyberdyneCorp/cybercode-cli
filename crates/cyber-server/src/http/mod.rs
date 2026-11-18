@@ -74,7 +74,10 @@ use crate::runtime::{Runtime, ToolDef, TurnContext};
 pub use envelope::{LocationInfo, ProjectInfo};
 pub use error::{ApiError, ErrorBody};
 pub use idempotency::request_fingerprint;
-pub use intelligence::{FormatterStatus, LspState, LspStatus, LspTransition};
+pub use intelligence::{
+    FormatterStatus, LspState, LspStatus, LspTransition, RepoMapFile, RepoMapIndex, RepoMapRequest,
+    RepoMapSymbol, RepoMapView,
+};
 pub use mcp_serve::{McpServeClock, McpServeSessions};
 pub use memory::{
     MemoryEdit, MemoryRecoveryConfirm, MemoryRecoveryView, MemoryScope, MemorySettingsView,
@@ -188,6 +191,10 @@ pub struct LocationDefaults {
     pub default_agent: Option<String>,
 }
 
+fn repo_map_unavailable() -> ApiError {
+    ApiError::service_unavailable("repo_map", "The repository map is unavailable in this host")
+}
+
 /// What the server needs beyond the runtime: catalogs and Location-level lookups.
 pub trait Services: Send + Sync {
     fn collaboration(&self) -> Option<Arc<dyn collaboration::CollaborationService>> {
@@ -242,6 +249,21 @@ pub trait Services: Send + Sync {
             error.body.service = Some("lsp".into());
             Err(error)
         })
+    }
+    /// `GET /lsp/map` (`code-intelligence` → Repository map inspection surfaces).
+    fn repo_map(
+        &self,
+        _location: PathBuf,
+        _request: RepoMapRequest,
+    ) -> BoxFuture<'_, Result<RepoMapView, ApiError>> {
+        Box::pin(async { Err(repo_map_unavailable()) })
+    }
+    /// `POST /lsp/map/rebuild`: start a rebuild and report the index status.
+    fn rebuild_repo_map(
+        &self,
+        _location: PathBuf,
+    ) -> BoxFuture<'_, Result<RepoMapIndex, ApiError>> {
+        Box::pin(async { Err(repo_map_unavailable()) })
     }
     fn memory_recovery(
         &self,

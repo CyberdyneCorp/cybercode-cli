@@ -38,7 +38,9 @@ use cyber_tools::{BuiltinHost, ConfigFn, HookConfigFn, HostOptions};
 use serde_json::{Value, json};
 
 pub use cyber_tools::IsolationOptions;
-pub use registered_status::registered_lsp_status;
+pub use registered_status::{
+    registered_lsp_status, registered_repo_map, registered_repo_map_rebuild,
+};
 pub use registration::{
     ClientBuild, Probe, Registration, ServerClientInfo, ServiceNotice, health, probe,
     probe_registration, read_registration, registered_health, registration_path, start_service,
@@ -303,6 +305,20 @@ impl App {
             .clone()
             .unwrap_or_else(|| Arc::new(cyber_tools::PolicyFetcher));
         host.attach_remote_skills(opts.paths.cache.join("skills"), fetcher)?;
+        // `code-intelligence` → Repository map index storage: `<cache>/repo-map/index.db`.
+        // Builds report counts only, to the telemetry exporter, once the runtime exists.
+        let build_runtime: Arc<std::sync::OnceLock<cyber_server::runtime::WeakRuntime>> =
+            Arc::default();
+        let observed = Arc::clone(&build_runtime);
+        host.attach_repo_maps(Arc::new(
+            cyber_tools::repo_map::RepoMaps::new(opts.paths.cache.clone()).with_observer(Arc::new(
+                move |report| {
+                    if let Some(runtime) = observed.get().and_then(|weak| weak.upgrade()) {
+                        runtime.publish_repo_map_build(report.telemetry());
+                    }
+                },
+            )),
+        ))?;
         let lsp_options = cyber_tools::lsp::LaunchOptions {
             checkout_claim: Some(host.lsp_checkout_claim()),
             paths: opts.paths.clone(),
@@ -379,6 +395,7 @@ impl App {
                 .map_err(|error| error.to_string())?;
         }
         host.attach(runtime.clone());
+        let _ = build_runtime.set(runtime.downgrade());
         if opts.snapshots {
             // Owner-confirmed construction discards whose unlink failed are retried forever.
             cyber_server::runtime::construction_discard::spawn_retry(runtime.clone());

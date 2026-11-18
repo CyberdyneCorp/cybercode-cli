@@ -110,6 +110,10 @@ pub struct BuiltinHost {
     /// Per-Session browser servers and the dev servers they own.
     pub(crate) browsers: crate::browser::Browsers,
     pub(crate) lsp: OnceLock<crate::lsp::Locations>,
+    /// The repository map index (`code-intelligence` → Repository map …).
+    pub(crate) repo_maps: OnceLock<Arc<crate::repo_map::RepoMaps>>,
+    /// Each Session's most recently read or edited distinct paths, most recent first.
+    recent_files: Mutex<HashMap<String, std::collections::VecDeque<PathBuf>>>,
     /// Per-command limit for template shell injections.
     pub(crate) injection_timeout_ms: std::sync::atomic::AtomicU64,
     /// The remote skill cache; without it, `https://` skill entries are reported unavailable.
@@ -151,6 +155,17 @@ impl BuiltinHost {
             .map_err(|_| "Language services already attached".into())
     }
 
+    /// Attach the repository map index; without it `repo_map` is not offered.
+    pub fn attach_repo_maps(&self, maps: Arc<crate::repo_map::RepoMaps>) -> Result<(), String> {
+        self.repo_maps
+            .set(maps)
+            .map_err(|_| "Repository map already attached".into())
+    }
+
+    pub fn repo_maps(&self) -> Option<&Arc<crate::repo_map::RepoMaps>> {
+        self.repo_maps.get()
+    }
+
     pub fn lsp_status(
         &self,
         location: &Path,
@@ -190,6 +205,8 @@ impl BuiltinHost {
             plugins: Default::default(),
             browsers: Default::default(),
             lsp: OnceLock::new(),
+            repo_maps: OnceLock::new(),
+            recent_files: Mutex::default(),
             opts,
             tools: tools::all(),
             file_observers: Default::default(),
@@ -233,6 +250,9 @@ impl BuiltinHost {
 
     pub(crate) fn observe_file_change(&self, location: &Path, path: &Path) {
         self.file_observers.changed(location, path);
+        if let Some(maps) = self.repo_maps.get() {
+            maps.mark_dirty(path);
+        }
     }
 
     /// Every built-in tool name, offered or not, and the runtime's `return_result`.
@@ -632,7 +652,7 @@ impl BuiltinHost {
     /// Whether the Location's checkout configuration is trusted (`workspace-trust`). A host
     /// without a resolver has no checkout trust: its embedder supplies the configuration
     /// (the App always attaches one). A configuration that fails to resolve is untrusted.
-    fn checkout_trusted(&self, location: &Path) -> bool {
+    pub(crate) fn checkout_trusted(&self, location: &Path) -> bool {
         self.hook_config.get().is_none_or(|config| {
             (config.resolve)(location).is_ok_and(|resolved| resolved.trust.trusted)
         })
@@ -812,6 +832,24 @@ impl BuiltinHost {
             .entry(session.into())
             .or_default()
             .insert(path.into());
+        let mut recent = self
+            .recent_files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let list = recent.entry(session.into()).or_default();
+        list.retain(|known| known != path);
+        list.push_front(path.into());
+        list.truncate(crate::repo_map::SESSION_FILES);
+    }
+
+    /// The Session's most recently read or edited distinct paths, most recent first.
+    pub(crate) fn recent_files(&self, session: &str) -> Vec<PathBuf> {
+        self.recent_files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(session)
+            .map(|list| list.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn was_read(&self, session: &str, path: &Path) -> bool {
@@ -840,6 +878,7 @@ impl BuiltinHost {
 impl ToolHost for BuiltinHost {
     fn open_location(&self, info: &cyber_server::runtime::SessionInfo) {
         self.file_observers.refresh(self, info);
+        self.start_repo_map(Path::new(&info.directory));
         self.start_mcp(info);
         self.reconcile_plugins(&info.directory, true);
         self.start_browser(info);
@@ -1572,6 +1611,7 @@ impl ToolHost for BuiltinHost {
             let info = &child.info;
             let inv = Invocation {
                 tool_output: Default::default(),
+                repo_map: Default::default(),
                 registration: None,
                 session_id: info.id.clone(),
                 directory: parent.directory.clone(),
@@ -1672,6 +1712,10 @@ impl ToolHost for BuiltinHost {
                     || tools::powershell::installed(Path::new(&turn.directory)).is_some()
             })
             .filter(|d| {
+                d.spec.name != tools::repo_map::NAME
+                    || tools::repo_map::offered(self, Path::new(&turn.directory))
+            })
+            .filter(|d| {
                 !tools::mcp::RESOURCE_TOOLS.contains(&d.spec.name.as_str())
                     || *resources.get_or_init(|| self.mcp_resources_offered(turn, &rules))
             })
@@ -1720,6 +1764,14 @@ impl ToolHost for BuiltinHost {
             self.context_observations_owned_for_tools(turn, &self.definitions(turn))
                 .await
         })
+    }
+
+    fn pinned_context_observations<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        profile: &'a cyber_llm::catalog::ModelProfile,
+    ) -> BoxFuture<'a, BTreeMap<String, cyber_server::runtime::ContextObservation>> {
+        Box::pin(self.pinned_context_observations_for(turn, profile))
     }
 
     fn execute(&self, inv: Invocation, cancel: CancellationToken) -> BoxFuture<'_, ToolOutcome> {
@@ -1831,6 +1883,7 @@ impl ToolHost for BuiltinHost {
             }
             let inv = Invocation {
                 tool_output: Default::default(),
+                repo_map: Default::default(),
                 registration: None,
                 session_id: turn.session_id,
                 directory: turn.directory,
@@ -1955,6 +2008,7 @@ impl ToolHost for BuiltinHost {
 fn user_invocation(directory: &str, session_id: &str, command: &str) -> Invocation {
     Invocation {
         tool_output: Default::default(),
+        repo_map: Default::default(),
         registration: None,
         session_id: session_id.into(),
         directory: directory.into(),

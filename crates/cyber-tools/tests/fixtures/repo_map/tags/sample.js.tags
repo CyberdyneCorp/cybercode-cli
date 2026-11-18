@@ -1,0 +1,6 @@
+scope 0 line 2 parent None: class Widget extends Base
+2 class Widget scope None: class Widget extends Base
+3 method render scope Some(0): render(props)
+8 function build scope None: function build(options)
+12 function handler scope None: const handler = async (event) => {
+refs: Base=1 Widget=1 build=1 div=1

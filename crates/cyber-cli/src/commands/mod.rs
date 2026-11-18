@@ -34,6 +34,7 @@ pub mod pr;
 mod preparation_recovery;
 pub mod providers;
 mod recovery;
+pub mod repo_map;
 pub mod review;
 mod rewind;
 pub mod sandbox;

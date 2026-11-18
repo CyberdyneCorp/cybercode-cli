@@ -101,7 +101,7 @@ pub fn percent_decode(s: &str) -> String {
 }
 
 /// Decode a query component, where `+` also means a space.
-fn query_decode(s: &str) -> String {
+pub fn query_decode(s: &str) -> String {
     decode(s, true)
 }
 

@@ -124,6 +124,10 @@ pub struct SourceMetadata {
     /// Withheld definitions beyond the recorded bound.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub omitted_withheld: usize,
+    /// An epoch-pinned source: observed only when a baseline is rendered and never
+    /// reconciled within the Epoch (`system-context` → Epoch-pinned Context Sources).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
 }
 
 fn is_zero(count: &usize) -> bool {
@@ -169,6 +173,7 @@ pub fn capture(
             None => provenance(status, observed, id),
         };
         record.pending_update = observed.pending.contains(id);
+        record.pinned = observed.pinned.contains(id);
         record.estimated_tokens = snapshot.get(id).map(|text| (text.len() / 4) as u64);
         (id.clone(), record)
     }));
@@ -203,6 +208,7 @@ fn provenance(status: SourceStatus, observed: &Observation, id: &str) -> SourceM
         file_stamps,
         withheld: withheld.entries,
         omitted_withheld: withheld.omitted,
+        pinned: false,
     }
 }
 

@@ -40,7 +40,12 @@ pub struct Observation {
     pub stamps: BTreeMap<String, BTreeMap<String, super::context_sources::FileStamp>>,
     /// Per source, definitions that applied but were left out, without their content.
     pub withheld: BTreeMap<String, super::context_sources::Withheld>,
+    /// Epoch-pinned sources in this observation.
+    pub pinned: std::collections::BTreeSet<String>,
 }
+
+/// How long a baseline render waits for the pinned sources.
+pub const PINNED_LOAD_BOUND: std::time::Duration = std::time::Duration::from_secs(2);
 
 pub fn observe(inputs: &ContextInputs) -> Observation {
     let mut sources = BTreeMap::new();
@@ -66,6 +71,7 @@ pub fn observe(inputs: &ContextInputs) -> Observation {
         stamps,
         withheld,
         pending: Default::default(),
+        pinned: Default::default(),
     }
 }
 

@@ -1,0 +1,10 @@
+scope 0 line 4 parent None: public class Sample implements Runnable
+scope 1 line 12 parent Some(0): interface Listener
+scope 2 line 17 parent None: enum Color
+4 class Sample scope None: public class Sample implements Runnable
+5 method Sample scope Some(0): public Sample(int value)
+8 method run scope Some(0): @Override public void run()
+12 interface Listener scope Some(0): interface Listener
+13 method onEvent scope Some(1): void onEvent(String name);
+17 enum Color scope None: enum Color
+refs: Runnable=1 String=1

@@ -1,5 +1,5 @@
 //! Actual authenticated TCP formatter discovery through application services.
-use cyber_app::{App, AppOptions, registered_lsp_status};
+use cyber_app::{App, AppOptions, registered_lsp_status, registered_repo_map};
 use cyber_core::paths::{DatabaseLocation, Paths};
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -546,5 +546,80 @@ async fn lsp_status_reports_connected_root_and_close_exits_the_process() {
     // The settled generation stays observable until reload, and is no longer connected.
     let after = status(f.client.clone(), url.clone()).await;
     assert_eq!(row(&after, "fixture")["status"], "broken");
+    f.close().await;
+}
+
+/// `code-intelligence` → Repository map inspection surfaces: both routes in the `lsp`
+/// group, behind the authenticated Location envelope.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn repo_map_routes_render_and_rebuild_the_location_index() {
+    let f = Fixture::new().await;
+    std::fs::create_dir_all(f.root.join("src")).unwrap();
+    std::fs::write(
+        f.root.join("src/main.rs"),
+        "mod net;\nfn main() { net::connect_upstream(); }\n",
+    )
+    .unwrap();
+    std::fs::write(f.root.join("src/net.rs"), "pub fn connect_upstream() {}\n").unwrap();
+    let url = f.url.replace("/formatters", "/lsp/map");
+    assert_eq!(
+        f.client.get(&url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let response = f
+        .client
+        .get(format!("{url}?focus=src%2Fnet.rs&tokens=512"))
+        .basic_auth("cyber", Some("status-password"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["location"]["directory"], f.root.display().to_string());
+    let data = &body["data"];
+    assert!(
+        data["text"].as_str().unwrap().starts_with("src/net.rs:\n"),
+        "{data}"
+    );
+    assert_eq!(data["files"][0]["path"], "src/net.rs");
+    assert_eq!(data["files"][0]["symbols"][0]["name"], "connect_upstream");
+    assert_eq!(data["index"]["status"], "complete");
+    assert!(data["index"]["languages"]["rust"].as_u64().unwrap() >= 2);
+    // The JSON for scripts matches the route through the registered server.
+    std::fs::write(
+        cyber_app::registration_path(&f.app.paths),
+        json!({"id":"srv_map","version":"test","url":f.url.replace("/api/v1/formatters", ""),"socket":null,"pid":std::process::id()}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(f.app.paths.state.join("password"), "status-password").unwrap();
+    let request = cyber_server::http::RepoMapRequest {
+        focus: vec!["src/net.rs".into()],
+        tokens: Some(512),
+        ..Default::default()
+    };
+    let view = registered_repo_map(&f.app.paths, &f.root, &request)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(serde_json::to_value(&view).unwrap(), *data);
+    let rebuild = f
+        .client
+        .post(url.replace("/lsp/map", "/lsp/map/rebuild"))
+        .basic_auth("cyber", Some("status-password"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rebuild.status(), reqwest::StatusCode::ACCEPTED);
+    let body: Value = rebuild.json().await.unwrap();
+    assert!(body["data"]["files"].as_u64().unwrap() >= 2, "{body}");
+    f.settings(json!({"repo_map": {"enabled": false}}));
+    let disabled = f
+        .client
+        .get(&url)
+        .basic_auth("cyber", Some("status-password"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disabled.status(), reqwest::StatusCode::CONFLICT);
     f.close().await;
 }

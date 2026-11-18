@@ -194,6 +194,7 @@ impl Inner {
     ) -> (String, bool) {
         let invocation = Invocation {
             tool_output: Default::default(),
+            repo_map: Default::default(),
             registration: def.registration.clone(),
             session_id: info.id.clone(),
             directory: info.directory.clone(),

@@ -1137,6 +1137,24 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         .ok::<Located<super::LspTransition>>(g),
         op(
             "get",
+            "/lsp/map",
+            "v1.lsp.map",
+            "Render the Location's repository map from its local index",
+        )
+        .located()
+        .query(&["path", "focus", "symbol", "tokens"])
+        .ok::<Located<super::RepoMapView>>(g),
+        op(
+            "post",
+            "/lsp/map/rebuild",
+            "v1.lsp.mapRebuild",
+            "Re-extract every file of the Location's repository index",
+        )
+        .located()
+        .status(202)
+        .ok::<Located<super::RepoMapIndex>>(g),
+        op(
+            "get",
             "/vcs",
             "v1.vcs.status",
             "The Location's git branch, upstream, ahead/behind, worktree and dirty flag",

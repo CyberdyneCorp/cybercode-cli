@@ -1,0 +1,14 @@
+scope 0 line 6 parent None: pub struct Config
+scope 1 line 12 parent None: pub trait Loader
+scope 2 line 16 parent None: impl Config
+scope 3 line 28 parent None: mod inner
+6 struct Config scope None: pub struct Config
+10 constant LIMIT scope None: pub const LIMIT: usize = 10;
+12 interface Loader scope None: pub trait Loader
+13 method load scope Some(1): fn load(&self, path: &Path) -> Result<Config, String>;
+18 method new scope Some(2): pub fn new(name: &str) -> Self
+23 function load scope None: pub fn load(path: &Path) -> Result<Config, String>
+28 module inner scope None: mod inner
+29 function helper scope Some(3): pub fn helper()
+32 macro shout scope None: macro_rules! shout {
+refs: Config=4 Path=3 Result=2 Self=1 String=3 into=1 new=1 path=1

@@ -271,7 +271,7 @@ pub use auto::{
     AutoDecision, AutoEffect, AutoReview, AutoReviewStage, CONFIRMATION_REVIEW, TAINTED_REVIEW,
 };
 pub use auto_context::{ReviewFiles, ReviewWorkspace, ReviewerToolUse};
-pub use bus::LiveEvent;
+pub use bus::{LiveEvent, RepoMapBuild};
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};
 pub use context_inspection::{
@@ -1222,6 +1222,11 @@ impl Runtime {
                 seq,
             });
         })
+    }
+
+    /// Publish a finished repository index build for the telemetry exporter only.
+    pub fn publish_repo_map_build(&self, build: RepoMapBuild) {
+        self.inner.bus.publish(LiveEvent::RepoMapBuilt { build });
     }
 
     /// Publish `mcp.tools.changed.1` after a server's tools or prompts were published or

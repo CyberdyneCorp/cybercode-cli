@@ -6,6 +6,16 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
+/// One repository index build, without any path, name or signature.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct RepoMapBuild {
+    pub status: String,
+    pub files: u64,
+    pub symbols: u64,
+    pub parsed: u64,
+    pub duration_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LiveEvent {
@@ -36,6 +46,13 @@ pub enum LiveEvent {
     HookReceipt {
         session_id: String,
         receipt: super::HookReceipt,
+    },
+    /// A repository index build finished: counts, durations and status only, for the
+    /// telemetry exporter (`code-intelligence` → Repository map data stays local). No
+    /// client stream carries it.
+    #[schemars(skip)]
+    RepoMapBuilt {
+        build: RepoMapBuild,
     },
     /// A child request notification on an ancestor's live stream, never its history.
     RequestRouted {

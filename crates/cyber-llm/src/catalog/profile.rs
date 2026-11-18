@@ -117,6 +117,44 @@ pub enum ThinkingParam {
     Budget,
 }
 
+/// Repository map budgets in tokens (`provider-catalog` → Repository map budgets in
+/// model profiles): the `core/repo-map` baseline map and the `repo_map` tool's default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct RepoMapBudget {
+    pub context_tokens: u32,
+    pub tool_tokens: u32,
+}
+
+impl Default for RepoMapBudget {
+    fn default() -> Self {
+        Self {
+            context_tokens: 1024,
+            tool_tokens: 2048,
+        }
+    }
+}
+
+impl RepoMapBudget {
+    /// The window caps, applied last: `context_tokens` at 3% of the context window,
+    /// rounded down to a multiple of 128, and `tool_tokens` at 6%. An unknown window
+    /// (`0`) caps nothing.
+    pub fn capped(self, window: u64) -> Self {
+        if window == 0 {
+            return self;
+        }
+        let context = (window * 3 / 100) / 128 * 128;
+        let tool = window * 6 / 100;
+        Self {
+            context_tokens: self.context_tokens.min(clamp_u32(context)),
+            tool_tokens: self.tool_tokens.min(clamp_u32(tool)),
+        }
+    }
+}
+
+fn clamp_u32(value: u64) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
 /// A model's resolved behavior profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct ModelProfile {
@@ -137,6 +175,7 @@ pub struct ModelProfile {
     /// Send Gemini's documented placeholder signature on current-turn calls another
     /// model made, instead of lowering them to text. Discouraged.
     pub signature_bypass: bool,
+    pub repo_map: RepoMapBudget,
 }
 
 impl Default for ModelProfile {
@@ -153,6 +192,7 @@ impl Default for ModelProfile {
             effort_clamp: EffortClamp::NearestLower,
             thinking_param: None,
             signature_bypass: false,
+            repo_map: RepoMapBudget::default(),
         }
     }
 }
@@ -187,6 +227,10 @@ pub struct ProfilePatch {
     pub thinking_param: Option<ThinkingParam>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature_bypass: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_map_context_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_map_tool_tokens: Option<u32>,
 }
 
 impl Default for ProfilePatch {
@@ -210,6 +254,8 @@ impl ProfilePatch {
         effort_clamp: None,
         thinking_param: None,
         signature_bypass: None,
+        repo_map_context_tokens: None,
+        repo_map_tool_tokens: None,
     };
 
     /// Config `providers.<p>.models.<m>.profile`. A key or value that does not parse is
@@ -220,6 +266,7 @@ impl ProfilePatch {
         };
         let verbosity = map.get("verbosity");
         let output = map.get("tool_output");
+        let repo_map = map.get("repo_map");
         Self {
             reasoning_replay: parsed(map.get("reasoning_replay")),
             reasoning_carrier: parsed(map.get("reasoning_carrier")),
@@ -234,8 +281,24 @@ impl ProfilePatch {
             effort_clamp: parsed(map.get("effort_clamp")),
             thinking_param: parsed(map.get("thinking_param")),
             signature_bypass: parsed(map.get("signature_bypass")),
+            repo_map_context_tokens: positive(repo_map.and_then(|v| v.get("context_tokens"))),
+            repo_map_tool_tokens: positive(repo_map.and_then(|v| v.get("tool_tokens"))),
         }
     }
+
+    /// Top-level `repo_map.context_tokens`/`tool_tokens`, which sit between the built-in
+    /// layers and per-model config.
+    pub fn from_repo_map(value: Option<&Value>) -> Self {
+        Self {
+            repo_map_context_tokens: positive(value.and_then(|v| v.get("context_tokens"))),
+            repo_map_tool_tokens: positive(value.and_then(|v| v.get("tool_tokens"))),
+            ..Self::EMPTY
+        }
+    }
+}
+
+fn positive(value: Option<&Value>) -> Option<u32> {
+    parsed::<u32>(value).filter(|n| *n > 0)
 }
 
 fn parsed<T: serde::de::DeserializeOwned>(value: Option<&Value>) -> Option<T> {
@@ -266,6 +329,11 @@ impl ModelProfile {
             self.thinking_param = Some(param);
         }
         set(&mut self.signature_bypass, patch.signature_bypass);
+        set(
+            &mut self.repo_map.context_tokens,
+            patch.repo_map_context_tokens,
+        );
+        set(&mut self.repo_map.tool_tokens, patch.repo_map_tool_tokens);
     }
 }
 
@@ -344,6 +412,12 @@ const RULES: &[Rule] = &[
 
 /// The profile of `model`: defaults, rules, catalog metadata, then config.
 pub fn resolve(provider: &Provider, model: &Model) -> ModelProfile {
+    resolve_with(provider, model, &ProfilePatch::default())
+}
+
+/// [`resolve`] with the top-level config layer (`repo_map` budgets) between catalog
+/// metadata and per-model config; the repository map window caps apply last.
+pub fn resolve_with(provider: &Provider, model: &Model, top_level: &ProfilePatch) -> ModelProfile {
     let kind = model.api_kind.or(provider.kind);
     let mut profile = defaults(model, kind);
     let name = model
@@ -362,7 +436,9 @@ pub fn resolve(provider: &Provider, model: &Model) -> ModelProfile {
         }
     }
     profile.apply(&model.profile_catalog);
+    profile.apply(top_level);
     profile.apply(&model.profile_config);
+    profile.repo_map = profile.repo_map.capped(model.limits.context);
     if profile.efforts.is_empty() {
         profile.efforts = sorted_efforts(
             model
@@ -540,6 +616,43 @@ mod tests {
             ..ModelProfile::default()
         };
         assert_eq!(resolve(&p, &m), plain);
+    }
+
+    #[test]
+    fn small_local_model() {
+        let (p, mut m) = compatible("ollama", "qwen3-coder");
+        m.limits.context = 32_768;
+        let profile = resolve(&p, &m);
+        assert_eq!(
+            profile.repo_map,
+            RepoMapBudget {
+                context_tokens: 896,
+                tool_tokens: 1966
+            }
+        );
+        m.limits.context = 200_000;
+        assert_eq!(resolve(&p, &m).repo_map, RepoMapBudget::default());
+        m.limits.context = 8_000;
+        assert_eq!(resolve(&p, &m).repo_map.context_tokens, 128);
+    }
+
+    #[test]
+    fn per_model_override_wins_over_the_top_level_key() {
+        let top = ProfilePatch::from_repo_map(Some(&json!({"tool_tokens": 4096})));
+        let (p, mut coder) = compatible("corp", "coder");
+        coder.limits.context = 200_000;
+        coder.profile_config = ProfilePatch::from_config(Some(&json!({
+            "repo_map": {"tool_tokens": 1024}
+        })));
+        assert_eq!(resolve_with(&p, &coder, &top).repo_map.tool_tokens, 1024);
+        let (p, mut other) = compatible("corp", "other");
+        other.limits.context = 200_000;
+        assert_eq!(resolve_with(&p, &other, &top).repo_map.tool_tokens, 4096);
+        // The window cap still applies last.
+        other.limits.context = 32_768;
+        assert_eq!(resolve_with(&p, &other, &top).repo_map.tool_tokens, 1966);
+        let invalid = ProfilePatch::from_repo_map(Some(&json!({"tool_tokens": "big"})));
+        assert_eq!(invalid, ProfilePatch::default());
     }
 
     #[test]

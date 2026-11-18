@@ -70,6 +70,7 @@ impl BuiltinHost {
         }
         let inv = Invocation {
             tool_output: Default::default(),
+            repo_map: Default::default(),
             registration: None,
             session_id: owner.session_id,
             directory: owner.directory,
@@ -131,6 +132,7 @@ impl BuiltinHost {
         };
         let inv = Invocation {
             tool_output: Default::default(),
+            repo_map: Default::default(),
             registration: None,
             session_id: owner.session_id,
             directory: owner.directory,

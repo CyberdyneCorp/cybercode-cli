@@ -1,0 +1,89 @@
+sample.rs:
+  6: pub struct Config
+  10: pub const LIMIT: usize = 10;
+  12: pub trait Loader
+  13:     fn load(&self, path: &Path) -> Result<Config, String>;
+  16: impl Config
+  18:     pub fn new(name: &str) -> Self
+  23: pub fn load(path: &Path) -> Result<Config, String>
+  28: mod inner
+  29:     pub fn helper()
+  32: macro_rules! shout {
+sample.sh:
+  3: deploy()
+  7: function build_assets
+sample.tsx:
+  1: interface Props
+  5: function Header({ title }: Props)
+sample.js:
+  2: class Widget extends Base
+  3:     render(props)
+  8: function build(options)
+  12: const handler = async (event) => {
+sample.py:
+  2: MAX_RETRIES = 3
+  6: class Session(Base):
+  9:     def refresh(self, token):
+  14: def helper(value):
+Sample.java:
+  4: public class Sample implements Runnable
+  5:     public Sample(int value)
+  8:     @Override public void run()
+  12:     interface Listener
+  13:         void onEvent(String name);
+  17: enum Color
+sample.cpp:
+  1: namespace net
+  3:     class Client
+  5:         void connect(int port);
+  6:         int port() const
+  11:     void Client::connect(int port)
+  17: int main()
+sample.go:
+  4: Server struct {
+  8: Handler interface {
+  12: ID string
+  14: DefaultAddr = ":8080"
+  16: func New(addr string) *Server
+  20: func (s *Server) Start() error
+sample.c:
+  2: #define MAX_SIZE 64
+  3: #define SQUARE(x) ((x) * (x))
+  5: struct buffer
+  9: typedef struct buffer buffer_t;
+  11: int buffer_size(const struct buffer *b);
+  13: static int compute(int value)
+  17: char *name_of(int id)
+sample.ts:
+  1: interface Store
+  2:     get(key: string): string | undefined
+  5: type Key = string;
+  7: enum Mode
+  12: class MemoryStore implements Store
+  13:     get(key: string): string | undefined
+  18: function open(path: string): Store
+  22: namespace Internal
+sample.sol:
+  4: interface IToken
+  5:     function transfer(address to, uint256 amount) external returns (bool);
+  8: library Math
+  9:     function max(uint256 a, uint256 b) internal pure returns (uint256)
+  14: contract Vault is IToken
+  15:     struct Deposit
+  16:     enum State
+  17:     event Deposited(address indexed from, uint256 amount);
+  18:     error Unauthorized();
+  20:     modifier onlyOwner()
+  24:     function transfer(address to, uint256 amount) external returns (bool)
+---
+sample.rs 0.156118129577
+sample.sh 0.084388187042
+sample.tsx 0.084388187042
+sample.js 0.084388187042
+sample.py 0.084388187042
+Sample.java 0.084388187042
+sample.cpp 0.084388187042
+sample.go 0.084388187042
+sample.c 0.084388187042
+sample.ts 0.084388187042
+sample.sol 0.084388187042
