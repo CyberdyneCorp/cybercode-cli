@@ -686,3 +686,191 @@ async fn approvals_with_a_token_are_applied_and_logged_by_id() {
         .collect::<String>();
     assert!(!file.contains(&token));
 }
+
+fn set_agent_mode(h: &Harness, mode: Option<&str>) {
+    h.tools.inference.lock().unwrap().permission_mode = mode.map(str::to_string);
+}
+
+async fn session_mode(h: &Harness, id: &str) -> String {
+    h.runtime.state(id).await.unwrap().info.mode
+}
+
+/// Security review, case 1: an agent (or the Location's default agent) whose
+/// `permission_mode` is `bypass` or `dont-ask` cannot give a token-created Session that
+/// Mode; the owner still can. A safe agent default is resolved at creation, never left
+/// for the first Safe Boundary.
+#[tokio::test]
+async fn an_agent_default_cannot_make_a_token_session_unattended() {
+    let h = Harness::new(Setup::default());
+    let base = serve(&h).await;
+    let (_, token) = issue(&base).await;
+    let post = reqwest::Method::POST;
+    for mode in ["bypass", "dont-ask"] {
+        set_agent_mode(&h, Some(mode));
+        for body in [json!({}), json!({ "agent": "build" })] {
+            let (status, refused) = ide(
+                &token,
+                post.clone(),
+                format!("{base}/sessions"),
+                Some(body.clone()),
+            )
+            .await;
+            assert!(
+                out_of_scope(status, &refused),
+                "{mode} {body}: {status} {refused}"
+            );
+        }
+        let (status, owned) =
+            owner(post.clone(), format!("{base}/sessions"), Some(json!({}))).await;
+        assert_eq!(status, 201, "{owned}");
+        let id = owned["data"]["id"].as_str().unwrap();
+        assert_eq!(
+            session_mode(&h, id).await,
+            mode,
+            "the owner path is unchanged"
+        );
+    }
+    set_agent_mode(&h, Some("plan"));
+    let (status, created) = ide(
+        &token,
+        post.clone(),
+        format!("{base}/sessions"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, 201, "{created}");
+    let id = created["data"]["id"].as_str().unwrap();
+    assert_eq!(session_mode(&h, id).await, "plan");
+    assert_eq!(created["data"]["pending_mode"], Value::Null);
+}
+
+/// Security review, cases 2 and 3: a token cannot create a child Session (which would
+/// inherit from a Session it did not create, such as a `bypass` parent) or an unattended
+/// one.
+#[tokio::test]
+async fn a_token_cannot_create_child_or_unattended_sessions() {
+    let h = Harness::new(Setup::default());
+    let base = serve(&h).await;
+    let (_, token) = issue(&base).await;
+    let parent = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            mode: Some("bypass".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    for body in [
+        json!({ "parent_id": parent }),
+        json!({ "unattended": true }),
+        json!({ "rules": { "*": "allow" } }),
+    ] {
+        let (status, refused) = ide(
+            &token,
+            reqwest::Method::POST,
+            format!("{base}/sessions"),
+            Some(body.clone()),
+        )
+        .await;
+        assert!(out_of_scope(status, &refused), "{body}: {status} {refused}");
+    }
+    let children = h
+        .runtime
+        .list(&cyber_server::runtime::ListFilter {
+            parent: Some(parent.clone()),
+            ..Default::default()
+        })
+        .unwrap()
+        .sessions;
+    assert!(children.is_empty(), "no child was created");
+}
+
+/// Security review, case 4: the in-scope routes cannot reach an unattended Session. A
+/// token cannot prompt a Session that already runs in `bypass` or `dont-ask` (the owner
+/// switched it), a prompt is never interpreted as a slash command, and an `always` reply
+/// saves only the request's own patterns, as a person approving in the editor would.
+#[tokio::test]
+async fn in_scope_routes_cannot_drive_or_reach_an_unattended_session() {
+    let h = Harness::new(Setup {
+        scripts: vec![(
+            "test/main",
+            vec![tools(&[("c1", "shell", "{}")]), text("done")],
+        )],
+        ..Setup::default()
+    });
+    h.tools.set("shell", Behavior::Ask("rm -rf build".into()));
+    let base = serve(&h).await;
+    let (_, token) = issue(&base).await;
+    let post = reqwest::Method::POST;
+    let prompt = |text: &str| json!({ "parts": [{ "type": "text", "text": text }] });
+
+    let unattended = h.session().await;
+    h.runtime
+        .switch_mode(&unattended, "dont-ask")
+        .await
+        .unwrap();
+    let (status, refused) = ide(
+        &token,
+        post.clone(),
+        format!("{base}/sessions/{unattended}/prompt"),
+        Some(prompt("go")),
+    )
+    .await;
+    assert!(out_of_scope(status, &refused), "{status} {refused}");
+    assert!(
+        h.runtime
+            .state(&unattended)
+            .await
+            .unwrap()
+            .entries
+            .is_empty()
+    );
+
+    let session = h.session().await;
+    let (status, body) = ide(
+        &token,
+        post.clone(),
+        format!("{base}/sessions/{session}/prompt"),
+        Some(prompt("/mode bypass")),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let request = loop {
+        let (_, list) = ide(
+            &token,
+            reqwest::Method::GET,
+            format!("{base}/permissions/requests"),
+            None,
+        )
+        .await;
+        if let Some(r) = list["data"].as_array().and_then(|a| a.first()).cloned() {
+            break r;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    assert_eq!(
+        session_mode(&h, &session).await,
+        "default",
+        "no slash command ran"
+    );
+    let rid = request["id"].as_str().unwrap();
+    let (status, body) = ide(
+        &token,
+        post,
+        format!("{base}/sessions/{session}/permissions/{rid}/reply"),
+        Some(json!({ "reply": "always" })),
+    )
+    .await;
+    assert_eq!(status, 204, "{body}");
+    h.settle(&session).await;
+    let info = h.runtime.state(&session).await.unwrap().info;
+    assert_eq!(info.mode, "default");
+    assert!(
+        info.rules.is_null() || info.rules == json!({}),
+        "{}",
+        info.rules
+    );
+}

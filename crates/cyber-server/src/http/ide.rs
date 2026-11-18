@@ -80,8 +80,18 @@ pub const SCOPE: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Modes an IDE token cannot select: both remove human approval.
+/// Modes an IDE token cannot select or drive: both remove human approval.
 const UNATTENDED_MODES: [&str; 2] = ["bypass", "dont-ask"];
+
+/// Whether `mode` runs without human approval (`bypass`, `dont-ask`).
+pub fn unattended(mode: &str) -> bool {
+    UNATTENDED_MODES.contains(&mode)
+}
+
+/// The `403 ide_token_scope` refusal as an [`ApiError`], for handlers.
+pub fn scope_error(message: impl Into<String>) -> ApiError {
+    ApiError::forbidden(message).with_reason("ide_token_scope")
+}
 /// The largest body read to check a Session create or Mode switch.
 const CHECKED_BODY_LIMIT: usize = 1024 * 1024;
 
@@ -278,12 +288,26 @@ async fn checked_body(operation: &str, req: Request) -> Result<Request, Box<Resp
             "an IDE token cannot select the {mode} mode"
         ))));
     }
-    if operation == "v1.session.create" && !value["rules"].is_null() {
-        return Err(Box::new(out_of_scope(
-            "an IDE token cannot set Session rules",
-        )));
+    if operation == "v1.session.create" {
+        refused_create_field(&value).map_err(|message| Box::new(out_of_scope(message)))?;
     }
     Ok(Request::from_parts(parts, Body::from(bytes)))
+}
+
+/// Session create fields an IDE token cannot use: its own `rules` (which could allow every
+/// tool), a `parent_id` (a child inherits from a Session the token did not create) and
+/// `unattended`.
+fn refused_create_field(value: &serde_json::Value) -> Result<(), &'static str> {
+    if !value["rules"].is_null() {
+        return Err("an IDE token cannot set Session rules");
+    }
+    if !value["parent_id"].is_null() {
+        return Err("an IDE token cannot create a child Session");
+    }
+    if value["unattended"].as_bool() == Some(true) {
+        return Err("an IDE token cannot create an unattended Session");
+    }
+    Ok(())
 }
 
 /// End an event stream when its token is revoked; other responses pass unchanged.

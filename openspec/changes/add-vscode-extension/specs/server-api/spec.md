@@ -118,7 +118,7 @@ A valid token SHALL authorize exactly these routes, plus the public health route
 - `GET /api/v1/permissions/requests` and `POST /api/v1/sessions/:sessionID/permissions/:requestID/reply`
 - `GET /api/v1/questions/requests` and `POST /api/v1/sessions/:sessionID/questions/:requestID/reply`
 
-Any other route, including the IDE token routes, `POST .../mode` with `bypass` or `dont-ask`, and `POST /api/v1/sessions` with `mode` `bypass` or `dont-ask` or with a Session `rules` set, SHALL be refused with `403` `ForbiddenError` `{ reason: "ide_token_scope" }` before the handler runs. Permission rules, Modes, sandbox, workspace trust and `file` part checks SHALL apply to an IDE token request exactly as to an owner request. The server SHALL log the token `id`, never its value, with every authorized request, and SHALL update `last_used_at` at most once per minute.
+Any other route, including the IDE token routes, `POST .../mode` with `bypass` or `dont-ask`, and `POST /api/v1/sessions` with `mode` `bypass` or `dont-ask`, a Session `rules` set, a `parent_id` or `unattended: true`, SHALL be refused with `403` `ForbiddenError` `{ reason: "ide_token_scope" }` before the handler runs. A Session created with an IDE token SHALL never run without human approval, whatever sets its Mode: its Mode SHALL be resolved at creation (the requested Mode, else the agent's `permission_mode`), and a creation that would resolve to `bypass` or `dont-ask` SHALL be refused the same way. An IDE token SHALL NOT prompt a Session whose selected, pending or running Mode is `bypass` or `dont-ask` (`403` `ide_token_scope`). A prompt is never interpreted as a slash command, and an `always` reply saves only the request's own `always_patterns`, as for a person approving in a client. Permission rules, Modes, sandbox, workspace trust and `file` part checks SHALL apply to an IDE token request exactly as to an owner request. The server SHALL log the token `id`, never its value, with every authorized request, and SHALL update `last_used_at` at most once per minute.
 
 #### Scenario: Out-of-scope route
 - **WHEN** an IDE token calls `POST /api/v1/providers/chatgpt/login`
@@ -129,8 +129,16 @@ Any other route, including the IDE token routes, `POST .../mode` with `bypass` o
 - **THEN** the response is `403` with `reason: "ide_token_scope"` and the Mode does not change
 
 #### Scenario: Session create cannot remove approval
-- **WHEN** an IDE token calls `POST /api/v1/sessions` with `mode: "bypass"` or with `rules: { "*": "allow" }`
+- **WHEN** an IDE token calls `POST /api/v1/sessions` with `mode: "bypass"`, with `rules: { "*": "allow" }`, with a `parent_id` or with `unattended: true`
 - **THEN** the response is `403` with `reason: "ide_token_scope"` and no Session is created
+
+#### Scenario: Agent default cannot make a token Session unattended
+- **WHEN** the agent's `permission_mode` is `bypass` and an IDE token calls `POST /api/v1/sessions` without a `mode`
+- **THEN** the response is `403` with `reason: "ide_token_scope"` and no Session is created, while the owner's same request still creates a `bypass` Session
+
+#### Scenario: A token cannot drive an unattended Session
+- **WHEN** the owner switched a Session to `dont-ask` and an IDE token posts a prompt to it
+- **THEN** the response is `403` with `reason: "ide_token_scope"` and nothing is admitted
 
 #### Scenario: Token from the LAN refused
 - **WHEN** the server listens on `0.0.0.0` with TLS and a request from `192.168.1.20` carries a valid IDE token
