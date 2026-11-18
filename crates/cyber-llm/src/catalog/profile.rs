@@ -303,6 +303,8 @@ const RULES: &[Rule] = &[
     by_name("glm", true, carrier(ReasoningCarrier::ReasoningContent)),
     by_name("qwen", true, carrier(ReasoningCarrier::ReasoningContent)),
     by_name("gemini-3", true, carrier(ReasoningCarrier::GeminiSignature)),
+    // Gemini 4 rejects a function call whose thought signature is not sent back.
+    by_name("gemini-4", true, carrier(ReasoningCarrier::GeminiSignature)),
     by_provider("openrouter", carrier(ReasoningCarrier::ReasoningDetails)),
     by_provider("ollama", carrier(ReasoningCarrier::Reasoning)),
     by_provider("lmstudio", carrier(ReasoningCarrier::Reasoning)),
@@ -546,11 +548,14 @@ mod tests {
             resolve(&p, &m).reasoning_carrier,
             ReasoningCarrier::Reasoning
         );
-        let (p, m) = compatible("corp", "gemini-3-pro");
-        assert_eq!(
-            resolve(&p, &m).reasoning_carrier,
-            ReasoningCarrier::GeminiSignature
-        );
+        for name in ["gemini-3-pro", "gemini-4-pro", "gemini-4-flash"] {
+            let (p, m) = compatible("corp", name);
+            assert_eq!(
+                resolve(&p, &m).reasoning_carrier,
+                ReasoningCarrier::GeminiSignature,
+                "{name}"
+            );
+        }
     }
 
     #[test]
