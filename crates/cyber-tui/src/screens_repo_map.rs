@@ -46,7 +46,7 @@ fn source(server: &Server) {
     .unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn inspect_the_map() {
     let server = Server::start().await;
     source(&server);
@@ -92,7 +92,7 @@ async fn inspect_the_map() {
     assert!(matches!(app.overlay, Overlay::None));
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test]
 async fn map_disabled() {
     let server =
         Server::start_config(json!({}), json!({"repo_map": {"enabled": false}}), false).await;
