@@ -685,3 +685,50 @@ async fn a_request_answered_elsewhere_leaves_the_drivers_asks() {
     driver.close().await;
     f.app.runtime.shutdown().await;
 }
+
+/// More owned requests than the bound: the next one is declined at once, so it
+/// neither waits unseen nor grows the driver's tracked requests.
+#[tokio::test]
+async fn an_owned_request_beyond_the_bound_is_declined_at_once() {
+    let f = Fixture::new().await;
+    let args = ExecArgs::default();
+    let session = json!({"id":f.session});
+    let mut out = Out::new(Format::Text, &args, &session);
+    let mut driver = Driver::new(
+        &f.client,
+        &f.session,
+        &args,
+        &mut out,
+        Run::new(&args, Instant::now()),
+    );
+    driver.attach().await;
+    driver
+        .admit(
+            None,
+            vec![json!({"type":"text","text":"PERMISSION_CASE"})],
+            "queue",
+        )
+        .await;
+    let request = f.request().await;
+    for index in 0..MAX_ASKS {
+        driver.asks.insert(
+            format!("per_placeholder{index}"),
+            Ask {
+                session_id: f.session.clone(),
+                question: false,
+                inputs: request.input_message_ids.clone(),
+            },
+        );
+    }
+    let (base, data) = event(&request);
+    driver.asked(base, &data).await;
+    assert_eq!(driver.asks.len(), MAX_ASKS);
+    assert!(!driver.asks.contains_key(&request.id));
+    tokio::time::timeout(Duration::from_secs(30), f.app.runtime.wait_idle(&f.session))
+        .await
+        .expect("the declined request kept its Turn waiting");
+    assert!(f.app.runtime.pending_requests(Some(&f.session)).is_empty());
+    driver.asks.clear();
+    driver.close().await;
+    f.app.runtime.shutdown().await;
+}

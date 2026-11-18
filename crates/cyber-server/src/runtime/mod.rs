@@ -49,6 +49,7 @@ pub use deliveries::{FilesSent, Notification, SEND_LIMIT_BYTES, SEND_LIMIT_FILES
 mod drain;
 mod events;
 mod files;
+mod foreground_children;
 mod fork;
 mod forked_skills;
 mod hook_tests;
@@ -102,6 +103,7 @@ mod subtask;
 mod subtree_reopen;
 mod subtree_stop;
 pub use delegations::{Delegation, DelegationPhase, DelegationStatus};
+pub use foreground_children::ForegroundChild;
 pub use input_interrupt::{
     InputInterrupt, InputInterruptProblem, InputInterruptReceipt, InputInterruptStatus,
 };
@@ -918,6 +920,8 @@ pub(crate) struct Inner {
     ptys: pty::Registry,
     delegations: StdMutex<HashMap<String, Arc<delegations::Control>>>,
     child_executions: StdMutex<HashMap<String, std::sync::Weak<Mutex<()>>>>,
+    /// Foreground subagent calls that lend their input cohort to their child.
+    foreground_children: foreground_children::Links,
     /// Registration ID of the server lock this runtime holds (`adopt_server_lock`).
     server_holder: std::sync::OnceLock<String>,
     child_preparations: StdMutex<HashMap<String, Arc<preparation::Control>>>,
@@ -1054,6 +1058,7 @@ impl Runtime {
             ptys: pty::Registry::default(),
             delegations: StdMutex::default(),
             child_executions: StdMutex::default(),
+            foreground_children: Default::default(),
             server_holder: std::sync::OnceLock::new(),
             child_preparations: StdMutex::default(),
             activities: StdMutex::default(),

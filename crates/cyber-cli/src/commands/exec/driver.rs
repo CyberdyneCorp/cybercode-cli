@@ -31,6 +31,9 @@ use crate::error::CliError;
 const LEASE_RENEWAL: Duration = Duration::from_secs(15);
 /// A fatal protocol error.
 const EXIT_PROTOCOL: u8 = 2;
+/// At most this many owned requests wait for a reply at once (two per pending input);
+/// a further one is declined at once with a `capacity` error line.
+const MAX_ASKS: usize = 64;
 
 /// What the stdin task sends.
 enum Line {
@@ -116,7 +119,9 @@ pub async fn execute(
             .map_err(api)?,
     );
     let hooks = HookLines::start(client, args, &id, &out).await;
-    let (sender, mut lines) = mpsc::channel(64);
+    // At most this many parsed lines (each at most 1 MiB) wait for the control loop;
+    // a writer that runs further ahead blocks on its stdin pipe.
+    let (sender, mut lines) = mpsc::channel(16);
     tokio::spawn(read_stdin(sender));
     let mut driver = Driver::new(client, &id, args, &mut out, run);
     driver.hooks = hooks;
@@ -465,17 +470,23 @@ impl<'a> Driver<'a> {
         self.release().await;
         let asks = std::mem::take(&mut self.asks);
         for (request_id, ask) in asks {
-            let (route, body) = if ask.question {
-                ("questions", json!({ "answers": null }))
-            } else {
-                (
-                    "permissions",
-                    json!({ "reply": "reject", "message": NO_APPROVER }),
-                )
-            };
-            let path = format!("/sessions/{}/{route}/{request_id}/reply", ask.session_id);
-            let _ = self.client.post(&path, body).await;
+            self.decline(&request_id, &ask).await;
         }
+    }
+
+    /// Decline a request nobody here will answer: `reject` a permission, dismiss a
+    /// question.
+    async fn decline(&self, request_id: &str, ask: &Ask) {
+        let (route, body) = if ask.question {
+            ("questions", json!({ "answers": null }))
+        } else {
+            (
+                "permissions",
+                json!({ "reply": "reject", "message": NO_APPROVER }),
+            )
+        };
+        let path = format!("/sessions/{}/{route}/{request_id}/reply", ask.session_id);
+        let _ = self.client.post(&path, body).await;
     }
 
     async fn event(&mut self, event: Event) {
@@ -614,7 +625,7 @@ impl<'a> Driver<'a> {
             }
         }
         self.stage_answers();
-        self.step = None;
+        self.set_step(None);
         self.refresh_background().await;
     }
 
@@ -671,7 +682,10 @@ impl<'a> Driver<'a> {
     /// A failed Turn fails the inputs it was answering.
     fn failed(&mut self, data: &Value) {
         let message = data["message"].as_str().unwrap_or("error").to_owned();
-        self.out.error(&message);
+        self.out.stream_line(
+            "error",
+            json!({ "message": message, "input_message_ids": self.answering }),
+        );
         for message_id in &self.answering {
             if let Some(input) = self.inputs.get_mut(message_id) {
                 input.error.get_or_insert_with(|| message.clone());
@@ -693,14 +707,20 @@ impl<'a> Driver<'a> {
         if !safe_id(request_id, prefix) || !safe_id(session_id, "ses") {
             return;
         }
-        self.asks.insert(
-            request_id.to_owned(),
-            Ask {
-                session_id: session_id.to_owned(),
-                question,
-                inputs,
-            },
-        );
+        let ask = Ask {
+            session_id: session_id.to_owned(),
+            question,
+            inputs,
+        };
+        if self.asks.len() >= MAX_ASKS && !self.asks.contains_key(request_id) {
+            self.out.stream_line(
+                "error",
+                json!({ "code": "capacity", "request_id": request_id,
+                    "message": format!("more than {MAX_ASKS} requests wait; {request_id} was declined") }),
+            );
+            return self.decline(request_id, &ask).await;
+        }
+        self.asks.insert(request_id.to_owned(), ask);
         let line = if question {
             "question"
         } else {
@@ -759,6 +779,12 @@ impl<'a> Driver<'a> {
             || (self.closed && self.inputs.is_empty() && self.interruptions.is_empty())
     }
 
+    /// The driven step being followed, whose lines carry its input cohort.
+    fn set_step(&mut self, step: Option<(&str, &[String])>) {
+        self.step = step.map(|(message, _)| message.to_owned());
+        self.out.correlate(step.map(|(_, roots)| roots));
+    }
+
     fn owns_step(&self, data: &Value) -> bool {
         self.step
             .as_deref()
@@ -770,7 +796,7 @@ impl<'a> Driver<'a> {
         if self.answer_done {
             self.stage_answers();
         }
-        self.step = None;
+        self.set_step(None);
         let Some(message) = data["message_id"].as_str().filter(|id| safe_id(id, "msg")) else {
             return;
         };
@@ -792,7 +818,7 @@ impl<'a> Driver<'a> {
         if !self.inputs.owns_cohort(&roots) {
             return;
         }
-        self.step = Some(message.to_owned());
+        self.set_step(Some((message, &roots)));
         self.answer_done = false;
         self.run.text.clear();
         for root in roots {

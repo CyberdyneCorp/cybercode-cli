@@ -219,9 +219,10 @@ fn asker_authority(
     call: &str,
 ) -> Result<Attendance, StoreError> {
     let owner = session.to_owned();
+    let foreground = inner.foreground_children.lent();
     let root = inner
         .store
-        .read(move |db| super::requests::descendant_inputs::recorded(db, &owner))?;
+        .read(move |db| super::requests::descendant_inputs::recorded(db, &owner, &foreground))?;
     if let Some(root) = root {
         return attendance(&inner.store, &root.session_id, &root.input_message_ids);
     }

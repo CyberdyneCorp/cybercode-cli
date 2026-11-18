@@ -2645,6 +2645,23 @@ impl Ctx<'_> {
         ToolError::Failed(message)
     }
 
+    /// Wait for the reply to `ask`. A refusal already delivered wins over a later
+    /// cancellation: a stop withdraws the request before it cancels the call, so the
+    /// call settles as refused (never run) instead of with an unknown outcome. An
+    /// approval never runs a cancelled call.
+    async fn await_reply(&self, ask: PermissionAsk) -> Result<PermissionReply, ToolError> {
+        let reply = tokio::select! {
+            biased;
+            reply = self.inv.asker.permission(ask) => reply,
+            _ = self.cancel.cancelled() => return Err(ToolError::Aborted),
+        };
+        let approved = matches!(reply, PermissionReply::Once | PermissionReply::Always);
+        if approved && self.cancel.is_cancelled() {
+            return Err(ToolError::Aborted);
+        }
+        Ok(reply)
+    }
+
     /// Ask the user. A `tainted` ask (`permissions-modes` → Taint-aware approvals) is not
     /// answered by a PermissionRequest hook's allow, and with no approver attached it is
     /// denied as not pre-approved. An "always" reply still saves the approval; it covers
@@ -2684,11 +2701,7 @@ impl Ctx<'_> {
             self.cancel.clone(),
         ))
         .await;
-        let reply = tokio::select! {
-            _ = self.cancel.cancelled() => return Err(ToolError::Aborted),
-            reply = self.inv.asker.permission(ask) => reply,
-        };
-        match reply {
+        match self.await_reply(ask).await? {
             PermissionReply::Once => Ok(()),
             PermissionReply::Always => {
                 let root = cyber_core::config::project_root(&self.location);
