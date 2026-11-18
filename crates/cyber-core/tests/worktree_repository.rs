@@ -10,6 +10,8 @@ use futures::executor::block_on;
 
 #[path = "worktree_repository/activity.rs"]
 mod activity;
+#[path = "worktree_repository/carry.rs"]
+mod carry;
 #[path = "worktree_repository/inclusion.rs"]
 mod inclusion;
 #[path = "worktree_repository/library_status.rs"]

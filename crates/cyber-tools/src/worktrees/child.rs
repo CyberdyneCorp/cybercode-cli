@@ -1,6 +1,6 @@
 //! Child-owned checkouts share native creation, setup, activity and removal boundaries.
 use super::*;
-use cyber_core::worktrees::{Branch, CheckoutActivity, Cleanup};
+use cyber_core::worktrees::{Branch, CarryPlan, CheckoutActivity, Cleanup};
 use cyber_server::runtime::CreateSession;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -458,6 +458,12 @@ impl BuiltinHost {
             ));
         }
 
+        let carry = match &base {
+            ChildBase::Configured => {
+                plan_child_carry(&ctx, &discovery, &repository, settings.carry_limit_mb).await?
+            }
+            ChildBase::Pinned(_) | ChildBase::Removed(_) => None,
+        };
         let target =
             repository.target(&settings, &request.data, &request.project_id, &request.name)?;
         let execution = GitPort {
@@ -492,7 +498,7 @@ impl BuiltinHost {
                     .await
             } else {
                 repository
-                    .create_on_branch(
+                    .create_carrying(
                         &execution,
                         &settings,
                         &request.data,
@@ -501,6 +507,7 @@ impl BuiltinHost {
                             name: &request.name,
                             reference: branch,
                         },
+                        carry.as_ref(),
                     )
                     .await
             }
@@ -515,6 +522,47 @@ impl BuiltinHost {
             },
         ))
     }
+}
+
+/// The parent checkout's uncommitted work for a new child checkout (`worktrees` →
+/// Subagent isolation): only files the parent Session may read, by its rules and its
+/// sandbox; `limit_mb` 0 carries nothing.
+async fn plan_child_carry(
+    ctx: &Ctx<'_>,
+    git: &dyn GitExecution,
+    repository: &Repository,
+    limit_mb: u64,
+) -> io::Result<Option<CarryPlan>> {
+    if limit_mb == 0 {
+        return Ok(None);
+    }
+    let hidden = crate::sandboxing::hidden(ctx);
+    let readable = |path: &Path| {
+        let absolute = repository.root.join(path);
+        let resource = ctx.resource(&absolute);
+        let request = Request {
+            tool: Some("read".into()),
+            action: "read".into(),
+            resources: vec![resource.clone()],
+            read_only: true,
+            ..Request::default()
+        };
+        crate::permissions::evaluate(&ctx.policy.rules, "read", &resource).0
+            == crate::permissions::Effect::Allow
+            && ctx.policy.decide(&request) == crate::permissions::Decision::Allow
+            && !ctx.policy.taint_holds(&request)
+            && !hidden.denies(&absolute)
+    };
+    let plan =
+        cyber_core::worktrees::plan_carry(git, &repository.root, &readable, limit_mb).await?;
+    if let Some(plan) = plan.as_ref().filter(|plan| !plan.skipped.is_empty()) {
+        cyber_core::log::info(
+            "worktree",
+            "Uncommitted files left out of an isolated checkout",
+            json!({"skipped": plan.skipped}),
+        );
+    }
+    Ok(plan)
 }
 
 impl BuiltinHost {
@@ -712,7 +760,7 @@ impl ChildWorktree {
     }
 
     pub(crate) async fn report(&self, cancel: CancellationToken) -> Value {
-        let mut result = json!({"id":self.managed.id,"path":self.managed.path,"branch":self.managed.branch,"kept":true});
+        let mut result = json!({"id":self.managed.id,"path":self.managed.path,"branch":self.managed.branch,"base":self.managed.base,"kept":true});
         let outcome = match self.host.upgrade().and_then(|host| host.runtime()) {
             Some(runtime) => {
                 runtime

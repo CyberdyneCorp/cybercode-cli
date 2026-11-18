@@ -108,7 +108,7 @@ async fn main_checkout(
     Ok(Some(git_path(value)?.canonicalize()?))
 }
 
-fn copy_file(source: &Dir, destination: &Dir, path: &Path) -> io::Result<String> {
+pub(super) fn copy_file(source: &Dir, destination: &Dir, path: &Path) -> io::Result<String> {
     if !source.symlink_metadata(path)?.is_file() {
         return Err(invalid("Worktree inclusion requires regular files"));
     }
@@ -140,7 +140,7 @@ fn copy_file(source: &Dir, destination: &Dir, path: &Path) -> io::Result<String>
     Ok(format!("{:x}", hash.finalize()))
 }
 
-fn paths(bytes: Vec<u8>) -> io::Result<Vec<PathBuf>> {
+pub(super) fn paths(bytes: Vec<u8>) -> io::Result<Vec<PathBuf>> {
     bytes
         .split(|byte| *byte == 0)
         .filter(|entry| !entry.is_empty())

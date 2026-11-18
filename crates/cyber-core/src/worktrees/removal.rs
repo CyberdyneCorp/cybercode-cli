@@ -135,6 +135,7 @@ impl Repository {
                 name: &name,
                 reference: &managed.branch,
             },
+            None,
         )
         .await
     }

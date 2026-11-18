@@ -111,6 +111,58 @@ async fn isolated_model_edits_stay_in_the_child_and_report_diff_stats() {
     );
 }
 
+/// `worktrees` → Subagent isolation: the parent's staged, unstaged and untracked work is
+/// the child's base commit; a file the parent's read rules ask for (`.env`) stays behind.
+#[tokio::test]
+async fn isolated_child_starts_from_the_parents_uncommitted_work() {
+    let flow = flow(
+        vec![
+            call(
+                "write",
+                "write",
+                json!({"path":"generated.txt","content":"child change\n"}),
+            ),
+            text("done"),
+        ],
+        false,
+    );
+    let head = git(&flow.f.repo, &["rev-parse", "HEAD"]);
+    flow.f.write("tracked.txt", "parent edit\n");
+    flow.f.write("staged.txt", "staged\n");
+    git(&flow.f.repo, &["add", "staged.txt"]);
+    flow.f.write("notes.md", "untracked\n");
+    flow.f.write(".env", "SECRET=1\n");
+    let parent = flow.session("bypass").await;
+    let result = invoke(
+        &flow,
+        &parent,
+        json!({"prompt":"continue","name":"carry","isolation":"worktree","model":"test/main"}),
+    )
+    .await
+    .unwrap();
+    let worktree = &result["worktree"];
+    let path = std::path::Path::new(worktree["path"].as_str().unwrap());
+    let read = |name: &str| std::fs::read_to_string(path.join(name)).ok();
+    assert_eq!(read("tracked.txt").as_deref(), Some("parent edit\n"));
+    assert_eq!(read("staged.txt").as_deref(), Some("staged\n"));
+    assert_eq!(read("notes.md").as_deref(), Some("untracked\n"));
+    assert_eq!(read(".env"), None);
+    let base = worktree["base"].as_str().unwrap();
+    assert_eq!(git(path, &["rev-parse", &format!("{base}^")]), head);
+    // Only the child's own edit is its change.
+    assert_eq!(
+        worktree["changes"]["files"].as_array().unwrap().len(),
+        1,
+        "{worktree}"
+    );
+    assert_eq!(worktree["changes"]["files"][0]["file"], "generated.txt");
+    assert_eq!(git(&flow.f.repo, &["rev-parse", "HEAD"]), head);
+    assert_eq!(
+        git(&flow.f.repo, &["status", "--porcelain"]),
+        "A  staged.txt\n M tracked.txt\n?? .env\n?? notes.md"
+    );
+}
+
 #[tokio::test]
 async fn a_clean_isolated_child_removes_its_checkout_and_branch() {
     let flow = flow(vec![text("no changes")], false);
