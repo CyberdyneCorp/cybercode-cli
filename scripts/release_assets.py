@@ -118,11 +118,34 @@ def workspace_version(cargo_toml: Path) -> str:
     return data["workspace"]["package"]["version"]
 
 
-def check_tag(tag: str, cargo_toml: Path) -> tuple[str, str]:
+def check_tag(tag: str, cargo_toml: Path, package_json: Path | None = None) -> tuple[str, str]:
+    """The tag's version and channel. With `package_json`, the VS Code extension's version
+    must be the same (`editor-integration` → Extension release assets)."""
     version = workspace_version(cargo_toml)
     if tag != f"v{version}":
         raise ReleaseError(f"tag {tag} does not match the workspace version {version}")
+    if package_json is not None:
+        extension = json.loads(package_json.read_text())["version"]
+        if extension != version:
+            raise ReleaseError(
+                f"clients/vscode/package.json says {extension}, the tag is v{version}"
+            )
     return version, channel_of(version)
+
+
+def vsix_name(version: str) -> str:
+    return f"cyber-{version}.vsix"
+
+
+def write_vsix_sum(version: str, dist: Path) -> str:
+    """`cyber-<version>.vsix.sha256` in `sha256sum` format; the `.vsix` must exist."""
+    name = vsix_name(version)
+    path = dist / name
+    if not path.is_file():
+        raise ReleaseError(f"missing extension {name}")
+    text = f"{sha256(path)}  {name}\n"
+    (dist / f"{name}.sha256").write_text(text, newline="\n")
+    return text
 
 
 def release_assets(version: str) -> list[str]:
@@ -131,6 +154,7 @@ def release_assets(version: str) -> list[str]:
     names = archives + [f"{a}.sigstore.json" for a in archives]
     names += ["SHA256SUMS", "SHA256SUMS.sigstore.json", "install.sh"]
     names += list(TEMPLATES.values()) + [f"cyber-npm-{version}.tar.gz"]
+    names += [vsix_name(version), f"{vsix_name(version)}.sha256"]
     return sorted(names)
 
 
@@ -359,6 +383,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     tag = sub.add_parser("check-tag")
     tag.add_argument("tag")
     tag.add_argument("--cargo-toml", type=Path, default=ROOT / "Cargo.toml")
+    tag.add_argument(
+        "--package-json", type=Path, default=ROOT / "clients" / "vscode" / "package.json"
+    )
+    vsix = sub.add_parser("vsix-sum")
+    vsix.add_argument("--version", required=True)
+    vsix.add_argument("dist", type=Path)
     pkg = sub.add_parser("package")
     pkg.add_argument("--version", required=True)
     pkg.add_argument("--target", required=True)
@@ -390,10 +420,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def run(args: argparse.Namespace) -> None:
     if args.command == "check-tag":
-        version, channel = check_tag(args.tag, args.cargo_toml)
+        version, channel = check_tag(args.tag, args.cargo_toml, args.package_json)
         print(f"version={version}\nchannel={channel}")
     elif args.command == "package":
         print(package(args.version, args.target, args.bin_dir, args.out))
+    elif args.command == "vsix-sum":
+        sys.stdout.write(write_vsix_sum(args.version, args.dist))
     elif args.command == "sums":
         sys.stdout.write(write_sums(args.version, args.dist))
     elif args.command == "manifest":

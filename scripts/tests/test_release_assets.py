@@ -4,6 +4,8 @@ Package channels "Rendered manifests")."""
 import datetime as dt
 import hashlib
 import json
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -40,6 +42,26 @@ class ChannelAndTag(unittest.TestCase):
             self.assertEqual(ra.check_tag("v1.5.0-beta.1", cargo), ("1.5.0-beta.1", "beta"))
             with self.assertRaises(ra.ReleaseError):
                 ra.check_tag("v1.5.0", cargo)
+
+    def test_version_mismatch_blocks_the_release(self):
+        """`editor-integration` → Extension release assets, "Version mismatch blocks the
+        release": `check-tag` fails, so no job after `verify` runs."""
+        with tempfile.TemporaryDirectory() as tmp:
+            cargo = Path(tmp) / "Cargo.toml"
+            cargo.write_text('[workspace.package]\nversion = "0.2.0"\n')
+            package = Path(tmp) / "package.json"
+            package.write_text(json.dumps({"name": "cyber", "version": "0.1.9"}))
+            with self.assertRaises(ra.ReleaseError) as raised:
+                ra.check_tag("v0.2.0", cargo, package)
+            self.assertIn("0.1.9", str(raised.exception))
+            self.assertEqual(ra.main(["check-tag", "v0.2.0", "--cargo-toml", str(cargo), "--package-json", str(package)]), 1)
+            package.write_text(json.dumps({"name": "cyber", "version": "0.2.0"}))
+            self.assertEqual(ra.check_tag("v0.2.0", cargo, package), ("0.2.0", "stable"))
+
+    def test_the_extension_version_is_the_workspace_version(self):
+        package = ra.ROOT / "clients" / "vscode" / "package.json"
+        version = ra.workspace_version(ra.ROOT / "Cargo.toml")
+        self.assertEqual(ra.check_tag(f"v{version}", ra.ROOT / "Cargo.toml", package)[0], version)
 
     def test_repository_version_is_releasable(self):
         version = ra.workspace_version(ra.ROOT / "Cargo.toml")
@@ -99,6 +121,25 @@ class ReleaseAssets(unittest.TestCase):
             (dist / name).unlink()
             with self.assertRaises(ra.ReleaseError):
                 ra.write_sums(VERSION, dist)
+
+    def test_release_carries_the_extension_and_its_checksum(self):
+        """"Release carries the extension": `cyber-<v>.vsix` and a `.sha256` that
+        `sha256sum -c` accepts are release assets; a missing `.vsix` fails."""
+        assets = ra.release_assets("0.2.0")
+        self.assertIn("cyber-0.2.0.vsix", assets)
+        self.assertIn("cyber-0.2.0.vsix.sha256", assets)
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            with self.assertRaises(ra.ReleaseError):
+                ra.write_vsix_sum("0.2.0", dist)
+            (dist / "cyber-0.2.0.vsix").write_bytes(b"PK extension")
+            text = ra.write_vsix_sum("0.2.0", dist)
+            digest = hashlib.sha256(b"PK extension").hexdigest()
+            self.assertEqual(text, f"{digest}  cyber-0.2.0.vsix\n")
+            self.assertEqual((dist / "cyber-0.2.0.vsix.sha256").read_text(), text)
+            if shutil.which("sha256sum"):
+                check = subprocess.run(["sha256sum", "-c", "cyber-0.2.0.vsix.sha256"], cwd=dist, capture_output=True)
+                self.assertEqual(check.returncode, 0, check.stderr)
 
     def test_check_assets_wants_exactly_the_release(self):
         with tempfile.TemporaryDirectory() as tmp:

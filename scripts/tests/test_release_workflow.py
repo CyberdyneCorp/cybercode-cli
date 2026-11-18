@@ -48,11 +48,11 @@ class ReleaseWorkflow(unittest.TestCase):
     def test_only_publish_can_write_or_sign(self):
         self.assertEqual(top_level_block(self.text, "permissions"), "  contents: read\n")
         per_job = jobs(self.text)
-        self.assertEqual(set(per_job), {"verify", "build", "publish"})
+        self.assertEqual(set(per_job), {"verify", "build", "extension", "publish"})
         for name, body in per_job.items():
             writes = "contents: write" in body and "id-token: write" in body
             self.assertEqual(writes, name == "publish", name)
-        self.assertIn("needs: [verify, build]", per_job["publish"])
+        self.assertIn("needs: [verify, build, extension]", per_job["publish"])
 
     def test_builds_the_release_targets(self):
         targets = re.findall(r"^\s+target: ([a-z0-9_-]+)$", jobs(self.text)["build"], re.M)
@@ -93,6 +93,20 @@ class ReleaseWorkflow(unittest.TestCase):
         self.assertTrue(all("post_merge_only" not in e for e in on_main))
         self.assertEqual([e["target"] for e in matrix("pull_request")],
                          [t for t in ra.ALL_TARGETS if t != "x86_64-apple-darwin"])
+
+    def test_the_extension_is_packaged_checked_and_attached(self):
+        """`editor-integration` → Extension release assets."""
+        extension = jobs(self.text)["extension"]
+        self.assertIn("needs: verify", extension)
+        self.assertIn("npm run package", extension)
+        self.assertIn("release_assets.py vsix-sum", extension)
+        self.assertIn("name: archive-vscode-extension", extension)
+        publish = jobs(self.text)["publish"]
+        self.assertIn("pattern: archive-*", publish)
+        self.assertIn("sha256sum -c cyber-$VERSION.vsix.sha256", publish)
+        self.assertIn("unsigned", publish)
+        verify = jobs(self.text)["verify"]
+        self.assertIn("release_assets.py check-tag", verify)
 
     def test_actions_are_pinned_by_commit(self):
         uses = re.findall(r"uses: (\S+)", self.text)
