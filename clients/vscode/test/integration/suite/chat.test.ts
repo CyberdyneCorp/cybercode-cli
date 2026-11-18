@@ -168,14 +168,14 @@ export function chatSuite(): void {
   test("File changed before review, then Reject with feedback", async () => {
     await prompt(api, "EDIT_APP again");
     const pending = await card(api, "permission");
-    writeFileSync(appPath, readFileSync(appPath, "utf8").replace("const value = 2;", "const value = 3;"));
+    writeFileSync(appPath, readFileSync(appPath, "utf8").replace("const value = 2;", "const value = 7;"));
     await api.chat.receive({ type: "review", requestId: pending.requestId });
     await eventually(diffTabs, (tabs) => tabs.some((tab) => tab.label.includes("proposal.diff")), "the raw diff");
     const raw = vscode.workspace.textDocuments.find((doc) => doc.uri.scheme === "cyber-review" && doc.uri.path.includes("-raw/"));
     assert.ok(raw?.getText().includes(CHANGED));
     assert.ok(await api.chat.reply(pending.sessionId, pending.requestId, { reply: "reject", message: "use the existing helper" }));
     await eventually(modelRequests, (text) => text.includes("use the existing helper"), "the feedback reaching the model");
-    assert.ok(readFileSync(appPath, "utf8").includes("const value = 3;"));
+    assert.ok(readFileSync(appPath, "utf8").includes("const value = 7;"), "the rejected edit wrote nothing");
     await idle(api);
   });
 

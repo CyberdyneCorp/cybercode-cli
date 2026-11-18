@@ -56,7 +56,12 @@ export function answer(body: Json): Json {
   const called = toolCalls(turn);
   if (text.includes("EDIT_APP")) {
     if (!called.includes("read")) return call("read", { path: "src/app.ts" }, messages.length);
-    if (!called.includes("edit")) return call("edit", { path: "src/app.ts", old_string: "const value = 1;", new_string: "const value = 2;" }, messages.length);
+    if (!called.includes("edit")) {
+      // Edit the value the read returned: `const value = N;` becomes N + 1.
+      const read = turn.filter((message) => message.role === "tool").map((message) => JSON.stringify(message.content)).join("\n");
+      const value = Number(/const value = (\d+);/.exec(read)?.[1] ?? "1");
+      return call("edit", { path: "src/app.ts", old_string: `const value = ${value};`, new_string: `const value = ${value + 1};` }, messages.length);
+    }
   }
   const write = /WRITE_NEW:([a-z0-9_-]+)/.exec(text)?.[1];
   if (write && !called.includes("write")) return call("write", { path: `${write}.txt`, content: `created-${write}\n` }, messages.length);
