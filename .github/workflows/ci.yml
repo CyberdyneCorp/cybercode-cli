@@ -277,6 +277,46 @@ jobs:
             target/${{ matrix.target }}/release/cyber-sandbox-exec${{ matrix.exe }}
           if-no-files-found: error
 
+  # `code-intelligence` → Repository map symbol extraction: the bundled grammars may not
+  # grow the stripped release binary by more than 12 MiB over the base branch.
+  binary-size:
+    name: Binary size
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: binary-size
+      - name: Compare the stripped release binary with the base branch
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          LIMIT_MIB: '12'
+        run: |
+          set -euo pipefail
+          git worktree add ../base "$BASE"
+          export CARGO_TARGET_DIR="$PWD/target"
+          (cd ../base && cargo build --locked --release -p cyber-cli --bin cyber)
+          strip -o base-cyber target/release/cyber
+          cargo build --locked --release -p cyber-cli --bin cyber
+          strip -o head-cyber target/release/cyber
+          base=$(stat -c %s base-cyber)
+          head=$(stat -c %s head-cyber)
+          growth=$((head - base))
+          echo "base ${base} bytes, head ${head} bytes, growth ${growth} bytes"
+          if [ "$growth" -gt $((LIMIT_MIB * 1024 * 1024)) ]; then
+            echo "::error::the stripped release binary grew by more than ${LIMIT_MIB} MiB"
+            exit 1
+          fi
+
   dashboard:
     name: Web dashboard
     needs: changes
