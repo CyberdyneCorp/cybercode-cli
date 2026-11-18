@@ -1395,3 +1395,21 @@ async fn contribution_authorization_is_fresh_human_only_and_project_scoped() {
             .is_err()
     );
 }
+
+/// `server-api` → Local IDE token scope: the collaboration listener never accepts a local
+/// IDE token, whatever route it calls.
+#[tokio::test]
+async fn the_collaboration_listener_refuses_ide_tokens() {
+    let hub = TestHub::new().await;
+    let token = format!("cyi_{}", "A".repeat(43));
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for path in ["/api/v1/hub/projects", "/api/v1/hub/me"] {
+        let response = client
+            .get(format!("{}{path}", hub.url))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 401, "{path}");
+    }
+}

@@ -120,6 +120,7 @@ fn state(h: &Harness, password: Option<&str>) -> AppState {
     AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime: h.runtime.clone(),
         remote_tools: Arc::default(),
         store: Arc::clone(&h.store),
@@ -1441,6 +1442,7 @@ async fn clients_register_tools_that_the_model_can_call() {
     let state = AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime: runtime.clone(),
         remote_tools: remote,
         store,
@@ -4673,6 +4675,7 @@ async fn client_hook_registration_drops_on_disconnect() {
     let state = AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime,
         remote_tools: Arc::clone(&remote),
         store,

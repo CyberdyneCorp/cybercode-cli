@@ -37,6 +37,15 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     if super::peer::guard::presents_peer_token(&req) {
         return basic_challenge();
     }
+    // An IDE token is its own credential with its own scope, checked before any other
+    // exemption (`server-api` → Local IDE token scope).
+    if transport != Transport::Embedded
+        && !public(req.uri().path())
+        && super::ide::presented(&req).is_some()
+    {
+        let response = super::ide::admit(state, req, transport, next).await;
+        return with_cors(response, origin);
+    }
     if transport != Transport::Embedded
         && super::mcp_serve::is_endpoint(req.uri().path())
         && let Err(error) = local_mcp_client(&req, transport)
@@ -55,7 +64,11 @@ pub async fn layer(State(state): State<AppState>, req: Request, next: Next) -> R
     {
         return basic_challenge();
     }
-    let mut response = next.run(req).await;
+    let response = next.run(req).await;
+    with_cors(response, origin)
+}
+
+fn with_cors(mut response: Response, origin: Option<String>) -> Response {
     if let Some(origin) = origin.and_then(|o| HeaderValue::from_str(&o).ok()) {
         response
             .headers_mut()

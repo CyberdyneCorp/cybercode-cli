@@ -47,6 +47,7 @@ fn state(h: &Harness, runtime: Runtime) -> AppState {
     AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime,
         remote_tools: Arc::default(),
         store: h.store.clone(),

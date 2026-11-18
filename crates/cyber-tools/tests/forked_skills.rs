@@ -189,6 +189,7 @@ async fn authenticated_user_fork_command_has_durable_retry_identity_and_queued_s
     let router = cyber_server::http::router(cyber_server::http::AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime: flow.runtime.clone(),
         remote_tools: Arc::default(),
         store: flow.f.store.clone(),
@@ -1063,6 +1064,7 @@ async fn retried_review_command_keeps_its_receipt_after_the_working_tree_changes
     let router = cyber_server::http::router(cyber_server::http::AppState {
         service: None,
         telemetry: None,
+        ide: Default::default(),
         runtime: flow.runtime.clone(),
         remote_tools: Arc::default(),
         store: flow.f.store.clone(),
