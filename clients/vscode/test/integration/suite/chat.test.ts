@@ -85,7 +85,7 @@ async function diagnose(api: TestApi): Promise<string> {
   const status = await (await server(`/sessions/${session}`)).text();
   const requests = JSON.parse(await modelRequests()) as { messages?: { role: string; content?: unknown; tool_calls?: { function: { name: string } }[] }[] }[];
   const last = requests.at(-1)?.messages?.slice(-4).map((m) => `${m.role}:${JSON.stringify(m.tool_calls?.map((c) => c.function.name) ?? m.content).slice(0, 300)}`);
-  return `cards=${JSON.stringify(api.chat.state.cards)} notice=${api.chat.state.notice} pending=${pending.slice(0, 500)} session=${status.slice(0, 400)} model=${JSON.stringify(last)}`;
+  return `events=${api.chat.eventsSeen} bound=${api.chat.table.session} log=${JSON.stringify(api.logged.slice(-12))} cards=${JSON.stringify(api.chat.state.cards)} notice=${api.chat.state.notice} pending=${pending.slice(0, 500)} session=${status.slice(0, 400)} model=${JSON.stringify(last)}`;
 }
 
 async function card(api: TestApi, kind: "permission" | "question") {

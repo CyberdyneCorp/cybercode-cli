@@ -58,6 +58,8 @@ export class ChatController implements vscode.WebviewViewProvider {
   #tokenWatch: NodeJS.Timeout | undefined;
   #notified = new Set<string>();
   #folderIndex = 0;
+  /** Durable and live events received on the bound Session's stream. */
+  eventsSeen = 0;
   onAnswered: (requestId: string, elsewhere: boolean) => void = () => {};
   openReview: (request: PendingRequest, location: string) => void = () => {};
 
@@ -442,9 +444,12 @@ export class ChatController implements vscode.WebviewViewProvider {
     try {
       for await (const event of link.client.sessions.events(sessionId, { after: seq, signal })) {
         if (signal.aborted) return;
+        this.eventsSeen++;
         this.event(event.type, (event.data ?? {}) as Record<string, unknown>);
       }
+      this.log("event stream ended");
     } catch (error) {
+      this.log(`event stream failed: ${classify(error)}`);
       if (!signal.aborted) await this.failed(error);
     }
   }
