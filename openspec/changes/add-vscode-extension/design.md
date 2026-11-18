@@ -8,7 +8,7 @@ Cyber Code runs one background server per user (`server-api` → One server per 
 - **Origin.** A request whose `Origin` is absent, matches the Host, is `http://localhost:*`/`http://127.0.0.1:*`, is `tauri://localhost` or appears in `remote.cors_origins` is allowed. Any other Origin gets `403` (`server-api` → Origin and CORS policy).
 - **Presence.** Interactive presence leases are created, renewed every 15 s and expire after 45 s. They let the server ask a human but never grant permissions (`server-api` → Interactive clients). The dashboard is the reference client.
 - **Requests.** Permission requests carry `metadata.diff` (a unified diff with `a/`/`b/` headers and 3 lines of context), `resources` and `always_patterns`. A reply is `once`, `always` or `reject` with an optional message. Any `reject` declines every other pending request of the Session (`permissions-modes` → Replies and approvals). Edit tools write only if the file is unchanged since it was read for approval (guarded write).
-- **SDK.** `@cyber-code/sdk` (ESM, Node ≥ 20, no runtime dependencies) reads the registration and password, sends Basic headers, resumes Session event streams by `durable.seq`, retries non-GET calls with stable `Idempotency-Key`s, and accepts an injected `fetch`.
+- **SDK.** `@cyber-code/sdk` (ESM, Node ≥ 20, no runtime dependencies) reads the registration and password, sends Basic headers or a Bearer token (`auth: { type: "account", token }` already sends `Authorization: Bearer`), resumes Session event streams by `durable.seq`, retries non-GET calls with stable `Idempotency-Key`s, and accepts an injected `fetch`.
 - **Dashboard security model** (docs/web-dashboard.md). Credentials live in memory only. Content is rendered inert. Stale cards cannot approve later requests. A reply is shown only after the server acknowledges it.
 
 Claude Code's extension uses a different shape. The extension hosts a loopback WebSocket MCP server, and the CLI connects to it with a per-activation token from a 0600 lock file. Codex's extension drives its own local agent process. Both give a chat panel, editor context, native diff review and in-editor approvals. Cyber already has a long-lived, multi-client server, so the extension is simply one more client of it.
@@ -17,16 +17,16 @@ Claude Code's extension uses a different shape. The extension hosts a loopback W
 
 **Goals:**
 - A user who opens VS Code in a repository can chat with a Session, attach the selection, review a proposed edit in the native diff editor and approve or reject it without opening a terminal. The same Session stays live in the TUI and dashboard.
-- The extension introduces no new credential, persistent secret, listener or CORS origin, and it widens no authority beyond what the TUI already has on the same machine.
+- The extension holds less authority than the TUI: a scoped, revocable IDE token instead of the owner password. It adds no listener or CORS origin.
 - Every behavior is testable in CI against the real binary.
 
 **Non-Goals:** see proposal.md.
 
 ## Decisions
 
-### D1. Owner API through the SDK; ACP stays a separate complement
+### D1. Public API through the SDK; ACP is the next editor deliverable
 
-| | Owner API + SDK (chosen) | ACP over stdio (`cyber acp`) |
+| | Public API + SDK (chosen) | ACP over stdio (`cyber acp`) |
 |---|---|---|
 | VS Code support | Ours; full control of UI | No built-in VS Code client (community extensions only) |
 | Session sharing with TUI/dashboard | Same live Session, concurrent clients | One process per editor connection |
@@ -45,8 +45,11 @@ ACP is the right protocol for editors we do not write a client for, so it stays 
 
 ### D3. Connection and transport security
 1. **Discovery.**
-   - Read `server.json` through the SDK's `readRegistration`. With no healthy registration, and only in a trusted workspace with `cyber.autoStartServer` (default `true`), run `<executable> service start` with `execFile` (argv, no shell, 10 s timeout) and read the registration again.
-   - `<executable>` is `cyber.executablePath` (setting scope `machine`, so `.vscode/settings.json` cannot set it), otherwise `cyber` resolved on `PATH`.
+   - Read `server.json` through the SDK's `readRegistration`.
+   - With no healthy registration, in a trusted workspace only, consult the machine-scoped `cyber.autoStartServer` (`ask` by default, or `always` or `never`). With `ask`, show a modal once: `Always start` and `Don't start` write `always` and `never` to user settings, and `Start this time` writes nothing.
+   - Machine scope keeps the answer per machine, out of workspace settings and out of Settings Sync. The user changes it in settings.
+   - Starting runs `<executable> service start` with `execFile` (argv, no shell, 10 s timeout), then reads the registration again.
+   - `<executable>` is `cyber.executablePath` (scope `machine`, so `.vscode/settings.json` cannot set it), otherwise `cyber` resolved on `PATH`. No binary is bundled. If none is found, the panel links to the install instructions.
 2. **Transport choice.**
    - On macOS and Linux, use the registered `socket` when present. The SDK gets an injected `fetch` bound to an undici `Agent({ connect: { socketPath } })`.
    - Otherwise use TCP only when the registered `url` is `http://127.0.0.1:<port>`, `http://[::1]:<port>` or `http://localhost:<port>`. Any other host, including a TLS LAN hostname, is refused with `Cyber Code server is not on loopback; the VS Code extension supports local servers only`.
@@ -55,15 +58,56 @@ ACP is the right protocol for editors we do not write a client for, so it stays 
    - check that the registration `pid` is alive;
    - check that unauthenticated `GET /api/v1/health` returns `apiVersion: "v1"` and the registration's `version` and `build`;
    - after the first authenticated call, check that `GET /api/v1/service` returns the registration `id`.
-   This narrows the stale-port window but does not close it, because the password is sent with the first authenticated call. A server proof-of-possession handshake would close it; that is open decision 2.
+   This narrows the stale-port window but does not close it, because the token is sent with the first authenticated call.
+   - The token is scoped and revocable, and the server refuses it from non-loopback peers, so a squatter that captures it gets only the IDE scope, until the owner revokes or rotates the token.
+   - A server proof-of-possession handshake would close the window. It is deferred to Windows support, the only platform where the extension would use TCP.
 4. **Version skew.** If `apiVersion` is not `v1`, or a route the MVP needs answers 404 or 503, the panel shows the server version and stops. It degrades no further.
 
-### D4. Credential handling
-- The password is read with the SDK's `readPassword` from `<state>/password` when a connection is created. It is kept in a closure inside the connection object and is dropped on disconnect, on extension deactivation and on a `401`. A `401` triggers exactly one re-read; another `401` shows "Run `cyber service password` or restart the server".
-- **Never stored** in VS Code settings, `SecretStorage`, `globalState`/`workspaceState`, the output channel, telemetry, error messages, URLs (no `auth_token`: Node `fetch` sets headers on SSE) or any message to the webview. There is no setting that accepts a password or token.
-- **Logs.** The output channel logs method, route template, status and request ID only. Headers and bodies are never logged.
-- *Why not SecretStorage:* the source of truth is already a same-user 0600 file. A copy in the OS keychain would add a second place to rotate and leak without adding any isolation from the extension host, which runs as the same user.
-- *Owner authority:* the password grants full owner authority. Any VS Code extension host already runs arbitrary code as that user and could read the same file, so the extension adds no new principal. A scoped IDE credential is still better defense in depth (open decision 1).
+### D4. Credential: local IDE tokens
+**Why a new credential.** The owner password authorizes every owner route: credentials, providers, configuration, PTYs, workflows, service stop, password replacement. An editor client is long-lived, sits next to many other extensions, and needs only about 20 routes. A scoped token limits what a leaked credential can do and can be revoked without rotating the owner password and restarting every client.
+
+**Issuance (owner only).**
+- `cyber ide token create --client vscode [--name] [--expires <days>]` calls `POST /api/v1/ide/tokens` with owner Basic credentials. The default is 30 days and the maximum 90.
+- The server generates 32 random bytes, returns `cyi_<base64url>` once, and stores only its SHA-256 plus the record `{ id: itk_…, client, name, created_at, expires_at, last_used_at, revoked_at }` in a new table.
+- The CLI writes the token atomically to `<state>/ide/vscode.token` (0600, in a 0700 directory) and prints only the ID and expiry. It never prints the token, to keep it out of scrollback and terminal logs.
+- There is one active token per client, so issuing another rotates: the old token is revoked in the same transaction.
+- **How the extension gets one.** The extension never holds owner credentials, so it cannot mint a token. When the file is missing, or the token is rejected twice, or it expires within 7 days, the panel offers `Create IDE token`. That opens an integrated terminal running `cyber ide token create --client vscode`, so the owner sees and runs the command, and the extension watches for the file.
+- The state directory is already private to the owner: model tools and sandboxed children cannot read it ("Private owner authentication storage"), so they cannot read the token either.
+
+**Presentation and transport.**
+- The token is sent as `Authorization: Bearer cyi_…`. The `cyi_` prefix lets the server tell it apart from Cyber Account JWTs (`eyJ…`) before any JWT validation.
+- It is accepted only on the Unix socket or from a loopback peer address on the main listener. It is refused on the peer listener, the collaboration listener, non-loopback peers (a TLS LAN bind) and the `auth_token` query parameter.
+
+**Scope (an allowlist of routes, enforced before the handler runs).**
+
+| Purpose | Routes |
+|---|---|
+| Identity and models | `GET /api/v1/service`, `GET /api/v1/models` |
+| Sessions | `GET\|POST /api/v1/sessions`, `GET .../:sessionID`, `POST .../prompt`, `.../interrupt`, `.../mode`, `.../model`, `GET .../messages`, `.../events`, `.../diff` |
+| Presence | `POST .../interactive-clients`, `PUT\|DELETE .../interactive-clients/:clientID` |
+| Approvals | `GET /api/v1/permissions/requests`, `POST .../permissions/:requestID/reply`, `GET /api/v1/questions/requests`, `POST .../questions/:requestID/reply` |
+
+- Everything else is refused with `403 ForbiddenError { reason: "ide_token_scope" }`. That includes the token routes themselves, so a token cannot mint, list or revoke tokens.
+- `POST .../mode` with `bypass` or `dont-ask` is also refused, so a leaked token cannot remove human approval.
+- Permission rules, Modes, sandbox, trust and `file` part checks apply unchanged. A token request is never more privileged than the owner.
+
+**Revocation, expiry and rotation.**
+- A revoked or expired token gets `401` on its next request. Revocation closes the token's event streams within 1 s and ends the presence leases it created.
+- `cyber service password <value>` revokes every IDE token, because replacing the owner password is the "credentials may be compromised" action.
+- Tokens survive server restarts. Records stay listable for 30 days after revocation or expiry.
+- **Audit.** The server logs the `itk_` ID, never the value, and updates `last_used_at` at most once a minute to bound writes.
+
+**In the extension.**
+- The token is read when a connection is created and kept in the connection's closure. It is dropped on disconnect, deactivation and `401`, after which the file is re-read once.
+- It is never stored in VS Code settings, `SecretStorage`, `globalState`/`workspaceState`, the output channel, telemetry, error messages, URLs (Node `fetch` sets headers on SSE) or any webview message. There is no setting that accepts a credential.
+- The extension never opens `<state>/password`, and an integration test asserts that.
+- **Logs.** The output channel logs method, route template, status and request ID only.
+
+*Rejected alternatives:*
+- **Owner password.** It gives full authority, and revoking it means rotating the owner password.
+- **SecretStorage copy.** It adds a second place to rotate and leak, with no isolation gain inside the same-user extension host.
+- **Extension-initiated pairing with a code shown in the TUI.** It needs a new interactive flow. The terminal command gives the same owner-visible consent with existing pieces.
+- **Location-bound tokens.** VS Code workspaces often span folders. Binding tokens to Locations is a possible follow-up.
 
 ### D5. Webview isolation (CSRF and origin)
 - **The webview never talks to the server.** Its origin is `vscode-webview://…`, which the server's Origin policy already rejects with `403`. This change does not add it to `remote.cors_origins`, and the extension SHALL NOT ask users to add it. All API traffic leaves the extension host, whose Node `fetch` sends no `Origin`. A malicious web page therefore cannot ride the extension's credential, because the credential never exists in any browser context.
@@ -112,28 +156,30 @@ ACP is the right protocol for editors we do not write a client for, so it stays 
   - another client answers first and the review closes;
   - Restricted Mode blocks prompts;
   - a non-loopback registration is refused;
-  - assertions that the password does not appear in settings, state or log output.
+  - IDE token issuance, scope refusal (`403 ide_token_scope`), revocation closing the stream, and `bypass` refused;
+  - assertions that the token does not appear in settings, state, logs or webview messages, and that `<state>/password` is never opened.
 - CI runs Linux (xvfb-run) and macOS. Windows waits for a Windows CLI release.
 
 ## Risks / Trade-offs
 
-- **[Owner authority in the extension host]** Any other extension can read the same 0600 password file, so this adds no exposure, but the extension is now a valuable target. → Mitigations: no persistence, no webview exposure, strict bridge. Scoped tokens are open decision 1.
-- **[Stale loopback port squatting on TCP]** Another local user could squat the port and receive the Basic credential. → Prefer the Unix socket on macOS and Linux, run the pid and health checks, and leave proof-of-possession as open decision 2. The exposure exists only on TCP-only hosts, which today means Windows from source.
+- **[Token theft by another same-user extension]** Any extension can read `<state>/ide/vscode.token`, as it could read the owner password. → The token's scope, loopback-only acceptance, 30-day expiry, one-command revocation and rotation limit the damage. The owner password is never exposed to the extension.
+- **[Stale loopback port squatting on TCP]** Another local user could squat the port and receive the IDE token. → Prefer the Unix socket on macOS and Linux and run the pid, health and `service.id` checks. A captured token is IDE-scoped and loopback-only. The proof-of-possession handshake is deferred to Windows support.
+- **[New credential surface on the server]** A mistake in route classification could widen the scope. → The scope is one allowlist table checked in middleware before routing to handlers. A test enumerates every OpenAPI operation and asserts that only the listed ones accept a token.
 - **[Diff application drift]** The proposed view could differ from what the server writes. → Exact-context application with fallback to the raw diff. The server's guarded write is the authority, and the view is advisory.
 - **[SDK is ESM-only and unpublished]** → Bundle it with esbuild from the workspace path. Publishing the SDK is a separate decision.
 - **[Event volume]** Long Sessions can stream many deltas to the webview. → Batch deltas into one webview message per animation frame (≤ 60/s) and cap the rendered transcript at 500 messages with "Load older".
 
 ## Migration Plan
 
-This change only adds things. The server change (an optional `range` on `file` parts) is backward compatible, because older clients never send it. The extension sends `range` only when the server's health `version` is at least the release that ships it. Against an older server it attaches the whole file and labels the chip "whole file". Rollback is uninstalling the `.vsix`.
+This change only adds things. The IDE token table needs a forward migration. Older servers answer `503` for the `ide` group, so the extension reports the server as incompatible. The server change (an optional `range` on `file` parts) is backward compatible, because older clients never send it. The extension sends `range` only when the server's health `version` is at least the release that ships it. Against an older server it attaches the whole file and labels the chip "whole file". Rollback is uninstalling the `.vsix`.
 
-## Open Questions
+## Owner decisions (2026-11-18)
 
-1. **Credential.** Keep the owner password for the MVP (as specified), or first add a scoped local "IDE client" token (`cyber ide token`, revocable, limited to session/message/permission/question/fs-read routes)?
-2. **Server proof-of-possession on TCP.** Add an unauthenticated `POST /api/v1/ide/handshake` where the server proves it knows the password (an HMAC of a client nonce) before the extension sends the credential, or accept the residual stale-port risk because the socket is the default on macOS and Linux?
-3. **Auto-start default.** Should `cyber.autoStartServer` default to `true` (as the TUI does), or ask once per machine before starting a background service that outlives VS Code?
-4. **Distribution.** Attach the `.vsix` to GitHub releases now (unsigned, with a SHA-256 in the release manifest), or keep it as a CI artifact until Marketplace and Open VSX publication with signing?
-5. **Publisher ID.** Keep `cyber-code.cyber` from the existing spec, or reserve a Marketplace publisher under the organization's name first?
-6. **Bundled CLI.** Require `cyber` on PATH (as specified), or bundle a platform-specific binary in per-platform `.vsix` files the way Claude Code bundles its CLI?
-7. **Phase.** Keep the MVP at P3 (M3.7) or pull it forward ahead of other P3 connectivity work?
-8. **ACP sequencing.** Confirm `cyber acp` is the next editor deliverable after this MVP.
+1. **Credential**: a scoped, revocable local IDE token is part of the MVP (D4, `server-api` → Local IDE token issuance, scope, revocation and expiry). The extension never uses the owner password.
+2. **TCP proof-of-possession handshake**: deferred to Windows support. Recorded as a non-goal.
+3. **Auto-start**: ask once, remember the answer per machine in the machine-scoped `cyber.autoStartServer` (`ask`/`always`/`never`), changeable in settings ("Extension server auto-start consent").
+4. **Distribution**: the release workflow attaches the unsigned `.vsix` and its SHA-256 to GitHub releases ("Extension release assets").
+5. **Publisher ID**: the placeholder `cyber-code` until the organization reserves a Marketplace publisher ID. Reserving it is a task, and a prerequisite for Marketplace publication.
+6. **CLI**: `cyber` is required on `PATH`, or set through the machine-scoped `cyber.executablePath`. No bundling.
+7. **Phase**: the MVP is P1 (current phase). Follow-ups stay P3.
+8. **ACP**: `cyber acp` is the next editor deliverable after this MVP.
