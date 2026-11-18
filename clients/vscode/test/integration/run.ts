@@ -7,7 +7,8 @@
 import { readdir, readFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { runTests } from "@vscode/test-electron";
+import { spawn } from "node:child_process";
+import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
 import { Fixture } from "./fixture";
 
 const extension = resolve(__dirname, "../..");
@@ -47,14 +48,28 @@ async function runSuite(fixture: Fixture, suite: "chat" | "restricted", root: st
     await mkdir(join(profile, "user/User"), { recursive: true });
     await writeFile(join(profile, "user/User/settings.json"), JSON.stringify({ "security.workspace.trust.enabled": true, "security.workspace.trust.startupPrompt": "never", "security.workspace.trust.untrustedFiles": "open" }));
   }
-  await runTests({
+  const options = {
     version: process.env.VSCODE_VERSION ?? "stable",
     cachePath: join(extension, ".vscode-test"),
     extensionDevelopmentPath: extension,
     extensionTestsPath: join(__dirname, "suite/index.js"),
     launchArgs: [fixture.repo, "--disable-extensions", "--skip-welcome", "--skip-release-notes", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--user-data-dir", join(profile, "user"), "--extensions-dir", join(profile, "extensions"), ...trust],
     extensionTestsEnv: { ...fixture.env, CYBER_VSCODE_TEST: "1", CYBER_TEST_SUITE: suite, CYBER_TEST_FIXTURE: JSON.stringify(fixture.info()), CYBER_TEST_REPORT: report },
+  };
+  if (suite === "chat") {
+    await runTests(options);
+    return;
+  }
+  // `runTests` always adds `--disable-workspace-trust`; Restricted Mode needs VS Code
+  // launched without it.
+  const executable = await downloadAndUnzipVSCode({ version: options.version, cachePath: options.cachePath });
+  const args = [...options.launchArgs, "--no-sandbox", "--disable-gpu-sandbox", "--disable-updates", "--no-cached-data", `--extensionTestsPath=${options.extensionTestsPath}`, `--extensionDevelopmentPath=${extension}`];
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const child = spawn(executable, args, { env: { ...process.env, ...options.extensionTestsEnv }, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", resolve);
   });
+  if (code !== 0) throw new Error(`the ${suite} suite failed with exit code ${code}`);
 }
 
 async function main(): Promise<void> {
