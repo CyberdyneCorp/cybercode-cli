@@ -125,7 +125,7 @@ pub fn build(files: &[Option<&Tags>], focus: &BTreeSet<String>, max_edges: usize
         }
     }
     cap_edges(&mut edges, names.len(), max_edges);
-    edges.sort_by(|a, b| (a.from, a.to, a.name).cmp(&(b.from, b.to, b.name)));
+    edges.sort_by_key(|a| (a.from, a.to, a.name));
     let mut out_weight = vec![0.0; files.len()];
     for edge in &edges {
         out_weight[edge.from] += edge.weight;

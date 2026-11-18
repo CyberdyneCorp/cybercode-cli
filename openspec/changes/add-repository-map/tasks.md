@@ -2,6 +2,7 @@
 
 - [ ] 0.1 Archive `improve-model-protocol-fidelity` first, since "Repository map budgets in model profiles" extends its "Model behavior profiles". Then rebase the MODIFIED "Capability-owned tool catalog" and "Top-level keys" deltas onto the current `main` text, keeping any lines other archived changes added.
   - Check: `openspec validate add-repository-map --strict` and `python3 scripts/spec_lint.py` with no new warnings.
+  - Open: `improve-model-protocol-fidelity` still has unchecked live-key tasks (8.2a, 8.3), so it cannot be archived yet. The profile field is implemented on top of its unarchived code; the deltas validate against current `main` (`spec_lint`: 0 errors, the same 25 warnings as `main`).
 
 ## 1. Grammars and extraction
 
@@ -9,7 +10,7 @@
   - Add a CI step that compares the stripped release binary with `main` and fails above +12 MiB.
   - Add the MIT notices to the third-party notices file.
   - Test: `grammars_load_for_every_bundled_language` parses one fixture per language.
-- [ ] 1.2 Add `repo_map/queries/<lang>.scm`, starting from each grammar's upstream `tags.scm` and writing our own for Bash and Solidity, and `repo_map/extract.rs`:
+- [x] 1.2 Add `repo_map/queries/<lang>.scm`, starting from each grammar's upstream `tags.scm` and writing our own for Bash and Solidity, and `repo_map/extract.rs`:
   - kinds and container;
   - signature up to the `body` field, collapsed and capped at 160 characters;
   - no comments or docstrings;
@@ -25,14 +26,14 @@
 
 ## 2. File selection and storage
 
-- [ ] 2.1 `repo_map/walk.rs`:
+- [x] 2.1 `repo_map/walk.rs`:
   - reuse the `grep`/`glob` ignore walker and skip submodules and nested repositories;
   - the default excludes, `@generated`/`DO NOT EDIT`, `.gitattributes` linguist attributes, size and binary checks;
   - `include`/`exclude` globs, refusing globs outside the Location;
   - an exclusion reason for every skipped file.
   
   Tests: "Generated protobuf skipped", "Include overrides a default exclude", `symlink_outside_location_not_followed`, `linguist_vendored_excluded`.
-- [ ] 2.2 `repo_map/store.rs`:
+- [x] 2.2 `repo_map/store.rs`:
   - `<cache>/repo-map/index.db` with WAL, a 5 s busy timeout and mode 0600;
   - the `blobs`/`checkouts`/`files` schema with `user_version`;
   - stat-then-hash change detection and 500-file commit batches;
@@ -40,7 +41,7 @@
   - drop and rebuild on a schema version mismatch.
   
   Tests: "Second worktree reuses tags" (counts parser invocations), "Deleted cache rebuilt", `schema_mismatch_rebuilds`, `gc_evicts_least_recently_used_over_cap`, `index_file_mode_is_0600` (Unix).
-- [ ] 2.3 Build coordination:
+- [x] 2.3 Build coordination:
   - one build at a time per checkout, with joined callers;
   - the cross-process `<root_id>.lock`, and readers getting committed state while locked;
   - the `max_files`/`build_timeout_ms` limits with the `truncated`/`partial` status;
@@ -51,7 +52,7 @@
 
 ## 3. Ranking and rendering
 
-- [ ] 3.1 `repo_map/graph.rs` and `rank.rs`:
+- [x] 3.1 `repo_map/graph.rs` and `rank.rs`:
   - edges and the `m(x)` multipliers;
   - the ignore rules for short names and names defined in more than 200 files;
   - the 2 000 000-edge cap;
@@ -61,7 +62,8 @@
   - deterministic order.
   
   Tests: "Focus symbol pulls in its definition", `private_and_common_names_damped`, `unreferenced_entry_point_still_ranked`, and "Same input, same output", which runs in CI on Linux, macOS and Windows against one golden file.
-- [ ] 3.2 `repo_map/render.rs`:
+  - Done with the spec refinements of the first commit: distinctive-name boost, ubiquitous-name damping, focus-symbol personalization, focus files first (`repo_map::tests::same_input_same_output` pins `tests/fixtures/repo_map/golden_map.txt`).
+- [x] 3.2 `repo_map/render.rs`:
   - the path/row format and container lines;
   - `other files:`;
   - `ceil(bytes/4)` estimation and the binary search for the largest prefix that fits.
@@ -70,7 +72,7 @@
 
 ## 4. Freshness and Location services
 
-- [ ] 4.1 `cyber-server`:
+- [x] 4.1 `cyber-server`:
   - start the background build when Location services start, only inside a git work tree;
   - no automatic build in the home directory or a filesystem root;
   - refresh-on-use with the 10 s debounce;
@@ -78,30 +80,32 @@
   - dirty marks from `write`, `edit`, `apply_patch`, `notebook_edit` and patches through the shell.
   
   Tests: "Own edit visible immediately", "Home directory refused", `stale_when_stat_walk_exceeds_bound` (an injected slow filesystem), `non_git_location_builds_on_demand`.
+  - Evidence: `repo_map::tests::{own_edit_visible_immediately, stale_when_stat_walk_exceeds_bound, non_git_location_builds_on_demand}`, `tests/repo_map.rs::{home_directory_refused, own_edit_marks_the_index_dirty}`, `repo_map_context::tests::background_builds_only_in_git_work_trees_outside_home`. Dirty marks ride the host's file-change observation, which `write`, `edit`, `apply_patch`, `notebook_edit` and shell patches all report.
 
 ## 5. Tool and permissions
 
 - [ ] 5.1 Write `tools/repo_map.rs` with the schema, argument clamping and the header line, and with `not indexed:` notes and `No indexed files`. The tool waits at most 10 s for a build, uses the `repo_map` permission with the `grep` default rule, is offered in plan mode, and filters out files whose `read` rule ends in deny. Register it in the capability-owned catalog.
   - Tests: "Focused map for a weak model", "Denied file hidden", "First call during the initial build", `tool_hidden_when_repo_map_disabled`, `offered_in_plan_mode`.
   - Update the tool schema bundle (`GET /api/v1/tools/schema`) snapshot.
-- [ ] 5.2 Add the Session-file personalization: the 20 most recently read or edited distinct paths, taken from settled tool calls.
+- [x] 5.2 Add the Session-file personalization: the 20 most recently read or edited distinct paths, taken from settled tool calls.
   - Test: `recent_session_files_bias_ranking`.
+  - Recorded by the tool host as file tools read or edit (`tests/repo_map.rs::recent_session_files_bias_the_tool`); in memory, so a restarted server starts without them.
 
 ## 6. Context Source and profiles
 
-- [ ] 6.1 `cyber-core` system context:
+- [x] 6.1 `cyber-core` system context:
   - the `pinned` flag on source registration;
   - reconciliation skips pinned sources;
   - the 2 s load bound and omission without `ContextInitializationBlocked`;
   - the `pinned` marker in `/context` and the context API.
   
   Tests: "Pinned source changes mid-epoch" (asserts the byte-identical serialized prefix of two requests), "Slow pinned source at the first Turn", and `restart_replays_pinned_bytes`.
-- [ ] 6.2 Add `core/repo-map`:
+- [x] 6.2 Add `core/repo-map`:
   - the `<repository_map>` block with its data header and `</repository_map>` escaping;
   - omission rules (disabled, untrusted checkout, `read` fully denied, budget under 256, empty index) and the per-agent `read` filtering.
   
   Tests: "Map in the baseline", "Edits do not move the prefix" (compaction then a fresh map), "Untrusted checkout", `closing_tag_in_signature_escaped`.
-- [ ] 6.3 `catalog/profile.rs`:
+- [x] 6.3 `catalog/profile.rs`:
   - the `repo_map` field with family defaults;
   - config precedence (top-level over layers 1–3, per-model config over top-level);
   - window caps applied last;
