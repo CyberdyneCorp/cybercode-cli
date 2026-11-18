@@ -78,8 +78,22 @@ async function openEditor(path: string): Promise<vscode.TextEditor> {
   return vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.One, preview: false });
 }
 
+/** What the server and the model saw, for a failure message. */
+async function diagnose(api: TestApi): Promise<string> {
+  const session = api.chat.state.sessionId;
+  const pending = await (await server("/permissions/requests")).text();
+  const status = await (await server(`/sessions/${session}`)).text();
+  const requests = JSON.parse(await modelRequests()) as { messages?: { role: string; content?: unknown; tool_calls?: { function: { name: string } }[] }[] }[];
+  const last = requests.at(-1)?.messages?.slice(-4).map((m) => `${m.role}:${JSON.stringify(m.tool_calls?.map((c) => c.function.name) ?? m.content).slice(0, 300)}`);
+  return `cards=${JSON.stringify(api.chat.state.cards)} notice=${api.chat.state.notice} pending=${pending.slice(0, 500)} session=${status.slice(0, 400)} model=${JSON.stringify(last)}`;
+}
+
 async function card(api: TestApi, kind: "permission" | "question") {
-  return present(() => api.chat.state.cards.find((c) => c.kind === kind && c.state === "pending"), `a pending ${kind} card`);
+  try {
+    return await present(() => api.chat.state.cards.find((c) => c.kind === kind && c.state === "pending"), `a pending ${kind} card`);
+  } catch (error) {
+    throw new Error(`${String(error)}: ${await diagnose(api)}`);
+  }
 }
 
 async function prompt(api: TestApi, text: string, includeContext = false): Promise<void> {
@@ -179,7 +193,9 @@ export function chatSuite(): void {
 
   test("Plan approval as a question", async () => {
     await api.chat.receive({ type: "setMode", mode: "plan" });
-    await eventually(() => api.chat.state.mode, (mode) => mode === "plan", "plan mode");
+    await eventually(() => api.chat.state.mode, (mode) => mode === "plan", "plan mode").catch(async (error: unknown) => {
+      throw new Error(`${String(error)}: ${await diagnose(api)}`);
+    });
     await prompt(api, "PLAN_EXIT now");
     const question = await card(api, "question");
     assert.deepEqual(question.questions[0]?.options.slice(0, 2), ["Approve and build", "Approve with accept-edits"]);
