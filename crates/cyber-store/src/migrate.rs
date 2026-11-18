@@ -213,6 +213,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261110010000_snapshot_checkout_retirement",
         sql: include_str!("../migrations/20261110010000_snapshot_checkout_retirement.sql"),
     },
+    Migration {
+        id: "20261118000000_ide_tokens",
+        sql: include_str!("../migrations/20261118000000_ide_tokens.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
@@ -880,5 +884,41 @@ mod tests {
             [],
         )
         .expect("the same day, root and model with another origin is its own row");
+    }
+
+    /// Task 1.1: the IDE token table applies over the previous schema, keeps its data,
+    /// and allows one unrevoked token per client.
+    #[test]
+    fn ide_tokens_apply_over_the_previous_schema() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        let at = MIGRATIONS
+            .iter()
+            .position(|m| m.id == "20261118000000_ide_tokens")
+            .unwrap();
+        migrate(&mut conn, &MIGRATIONS[..at]).unwrap();
+        conn.execute_batch(
+            "INSERT INTO peer_grant (id, name, token_sha256, scopes, created_ms)
+             VALUES ('pgr_1', 'laptop', 'aa', '[\"message\"]', 1)",
+        )
+        .unwrap();
+        migrate(&mut conn, MIGRATIONS).unwrap();
+        let kept: i64 = conn
+            .query_row("SELECT count(*) FROM peer_grant", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, 1);
+        let insert = |id: &str, hash: &str, revoked: Option<i64>| {
+            conn.execute(
+                "INSERT INTO ide_token (id, client, sha256, created_ms, expires_ms, revoked_ms)
+                 VALUES (?1, 'vscode', ?2, 1, 2, ?3)",
+                params![id, hash, revoked],
+            )
+        };
+        insert("itk_1", "h1", Some(5)).unwrap();
+        insert("itk_2", "h2", None).unwrap();
+        assert!(
+            insert("itk_3", "h3", None).is_err(),
+            "a second unrevoked token for one client is refused"
+        );
+        assert!(insert("itk_4", "h2", Some(5)).is_err(), "hashes are unique");
     }
 }
