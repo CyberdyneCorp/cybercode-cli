@@ -171,6 +171,9 @@ jobs:
             gh release download "channel-$CHANNEL" --pattern "$CHANNEL.json" --dir published
           fi
           python scripts/release_assets.py newer --version "$VERSION" --current "published/$CHANNEL.json" | tee -a "$GITHUB_OUTPUT"
+      # `releases/latest/download/install.sh` must resolve to a `v<version>` release, which
+      # carries install.sh. Only a newer stable tag is made latest, explicitly; GitHub never
+      # makes a prerelease latest.
       - name: Release v${{ needs.verify.outputs.version }}
         env:
           NEWER: ${{ steps.order.outputs.newer }}
@@ -179,11 +182,16 @@ jobs:
           elif [ "$NEWER" = true ]; then kind=--latest
           else kind=--latest=false; fi
           gh release create "v$VERSION" --verify-tag "$kind" --title "cyber $VERSION" --generate-notes dist/*
+      # The rolling channel release holds only the manifest. It is a prerelease because
+      # `--latest=false` alone is not enough: while no release is explicitly latest,
+      # GitHub falls back to the newest non-prerelease, which was `channel-beta`. The
+      # edit converts a channel release created before this rule.
       - name: Channel ${{ needs.verify.outputs.channel }}
         if: steps.order.outputs.newer == 'true'
         run: |
           if ! gh release view "channel-$CHANNEL" >/dev/null 2>&1; then
-            gh release create "channel-$CHANNEL" --latest=false --target "$GITHUB_SHA" \
+            gh release create "channel-$CHANNEL" --prerelease --latest=false --target "$GITHUB_SHA" \
               --title "cyber $CHANNEL channel" --notes "The latest $CHANNEL release, for cyber upgrade."
           fi
+          gh release edit "channel-$CHANNEL" --prerelease --latest=false
           gh release upload "channel-$CHANNEL" "channel/$CHANNEL.json" --clobber
