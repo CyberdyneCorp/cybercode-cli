@@ -2,7 +2,7 @@
 """Refresh the bundled offline model catalog (provider-catalog → Offline and pinned catalog).
 
 Downloads https://models.dev/api.json (or reads a local file given as the first argument),
-keeps providers whose SDK maps to a P0 adapter, drops descriptions, and writes a
+keeps providers whose SDK maps to a native adapter, drops descriptions, and writes a
 reproducible gzip to crates/cyber-llm/snapshot/models.json.gz.
 """
 
@@ -16,6 +16,7 @@ from pathlib import Path
 SUPPORTED_NPM = {
     "@ai-sdk/openai",
     "@ai-sdk/anthropic",
+    "@ai-sdk/google",
     "@ai-sdk/openai-compatible",
     "@openrouter/ai-sdk-provider",
 }

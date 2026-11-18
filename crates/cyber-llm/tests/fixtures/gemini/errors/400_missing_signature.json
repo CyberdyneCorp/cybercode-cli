@@ -1,0 +1,1 @@
+{"error":{"code":400,"message":"Function call is missing a thought_signature in functionCall parts. This is required for tools to work correctly.","status":"INVALID_ARGUMENT"}}

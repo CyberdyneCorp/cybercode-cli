@@ -10,8 +10,10 @@
 //! only after the stream ended.
 
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
+use futures::future::BoxFuture;
 use futures::stream::{self, Stream, StreamExt};
 
 use crate::adapters::{Adapter, EventStream};
@@ -26,8 +28,18 @@ pub struct RetryPolicy {
     pub max_retries: u32,
     pub base_delay: Duration,
     pub max_delay: Duration,
+    /// The longest server-advised delay waited as an ordinary retry; per provider
+    /// (`providers.<id>.retry.max_wait_ms`).
     pub retry_after_cap: Duration,
+    /// What an advised delay longer than `retry_after_cap` does. It is never shortened:
+    /// a retry before the window opens only spends an attempt.
+    pub over_cap: OverCap,
+    /// How retry waits sleep.
+    pub sleeper: Sleeper,
 }
+
+/// The cap of a server-advised delay when the provider sets none.
+pub const DEFAULT_RETRY_AFTER_CAP: Duration = Duration::from_secs(60);
 
 impl Default for RetryPolicy {
     fn default() -> Self {
@@ -35,22 +47,102 @@ impl Default for RetryPolicy {
             max_retries: 4,
             base_delay: Duration::from_secs(1),
             max_delay: Duration::from_secs(30),
-            retry_after_cap: Duration::from_secs(60),
+            retry_after_cap: DEFAULT_RETRY_AFTER_CAP,
+            over_cap: OverCap::Fail,
+            sleeper: Sleeper::default(),
         }
     }
 }
 
+/// What an advised delay beyond the cap does (`provider-catalog` → Gemini error and quota
+/// classification): an interactive Session fails at once so the fallback chain and the
+/// user can decide; an unattended run waits the whole delay, up to a bound the runtime
+/// derives from `usage_limit.max_wait` and the Session's wall deadlines.
+#[derive(Debug, Clone, Default)]
+pub enum OverCap {
+    #[default]
+    Fail,
+    Wait {
+        /// The longest delay waited.
+        up_to: Duration,
+        sleeper: Sleeper,
+    },
+}
+
+/// Sleeps for a retry wait. The default is the Tokio timer; the runtime waits a long
+/// unattended delay on its wait clock, and tests skip time.
+#[derive(Clone)]
+pub struct Sleeper(Arc<dyn Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync>);
+
+impl Sleeper {
+    pub fn new(sleep: impl Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(sleep))
+    }
+
+    pub fn sleep(&self, duration: Duration) -> BoxFuture<'static, ()> {
+        (self.0)(duration)
+    }
+}
+
+impl Default for Sleeper {
+    fn default() -> Self {
+        Self::new(|duration| Box::pin(tokio::time::sleep(duration)))
+    }
+}
+
+impl std::fmt::Debug for Sleeper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Sleeper(..)")
+    }
+}
+
 impl RetryPolicy {
-    /// Delay before retry number `attempt` (1-based).
-    pub fn delay(&self, attempt: u32, error: &LlmError) -> Duration {
-        if let Some(after) = error.retry_after {
-            return after.min(self.retry_after_cap);
+    /// Delay before retry number `attempt` (1-based); `None` when the server advised a
+    /// delay beyond the cap that this run does not wait.
+    pub fn delay(&self, attempt: u32, error: &LlmError) -> Option<Duration> {
+        self.plan(attempt, error).map(|(delay, _)| delay)
+    }
+
+    /// The delay before retry `attempt` and what sleeps it.
+    fn plan(&self, attempt: u32, error: &LlmError) -> Option<(Duration, &Sleeper)> {
+        let Some(after) = error.retry_after else {
+            let exp = self
+                .base_delay
+                .saturating_mul(2_u32.saturating_pow(attempt.saturating_sub(1)));
+            let capped = exp.min(self.max_delay);
+            return Some((capped.mul_f64(0.5 + jitter() * 0.5), &self.sleeper));
+        };
+        if after <= self.retry_after_cap {
+            return Some((after, &self.sleeper));
         }
-        let exp = self
-            .base_delay
-            .saturating_mul(2_u32.saturating_pow(attempt.saturating_sub(1)));
-        let capped = exp.min(self.max_delay);
-        capped.mul_f64(0.5 + jitter() * 0.5)
+        match &self.over_cap {
+            OverCap::Wait { up_to, sleeper } if after <= *up_to => Some((after, sleeper)),
+            _ => None,
+        }
+    }
+}
+
+/// The failure of an advised delay beyond the cap, naming both.
+fn over_cap(mut failure: LlmError, cap: Duration) -> LlmError {
+    let after = failure.retry_after.unwrap_or_default();
+    failure.message = format!(
+        "{}; the provider advised waiting {}, beyond the {} retry wait cap",
+        failure.message,
+        span(after),
+        span(cap)
+    );
+    failure
+}
+
+/// `37s`, `10m`, `1h5m`.
+fn span(duration: Duration) -> String {
+    let seconds = duration.as_secs_f64().ceil() as u64;
+    match (seconds / 3600, seconds % 3600 / 60, seconds % 60) {
+        (0, 0, s) => format!("{s}s"),
+        (0, m, 0) => format!("{m}m"),
+        (0, m, s) => format!("{m}m{s}s"),
+        (h, 0, 0) => format!("{h}h"),
+        (h, m, _) => format!("{h}h{m}m"),
     }
 }
 
@@ -124,15 +216,18 @@ impl<F: FnMut(&RetryNotice<'_>)> Replay<'_, F> {
         if !self.may_retry(&failure) {
             return Err(failure);
         }
+        let Some((delay, sleeper)) = self.policy.plan(self.attempt + 1, &failure) else {
+            return Err(over_cap(failure, self.policy.retry_after_cap));
+        };
+        let sleep = sleeper.sleep(delay);
         self.attempt += 1;
-        let delay = self.policy.delay(self.attempt, &failure);
         (self.on_retry)(&RetryNotice {
             attempt: self.attempt,
             delay,
             error: &failure,
             discarded,
         });
-        tokio::time::sleep(delay).await;
+        sleep.await;
         Ok(())
     }
 }
@@ -202,22 +297,43 @@ mod tests {
     use super::*;
     use crate::error::ErrorKind;
 
+    /// Regression: an advised delay beyond the cap was shortened to the cap, so the
+    /// retry came before the window opened and spent an attempt. Now it fails at once,
+    /// or, when the run waits, waits the whole delay.
     #[test]
-    fn retry_after_is_honored_and_capped() {
-        let p = RetryPolicy::default();
+    fn an_advised_delay_is_waited_whole_or_not_at_all() {
+        let mut p = RetryPolicy::default();
         let mut e = LlmError::new(ErrorKind::RateLimit, "x");
         e.retry_after = Some(Duration::from_secs(7));
-        assert_eq!(p.delay(1, &e), Duration::from_secs(7));
+        assert_eq!(p.delay(1, &e), Some(Duration::from_secs(7)));
         e.retry_after = Some(Duration::from_secs(600));
-        assert_eq!(p.delay(1, &e), Duration::from_secs(60));
+        assert_eq!(p.delay(1, &e), None, "never a shortened wait");
+        p.over_cap = OverCap::Wait {
+            up_to: Duration::from_secs(900),
+            sleeper: Sleeper::default(),
+        };
+        assert_eq!(p.delay(1, &e), Some(Duration::from_secs(600)));
+        e.retry_after = Some(Duration::from_secs(901));
+        assert_eq!(p.delay(1, &e), None, "beyond the bound fails too");
+        p.retry_after_cap = Duration::from_secs(240);
+        e.retry_after = Some(Duration::from_secs(240));
+        assert_eq!(p.delay(1, &e), Some(Duration::from_secs(240)));
     }
 
     #[test]
     fn backoff_grows_and_caps() {
         let p = RetryPolicy::default();
         let e = LlmError::new(ErrorKind::ProviderInternal, "x");
-        let first = p.delay(1, &e);
+        let first = p.delay(1, &e).unwrap();
         assert!(first >= Duration::from_millis(500) && first <= Duration::from_secs(1));
-        assert!(p.delay(10, &e) <= Duration::from_secs(30));
+        assert!(p.delay(10, &e).unwrap() <= Duration::from_secs(30));
+    }
+
+    #[test]
+    fn spans_read_as_people_write_them() {
+        assert_eq!(span(Duration::from_secs(37)), "37s");
+        assert_eq!(span(Duration::from_secs(600)), "10m");
+        assert_eq!(span(Duration::from_secs(250)), "4m10s");
+        assert_eq!(span(Duration::from_secs(3900)), "1h5m");
     }
 }

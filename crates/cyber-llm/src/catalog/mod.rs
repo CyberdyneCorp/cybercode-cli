@@ -23,6 +23,7 @@ use crate::json::{deep_merge, strip_credentials};
 use crate::types::{LlmRequest, Reasoning};
 
 pub use cost::compute as compute_cost;
+pub(crate) use credentials::is_loopback as is_loopback_url;
 pub use credentials::{Credential, CredentialSource};
 pub use family::model_family;
 pub use model_ref::ModelRef;
@@ -53,6 +54,10 @@ pub enum CatalogError {
     #[error("catalog source: {0}")]
     Source(String),
 }
+
+/// The retry wait cap of the `gemini` protocol: a per-minute limit can advise up to a
+/// few minutes.
+pub const GEMINI_RETRY_AFTER_CAP: std::time::Duration = std::time::Duration::from_secs(240);
 
 /// Extra headers and body merged into requests, in layer order.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -203,6 +208,9 @@ pub struct Provider {
     /// timer off and `None` keeps the default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idle_ms: Option<u64>,
+    /// `retry.max_wait_ms`: the longest server-advised delay waited as an ordinary retry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_max_wait_ms: Option<u64>,
     pub disabled: bool,
     pub models: BTreeMap<String, Model>,
 }
@@ -260,6 +268,8 @@ pub struct Catalog {
     pub providers: BTreeMap<String, Provider>,
     credentials: BTreeMap<String, Credential>,
     experimental: bool,
+    /// `features.gemini`: the experimental `gemini` protocol is on.
+    gemini: bool,
     /// The stored ChatGPT login behind the `chatgpt` provider, when there is one.
     chatgpt: Option<crate::chatgpt::Session>,
     /// The stored GitHub Copilot login behind the `copilot` provider, when there is one.
@@ -282,10 +292,12 @@ impl Catalog {
         }
         resolve_profiles(&mut providers);
         let credentials = credentials::resolve_all(&providers, inputs.env);
+        let features = cyber_core::features::Features::from_config(inputs.config, &BTreeMap::new());
         Self {
             providers,
             credentials,
             experimental: inputs.env.flag("CYBER_ENABLE_EXPERIMENTAL_MODELS"),
+            gemini: features.enabled(cyber_core::features::GEMINI),
             chatgpt,
             copilot,
         }
@@ -319,20 +331,71 @@ impl Catalog {
         let Some(provider) = self.providers.get(&model.provider_id) else {
             return Availability::Unavailable("provider_not_found");
         };
+        let kind = model.api_kind.or(provider.kind);
+        let url = model.api_url.as_ref().or(provider.url.as_ref());
         let reason = if provider.disabled {
             Some("provider_disabled")
         } else if model.disabled {
             Some("disabled")
-        } else if model.api_kind.or(provider.kind).is_none() {
+        } else if kind.is_none() {
             Some("adapter_unsupported")
-        } else if model.api_url.as_ref().or(provider.url.as_ref()).is_none() {
+        } else if kind == Some(ApiKind::Gemini) && !self.gemini {
+            Some("experimental")
+        } else if url.is_none() {
             Some("missing_url")
+        } else if kind == Some(ApiKind::Gemini)
+            && !url.is_some_and(|url| adapters::gemini_url_allowed(url))
+        {
+            Some("insecure_url")
         } else if !self.credentials.contains_key(&provider.id) {
             Some("missing_credentials")
         } else {
             status_reason(model.status.as_deref(), self.experimental)
         };
         reason.map_or(Availability::Available, Availability::Unavailable)
+    }
+
+    /// What to do about an unavailable model, when there is something specific: the
+    /// feature to turn on, or the URL that is refused.
+    pub fn hint(&self, model: &Model) -> Option<String> {
+        let provider = self.providers.get(&model.provider_id)?;
+        let gemini = model.api_kind.or(provider.kind) == Some(ApiKind::Gemini);
+        match self.availability(model) {
+            Availability::Unavailable("experimental") if gemini => Some(format!(
+                "enable with features.{}",
+                cyber_core::features::GEMINI
+            )),
+            Availability::Unavailable("insecure_url") => {
+                let url = model.api_url.as_ref().or(provider.url.as_ref())?;
+                Some(format!(
+                    "{url} must use https unless it is a loopback address"
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// The error for a model that cannot be used, with its hint.
+    pub fn unavailable(&self, model_ref: &ModelRef, model: &Model, reason: &str) -> CatalogError {
+        let reason = match self.hint(model) {
+            Some(hint) => format!("{reason} ({hint})"),
+            None => reason.to_string(),
+        };
+        CatalogError::Unavailable {
+            model: model_ref.base(),
+            reason,
+        }
+    }
+
+    /// The longest server-advised delay a provider's requests wait as an ordinary retry:
+    /// `retry.max_wait_ms`, else 240 s for the `gemini` protocol and 60 s otherwise.
+    pub fn retry_after_cap(&self, provider_id: &str) -> Option<std::time::Duration> {
+        let provider = self.providers.get(provider_id)?;
+        Some(match (provider.retry_max_wait_ms, provider.kind) {
+            (Some(ms), _) => std::time::Duration::from_millis(ms),
+            (None, Some(ApiKind::Gemini)) => GEMINI_RETRY_AFTER_CAP,
+            (None, _) => crate::DEFAULT_RETRY_AFTER_CAP,
+        })
     }
 
     pub fn is_available(&self, model: &Model) -> bool {
@@ -373,10 +436,7 @@ impl Catalog {
     ) -> Result<Resolved, CatalogError> {
         let (provider, model) = self.find(model_ref)?;
         if let Availability::Unavailable(reason) = self.availability(model) {
-            return Err(CatalogError::Unavailable {
-                model: model_ref.base(),
-                reason: reason.into(),
-            });
+            return Err(self.unavailable(model_ref, model, reason));
         }
         let variant = self.variant(model_ref, model)?;
         let mut overlay = provider.request.clone();
@@ -417,6 +477,9 @@ impl Catalog {
             .or(provider.kind)
             .expect("checked by availability");
         let mut endpoint = Endpoint::new(url, key);
+        if kind == ApiKind::Gemini {
+            endpoint.idle_timeout = Some(adapters::GEMINI_IDLE_TIMEOUT);
+        }
         if let Some(idle) = provider.idle_ms {
             endpoint.idle_timeout = (idle > 0).then(|| std::time::Duration::from_millis(idle));
         }

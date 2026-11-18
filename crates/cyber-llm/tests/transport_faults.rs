@@ -390,3 +390,148 @@ async fn a_stalled_stream_fails_after_the_idle_window_and_is_replayed() {
     assert_eq!(errors, ["stream idle for 300s"]);
     assert_eq!(server.requests.load(Ordering::SeqCst), 2);
 }
+
+/// A server for Gemini transport faults: the first `resets` connections are closed after
+/// the request arrives and before any header; later ones answer `chunks`, waiting
+/// `pause` (on the Tokio clock) between the first chunk and the rest.
+async fn gemini_server(resets: usize, chunks: Vec<String>, pause: Duration) -> FaultServer {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(AtomicUsize::new(0));
+    let count = Arc::clone(&requests);
+    let task = tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).await.unwrap();
+                request.push(byte[0]);
+            }
+            let index = count.fetch_add(1, Ordering::SeqCst);
+            if index < resets {
+                drop(socket);
+                continue;
+            }
+            // Read the body too, so closing never resets a connection with unread data.
+            let length = String::from_utf8_lossy(&request)
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            let mut body = vec![0; length];
+            socket.read_exact(&mut body).await.unwrap();
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
+            socket.write_all(head.as_bytes()).await.unwrap();
+            for (n, chunk) in chunks.iter().enumerate() {
+                if n == 1 {
+                    tokio::time::sleep(pause).await;
+                }
+                let framed = format!("{:x}\r\n{chunk}\r\n", chunk.len());
+                socket.write_all(framed.as_bytes()).await.unwrap();
+            }
+            socket.write_all(b"0\r\n\r\n").await.unwrap();
+            socket.shutdown().await.unwrap();
+        }
+    });
+    FaultServer {
+        url,
+        requests,
+        task,
+    }
+}
+
+fn gemini_chunk(text: &str, finish: bool) -> String {
+    let mut candidate = json!({"content": {"role": "model", "parts": [{"text": text}]}});
+    if finish {
+        candidate["finishReason"] = json!("STOP");
+    }
+    format!("data: {}\n\n", json!({"candidates": [candidate]}))
+}
+
+fn gemini_adapter(server: &FaultServer, idle: Option<Duration>) -> Box<dyn cyber_llm::Adapter> {
+    let mut endpoint = Endpoint::new(format!("{}/v1beta", server.url), Some("k".into()));
+    endpoint.client = reqwest::Client::builder().no_proxy().build().unwrap();
+    endpoint.idle_timeout = idle;
+    adapter(ApiKind::Gemini, endpoint)
+}
+
+fn gemini_request() -> LlmRequest {
+    LlmRequest {
+        model: "gemini-4-carbon".into(),
+        ..LlmRequest::default()
+    }
+}
+
+/// `provider-catalog` → "Stale HTTP/2 connection": a connection closed before any header
+/// is resent once at once, with no `session.retry` and the retry budget untouched.
+#[tokio::test]
+async fn a_stale_connection_is_resent_once_without_a_retry() {
+    let server = gemini_server(1, vec![gemini_chunk("hi", true)], Duration::ZERO).await;
+    let adapter = gemini_adapter(&server, Some(Duration::from_secs(5)));
+    let mut notices = 0;
+    let stream = open_with_retry(adapter.as_ref(), &gemini_request(), &policy(), |_| {
+        notices += 1;
+    })
+    .await
+    .unwrap();
+    let output = collect(stream, |_| {}).await.unwrap();
+    assert_eq!(output.text, "hi");
+    assert_eq!(notices, 0, "the resend is not a retry");
+    assert_eq!(server.requests.load(Ordering::SeqCst), 2);
+}
+
+/// A second failure in a row is an ordinary `Transport` failure.
+#[tokio::test]
+async fn a_second_stale_connection_is_a_transport_failure() {
+    let server = gemini_server(usize::MAX, Vec::new(), Duration::ZERO).await;
+    let error = gemini_adapter(&server, None)
+        .stream(gemini_request())
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, ErrorKind::Transport);
+    assert_eq!(server.requests.load(Ordering::SeqCst), 2);
+    // Other protocols never resend.
+    let server = gemini_server(usize::MAX, Vec::new(), Duration::ZERO).await;
+    assert!(model(&server).stream(LlmRequest::default()).await.is_err());
+    assert_eq!(server.requests.load(Ordering::SeqCst), 1);
+}
+
+/// `provider-catalog` → "Long silent thinking": eight silent minutes fit the `gemini`
+/// idle window, and would not fit the 300 s default.
+#[tokio::test]
+async fn long_silent_thinking_fits_the_gemini_idle_window() {
+    let chunks = vec![
+        gemini_chunk("thinking done:", false),
+        gemini_chunk(" ok", true),
+    ];
+    let silence = Duration::from_secs(8 * 60);
+    let server = gemini_server(0, chunks.clone(), silence).await;
+    let adapter = gemini_adapter(&server, Some(cyber_llm::adapters::GEMINI_IDLE_TIMEOUT));
+    let mut stream = adapter.stream(gemini_request()).await.unwrap();
+    assert!(stream.next().await.unwrap().unwrap().is_output());
+    tokio::time::pause();
+    let started = tokio::time::Instant::now();
+    let mut rest = Vec::new();
+    while let Some(item) = stream.next().await {
+        rest.push(item.unwrap());
+    }
+    assert!(started.elapsed() >= silence);
+    assert!(
+        rest.contains(&LlmEvent::TextDelta { text: " ok".into() }),
+        "{rest:?}"
+    );
+    tokio::time::resume();
+
+    let server = gemini_server(0, chunks, silence).await;
+    let adapter = gemini_adapter(&server, Some(cyber_llm::adapters::DEFAULT_IDLE_TIMEOUT));
+    let mut stream = adapter.stream(gemini_request()).await.unwrap();
+    assert!(stream.next().await.unwrap().unwrap().is_output());
+    tokio::time::pause();
+    let error = stream.next().await.unwrap().unwrap_err();
+    assert_eq!(error.message, "stream idle for 300s");
+}

@@ -9,15 +9,27 @@ use crate::adapters::ApiKind;
 use crate::json::str_at;
 use crate::types::Reasoning;
 
-/// First-party providers whose endpoint and key variable the downloaded catalog cannot
-/// change (`provider-catalog` → Catalog source integrity): a tampered catalog must not
-/// send their keys elsewhere. A user's own `providers` configuration still can.
-const PINNED: &[(&str, &str, &str)] = &[
-    ("openai", "https://api.openai.com/v1", "OPENAI_API_KEY"),
+/// First-party providers whose endpoint and key variables the downloaded catalog cannot
+/// change (`provider-catalog` → Catalog source integrity, `provider-credentials` →
+/// Gemini API key): a tampered catalog must not send their keys elsewhere. Variables are
+/// read in the order listed, the first one set winning. A user's own `providers`
+/// configuration still can change them.
+const PINNED: &[(&str, &str, &[&str])] = &[
+    ("openai", "https://api.openai.com/v1", &["OPENAI_API_KEY"]),
     (
         "anthropic",
         "https://api.anthropic.com/v1",
-        "ANTHROPIC_API_KEY",
+        &["ANTHROPIC_API_KEY"],
+    ),
+    (
+        "google",
+        "https://generativelanguage.googleapis.com/v1beta",
+        // `GOOGLE_API_KEY` is generic, so it comes last.
+        &[
+            "GEMINI_API_KEY",
+            "GOOGLE_GENERATIVE_AI_API_KEY",
+            "GOOGLE_API_KEY",
+        ],
     ),
 ];
 
@@ -52,14 +64,18 @@ fn provider(id: &str, v: &Value) -> Provider {
     };
     // Another provider may not read a first-party provider's key variable.
     let env = match pinned {
-        Some((_, _, variable)) => vec![(*variable).to_string()],
+        Some((_, _, variables)) => variables.iter().map(|v| (*v).to_string()).collect(),
         None => v
             .get("env")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
             .filter_map(|e| e.as_str().map(str::to_string))
-            .filter(|e| !PINNED.iter().any(|(_, _, reserved)| reserved == e))
+            .filter(|e| {
+                !PINNED
+                    .iter()
+                    .any(|(_, _, reserved)| reserved.contains(&e.as_str()))
+            })
             .collect(),
     };
     let models = v

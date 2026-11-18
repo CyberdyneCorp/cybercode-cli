@@ -1,0 +1,2 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":""}]},"finishReason":"MALFORMED_FUNCTION_CALL","index":0}],"usageMetadata":{"promptTokenCount":12,"totalTokenCount":12},"modelVersion":"gemini-4-carbon"}
+

@@ -1,0 +1,2 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Partial"}]},"finishReason":"MAX_TOKENS","index":0}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":1,"thoughtsTokenCount":4095,"totalTokenCount":4108},"modelVersion":"gemini-4-carbon"}
+

@@ -19,6 +19,7 @@ pub const VERBOSITY: &[&str] = &["low", "medium", "high"];
 pub const EDIT_TOOL: &[&str] = &["freeform_patch", "json_patch", "edit"];
 pub const TRUNCATION: &[&str] = &["default", "head", "tail", "middle"];
 pub const EFFORT_CLAMP: &[&str] = &["nearest_lower", "fail"];
+pub const THINKING_PARAM: &[&str] = &["level", "budget"];
 
 /// What one key accepts.
 enum Shape {
@@ -26,6 +27,8 @@ enum Shape {
     Bool,
     Tokens,
     Millis,
+    /// Milliseconds where `0` is a real value, not off.
+    Wait,
     Strings,
     Object(&'static [(&'static str, Shape)]),
 }
@@ -48,13 +51,17 @@ const FIELDS: &[(&str, Shape)] = &[
     ("tool_output", Shape::Object(TOOL_OUTPUT_FIELDS)),
     ("efforts", Shape::Strings),
     ("effort_clamp", Shape::OneOf(EFFORT_CLAMP)),
+    ("thinking_param", Shape::OneOf(THINKING_PARAM)),
+    ("signature_bypass", Shape::Bool),
 ];
 
 /// `providers.<p>.timeout` (`provider-catalog` → Stream idle timeout).
 const TIMEOUT_FIELDS: &[(&str, Shape)] = &[("idle_ms", Shape::Millis)];
+/// `providers.<p>.retry` (`provider-catalog` → Gemini error and quota classification).
+const RETRY_FIELDS: &[(&str, Shape)] = &[("max_wait_ms", Shape::Wait)];
 
-/// Warn about every invalid key or value of the model profiles and stream timeouts
-/// under `providers`.
+/// Warn about every invalid key or value of the model profiles, stream timeouts and
+/// retry wait caps under `providers`.
 pub fn check(providers: Option<&Value>, warnings: &mut Vec<String>) {
     let Some(providers) = providers.and_then(Value::as_object) else {
         return;
@@ -63,6 +70,10 @@ pub fn check(providers: Option<&Value>, warnings: &mut Vec<String>) {
         if let Some(timeout) = value.get("timeout") {
             let path = format!("providers.{provider}.timeout");
             check_object(&path, timeout, TIMEOUT_FIELDS, warnings);
+        }
+        if let Some(retry) = value.get("retry") {
+            let path = format!("providers.{provider}.retry");
+            check_object(&path, retry, RETRY_FIELDS, warnings);
         }
         let models = value.get("models").and_then(Value::as_object);
         for (model, value) in models.into_iter().flatten() {
@@ -100,6 +111,8 @@ fn check_value(path: &str, value: &Value, shape: &Shape, warnings: &mut Vec<Stri
         Shape::Tokens => "a token count".into(),
         Shape::Millis if value.is_u64() => return,
         Shape::Millis => "milliseconds (0 turns it off)".into(),
+        Shape::Wait if value.is_u64() => return,
+        Shape::Wait => "milliseconds".into(),
         Shape::Strings if is_strings(value) => return,
         Shape::Strings => "an array of strings".into(),
     };
@@ -135,6 +148,7 @@ mod tests {
             "parallel_tool_calls": true, "edit_tool": "freeform_patch",
             "tool_output": {"tokens": 10000, "truncation": "middle"},
             "efforts": ["low", "high"], "effort_clamp": "fail",
+            "thinking_param": "budget", "signature_bypass": false,
         });
         assert_eq!(warnings(profile), Vec::<String>::new());
     }
@@ -146,6 +160,7 @@ mod tests {
             "verbosity": {"default": "loud"},
             "tool_output": {"tokens": -1},
             "colour": "red",
+            "signature_bypass": "yes",
         }));
         assert_eq!(
             found,
@@ -154,12 +169,13 @@ mod tests {
                 "providers.corp.models.coder.profile.verbosity.default: expected one of low, medium, high, got \"loud\"; ignored",
                 "providers.corp.models.coder.profile.tool_output.tokens: expected a token count, got -1; ignored",
                 "unknown config key \"providers.corp.models.coder.profile.colour\"; ignored",
+                "providers.corp.models.coder.profile.signature_bypass: expected true or false, got \"yes\"; ignored",
             ]
         );
         let mut timeouts = Vec::new();
         check(
             Some(
-                &json!({"a": {"timeout": {"idle_ms": 0}}, "b": {"timeout": {"idle_ms": "5m", "connect_ms": 1}}}),
+                &json!({"a": {"timeout": {"idle_ms": 0}, "retry": {"max_wait_ms": 240000}}, "b": {"timeout": {"idle_ms": "5m", "connect_ms": 1}, "retry": {"max_wait_ms": "4m"}}}),
             ),
             &mut timeouts,
         );
@@ -168,6 +184,7 @@ mod tests {
             [
                 "providers.b.timeout.idle_ms: expected milliseconds (0 turns it off), got \"5m\"; ignored",
                 "unknown config key \"providers.b.timeout.connect_ms\"; ignored",
+                "providers.b.retry.max_wait_ms: expected milliseconds, got \"4m\"; ignored",
             ]
         );
         assert_eq!(

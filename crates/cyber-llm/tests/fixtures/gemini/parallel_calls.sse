@@ -1,0 +1,4 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"fc_read","name":"read","args":{"path":"src/main.rs"}},"thoughtSignature":"S1sig=="},{"functionCall":{"id":"fc_grep","name":"grep","args":{"pattern":"main"}}}]},"index":0}],"modelVersion":"gemini-4-carbon"}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":""}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":812,"candidatesTokenCount":41,"thoughtsTokenCount":120,"totalTokenCount":973},"modelVersion":"gemini-4-carbon"}
+

@@ -1,0 +1,1 @@
+{"error":{"code":400,"message":"Invalid JSON payload received. * GenerateContentRequest.tools[0].function_declarations[1].parameters_json_schema: schema for big_tool exceeds the allowed nesting depth","status":"INVALID_ARGUMENT"}}

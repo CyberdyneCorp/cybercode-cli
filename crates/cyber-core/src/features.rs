@@ -51,6 +51,9 @@ pub const TEAMS: &str = "teams";
 /// Shared project hub and explicitly published local agents.
 pub const COLLABORATION: &str = "collaboration";
 pub const COMPUTER_USE: &str = "computer_use";
+/// The native Gemini API adapter (`provider-catalog` → Gemini API adapter); stable once
+/// its live coding baseline is published.
+pub const GEMINI: &str = "gemini";
 
 /// Every feature this binary knows.
 pub const REGISTRY: &[Entry] = &[
@@ -71,6 +74,12 @@ pub const REGISTRY: &[Entry] = &[
         maturity: Maturity::Experimental,
         default: false,
         description: "Project collaboration: people and explicitly published local agents through a self-hosted hub",
+    },
+    Entry {
+        name: GEMINI,
+        maturity: Maturity::Experimental,
+        default: false,
+        description: "Native Gemini API adapter: google/* models with a Gemini API key from AI Studio",
     },
 ];
 
@@ -378,6 +387,21 @@ mod tests {
         assert!(!status.default && !status.enabled && !status.locked);
         assert_eq!(status.source, "default");
         assert_eq!(Features::default(), resolved.0);
+    }
+
+    #[test]
+    fn gemini_is_experimental_and_off_by_default() {
+        let resolved = run(json!({}), &[], Overrides::default()).unwrap();
+        let status = resolved.0.get(GEMINI).unwrap();
+        assert_eq!(status.maturity, Maturity::Experimental);
+        assert!(!status.default && !status.enabled);
+        let on = run(
+            json!({"features": {"gemini": true}}),
+            &[],
+            Overrides::default(),
+        )
+        .unwrap();
+        assert!(on.0.enabled(GEMINI));
     }
 
     #[test]

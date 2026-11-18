@@ -1,0 +1,2 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Bonjour"}]},"finishReason":"LANGUAGE","index":0}],"modelVersion":"gemini-4-carbon"}
+

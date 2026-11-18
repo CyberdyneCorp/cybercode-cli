@@ -74,6 +74,20 @@ fn bundled_snapshot_has_p0_providers() {
     });
     assert_eq!(c.providers["openai"].kind, Some(ApiKind::OpenaiResponses));
     assert_eq!(c.providers["anthropic"].kind, Some(ApiKind::Anthropic));
+    let google = &c.providers["google"];
+    assert_eq!(google.kind, Some(ApiKind::Gemini));
+    assert!(google.models.contains_key("gemini-4-carbon"));
+    assert!(
+        google
+            .models
+            .values()
+            .all(|m| m.api_kind.or(google.kind) == Some(ApiKind::Gemini)),
+        "google models resolve to the gemini protocol"
+    );
+    assert!(
+        !c.providers.values().any(|p| p.id == "google-vertex"),
+        "@ai-sdk/google-vertex stays out of the snapshot"
+    );
     assert!(
         c.providers
             .values()
@@ -100,7 +114,8 @@ fn availability_follows_credentials_status_and_adapters() {
     );
     assert_eq!(
         get("google/gemini"),
-        Availability::Unavailable("adapter_unsupported")
+        Availability::Unavailable("experimental"),
+        "the gemini protocol is behind features.gemini"
     );
     let rows = c.list(None).unwrap();
     let first_unavailable = rows
@@ -190,6 +205,7 @@ fn resolved_requests_carry_the_profile_shaping() {
             verbosity: Some(VerbosityLevel::Low),
             parallel_tool_calls: Some(true),
             freeform_patch: true,
+            ..Shaping::default()
         }
     );
     let mini = shaping("openai/gpt-6-mini");
@@ -739,4 +755,302 @@ fn a_tampered_catalog_cannot_redirect_first_party_keys() {
         c.providers["anthropic"].url.as_deref(),
         Some("https://gateway.corp/v1")
     );
+}
+
+/// models.dev-shaped `google` data with three tiers, newest last.
+fn google_data() -> Value {
+    let mut data = data();
+    data["google"] = json!({ "id": "google", "npm": "@ai-sdk/google",
+    "env": ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"],
+    "api": "https://evil.example/v1beta",
+    "models": {
+        "gemini-3.1-pro-preview": { "id": "gemini-3.1-pro-preview", "tool_call": true, "reasoning": true,
+            "release_date": "2026-02-19", "limit": {"context": 1048576, "output": 65536} },
+        "gemini-4-carbon": { "id": "gemini-4-carbon", "tool_call": true, "reasoning": true,
+            "release_date": "2026-11-10", "limit": {"context": 1048576, "output": 32768},
+            "reasoning_options": [{"type": "effort", "values": ["low", "medium", "high"]}] },
+        "gemini-4-argon": { "id": "gemini-4-argon", "tool_call": true, "release_date": "2026-10-13" },
+        "gemini-4-hydrogen": { "id": "gemini-4-hydrogen", "tool_call": true, "release_date": "2026-11-12" },
+        "gemini-3.8-flash": { "id": "gemini-3.8-flash", "tool_call": true, "release_date": "2026-09-02" }
+    }});
+    data["google-vertex"] = json!({ "id": "google-vertex", "npm": "@ai-sdk/google-vertex",
+        "env": ["GOOGLE_VERTEX_PROJECT"], "models": { "gemini-4-carbon": { "id": "gemini-4-carbon", "tool_call": true } } });
+    data
+}
+
+fn gemini_on() -> Value {
+    json!({ "features": { "gemini": true } })
+}
+
+fn google(config: Value, e: &[(&str, &str)]) -> Catalog {
+    Catalog::build(&BuildInputs {
+        data: &google_data(),
+        config: &config,
+        env: &env(e),
+    })
+}
+
+/// "Experimental feature off" and "Key enables Gemini once the feature is on".
+#[test]
+fn the_gemini_protocol_is_gated_by_its_feature() {
+    let key = [("GEMINI_API_KEY", "gm-key")];
+    let off = google(json!({}), &key);
+    let (_, carbon) = off.find(&model_ref("google/gemini-4-carbon")).unwrap();
+    assert_eq!(
+        off.availability(carbon),
+        Availability::Unavailable("experimental")
+    );
+    assert_eq!(
+        off.hint(carbon).as_deref(),
+        Some("enable with features.gemini")
+    );
+    let error = off
+        .resolve(&model_ref("google/gemini-4-carbon"), None)
+        .err()
+        .unwrap();
+    assert_eq!(
+        error.to_string(),
+        "model google/gemini-4-carbon is unavailable: experimental (enable with features.gemini)"
+    );
+    let (_, vertex) = off
+        .find(&model_ref("google-vertex/gemini-4-carbon"))
+        .unwrap();
+    assert_eq!(
+        off.availability(vertex),
+        Availability::Unavailable("adapter_unsupported")
+    );
+
+    let on = google(gemini_on(), &key);
+    let resolved = on
+        .resolve(&model_ref("google/gemini-4-carbon#high"), None)
+        .unwrap();
+    assert_eq!(resolved.kind, ApiKind::Gemini);
+    assert_eq!(
+        resolved.endpoint.base_url, "https://generativelanguage.googleapis.com/v1beta",
+        "a tampered catalog endpoint is ignored"
+    );
+    assert_eq!(resolved.endpoint.api_key.as_deref(), Some("gm-key"));
+    assert_eq!(
+        resolved.request.reasoning,
+        Some(Reasoning::Effort("high".into()))
+    );
+    assert_eq!(
+        resolved.endpoint.idle_timeout,
+        Some(Duration::from_secs(600)),
+        "Long silent thinking: 600 s for the gemini protocol"
+    );
+    let profile = &on.providers["google"].models["gemini-4-carbon"].profile;
+    assert_eq!(
+        (profile.reasoning_carrier, profile.reasoning_replay),
+        (
+            cyber_llm::catalog::profile::ReasoningCarrier::GeminiSignature,
+            cyber_llm::catalog::profile::ReasoningReplay::Always
+        )
+    );
+    let configured = google(
+        json!({ "features": { "gemini": true }, "providers": { "google": { "timeout": { "idle_ms": 1000 } } } }),
+        &key,
+    );
+    let resolved = configured
+        .resolve(&model_ref("google/gemini-4-carbon"), None)
+        .unwrap();
+    assert_eq!(
+        resolved.endpoint.idle_timeout,
+        Some(Duration::from_secs(1)),
+        "timeout.idle_ms still overrides"
+    );
+}
+
+/// "Environment key", "Variable order" and "Generic Google key alone": the first set of
+/// GEMINI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY, GOOGLE_API_KEY wins, whatever order the
+/// catalog lists them in, and no other catalog provider reads them.
+#[test]
+fn google_key_variables_are_read_in_order() {
+    let source = |e: &[(&str, &str)]| {
+        let c = google(gemini_on(), e);
+        c.credential("google")
+            .map(|cred| (cred.source.clone(), cred.api_key.clone().unwrap()))
+    };
+    let env_source = |name: &str| CredentialSource::Env(name.into());
+    assert_eq!(
+        source(&[
+            ("GEMINI_API_KEY", "a"),
+            ("GOOGLE_GENERATIVE_AI_API_KEY", "b"),
+            ("GOOGLE_API_KEY", "c")
+        ]),
+        Some((env_source("GEMINI_API_KEY"), "a".into()))
+    );
+    assert_eq!(
+        source(&[
+            ("GOOGLE_API_KEY", "c"),
+            ("GOOGLE_GENERATIVE_AI_API_KEY", "b")
+        ]),
+        Some((env_source("GOOGLE_GENERATIVE_AI_API_KEY"), "b".into()))
+    );
+    assert_eq!(
+        source(&[("GOOGLE_API_KEY", "c")]),
+        Some((env_source("GOOGLE_API_KEY"), "c".into()))
+    );
+    assert_eq!(source(&[]), None);
+    let configured = google(
+        json!({ "features": { "gemini": true }, "providers": { "google": { "api": { "settings": { "api_key": "cfg" } } } } }),
+        &[("GEMINI_API_KEY", "a")],
+    );
+    assert_eq!(
+        configured.credential("google").unwrap().source,
+        CredentialSource::Config
+    );
+
+    let mut data = google_data();
+    data["thief"] = json!({ "id": "thief", "npm": "@ai-sdk/openai-compatible", "api": "https://thief.example/v1",
+        "env": ["GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY"],
+        "models": { "m": { "id": "m", "tool_call": true } } });
+    let c = Catalog::build(&BuildInputs {
+        data: &data,
+        config: &gemini_on(),
+        env: &env(&[("GOOGLE_API_KEY", "c"), ("GEMINI_API_KEY", "a")]),
+    });
+    assert!(
+        c.credential("thief").is_none(),
+        "no other provider receives a Google key"
+    );
+    assert!(c.providers["thief"].env.is_empty());
+}
+
+/// "Tampered catalog endpoint", and the user's own configuration still deciding.
+#[test]
+fn the_google_endpoint_is_pinned_against_the_catalog() {
+    let mut data = google_data();
+    data["google"]["models"]["gemini-4-carbon"]["provider"] =
+        json!({ "api": "https://evil.example/v1beta" });
+    let c = Catalog::build(&BuildInputs {
+        data: &data,
+        config: &gemini_on(),
+        env: &env(&[("GEMINI_API_KEY", "a")]),
+    });
+    let resolved = c
+        .resolve(&model_ref("google/gemini-4-carbon"), None)
+        .unwrap();
+    assert_eq!(
+        resolved.endpoint.base_url,
+        "https://generativelanguage.googleapis.com/v1beta"
+    );
+    let proxied = google(
+        json!({ "features": { "gemini": true },
+            "providers": { "google": { "api": { "url": "https://gemini-proxy.corp/v1beta/" } } } }),
+        &[("GEMINI_API_KEY", "a")],
+    );
+    let resolved = proxied
+        .resolve(&model_ref("google/gemini-4-carbon"), None)
+        .unwrap();
+    assert_eq!(
+        resolved.endpoint.base_url,
+        "https://gemini-proxy.corp/v1beta/"
+    );
+}
+
+/// "Plain HTTP to a remote host": unavailable with an error naming the URL; loopback is
+/// fine.
+#[test]
+fn a_gemini_provider_over_plain_http_to_another_host_is_unavailable() {
+    let config = |url: &str| {
+        json!({ "features": { "gemini": true }, "providers": { "corp": {
+            "api": { "type": "gemini", "url": url, "settings": { "api_key": "k" } },
+            "models": { "gemini-4-carbon": {} } } } })
+    };
+    let c = google(config("http://gemini.corp.example"), &[]);
+    let (_, m) = c.find(&model_ref("corp/gemini-4-carbon")).unwrap();
+    assert_eq!(c.availability(m), Availability::Unavailable("insecure_url"));
+    let error = c
+        .resolve(&model_ref("corp/gemini-4-carbon"), None)
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("http://gemini.corp.example must use https"),
+        "{error}"
+    );
+    for alias in ["google", "google-genai"] {
+        let mut config = config("http://127.0.0.1:9999");
+        config["providers"]["corp"]["api"]["type"] = json!(alias);
+        let c = google(config, &[]);
+        let resolved = c.resolve(&model_ref("corp/gemini-4-carbon"), None).unwrap();
+        assert_eq!(resolved.kind, ApiKind::Gemini, "{alias}");
+    }
+}
+
+/// "Only a Google key": the newest Pro-tier model, never a newer lighter one.
+#[test]
+fn only_a_google_key_picks_the_pro_tier() {
+    let c = google(gemini_on(), &[("GEMINI_API_KEY", "a")]);
+    let (chosen, _) = default_model(&c, &gemini_on(), &[]).unwrap();
+    assert_eq!(chosen.to_string(), "google/gemini-4-carbon");
+    let mut data = google_data();
+    data["google"]["models"]["gemini-3.1-pro-preview"]["release_date"] = json!("2026-11-11");
+    let c = Catalog::build(&BuildInputs {
+        data: &data,
+        config: &gemini_on(),
+        env: &env(&[("GEMINI_API_KEY", "a")]),
+    });
+    let (chosen, _) = default_model(&c, &gemini_on(), &[]).unwrap();
+    assert_eq!(
+        chosen.to_string(),
+        "google/gemini-3.1-pro-preview",
+        "the later of the Pro tier"
+    );
+
+    // No Pro-tier model available: the other tool-capable models take part.
+    let mut data = google_data();
+    for id in ["gemini-3.1-pro-preview", "gemini-4-carbon"] {
+        data["google"]["models"][id]["status"] = json!("deprecated");
+    }
+    let c = Catalog::build(&BuildInputs {
+        data: &data,
+        config: &gemini_on(),
+        env: &env(&[("GEMINI_API_KEY", "a")]),
+    });
+    let (chosen, _) = default_model(&c, &gemini_on(), &[]).unwrap();
+    assert_eq!(chosen.to_string(), "google/gemini-4-hydrogen");
+}
+
+/// "Configured model wins", and an unchanged choice with OpenAI and Anthropic keys.
+#[test]
+fn the_google_tier_rule_changes_nothing_else() {
+    let mut config = gemini_on();
+    config["model"] = json!("google/gemini-4-argon");
+    let c = google(config.clone(), &[("GEMINI_API_KEY", "a")]);
+    assert_eq!(
+        default_model(&c, &config, &[]).unwrap().0.to_string(),
+        "google/gemini-4-argon"
+    );
+    let keys = [("OPENAI_API_KEY", "k"), ("ANTHROPIC_API_KEY", "a")];
+    let before = catalog(json!({}), &env(&keys));
+    let after = google(gemini_on(), &keys);
+    assert_eq!(
+        default_model(&before, &json!({}), &[]).unwrap().0,
+        default_model(&after, &gemini_on(), &[]).unwrap().0
+    );
+    // Without the feature a Google key chooses nothing.
+    let off = google(json!({}), &[("GEMINI_API_KEY", "a")]);
+    assert!(matches!(
+        default_model(&off, &json!({}), &[]),
+        Err(CatalogError::ModelNotSelected)
+    ));
+}
+
+/// `providers.<id>.retry.max_wait_ms`, 60 s by default and 240 s for the gemini protocol.
+#[test]
+fn the_retry_wait_cap_is_per_provider() {
+    let c = google(
+        json!({ "providers": { "anthropic": { "retry": { "max_wait_ms": 90000 } } } }),
+        &[],
+    );
+    assert_eq!(c.retry_after_cap("openai"), Some(Duration::from_secs(60)));
+    assert_eq!(c.retry_after_cap("google"), Some(Duration::from_secs(240)));
+    assert_eq!(
+        c.retry_after_cap("anthropic"),
+        Some(Duration::from_secs(90))
+    );
+    assert_eq!(c.retry_after_cap("nope"), None);
 }

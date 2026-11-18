@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"**Planning** I should read the file first.","thought":true}]},"index":0}],"modelVersion":"gemini-2.5-flash"}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":" Then answer.","thought":true}]},"index":0}],"modelVersion":"gemini-2.5-flash"}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"read","args":{"path":"a.txt"}},"thoughtSignature":"S3sig=="}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"thoughtsTokenCount":30,"totalTokenCount":45},"modelVersion":"gemini-2.5-flash"}
+
