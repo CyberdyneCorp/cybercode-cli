@@ -25,6 +25,11 @@
         "scheme": "bearer",
         "description": "A peer grant's cyp_ token, on the peer listener only"
       },
+      "ideBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A local IDE token (cyi_), on the Unix socket or from a loopback peer only, for the operations that list it; other operations answer 403 ForbiddenError with reason ide_token_scope"
+      },
       "hubBearer": {
         "type": "http",
         "scheme": "bearer",
@@ -2403,6 +2408,163 @@
           "active_workflow_runs"
         ],
         "description": "The listening server and its running work, so a client of another build can decide\nwhether restarting it interrupts anything."
+      },
+      "CreateIdeToken": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "client": {
+            "type": "string",
+            "description": "The editor client; only `vscode`."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A label shown by `cyber ide token list`.",
+            "default": null
+          },
+          "expires_in_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "description": "Lifetime in days, 1–90; default 30.",
+            "default": null
+          }
+        },
+        "required": [
+          "client"
+        ],
+        "description": "`POST /api/v1/ide/tokens`."
+      },
+      "Data_IssuedIdeToken": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/IssuedIdeToken"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "IssuedIdeToken": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "`itk_…`."
+          },
+          "token": {
+            "type": "string",
+            "description": "`cyi_…`; store it, it is never shown again."
+          },
+          "client": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          }
+        },
+        "required": [
+          "id",
+          "token",
+          "client",
+          "created_at",
+          "expires_at"
+        ],
+        "description": "A created token. `token` appears only in this response."
+      },
+      "Data_Array_of_IdeTokenView": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdeTokenView"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "IdeTokenView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "client": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "RFC 3339."
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339; recorded at most once a minute."
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "RFC 3339."
+          },
+          "status": {
+            "type": "string",
+            "description": "`active`, `revoked` or `expired`."
+          }
+        },
+        "required": [
+          "id",
+          "client",
+          "created_at",
+          "expires_at",
+          "status"
+        ],
+        "description": "A token record; never its value or hash."
+      },
+      "Data_IdeTokenView": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/IdeTokenView"
+          }
+        },
+        "required": [
+          "data"
+        ]
       },
       "UpdateStatus": {
         "type": "object",
@@ -6686,6 +6848,17 @@
                   "null"
                 ]
               },
+              "range": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/LineRange"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Admit only these lines of a text file, after the checks for the whole file."
+              },
               "type": {
                 "type": "string",
                 "const": "file"
@@ -6695,7 +6868,7 @@
               "type",
               "path"
             ],
-            "description": "A file the server reads through the `read` tool's checks; local API only."
+            "description": "A file the server reads through the `read` tool's checks; local API only. A text\nfile is admitted as a `<file>` text block, media as an attachment."
           },
           {
             "type": "object",
@@ -6716,6 +6889,27 @@
           }
         ],
         "description": "One prompt part."
+      },
+      "LineRange": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "start_line": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 1
+          },
+          "end_line": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "start_line",
+          "end_line"
+        ],
+        "description": "Lines of a `file` part: 1-based and inclusive, `1 <= start_line <= end_line`. A range\npast the end of the file is clamped to its last line."
       },
       "Data_Delegation": {
         "type": "object",
@@ -22796,6 +22990,144 @@
               }
             }
           }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
+      }
+    },
+    "/api/v1/ide/tokens": {
+      "post": {
+        "operationId": "v1.ide.tokenCreate",
+        "summary": "Issue a local IDE token (owner only); the cyi_ value appears only in this response, and the client's previous token is revoked",
+        "tags": [
+          "ide"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_IssuedIdeToken"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIdeToken"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "v1.ide.tokenList",
+        "summary": "Local IDE token records within retention, without token values or hashes (owner only)",
+        "tags": [
+          "ide"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_IdeTokenView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ide/tokens/{tokenID}": {
+      "delete": {
+        "operationId": "v1.ide.tokenRevoke",
+        "summary": "Revoke a local IDE token (idempotent): its next request gets 401, its event streams close and its presence leases end (owner only)",
+        "tags": [
+          "ide"
+        ],
+        "parameters": [
+          {
+            "name": "tokenID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_IdeTokenView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -24670,7 +25002,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       },
       "post": {
         "operationId": "v1.session.create",
@@ -24735,7 +25075,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{id}/children": {
@@ -25199,7 +25547,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       },
       "patch": {
         "operationId": "v1.session.update",
@@ -25741,7 +26097,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/input-clients": {
@@ -25944,7 +26308,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/interactive-clients/{clientID}": {
@@ -26011,7 +26383,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       },
       "delete": {
         "operationId": "v1.session.interactiveRelease",
@@ -26059,7 +26439,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/command": {
@@ -26327,7 +26715,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/usage-limit/resume": {
@@ -26514,7 +26910,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/mode": {
@@ -26573,7 +26977,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/output-style": {
@@ -28459,7 +28871,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/tree": {
@@ -29073,7 +29493,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/history": {
@@ -29203,7 +29631,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/permissions/{requestID}/reply": {
@@ -29263,7 +29699,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionID}/questions/{requestID}/reply": {
@@ -29323,7 +29767,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/permissions/requests": {
@@ -29364,7 +29816,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/permissions/test": {
@@ -29494,7 +29954,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/models": {
@@ -29543,7 +30011,15 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "basic": []
+          },
+          {
+            "ideBearer": []
+          }
+        ]
       }
     },
     "/api/v1/plugins": {

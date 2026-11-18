@@ -1081,6 +1081,16 @@ export type CreateGoal = {
   args?: string | null;
 };
 
+/** `POST /api/v1/ide/tokens`. */
+export type CreateIdeToken = {
+  /** The editor client; only `vscode`. */
+  client: string;
+  /** A label shown by `cyber ide token list`. */
+  name?: string | null;
+  /** Lifetime in days, 1–90; default 30. */
+  expires_in_days?: number | null;
+};
+
 /** `POST /api/v1/sessions/:id/loops`: the `/loop` arguments as typed, or the parsed fields. */
 export type CreateLoop = {
   command: string;
@@ -1148,6 +1158,10 @@ export type Data_Array_of_BranchNode = {
 
 export type Data_Array_of_FileDiff = {
   data: FileDiff[];
+};
+
+export type Data_Array_of_IdeTokenView = {
+  data: IdeTokenView[];
 };
 
 export type Data_Array_of_InboxRow = {
@@ -1274,6 +1288,10 @@ export type Data_GoalsView = {
   data: GoalsView;
 };
 
+export type Data_IdeTokenView = {
+  data: IdeTokenView;
+};
+
 export type Data_InputInterruptReceipt = {
   data: InputInterruptReceipt;
 };
@@ -1288,6 +1306,10 @@ export type Data_InteractiveClient = {
 
 export type Data_InterruptedResume = {
   data: InterruptedResume;
+};
+
+export type Data_IssuedIdeToken = {
+  data: IssuedIdeToken;
 };
 
 export type Data_Job = {
@@ -2579,6 +2601,23 @@ export type HubUpdateTask = {
   report?: HubReportInput | null;
 };
 
+/** A token record; never its value or hash. */
+export type IdeTokenView = {
+  id: string;
+  client: string;
+  name?: string | null;
+  /** RFC 3339. */
+  created_at: string;
+  /** RFC 3339. */
+  expires_at: string;
+  /** RFC 3339; recorded at most once a minute. */
+  last_used_at?: string | null;
+  /** RFC 3339. */
+  revoked_at?: string | null;
+  /** `active`, `revoked` or `expired`. */
+  status: string;
+};
+
 export type IgnoredTelemetry = {
   /** JSON pointer, such as `/telemetry/otel/endpoint`. */
   pointer: string;
@@ -2830,6 +2869,20 @@ export type InvitePeer = {
 /** Where a teammate works. */
 export type Isolation = "shared" | "worktree";
 
+/** A created token. `token` appears only in this response. */
+export type IssuedIdeToken = {
+  /** `itk_…`. */
+  id: string;
+  /** `cyi_…`; store it, it is never shown again. */
+  token: string;
+  client: string;
+  name?: string | null;
+  /** RFC 3339. */
+  created_at: string;
+  /** RFC 3339. */
+  expires_at: string;
+};
+
 /** One ended iteration, as clients list it. */
 export type IterationRecord = {
   n: number;
@@ -2979,6 +3032,15 @@ export type LimitReading = {
   resets_ms?: number | null;
   /** When the response carrying this reading arrived, Unix milliseconds. */
   observed_ms: number;
+};
+
+/**
+ * Lines of a `file` part: 1-based and inclusive, `1 <= start_line <= end_line`. A range
+ * past the end of the file is clamped to its last line.
+ */
+export type LineRange = {
+  start_line: number;
+  end_line: number;
 };
 
 /** A Location-scoped response. */
@@ -4228,6 +4290,8 @@ export type PromptPart = {
 } | {
   path: string;
   name?: string | null;
+  /** Admit only these lines of a text file, after the checks for the whole file. */
+  range?: LineRange | null;
   type: "file";
 } | {
   sha256: string;
