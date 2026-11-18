@@ -84,9 +84,10 @@
 
 ## 5. Tool and permissions
 
-- [ ] 5.1 Write `tools/repo_map.rs` with the schema, argument clamping and the header line, and with `not indexed:` notes and `No indexed files`. The tool waits at most 10 s for a build, uses the `repo_map` permission with the `grep` default rule, is offered in plan mode, and filters out files whose `read` rule ends in deny. Register it in the capability-owned catalog.
+- [x] 5.1 Write `tools/repo_map.rs` with the schema, argument clamping and the header line, and with `not indexed:` notes and `No indexed files`. The tool waits at most 10 s for a build, uses the `repo_map` permission with the `grep` default rule, is offered in plan mode, and filters out files whose `read` rule ends in deny. Register it in the capability-owned catalog.
   - Tests: "Focused map for a weak model", "Denied file hidden", "First call during the initial build", `tool_hidden_when_repo_map_disabled`, `offered_in_plan_mode`.
   - Update the tool schema bundle (`GET /api/v1/tools/schema`) snapshot.
+  - Evidence: `crates/cyber-tools/tests/repo_map.rs` (all five scenarios plus `paths_outside_the_location_are_refused`; "First call during the initial build" is `repo_map::tests::first_call_during_the_initial_build`). The tool schema bundle is generated from the registry at request time and has no committed snapshot; `repo_map` is in it whenever the tool is offered.
 - [x] 5.2 Add the Session-file personalization: the 20 most recently read or edited distinct paths, taken from settled tool calls.
   - Test: `recent_session_files_bias_ranking`.
   - Recorded by the tool host as file tools read or edit (`tests/repo_map.rs::recent_session_files_bias_the_tool`); in memory, so a restarted server starts without them.
@@ -112,23 +113,28 @@
   - the field in `cyber models --json`.
   
   Tests: "Small local model", "Per-model override wins over the top-level key".
-- [ ] 6.4 Config schema for `repo_map` in `cyber-core`, with invalid-value warnings. Regenerate the JSON schema.
+- [x] 6.4 Config schema for `repo_map` in `cyber-core`, with invalid-value warnings. Regenerate the JSON schema.
   - Tests: "Map turned off for a project", "Invalid budget ignored".
+  - Evidence: `config::repo_map::tests`, `tests/repo_map.rs::tool_hidden_when_repo_map_disabled`. The configuration has no committed JSON schema file to regenerate; `repo_map` joins the validated top-level keys and is not trust-sensitive.
 
 ## 7. CLI, API and TUI
 
-- [ ] 7.1 Add `GET /api/v1/lsp/map` (`v1.lsp.map`) and `POST /api/v1/lsp/map/rebuild` (`v1.lsp.mapRebuild`) with the Location envelope. Regenerate `sdk/openapi.json` and the TS SDK.
+- [x] 7.1 Add `GET /api/v1/lsp/map` (`v1.lsp.map`) and `POST /api/v1/lsp/map/rebuild` (`v1.lsp.mapRebuild`) with the Location envelope. Regenerate `sdk/openapi.json` and the TS SDK.
   - Tests: route tests for both, an OpenAPI snapshot, and an SDK type-check.
-- [ ] 7.2 Add `cyber lsp map` with `[<path>]`, `--focus`, `--symbol`, `--tokens`, `--format text|json`, `--status`, `--rebuild` and `--clear`. It uses the server when one is registered and runs in process otherwise.
+  - Evidence: `cyber-app/tests/intelligence.rs::repo_map_routes_render_and_rebuild_the_location_index`, `cyber-server` `openapi_document_is_current`, `generate_sdk.py --check` and the SDK CI type-check.
+- [x] 7.2 Add `cyber lsp map` with `[<path>]`, `--focus`, `--symbol`, `--tokens`, `--format text|json`, `--status`, `--rebuild` and `--clear`. It uses the server when one is registered and runs in process otherwise.
   - Tests: "Inspect without a server" (asserts no server process and no session database), "JSON for scripts", `clear_removes_checkout_rows`.
   - Update `docs/cli.md`.
-- [ ] 7.3 TUI `/map [<path>]`: the status header, `r` rebuild, `Enter` to open the file explorer, `Esc` to close, and the disabled message.
+  - Evidence: `cyber-cli/tests/cli.rs::{repo_map_inspect_without_a_server, repo_map_json_for_scripts, clear_removes_checkout_rows}`; the JSON equals the route's (`repo_map_routes_render_and_rebuild_the_location_index`).
+- [x] 7.3 TUI `/map [<path>]`: the status header, `r` rebuild, `Enter` to open the file explorer, `Esc` to close, and the disabled message.
   - Screen tests: "Inspect the map", "Map disabled".
+  - Evidence: `cyber-tui` `screens_repo_map::{inspect_the_map, map_disabled}`.
 
 ## 8. Privacy
 
-- [ ] 8.1 Keep paths, names and signatures out of logs and OTel. The span `repo_map.build` carries counts, durations and status only. The index is not part of exports, shares, backups or runner sync.
+- [x] 8.1 Keep paths, names and signatures out of logs and OTel. The span `repo_map.build` carries counts, durations and status only. The index is not part of exports, shares, backups or runner sync.
   - Tests: "Telemetry without code" (an in-memory exporter), `export_excludes_index`, "Untrusted checkout still mapped by the tool" (asserts no hook, formatter or LSP spawn).
+  - Evidence: `cyber-telemetry` `telemetry_without_code`, `cyber-app/tests/backup.rs::export_excludes_index`, `tests/repo_map.rs::untrusted_checkout_still_mapped_by_the_tool`. Build failures log no error text, since it can name files.
 
 ## 9. Evidence
 
@@ -139,7 +145,7 @@
 
 ## 10. Docs and checks
 
-- [ ] 10.1 Docs:
+- [x] 10.1 Docs:
   - `docs/local-core-guide.md`: the repository map, epoch-pinned sources, `core/repo-map` and the limits table;
   - a row in `docs/features.md`;
   - the ROADMAP entry.
