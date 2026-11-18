@@ -15,6 +15,10 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 - A key chord that computer use refuses (for example Command+C under an application grant) is now refused with `key_chord_refused` before anything is recorded or sent, and the grant stays armed. Before, it was recorded, failed in the native adapter, settled as an unknown operation and stopped the grant. The set of allowed and refused chords on macOS is unchanged.
 
+### Fixed
+
+- Model-run commands no longer wait for an editor, pager or Git credential prompt: `git commit` without `-m` aborted only at the command timeout, and `git log` in a PTY waited in the pager. Shell tools, `monitor`, PTYs, background commands, worktree setup and solve checks now get `GIT_EDITOR`/`JJ_EDITOR`/`HGEDITOR`/`EDITOR`/`VISUAL=true`, `PAGER`/`GIT_PAGER`/`JJ_PAGER`/`MANPAGER=cat` and `GIT_TERMINAL_PROMPT=0`; a value set in `sandbox.env.set` is kept.
+
 ### Security
 
 - A hook's block reason (stderr of an exit-2 command), JSON `reason`/`stop_reason` and failure stderr are redacted like tool output and cut to 4 KiB before they reach live hook notices and hook receipts; the tool result was already redacted but was unbounded.

@@ -32,13 +32,25 @@ No-op replacement SHALL still check edit permission and SHALL preserve original 
 - **THEN** editing a cell SHALL preserve those literals exactly, including values outside floating-point range
 
 ### Requirement: bash tool
-(P0) `bash` SHALL accept `{ command, timeout_ms? (default 120000, max 600000), workdir?, description?, background?, ready_url?, ready_timeout_seconds? }`. It SHALL run in the configured `shell`, else `$SHELL` when acceptable (bash, zsh, sh, dash), else `/bin/sh`. Stdin SHALL be closed and stdout/stderr combined. The environment SHALL carry `CYBER=1`, `CYBER_SESSION_ID` and `CYBER_PID`. The tool SHALL run inside the sandbox per the `sandbox` capability. Capture SHALL be limited to 1 MiB, keeping the tail, with the full output in a managed file. The exit code SHALL be reported as `exit_code` metadata, and empty output SHALL be returned as `(no output)`. `background: true` SHALL start a background task and return its `job_` ID immediately.
+(P0) `bash` SHALL accept `{ command, timeout_ms? (default 120000, max 600000), workdir?, description?, background?, ready_url?, ready_timeout_seconds? }`. It SHALL run in the configured `shell`, else `$SHELL` when acceptable (bash, zsh, sh, dash), else `/bin/sh`. Stdin SHALL be closed and stdout/stderr combined. The environment SHALL carry `CYBER=1`, `CYBER_SESSION_ID` and `CYBER_PID`. So that no command waits for a person at an editor, pager or credential prompt, every model-run process (`bash`, `powershell`, `monitor`, `pty_start`, background commands, worktree setup and solve checks) SHALL get `GIT_EDITOR`, `JJ_EDITOR`, `HGEDITOR`, `EDITOR` and `VISUAL` set to `true` (a no-op editor that leaves the message unchanged), `PAGER`, `GIT_PAGER`, `JJ_PAGER` and `MANPAGER` set to `cat`, and `GIT_TERMINAL_PROMPT=0`, replacing inherited values; a variable named in `sandbox.env.set` SHALL keep its configured value. The tool SHALL run inside the sandbox per the `sandbox` capability. Capture SHALL be limited to 1 MiB, keeping the tail, with the full output in a managed file. The exit code SHALL be reported as `exit_code` metadata, and empty output SHALL be returned as `(no output)`. `background: true` SHALL start a background task and return its `job_` ID immediately.
 
 `ready_url` (P1, `browser-verification` → Verification artifacts and lifecycle) SHALL apply only with `background: true` and SHALL be an `http(s)` URL on this machine (`localhost`, a loopback address). The call SHALL then return only once that URL answers with an HTTP status below 500. When the process exits first, or `ready_timeout_seconds` (default 60, at most 600) passes, the Job SHALL be stopped. The call SHALL then fail with the log tail and record `startup_failed` browser evidence stating that the page was not tested. A call cancelled while it waits SHALL stop the Job. The readiness check SHALL NOT follow redirects. Where the sandbox isolates the command's loopback from the host (a sandboxed command on Windows, or on Linux and macOS below a `sandbox.network` other than `on`), `ready_url` SHALL be refused before the command starts. `powershell` SHALL accept the same two parameters.
 
 #### Scenario: Timeout
 - **WHEN** a command exceeds `timeout_ms`
 - **THEN** its process tree is killed and the result ends with `Command timed out after <n> ms`
+
+#### Scenario: Commit without a message
+- **WHEN** the model runs `git commit` without `-m` in a repository whose `core.editor` is an interactive editor
+- **THEN** the no-op editor leaves the message empty and Git aborts at once instead of waiting until the timeout
+
+#### Scenario: Pager on a terminal
+- **WHEN** the model starts `git log` with `pty_start`
+- **THEN** the log is printed through `cat` and the program ends without waiting for a keypress
+
+#### Scenario: Configured editor kept
+- **WHEN** `sandbox.env.set` sets `PAGER` to `more`
+- **THEN** commands see `PAGER=more` and `GIT_PAGER=cat`
 
 #### Scenario: Background command
 - **WHEN** the model calls `bash` with `background: true` for `npm run dev`

@@ -3,7 +3,7 @@
 //! plus the classification of sandbox denials (`sandbox` → Escalation requests, Sandbox
 //! events and audit).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -329,6 +329,13 @@ async fn prepare_scoped_command(
         .collect();
     env.extend(wrapped.env);
     env.push(("TMPDIR".into(), tmp.display().to_string()));
+    // Native authority ignores `sandbox.env.set`, so its overlays cannot pick an editor.
+    let configured = if scope.native_authority {
+        BTreeMap::new()
+    } else {
+        sandbox.env.set.clone()
+    };
+    noninteractive(&mut env, &configured);
     env.retain(|(key, _)| key != WORKFLOW_RUN_ENV);
     if let Some(run) = ctx.host.process_workflow_run(&ctx.inv.session_id) {
         env.push((WORKFLOW_RUN_ENV.into(), run));
@@ -351,6 +358,31 @@ async fn prepare_scoped_command(
         refused,
         _proxy: proxy,
     })
+}
+
+/// Editors and pagers of model-run commands: nothing waits for a person at a terminal.
+/// A no-op editor leaves the message unchanged, so `git commit` without `-m` aborts.
+pub(crate) const NONINTERACTIVE_ENV: &[(&str, &str)] = &[
+    ("GIT_EDITOR", "true"),
+    ("JJ_EDITOR", "true"),
+    ("HGEDITOR", "true"),
+    ("EDITOR", "true"),
+    ("VISUAL", "true"),
+    ("PAGER", "cat"),
+    ("GIT_PAGER", "cat"),
+    ("JJ_PAGER", "cat"),
+    ("MANPAGER", "cat"),
+    ("GIT_TERMINAL_PROMPT", "0"),
+];
+
+/// Replace inherited values of [`NONINTERACTIVE_ENV`]; a name the user configured in
+/// `sandbox.env.set` keeps its configured value.
+fn noninteractive(env: &mut Vec<(String, String)>, configured: &BTreeMap<String, String>) {
+    for (name, default) in NONINTERACTIVE_ENV {
+        let value = configured.get(*name).map_or(*default, String::as_str);
+        env.retain(|(key, _)| !key.eq_ignore_ascii_case(name));
+        env.push(((*name).to_owned(), value.to_owned()));
+    }
 }
 
 fn command_environment(
@@ -715,6 +747,31 @@ pub(crate) fn session_tmp(ctx: &Ctx<'_>) -> Result<PathBuf, ToolError> {
 mod tests {
     use super::*;
     use cyber_sandbox::proxy::Endpoint;
+
+    #[test]
+    fn noninteractive_defaults_replace_inherited_but_not_configured_values() {
+        let mut env = vec![
+            ("EDITOR".to_owned(), "vim".to_owned()),
+            ("PAGER".to_owned(), "less".to_owned()),
+            ("PATH".to_owned(), "/bin".to_owned()),
+        ];
+        let configured = BTreeMap::from([("PAGER".to_owned(), "most".to_owned())]);
+        noninteractive(&mut env, &configured);
+        let value = |name: &str| {
+            let values: Vec<&str> = env
+                .iter()
+                .filter(|(key, _)| key == name)
+                .map(|(_, value)| value.as_str())
+                .collect();
+            values.join(",")
+        };
+        assert_eq!(value("EDITOR"), "true");
+        assert_eq!(value("GIT_EDITOR"), "true");
+        assert_eq!(value("GIT_PAGER"), "cat");
+        assert_eq!(value("GIT_TERMINAL_PROMPT"), "0");
+        assert_eq!(value("PAGER"), "most");
+        assert_eq!(value("PATH"), "/bin");
+    }
 
     fn credential_fixture() -> cyber_server::runtime::CatalogResolver {
         cyber_server::runtime::CatalogResolver::new(

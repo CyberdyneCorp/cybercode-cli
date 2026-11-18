@@ -322,6 +322,70 @@ async fn bash_reports_output_and_exit_code() {
     assert!(out.contains("hi") && out.contains("Exit code: 3"), "{out}");
 }
 
+/// Editor and pager variables every model-run command gets.
+const NONINTERACTIVE: [&str; 10] = [
+    "GIT_EDITOR",
+    "JJ_EDITOR",
+    "HGEDITOR",
+    "EDITOR",
+    "VISUAL",
+    "PAGER",
+    "GIT_PAGER",
+    "JJ_PAGER",
+    "MANPAGER",
+    "GIT_TERMINAL_PROMPT",
+];
+
+/// A shell script that makes a Git repository in `w/` with one staged file; `core.editor`
+/// would block for a minute, as an interactive editor waits for a person.
+#[cfg(unix)]
+const STAGED_REPO: &str = "mkdir w && cd w && git init -q \
+ && git config user.email t@example.com && git config user.name t \
+ && git config commit.gpgsign false && git config core.editor 'sleep 60;:' \
+ && echo x > f && git add f";
+
+/// Regression: `git commit` without `-m` opened the configured editor and waited until the
+/// command timed out. The no-op `GIT_EDITOR` leaves the message empty, so Git aborts.
+#[cfg(unix)]
+#[tokio::test]
+async fn bash_git_commit_without_a_message_aborts_instead_of_waiting_for_an_editor() {
+    let f = Fixture::new();
+    f.set_config(json!({"permissions": {"bash": "allow"}}));
+    let started = std::time::Instant::now();
+    let command = format!("{STAGED_REPO} && git commit; echo \"commit=$?\"");
+    let out = ok(f
+        .call(
+            "default",
+            "bash",
+            json!({"command": command, "timeout_ms": 20000}),
+        )
+        .await);
+    assert!(!out.contains("timed out"), "{out}");
+    assert!(
+        out.contains("Aborting commit due to empty commit message") && out.contains("commit=1"),
+        "{out}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+}
+
+/// A variable the user sets in `sandbox.env.set` wins over the non-interactive default.
+#[tokio::test]
+async fn configured_editor_and_pager_win_over_noninteractive_defaults() {
+    let f = Fixture::new();
+    f.set_config(json!({
+        "permissions": {"bash": "allow"},
+        "sandbox": {"env": {"set": {"PAGER": "more"}}}
+    }));
+    let out = ok(f
+        .call(
+            "default",
+            "bash",
+            json!({"command": "echo \"$PAGER $GIT_PAGER $EDITOR $GIT_TERMINAL_PROMPT\""}),
+        )
+        .await);
+    assert!(out.contains("more cat true 0"), "{out}");
+}
+
 #[tokio::test]
 async fn bash_kills_the_process_group_on_timeout() {
     let f = Fixture::new();
@@ -813,7 +877,10 @@ async fn sandbox_env_none_exposes_only_base_vars_set_and_markers() {
     assert!(out.lines().any(|line| line == "CI=1"), "{out}");
     for name in &names {
         assert!(
-            cyber_sandbox::BASE_VARS.contains(name) || *name == "CI" || name.starts_with("CYBER"),
+            cyber_sandbox::BASE_VARS.contains(name)
+                || NONINTERACTIVE.contains(name)
+                || *name == "CI"
+                || name.starts_with("CYBER"),
             "unexpected {name} in {out}"
         );
     }
