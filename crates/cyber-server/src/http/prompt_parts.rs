@@ -16,6 +16,17 @@ use crate::runtime::attachments::{InputPart, MAX_MEDIA_PARTS, StoredParts};
 /// Request bodies of the prompt routes may carry this much (base64 media included).
 pub const PROMPT_BODY_LIMIT: usize = 64 * 1024 * 1024;
 
+/// Lines of a `file` part: 1-based and inclusive, `1 <= start_line <= end_line`. A range
+/// past the end of the file is clamped to its last line.
+#[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LineRange {
+    #[schemars(range(min = 1))]
+    pub start_line: u32,
+    #[schemars(range(min = 1))]
+    pub end_line: u32,
+}
+
 /// One prompt part.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -39,10 +50,14 @@ pub enum PromptPart {
         data: String,
         name: Option<String>,
     },
-    /// A file the server reads through the `read` tool's checks; local API only.
+    /// A file the server reads through the `read` tool's checks; local API only. A text
+    /// file is admitted as a `<file>` text block, media as an attachment.
     File {
         path: String,
         name: Option<String>,
+        /// Admit only these lines of a text file, after the checks for the whole file.
+        #[serde(default)]
+        range: Option<LineRange>,
     },
     /// A blob this Session already stores, by its SHA-256.
     Attachment {
@@ -64,10 +79,23 @@ impl PromptPart {
                     .map_err(|_| ApiError::invalid("attachment data is not valid base64"))?;
                 Ok(InputPart::Inline { bytes, name })
             }
-            Self::File { path, name } => Ok(InputPart::File { path, name }),
+            Self::File { path, name, range } => {
+                let range = range.map(line_range).transpose()?;
+                Ok(InputPart::File { path, name, range })
+            }
             Self::Attachment { sha256 } => Ok(InputPart::Stored { sha256 }),
         }
     }
+}
+
+fn line_range(range: LineRange) -> Result<(u32, u32), ApiError> {
+    if range.start_line < 1 || range.end_line < range.start_line {
+        return Err(ApiError::invalid(format!(
+            "invalid file range {}-{}: lines are 1-based and start_line <= end_line",
+            range.start_line, range.end_line
+        )));
+    }
+    Ok((range.start_line, range.end_line))
 }
 
 /// Check the media count and decode inline media.

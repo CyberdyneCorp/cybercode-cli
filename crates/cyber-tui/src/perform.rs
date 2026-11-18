@@ -831,7 +831,7 @@ async fn submit_prompt(
             .await;
         }
     }
-    let mut parts = parts(text, &session.directory);
+    let mut parts = parts(text, &session.directory, local);
     parts[0]["text"] = expanded.into();
     parts.extend(media);
     client
@@ -1622,36 +1622,46 @@ fn agent_choices(data: &Value) -> Vec<Choice> {
 }
 
 /// The prompt text plus a part for each `@path` or `@path#L10-40` mention that exists.
-/// `@server:uri` is an MCP resource mention the server resolves, never a file.
-pub fn parts(text: &str, directory: &str) -> Vec<Value> {
+/// `@server:uri` is an MCP resource mention the server resolves, never a file. On a local
+/// server (`local`), a ranged mention is a ranged `file` part the server reads through the
+/// `read` tool's checks (`server-api` → Prompt attachment parts); otherwise the text is
+/// inlined.
+pub fn parts(text: &str, directory: &str, local: bool) -> Vec<Value> {
     let mut parts = vec![json!({ "type": "text", "text": text })];
-    for token in text
-        .split_whitespace()
-        .filter_map(|w| w.strip_prefix('@'))
-        .filter(|token| !resource_mention(token))
-        .filter(|token| crate::attachments::Kind::of_path(std::path::Path::new(token)).is_none())
-    {
-        let (path, range) = token
-            .split_once("#L")
-            .map_or((token, None), |(p, r)| (p, Some(r)));
-        let full = std::path::Path::new(directory).join(path);
-        let Ok(content) = std::fs::read_to_string(&full) else {
-            continue;
-        };
-        let body = match range.and_then(parse_range) {
-            Some((a, b)) => content
-                .lines()
-                .skip(a - 1)
-                .take(b + 1 - a)
-                .collect::<Vec<_>>()
-                .join("\n"),
-            None => content,
-        };
-        parts.push(
-            json!({ "type": "text", "text": format!("<file path=\"{token}\">\n{body}\n</file>") }),
-        );
-    }
+    parts.extend(
+        text.split_whitespace()
+            .filter_map(|w| w.strip_prefix('@'))
+            .filter(|token| !resource_mention(token))
+            .filter(|token| {
+                crate::attachments::Kind::of_path(std::path::Path::new(token)).is_none()
+            })
+            .filter_map(|token| mention_part(token, directory, local)),
+    );
     parts
+}
+
+/// The part for one `@path[#Lx-y]` mention, `None` when the file cannot be read.
+fn mention_part(token: &str, directory: &str, local: bool) -> Option<Value> {
+    let (path, range) = token
+        .split_once("#L")
+        .map_or((token, None), |(p, r)| (p, parse_range(r)));
+    let full = std::path::Path::new(directory).join(path);
+    if let (true, Some((a, b))) = (local, range) {
+        full.is_file().then_some(())?;
+        return Some(json!({ "type": "file", "path": path,
+            "range": { "start_line": a, "end_line": b } }));
+    }
+    let content = std::fs::read_to_string(&full).ok()?;
+    let body = match range {
+        Some((a, b)) => content
+            .lines()
+            .skip(a - 1)
+            .take(b + 1 - a)
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => content,
+    };
+    Some(json!({ "type": "text", "text": format!("<file path=\"{token}\">\n{body}\n</file>") }))
 }
 
 /// A server-name-like prefix followed by `:` (this also keeps `@name:stream` from being
@@ -1948,11 +1958,23 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("a.txt"), "one\ntwo\nthree\nfour\n").unwrap();
         let dir = tmp.path().display().to_string();
-        let parts = parts("look at @a.txt#L2-3 and @missing.rs", &dir);
+        let parts = parts("look at @a.txt#L2-3 and @missing.rs", &dir, false);
         assert_eq!(parts.len(), 2);
         assert_eq!(
             parts[1]["text"],
             "<file path=\"a.txt#L2-3\">\ntwo\nthree\n</file>"
+        );
+        // A local server reads a ranged mention itself, through the `read` checks.
+        let local = super::parts("look at @a.txt#L2-3 @a.txt @missing.rs#L1-2", &dir, true);
+        assert_eq!(local.len(), 3, "{local:?}");
+        assert_eq!(
+            local[1],
+            json!({ "type": "file", "path": "a.txt",
+                "range": { "start_line": 2, "end_line": 3 } })
+        );
+        assert_eq!(
+            local[2]["text"],
+            "<file path=\"a.txt\">\none\ntwo\nthree\nfour\n\n</file>"
         );
         assert_eq!(parse_range("5"), Some((5, 5)));
         assert_eq!(parse_range("4-2"), None);
@@ -1970,7 +1992,7 @@ mod tests {
         std::fs::write(&file, "# Work").unwrap();
         let plain = crate::sidebar::display_path(&file.display().to_string());
         for mention in [plain.clone(), plain.replace('\\', "/")] {
-            let parts = parts(&format!("@{mention} please"), "C:\\");
+            let parts = parts(&format!("@{mention} please"), "C:\\", false);
             assert_eq!(parts.len(), 2, "{mention}: {parts:?}");
             assert!(parts[1]["text"].as_str().unwrap().contains("# Work"));
         }
@@ -1988,7 +2010,7 @@ mod tests {
         }
         std::fs::write(tmp.path().join("notes.txt"), "notes").unwrap();
         let dir = tmp.path().display().to_string();
-        let parts = parts("@remote:file:///guide.md and @notes.txt", &dir);
+        let parts = parts("@remote:file:///guide.md and @notes.txt", &dir, true);
         assert_eq!(parts.len(), 2, "{parts:?}");
         assert_eq!(
             parts[1]["text"],

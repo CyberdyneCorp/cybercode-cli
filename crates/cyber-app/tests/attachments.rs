@@ -1267,3 +1267,94 @@ async fn import_refuses_inline_media_and_downgrades_system_messages() {
     );
     assert!(sent.contains("[Imported system message"), "{sent}");
 }
+
+/// `server-api` → Prompt attachment parts, "Ranged file part" and "Malformed range": a
+/// text file is admitted as a `<file>` block, a range admits only its lines (clamped past
+/// the end), the range is part of the retry digest, a malformed range or a range on media
+/// is refused, and a `read` deny still refuses a ranged part. Nothing refused is admitted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ranged_file_parts_admit_only_their_lines() {
+    let deny_env = json!({ "permissions": { "read": { "*.env": "deny" } } });
+    let f = Fixture::with(|_| json!({ "content": "ok" }), deny_env).await;
+    let session = f.session().await;
+    let source: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+    std::fs::create_dir_all(f.project.join("src")).unwrap();
+    std::fs::write(f.project.join("src/app.ts"), &source).unwrap();
+    std::fs::write(f.project.join("secret.env"), "TOKEN=1\n").unwrap();
+    std::fs::write(f.project.join("shot.png"), screenshot()).unwrap();
+    let ranged = |start: u32, end: u32| {
+        json!({ "type": "file", "path": "src/app.ts",
+                "range": { "start_line": start, "end_line": end } })
+    };
+    let body = |id: &str, part: Value| json!({ "id": id, "parts": [{ "type": "text", "text": "explain this" }, part] });
+    let prompt = format!("/sessions/{session}/prompt");
+
+    let (status, receipt) = f.post(&prompt, &body("msg_range", ranged(12, 30))).await;
+    assert_eq!(status, 202, "{receipt}");
+    let rows = f.admitted_rows(&session);
+    let admitted: Value = serde_json::from_str(&rows[0]).unwrap();
+    let expected: String = (12..=30).map(|n| format!("line {n}\n")).collect();
+    assert_eq!(admitted["parts"][0]["text"], "explain this", "{admitted}");
+    assert_eq!(
+        admitted["parts"][1]["text"],
+        format!("<file path=\"src/app.ts\" lines=\"12-30\">\n{expected}</file>"),
+        "{admitted}"
+    );
+    let text = admitted.to_string();
+    assert!(
+        !text.contains("line 11\\n") && !text.contains("line 31"),
+        "{text}"
+    );
+
+    // An exact retry replays its receipt; the same ID with another range is another prompt.
+    let (status, replay) = f.post(&prompt, &body("msg_range", ranged(12, 30))).await;
+    assert_eq!(status, 202, "{replay}");
+    assert_eq!(replay["data"], receipt["data"]);
+    let (status, changed) = f.post(&prompt, &body("msg_range", ranged(12, 31))).await;
+    assert_eq!(status, 409, "{changed}");
+
+    // Past the end of the file: clamped to the last line.
+    let (status, clamped) = f.post(&prompt, &body("msg_tail", ranged(39, 100))).await;
+    assert_eq!(status, 202, "{clamped}");
+    let rows = f.admitted_rows(&session);
+    let tail: Value = serde_json::from_str(&rows[1]).unwrap();
+    assert_eq!(
+        tail["parts"][1]["text"],
+        "<file path=\"src/app.ts\" lines=\"39-40\">\nline 39\nline 40\n</file>",
+        "{tail}"
+    );
+
+    // Refused: malformed ranges, a range on media and a denied path.
+    for (part, tag) in [
+        (ranged(30, 12), "InvalidRequestError"),
+        (ranged(0, 3), "InvalidRequestError"),
+        (
+            json!({ "type": "file", "path": "shot.png",
+                    "range": { "start_line": 1, "end_line": 2 } }),
+            "InvalidRequestError",
+        ),
+        (
+            json!({ "type": "file", "path": "secret.env",
+                    "range": { "start_line": 1, "end_line": 1 } }),
+            "PermissionDeniedError",
+        ),
+    ] {
+        let (status, refused) = f.prompt(&session, json!([part.clone()])).await;
+        assert!(status == 400 || status == 403, "{part}: {status} {refused}");
+        assert_eq!(refused["_tag"], tag, "{part}: {refused}");
+    }
+    assert_eq!(f.admitted_rows(&session).len(), 2);
+    assert!(!f.admitted_rows(&session).concat().contains("TOKEN=1"));
+
+    // Without a range, the whole text file is admitted.
+    let (status, whole) = f
+        .prompt(&session, json!([{ "type": "file", "path": "src/app.ts" }]))
+        .await;
+    assert_eq!(status, 202, "{whole}");
+    let rows = f.admitted_rows(&session);
+    let whole: Value = serde_json::from_str(&rows[2]).unwrap();
+    assert_eq!(
+        whole["parts"][0]["text"],
+        format!("<file path=\"src/app.ts\">\n{source}\n</file>")
+    );
+}
