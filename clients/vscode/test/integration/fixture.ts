@@ -22,12 +22,22 @@ export interface FixtureInfo {
   serverUrl: string;
 }
 
-function lastUserText(messages: Json[]): string {
-  const user = [...messages].reverse().find((message) => message.role === "user");
-  const content = user?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((part) => String((part as Json).text ?? "")).join("\n");
-  return "";
+/** The messages of the current turn: after the last final (tool-less) assistant answer. */
+function currentTurn(messages: Json[]): Json[] {
+  const last = messages.map((message, index) => ({ message, index })).filter(({ message }) => message.role === "assistant" && !message.tool_calls).at(-1);
+  return messages.slice(last ? last.index + 1 : 0);
+}
+
+/** Every user text of the turn, including reminders the server adds after the prompt. */
+function turnText(messages: Json[]): string {
+  return messages
+    .filter((message) => message.role === "user")
+    .map((message) => {
+      const content = message.content;
+      if (typeof content === "string") return content;
+      return Array.isArray(content) ? content.map((part) => String((part as Json).text ?? "")).join("\n") : "";
+    })
+    .join("\n");
 }
 
 function toolCalls(messages: Json[]): string[] {
@@ -41,8 +51,9 @@ function call(name: string, input: Json, index: number): Json {
 /** The scripted model: markers in the prompt choose a tool call; after it, a short reply. */
 export function answer(body: Json): Json {
   const messages = (body.messages as Json[] | undefined) ?? [];
-  const text = lastUserText(messages);
-  const called = toolCalls(messages);
+  const turn = currentTurn(messages);
+  const text = turnText(turn);
+  const called = toolCalls(turn);
   if (text.includes("EDIT_APP")) {
     if (!called.includes("read")) return call("read", { path: "src/app.ts" }, messages.length);
     if (!called.includes("edit")) return call("edit", { path: "src/app.ts", old_string: "const value = 1;", new_string: "const value = 2;" }, messages.length);
