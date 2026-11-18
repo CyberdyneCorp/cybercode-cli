@@ -18,15 +18,13 @@ export OPENAI_API_KEY="your-key"
 ./target/debug/cyber
 ```
 
-OpenAI, Anthropic, GitHub Copilot and OpenAI-compatible endpoints are supported, including local model servers. Instead of an API key, you can sign in with a subscription:
+OpenAI, Anthropic, GitHub Copilot and OpenAI-compatible endpoints are supported, including local model servers. The native Gemini API is experimental (`cyber features enable gemini`, then `GEMINI_API_KEY`; [guide](docs/local-core-guide.md#gemini-api)). Instead of an API key, you can sign in with a subscription:
 
 | Subscription | Sign in | Guide |
 |---|---|---|
 | ChatGPT Plus/Pro | `cyber providers login chatgpt`, or `/login` in the TUI | [ChatGPT sign-in](docs/local-core-guide.md#signing-in-with-a-chatgpt-subscription) |
 | GitHub Copilot | `cyber providers login copilot` (CLI only) | [Copilot sign-in and limits](docs/local-core-guide.md#signing-in-with-a-github-copilot-subscription) |
-| Google Gemini | Not supported: third-party use of Gemini subscriptions has led to account suspensions, so `/login google` is refused | — |
-
-There is no native Gemini adapter yet (planned), so `GEMINI_API_KEY` alone does not enable Gemini models. Use them through a Copilot plan that serves them, or through an OpenAI-compatible gateway.
+| Google Gemini | Not supported: Google's terms forbid third-party use of its subscription logins, so `/login google` is refused; use a Gemini API key | [Gemini API](docs/local-core-guide.md#gemini-api) |
 
 Examples below use the built binary. If you installed it on your PATH, use `cyber` instead of `./target/debug/cyber`.
 
@@ -182,6 +180,7 @@ Other limits to consider:
 
 - **Acceptance is ongoing:** the full local-model baseline, Windows enforcement and several P1 migration, memory and code-intelligence paths remain open.
 - **Automation has edges:** [reserved budgets](docs/reserved-budgets.md) currently support bounded official OpenAI Responses requests; ChatGPT/Copilot subscription models use soft token/time controls. Finished-agent transcript retention and persistent scheduling are separate roadmap items; agent teams and the project hub are experimental.
+- **The native Gemini adapter is experimental:** off until `features.gemini` is set; tested against recorded protocol shapes only. A live tool-loop run with a key, the live coding baseline, Vertex AI and stored Gemini keys (`cyber providers login google`) remain.
 - **Native computer use is experimental:** macOS 14+ only, off by default; controlled capture, input and Stop passed. Other layouts, live OS revocation and release signing remain unverified.
 - **Remote access is private:** physical-device certificate trust is an operator check. Relay, paired Devices and mobile apps remain roadmap work.
 

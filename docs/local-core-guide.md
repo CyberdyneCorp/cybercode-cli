@@ -63,7 +63,7 @@ An HTTP body failure reports `provider response stream interrupted after N body 
 
 ### Stream idle timeout
 
-A response stream that delivers no bytes for `providers.<p>.timeout.idle_ms` milliseconds (default 300 000, five minutes) fails with a `Transport` error `stream idle for <n>s`. It is retried like any other transport failure. If output had already arrived, the partial answer is discarded and the request is replayed, as described above. `0` turns the timer off for that provider:
+A response stream that delivers no bytes for `providers.<p>.timeout.idle_ms` milliseconds (default 300 000, five minutes; 600 000 for the [Gemini API](#gemini-api), which sends nothing while a model thinks) fails with a `Transport` error `stream idle for <n>s`. It is retried like any other transport failure. If output had already arrived, the partial answer is discarded and the request is replayed, as described above. `0` turns the timer off for that provider:
 
 ```jsonc
 { "providers": { "ollama": { "timeout": { "idle_ms": 0 } } } }
@@ -83,7 +83,13 @@ Known error codes from HTTP bodies and in-stream errors map onto the usual reaso
 | `rate_limit_exceeded` | `RateLimit` | retried |
 | `invalid_prompt`, `*_policy` | `ContentPolicy` | not retried |
 
-A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s", capped at 60 seconds, in place of the usual backoff. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
+A retry waits the delay the server advises, taken from `retry-after-ms`, then `Retry-After`, then a message such as "try again in 2.5s" (or a Gemini `RetryInfo`), in place of the usual backoff. The longest advised delay waited as an ordinary retry is `providers.<p>.retry.max_wait_ms` (default 60 000, 240 000 for the Gemini API). A longer one is never shortened, since a retry before the window opens only spends an attempt: an interactive Session fails at once with `RateLimit` and a message such as `…; the provider advised waiting 10m, beyond the 4m retry wait cap`, so [fallback models](#model-fallback) apply and you decide. A run nobody is watching (the runs that [wait for usage limits](#usage-limit-waits), plus background subagent Jobs) waits the whole delay instead, announced by one `session.retry` and counted as one retry, as long as it ends within `usage_limit.max_wait` and before every wall deadline; `usage_limit.mode: "never"` turns that off.
+
+```jsonc
+{ "providers": { "corp-gateway": { "retry": { "max_wait_ms": 120000 } } } }
+```
+
+A response body in Google's error format (`google.rpc` `status` and `details`) is classified by the [Gemini rules](#gemini-api) whichever protocol received it, so a per-minute Gemini limit reached through an OpenAI-compatible endpoint is a retried `RateLimit`, not a `QuotaExceeded`. A Responses `response.incomplete` finishes as `Stop` for `interrupted`, `Length` for `max_output_tokens` and `ContentFilter` for `content_filter`; any other reason fails the step as `ProviderInternal` with the reason, rather than ending silently.
 
 A refusal is the model's answer: refusal text (Responses `response.refusal.delta`, Chat Completions `delta.refusal`) is shown as the answer's text. Each finished assistant message carries its `finish` reason in the messages API. When it is `content_filter`, the TUI shows `⚠ Stopped by the provider's safety filter…` under the answer, and `cyber exec` ends with `stop_reason: "refusal"` and prints a `warning:` line on stderr in text mode. When it is `length`, the TUI says the answer was cut off at the output limit, and exec reports `stop_reason: "max_tokens"`. Neither changes exec's exit code.
 
@@ -159,10 +165,10 @@ An answer keeps its reasoning as separate items, one per reasoning block the pro
 | `reasoning_content` (DeepSeek, Kimi, GLM, Qwen, vLLM) | the assistant message's `reasoning_content`; a single space when the reasoning is empty, or when a tool-calling message of the current tool loop has none (another model's reasoning went as text) |
 | `reasoning` (Ollama, LM Studio) | the assistant message's `reasoning` |
 | `reasoning_details` (OpenRouter) | the streamed `reasoning_details` entries, merged by index, unchanged |
-| `gemini_signature` (Gemini 3 and Gemini 4 models on OpenAI-compatible endpoints) | `extra_content.google.thought_signature` on the tool call that carried it |
+| `gemini_signature` (the [Gemini API](#gemini-api); Gemini 3 and Gemini 4 models on OpenAI-compatible endpoints) | natively, `thoughtSignature` on the part it came on; on compatible endpoints, `extra_content.google.thought_signature` on the tool call that carried it |
 | `copilot_opaque` (Copilot Chat Completions models) | `reasoning_text` and `reasoning_opaque` on the assistant message |
 
-How much reasoning goes back follows the profile's `reasoning_replay`: `always` replays it for the whole history (the default for OpenAI Responses and Anthropic), `tool_loop` only for the answers after the latest user message and drops older reasoning (the Chat Completions carriers and Gemini), and `never` sends reasoning as assistant text. Native state goes back only to the provider and model that produced it. A Turn on another model gets an item's text as assistant text and drops an item without text, such as a redacted block. An item whose state was dropped is also replayed as text, except on OpenAI Responses, which cannot replay reasoning without its encrypted content and leaves it out. When a tool loop continues on an Anthropic model with thinking on, but the answer it continues came from another model, the rest of that tool loop goes out with thinking off (the API would reject it otherwise; an answer given with thinking off has no thinking block to continue from either) and one `info` log line says so. The next prompt has thinking on again. A compaction summary carries no opaque state; the reasoning in the kept tail still replays. Sessions recorded before reasoning items read their one reasoning string and signature as a single item.
+How much reasoning goes back follows the profile's `reasoning_replay`: `always` replays it for the whole history (the default for OpenAI Responses, Anthropic and the Gemini API), `tool_loop` only for the answers after the latest user message and drops older reasoning (the Chat Completions carriers, Gemini on compatible endpoints included), and `never` sends reasoning as assistant text. Native state goes back only to the provider and model that produced it. A Turn on another model gets an item's text as assistant text and drops an item without text, such as a redacted block. An item whose state was dropped is also replayed as text, except on OpenAI Responses, which cannot replay reasoning without its encrypted content and leaves it out. When a tool loop continues on an Anthropic model with thinking on, but the answer it continues came from another model, the rest of that tool loop goes out with thinking off (the API would reject it otherwise; an answer given with thinking off has no thinking block to continue from either) and one `info` log line says so. The next prompt has thinking on again. A compaction summary carries no opaque state; the reasoning in the kept tail still replays. Sessions recorded before reasoning items read their one reasoning string and signature as a single item.
 
 Opaque state never leaves the store: exports (JSON, Markdown and HTML), the messages and history routes, the event streams (including a fork's `session.created.1`) and telemetry show `[opaque reasoning]` instead, and an imported document never supplies any. A value over 1 MiB is dropped when it arrives, with one warning per step in the log. Context estimates count opaque state at 3 tokens per 4 bytes.
 
@@ -256,6 +262,48 @@ A project's or a plugin's config can only make redaction stricter, even in a tru
 - Fragments that lost their recognizable shape. Examples are a private key's body lines printed without the `BEGIN` line (`sed -n 2,5p key.pem`), a token a tool cut short, and a lowercase-only password such as `secret=changeme`.
 - OAuth tokens in the MCP credential store, which are not matched as exact values.
 
+## Gemini API
+
+Gemini models run natively on the Gemini API (`streamGenerateContent`) with a key from [Google AI Studio](https://aistudio.google.com/apikey). The protocol is experimental until its live coding baseline is published, so turn it on first:
+
+```bash
+cyber features enable gemini       # or features.gemini in cyber.jsonc, or --features gemini once
+export GEMINI_API_KEY="your-key"
+cyber models google                # google/gemini-4-carbon, google/gemini-2.5-flash, …
+cyber exec -m google/gemini-4-carbon#high "Fix the failing test"
+```
+
+While the feature is off, `cyber models google` lists the models as `(experimental; enable with features.gemini)` and no request is sent; `cyber features list` shows `gemini  experimental  off (default)`.
+
+- **Key.** `providers.google.api.settings.api_key` in config wins, then `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` and `GOOGLE_API_KEY`, in that order. `GOOGLE_API_KEY` is generic, so it comes last, and no other catalog provider may read any of the three. The key travels only in the `x-goog-api-key` header, never in a URL, and is redacted from logs and errors like every key. Storing a key with `cyber providers login google` is not available yet (stored API-key connections are still planned for every provider); `cyber providers login google` points to these variables.
+- **Endpoint.** `https://generativelanguage.googleapis.com/v1beta`. A downloaded model catalog cannot change it; your own `providers.google.api.url` can. A trailing `/` is removed and `/v1beta` is added to a URL without a path, so `https://generativelanguage.googleapis.com` works; any other path (a proxy prefix) is kept as written. Plain `http://` is accepted only for a loopback address; another host makes the models unavailable with `insecure_url` and a message naming the URL. A custom provider can use the protocol with `api.type: "gemini"` (or `google`, `google-genai`).
+- **Default model.** With only a Google key and no `model` configured or used before, the default is the newest Pro-tier model: an ID containing `-pro`, or `gemini-4-carbon`, Google's strongest Gemini 4 reasoning model. Newer lightweight or special-purpose models are not picked on their own. A configured `model`, a recent model or `/model` always wins.
+- **Thinking.** A variant's effort becomes `thinkingLevel` on Gemini 3 and later (`google/gemini-4-hydrogen#high`), and a budget becomes `thinkingBudget` on Gemini 2.5; the two are never sent together. A budget sent to a level model becomes the nearest level (`low` up to 1 024 tokens, `medium` up to 8 192, `high` above), with an `info` log line. Reasoning off sends `thinkingBudget: 0` where a model can turn thinking off (2.5 Flash); Gemini 4, Gemini 3 Pro and 2.5 Pro cannot, so they get the lowest level or budget. Thought summaries stream as reasoning. `providers.<p>.models.<m>.profile.thinking_param` (`level` or `budget`) overrides the choice for a model whose name misleads it. Thinking counts toward `maxOutputTokens`, which defaults to the model's output limit and never exceeds 65 535; temperature is sent only when an agent or config sets one.
+- **Thought signatures.** Gemini 3 and 4 reject a tool loop whose current call lost its signature. Each signature goes back byte for byte on the part it came on: on the first of parallel calls only, or as the last part of an answer when it arrived on an empty final part. History is replayed whole (`reasoning_replay: always`), which also keeps the request prefix byte-stable for implicit caching. After you switch models in the middle of a tool loop, the current turn's calls from the other model are sent as text (`[tool call <name> <args>]`, `[tool result <name>] <output>`).
+- **`signature_bypass` (discouraged).** `providers.google.models.<m>.profile.signature_bypass: true` sends those calls as structured calls with Google's documented placeholder signature instead, and logs one warning per Session. Google discourages it, and it can hide real signature bugs; use it only when a tool loop must keep structured calls across a model switch.
+- **Quota errors.** Every Gemini quota error is a 429 that says "quota"; Cyber reads its `google.rpc` details instead:
+
+  | Message | Meaning | What happens |
+  |---|---|---|
+  | (the provider's message), `RateLimit` | a per-minute request or token limit, or capacity | waits the advised `RetryInfo` delay (up to 240 s, `retry.max_wait_ms`) and retries; a longer delay [fails at once interactively and is waited in full by unattended runs](#provider-error-codes) |
+  | `Gemini daily quota exhausted for <model> (<quota id>)` (or `weekly`) | the day's or week's quota is used | stops at once; [fallback models](#model-fallback) are tried |
+  | `Gemini project spend cap reached` | the project's spend cap | stops at once; raise the cap in AI Studio |
+  | `Gemini prepaid credit balance is exhausted; add credits in AI Studio` | HTTP 402 | stops at once |
+  | `Gemini rejected the history: missing thought signature` | a signature was lost | not retried; please report it |
+  | `Gemini API not available for this project or region` | `FAILED_PRECONDITION` | not retried |
+  | `Gemini rejected a tool declaration for <tool>: …` | a tool schema is too large or deep | not retried; see below |
+
+- **Large tool schemas.** Gemini does not publish its schema size limits and answers an oversized declaration with a 400. Tool descriptions and schemas are never shrunk or rewritten automatically: turn on MCP tool search (deferred tool loading) or disable large MCP servers for Gemini agents. `$schema`, `$id` and `examples` keys are removed before sending; everything else goes as written in `parametersJsonSchema`.
+- **Safety and finish reasons.** A safety or policy block (`SAFETY`, `PROHIBITED_CONTENT`, `BLOCKLIST`, `SPII`, `IMAGE_SAFETY`, `RECITATION`, or a blocked prompt) after some output keeps it and finishes as `content_filter`; before any output it fails with `ContentPolicy` naming the reason. Neither is retried or sent to a fallback model. `MALFORMED_FUNCTION_CALL` is retried, since a resample usually succeeds. `MAX_TOKENS` finishes as `length`, `TOO_MANY_TOOL_CALLS` keeps the calls received.
+- **Long thinking.** The stream idle window is 600 s for this protocol (`timeout.idle_ms` still overrides it), since a high-effort answer can be silent for more than five minutes. A request that fails before any header because a pooled connection was already closed is sent once more at once on a new connection; that resend is not a retry and publishes no `session.retry`.
+- **Usage.** Implicit cache hits (`cachedContentTokenCount`) are cache reads, thinking tokens are reasoning, and both are priced at the model's rates.
+
+Not yet: Vertex AI and Application Default Credentials, explicit context caching, the Interactions API, and a live run of the tool-loop tests with a key.
+
+### Why Google subscription login is refused
+
+`/login google` (or `gemini`) and `cyber providers login google` refuse, store nothing and open no browser. Google AI Pro/Ultra, Gemini Code Assist for individuals and the Gemini CLI and Antigravity logins are not supported: the Antigravity terms (clause 6) and the Gemini CLI terms prohibit third-party use of their OAuth, consumer tiers stopped being served through Gemini CLI on 2026-06-18, and accounts were suspended for third-party use in 2026. A Gemini API key works instead.
+
 ## Signing in with a ChatGPT subscription
 
 A ChatGPT Plus or Pro plan can pay for OpenAI models instead of an API key:
@@ -276,7 +324,7 @@ In the TUI, `/login openai` (or `/login chatgpt`) does the same from a dialog:
 - Esc cancels.
 - `/logout openai` signs out.
 
-The server reloads its model catalog when you sign in or out, so `chatgpt/*` models appear or disappear without a restart. Clients can drive the same flow through `POST /api/v1/providers/chatgpt/login`, then poll `GET …/login/{attempt_id}` or post the pasted URL to `…/login/{attempt_id}/code`. Google (Gemini CLI / Code Assist) subscription logins are not supported, because third-party use has led to account suspensions. Gemini models also need the planned native Gemini adapter.
+The server reloads its model catalog when you sign in or out, so `chatgpt/*` models appear or disappear without a restart. Clients can drive the same flow through `POST /api/v1/providers/chatgpt/login`, then poll `GET …/login/{attempt_id}` or post the pasted URL to `…/login/{attempt_id}/code`. Google subscription logins are not supported; see [why](#why-google-subscription-login-is-refused). Gemini models work with a [Gemini API key](#gemini-api).
 
 The sign-in uses OpenAI's OAuth flow with the Codex public client, which is what OpenCode and other harnesses use. Requests go to the Codex backend (`https://chatgpt.com/backend-api/codex`), count against your plan's limits, and send `originator: cyber`. The login is kept in `~/.local/share/cyber/chatgpt-auth.json` (mode 0600; a file other users can read is refused). It is separate from Codex's `~/.codex/auth.json`. The access token is renewed 5 minutes before it expires, under a lock shared by every Cyber process.
 
