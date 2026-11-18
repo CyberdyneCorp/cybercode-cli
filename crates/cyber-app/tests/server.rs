@@ -2222,6 +2222,7 @@ async fn bundled_skill_catalogue_and_project_overrides_share_command_precedence(
         "simplify",
         "security-review",
         "customize-cyber",
+        "grill-me",
     ] {
         let row = rows.iter().find(|row| row.name == name).unwrap();
         assert_eq!(row.source, "builtin");

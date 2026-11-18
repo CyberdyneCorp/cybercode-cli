@@ -524,7 +524,7 @@ async fn unknown_skills_list_the_available_names() {
     // The bundled `review` needs a host-resolved diff, so it is user-only.
     assert_eq!(
         out,
-        "Skill \"nope\" not found. Available: alpha, batch, customize-cyber, security-review, simplify"
+        "Skill \"nope\" not found. Available: alpha, batch, customize-cyber, grill-me, security-review, simplify"
     );
 }
 
@@ -537,7 +537,7 @@ async fn unknown_skill_lists_only_skills_the_agent_may_load() {
     let out = failed(f.call("default", "skill", json!({"name": "nope"})).await);
     assert_eq!(
         out,
-        "Skill \"nope\" not found. Available: alpha, customize-cyber, security-review, simplify"
+        "Skill \"nope\" not found. Available: alpha, customize-cyber, grill-me, security-review, simplify"
     );
 }
 
@@ -577,7 +577,7 @@ async fn skills_listing_excludes_denied_and_user_only_skills() {
         "---\nname: gamma\ndescription: user only\ndisable-model-invocation: true\n---\nC",
     );
     f.set_config(json!({"permissions": {"skill": {
-        "beta": "deny", "batch": "deny", "customize-cyber": "deny",
+        "beta": "deny", "batch": "deny", "customize-cyber": "deny", "grill-me": "deny",
         "review": "deny", "security-review": "deny", "simplify": "deny"
     }}}));
     let turn = cyber_server::runtime::TurnContext {

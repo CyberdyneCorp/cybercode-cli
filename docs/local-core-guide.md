@@ -2486,7 +2486,7 @@ Inline model-loaded skills can declare bounded `allowed-tools` and `disallowed-t
 Skills can declare `context: fork` to run in a background child with the caller's history, using the skill's model when specified. An optional `agent` names the child profile; without it the caller's profile is retained. Agent selectors require fork context and are captured in retry/replay identity. The built-in `reviewer` permits inspection and has an immutable filesystem read-only ceiling, including for descendants: bypass, configured grants and skill grants cannot authorize file edits or mutating shell commands. Use a different custom profile name for coding subtasks. The caller receives the queued summary; instruction bodies and child intermediate output stay in the child. The captured child instruction frame includes the skill base directory and a bounded list of supporting files. User commands preserve held input, release and queue delivery, and bind captured declarations to their retry identity. Child creation shares ordinary subagent admission, Mode/ancestor ceilings and cancellation ownership. Refusal or cancellation before child admission queues a durable status handback with the skill name and delegation ID. Setup diagnostics remain available through the delegation API; replay delivers a missing handback once. Unknown admission ownership requires reconciliation rather than another launch; full native and lifecycle acceptance remains open.
 
 
-Five bundled skills ship inside the binary and appear in the command catalogue without installation:
+Six bundled skills ship inside the binary and appear in the command catalogue without installation:
 
 | Command | Purpose | Execution |
 |---|---|---|
@@ -2495,5 +2495,8 @@ Five bundled skills ship inside the binary and appear in the command catalogue w
 | `/security-review [scope]` | Trace pending changes for exploitable defects | Background reviewer |
 | `/batch <change>` | Coordinate 5-30 independently checked tasks | Caller, delegating separate worktrees |
 | `/customize-cyber <request>` | Explain or update configuration and integrations | Caller |
+| `/grill-me <task>` | Interview you one question at a time, each with a recommended answer, then confirm the agreed scope before any work | Caller |
+
+`/grill-me` asks through the `question` tool, one question per call, with its recommended answer first and marked `(Recommended)`; you can always type your own answer. It reads the repository, read-only, to ground its questions. It stops when the remaining choices would not change the work, summarizes the goal, scope, decisions, assumptions and verification, and starts only after you confirm. Where `question` is not available (a subagent, `cyber exec` without an approver), it asks the same questions in plain text.
 
 Embedded instruction frames use `builtin:<name>` as their source; this is not a readable filesystem directory and grants no external-directory access. A discovered `SKILL.md` of the same name replaces the package. Configured static commands take precedence over the embedded defaults; discovered skills still take precedence over those commands. Unsupported winning command definitions remain unavailable. File-backed replacements keep their ordinary directory and supporting-file permissions. These are instruction packages using existing tool authority, not permission exemptions. Full review target resolution, the dedicated `cyber review` CLI and enforced finding validation remain under implementation.

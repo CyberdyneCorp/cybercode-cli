@@ -46,6 +46,7 @@ async fn embedded_packages_keep_skill_denials_and_do_not_authorize_external_dire
         "simplify",
         "security-review",
         "customize-cyber",
+        "grill-me",
     ] {
         flow.f
             .set_config(json!({"permissions":{"skill":{name:"deny"}}}));
