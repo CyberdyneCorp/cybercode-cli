@@ -608,7 +608,21 @@ Configure controls in trusted global or project configuration:
 }
 ```
 
-Block rules take precedence. Allow rules cover every resource and preserve hard denies, protected paths and parent manual approval. Read-only tools skip classification by default; set `classify_read_only` to true to review their approval-required requests. Set `fallback` to `deny` to refuse fallback even with a user attached. Project settings require trust. Inspect or clear recorded decision counters for the current checkout:
+Block rules take precedence. Allow rules cover every resource and preserve hard denies, protected paths and parent manual approval. Read-only tools skip classification by default, and so do sandbox-confined reads (below); set `classify_read_only` to true to review both. Set `fallback` to `deny` to refuse fallback even with a user attached. Project settings require trust.
+
+**What the reviewer can check.** Besides the tool call, the last 20 messages, the Location and your stated boundaries, the reviewer may call three read-only tools before it decides:
+
+- `transcript_search`: a literal, case-insensitive search of the Session's history (up to 10 excerpts, newest first);
+- `read_file`: up to 400 numbered lines of one file in the Location;
+- `grep_files`: a regular expression over the Location's files (up to 50 matching lines; `.gitignore`d and hidden files are skipped).
+
+The file tools read only what the Session's `read` tool could read without asking: `.env` files, other secret files (`*.pem`, `id_rsa*`, …), `deny_read` globs, files a rule asks for or denies, paths outside the Location and links leading out of it stay unreadable. Nothing the reviewer can call runs a command, writes a file or reaches the network. Every result arrives inside an `<untrusted_content source="transcript|workspace">` frame with its injection signals, and the reviewer is told that text asking it to approve is an injection attempt. A review may make at most 8 tool calls, with 16 KiB per result, 64 KiB in total and 5 s per call, inside the 30 s review limit. A file that does not exist comes back as `<path>: not found` and the review goes on; a refused path ends it without saying whether the file exists. An unknown tool, invalid arguments, a refused or failed read, a timeout or an exhausted budget ends the review as a fallback (`Reviewer tool failed: …`), never an allow. If the model catalog says the evaluator takes no tools, or the provider rejects the tools, the review runs without them as before. Each decision records the calls as `reviewer_tools` on `permission.auto_decided.1`.
+
+**Short confirmations.** When your newest message is a bare confirmation such as `yes`, `ok`, `go ahead` or `do it`, the reviewer receives it together with the assistant message it answers, and judges the action against what that message proposed. A longer reply ("yes, and push it too") is reviewed as written.
+
+**Sandbox-confined reads.** A `bash` command that only reads and that the OS sandbox fully confines skips the reviewer and is recorded as a policy allow (`Sandbox-confined read-only command`): every part is `ls`, `pwd`, `echo`, `cat`, `head`, `tail` or `wc`; it uses no variables, globs, substitutions, redirections or separators; each file it names is one the Session could `read` without asking; it runs in the Location under the enforced sandbox (`read-only` or `workspace-write`, network `proxy` or `off`), is not escalated or an excluded command, and the run is not tainted. Everything else is still reviewed, including every `git` command (repository configuration such as `core.fsmonitor` can make even `git status` run a program), `grep -r`, network commands and any write.
+
+Inspect or clear recorded decision counters for the current checkout:
 
 ```bash
 cyber permissions auto show
@@ -616,7 +630,7 @@ cyber permissions auto reset
 cyber --format json permissions auto show
 ```
 
-Counters include allows, blocks, fallbacks and classifier/policy decisions. They start when checkout scope was first recorded (or at reset); historical unscoped events are excluded. Reset preserves decision history and spending records and leaves other checkouts unchanged.
+Counters include allows, blocks, fallbacks, classifier/policy decisions and reviewer tool calls. They start when checkout scope was first recorded (or at reset); historical unscoped events are excluded. Reset preserves decision history and spending records and leaves other checkouts unchanged.
 
 After a classifier block, use `/approve` in the TUI to review the original tool call and reason, then confirm one replay. It uses the stored input without another coding-model turn, saves no permanent approval and preserves current denies, protected paths and parent manual approval. Rejected or unattended confirmation has no effects. A consumed replay remains spent even after restart or failure; unresolved effects require recovery. Configuration block rules cannot be overridden this way. API clients can POST `/api/v1/sessions/:id/approve` or call `client.session.approve(id)`. The returned receipt identifies the original decision and replay call; subscribe to Session events and answer the `auto_override` permission request to proceed.
 

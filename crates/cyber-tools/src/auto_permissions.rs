@@ -156,6 +156,11 @@ impl Ctx<'_> {
                 AutoEffect::Allow,
                 "Read-only classification is disabled".into(),
             ))
+        } else if !settings.classify_read_only && self.sandbox_confined_read(request) {
+            Some((
+                AutoEffect::Allow,
+                crate::auto_review::CONFINED_REASON.into(),
+            ))
         } else {
             None
         };
@@ -177,6 +182,7 @@ impl Ctx<'_> {
                     .iter()
                     .map(cyber_core::untrusted::TaintSource::of)
                     .collect(),
+                files: rule.is_none().then(|| self.review_files()),
             },
             ancestor_id: ancestor_id.clone(),
             rule,

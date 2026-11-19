@@ -247,7 +247,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `memory` |  | 13 |  | 1 |  | 14 |
 | `observability-costs` | 8 | 17 | 2 | 1 |  | 28 |
 | `org-policy` |  |  |  | 15 |  | 15 |
-| `permissions-modes` | 15 | 12 |  |  |  | 27 |
+| `permissions-modes` | 15 | 15 |  |  |  | 30 |
 | `plugins-marketplace` |  | 14 | 2 |  | 6 | 22 |
 | `project-collaboration` |  |  |  | 16 |  | 16 |
 | `provider-catalog` | 19 | 7 | 2 |  |  | 28 |
@@ -265,7 +265,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `system-context` | 14 | 7 | 1 |  |  | 22 |
 | `tool-registry` | 15 | 8 |  |  |  | 23 |
 | `tui` | 21 | 45 | 5 | 1 | 1 | 73 |
-| `untrusted-content` |  | 6 |  |  |  | 6 |
+| `untrusted-content` |  | 7 |  |  |  | 7 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
 | `verified-integrations` |  |  | 4 |  |  | 4 |
 | `verified-workflows` |  |  | 5 |  |  | 5 |
@@ -273,7 +273,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `workflows` |  |  | 36 | 2 | 1 | 39 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 12 | 4 |  |  | 16 |
-| **Total** | **346** | **375** | **143** | **180** | **15** | **1059** |
+| **Total** | **346** | **379** | **143** | **180** | **15** | **1063** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.

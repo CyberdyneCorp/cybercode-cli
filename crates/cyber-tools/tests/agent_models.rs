@@ -40,6 +40,7 @@ impl ModelResolver for Models {
             family: cyber_core::prompts::ModelFamily::Default,
             vision: false,
             pdf: false,
+            tools: true,
             profile: Default::default(),
         })
     }

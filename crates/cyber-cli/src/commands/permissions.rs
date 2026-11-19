@@ -57,6 +57,7 @@ pub fn run(command: PermissionsCmd, ctx: &Context, global: &GlobalArgs) -> Resul
         ("fallback", stats.fallback.to_string()),
         ("classifier decisions", stats.classifier.to_string()),
         ("policy decisions", stats.policy.to_string()),
+        ("reviewer tool calls", stats.reviewer_tool_calls.to_string()),
         (
             "recorded since",
             stats

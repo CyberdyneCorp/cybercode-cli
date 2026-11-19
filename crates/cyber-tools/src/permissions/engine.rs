@@ -426,6 +426,10 @@ pub struct Request {
     /// Absolute paths the action reads beyond its resources (a search's base and file
     /// filter), checked against the secret paths in a tainted run.
     pub reads: Vec<PathBuf>,
+    /// A `bash` tool command that runs under the enforced OS sandbox in the Location: not
+    /// excluded, not escalated, network not `on` (`permissions-modes` → Sandbox-confined
+    /// commands skip auto review). Only the `bash` tool sets it.
+    pub sandbox_confined: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

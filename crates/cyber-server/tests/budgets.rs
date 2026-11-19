@@ -325,6 +325,7 @@ async fn exhausted_scope_blocks_hidden_evaluator_calls() {
                 tool: "read".into(),
                 policy: "Only read this file".into(),
                 taint: Vec::new(),
+                files: None,
                 resources: vec!["file".into()],
                 input: json!({"path":"file"}),
             },
