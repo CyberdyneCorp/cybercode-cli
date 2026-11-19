@@ -1042,7 +1042,7 @@ pub async fn perform_owned(
 }
 
 /// Requests their own modules run: `/loop`, `/goal`, Workflow Runs, `/team`, `/login`
-/// and the update check; the branch tree (`/tree`, `/label`); and `/model <m> <prompt>`.
+/// and the update check; and the branch tree (`/tree`, `/label`).
 async fn scheduled(client: &Client, session: &Session, action: Action) -> Result<Msg, String> {
     match action {
         Action::Hex(request) => Ok(crate::hex::perform(client, session, request).await),
@@ -1050,9 +1050,11 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::ComputerStatus | Action::ComputerStop => {
             crate::computer::perform(client, session, action).await
         }
-        Action::Branch(_) | Action::Export(_) | Action::LoadUpdate | Action::ResumeAtReset => {
-            session_requests(client, session, action).await
-        }
+        Action::Branch(_)
+        | Action::Export(_)
+        | Action::LoadUpdate
+        | Action::ResumeAtReset
+        | Action::ModelPrompt { .. } => session_requests(client, session, action).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Collaboration(request) => {
@@ -1068,11 +1070,6 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::Workflow(request) => Ok(Msg::Workflow(
             crate::workflows::perform(client, request).await,
         )),
-        Action::ModelPrompt {
-            model,
-            text,
-            delivery,
-        } => model_prompt(client, session, &model, &text, delivery).await,
         _ => Ok(Msg::Done),
     }
 }
@@ -1087,8 +1084,8 @@ async fn preferences(client: &Client, action: Action) -> Result<Msg, String> {
     }
 }
 
-/// The branch tree (`/tree`, `/label`), `/export`, the update check and
-/// `/resume-at-reset`.
+/// The branch tree (`/tree`, `/label`), `/export`, the update check,
+/// `/resume-at-reset` and `/model <provider/model> <prompt>`.
 async fn session_requests(
     client: &Client,
     session: &Session,
@@ -1099,6 +1096,11 @@ async fn session_requests(
         Action::Export(request) => crate::export::perform(client, request).await,
         Action::LoadUpdate => crate::update::perform(client).await,
         Action::ResumeAtReset => crate::usage_wait::perform(client, &session.id).await,
+        Action::ModelPrompt {
+            model,
+            text,
+            delivery,
+        } => model_prompt(client, session, &model, &text, delivery).await,
         _ => Ok(Msg::Done),
     }
 }
