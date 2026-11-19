@@ -97,6 +97,8 @@ mod process_jobs;
 pub use process_jobs::{JobIo, ProcessJob, ProcessReservation, ProcessWork};
 pub mod pty;
 pub use pty::{Pty, PtyAttach, PtyChunk, PtyCursor, PtyFeed, PtyInput, PtySpec};
+mod planner;
+pub use planner::PLAN_ROLE;
 mod pr_links;
 pub use pr_links::{PR_LINKED, PrLink};
 mod preparation;

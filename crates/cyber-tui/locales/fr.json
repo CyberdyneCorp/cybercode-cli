@@ -102,6 +102,7 @@
   "expand or collapse long tool output": "déplier ou replier les longues sorties des outils",
   "expand or collapse tool output": "déplier ou replier la sortie des outils",
   "fallback: {model}": "secours : {model}",
+  "planner: {model}": "planificateur : {model}",
   "filter": "filtrer",
   "find literal bytes": "chercher des octets littéraux",
   "focus the sidebar": "activer la barre latérale",

@@ -79,39 +79,11 @@ fn right_side(app: &App) -> Vec<Span<'static>> {
         }
         spans.push(span);
     }
-    if let Some(badge) = super::messaging::badge(app) {
+    for notice in notices(app) {
         if !spans.is_empty() {
             spans.push(Span::raw("  "));
         }
-        spans.push(badge);
-    }
-    if let Some(text) = app.goals.footer() {
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
-        }
-        spans.push(Span::styled(text, Style::default().fg(t.accent)));
-    }
-    if let Some(text) = app.loops.footer(crate::loops::now_ms()) {
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
-        }
-        spans.push(Span::styled(text, Style::default().fg(t.accent)));
-    }
-    let fallback = app.session.fallback.as_ref();
-    if let Some((model, _)) = fallback.filter(|(_, until)| *until > crate::loops::now_ms()) {
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
-        }
-        spans.push(Span::styled(
-            app.trf("fallback: {model}", &[("model", model)]),
-            Style::default().fg(t.warning),
-        ));
-    }
-    if let Some(text) = app.session.usage_wait.map(crate::usage_wait::footer) {
-        if !spans.is_empty() {
-            spans.push(Span::raw("  "));
-        }
-        spans.push(Span::styled(text, Style::default().fg(t.warning)));
+        spans.push(notice);
     }
     if let Some(key) = app.keymap.label("global", "command_palette") {
         spans.push(Span::raw("  "));
@@ -119,6 +91,40 @@ fn right_side(app: &App) -> Vec<Span<'static>> {
         spans.push(Span::styled(format!(" {}", app.tr("commands")), muted));
     }
     spans.push(Span::raw(" "));
+    spans
+}
+
+/// The two-space-separated notices after the fields: messaging, Goals, Loops, the model
+/// fallback, the planner and a usage limit wait.
+fn notices(app: &App) -> Vec<Span<'static>> {
+    let t = &app.theme;
+    let accent = Style::default().fg(t.accent);
+    let warning = Style::default().fg(t.warning);
+    let mut spans: Vec<Span<'static>> = super::messaging::badge(app).into_iter().collect();
+    spans.extend(app.goals.footer().map(|text| Span::styled(text, accent)));
+    spans.extend(
+        app.loops
+            .footer(crate::loops::now_ms())
+            .map(|text| Span::styled(text, accent)),
+    );
+    let fallback = app.session.fallback.as_ref();
+    if let Some((model, _)) = fallback.filter(|(_, until)| *until > crate::loops::now_ms()) {
+        spans.push(Span::styled(
+            app.trf("fallback: {model}", &[("model", model)]),
+            warning,
+        ));
+    }
+    if app.session.model_role.as_deref() == Some("plan") {
+        spans.push(Span::styled(
+            app.trf("planner: {model}", &[("model", &app.session.model)]),
+            accent,
+        ));
+    }
+    spans.extend(
+        app.session
+            .usage_wait
+            .map(|wait| Span::styled(crate::usage_wait::footer(wait), warning)),
+    );
     spans
 }
 

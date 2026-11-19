@@ -102,6 +102,7 @@
   "expand or collapse long tool output": "expandir o contraer la salida de herramientas larga",
   "expand or collapse tool output": "expandir o contraer la salida de herramientas",
   "fallback: {model}": "respaldo: {model}",
+  "planner: {model}": "planificador: {model}",
   "filter": "filtrar",
   "find literal bytes": "buscar bytes literales",
   "focus the sidebar": "enfocar la barra lateral",

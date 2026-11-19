@@ -286,6 +286,10 @@ pub struct StepStarted {
     pub message_id: String,
     pub provider: String,
     pub model: String,
+    /// `plan` when the step runs on the planner (`provider-catalog` → Planner and
+    /// executor models); absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_role: Option<String>,
     pub tools: bool,
     /// The working-tree snapshot taken before the Turn.
     #[serde(default)]

@@ -97,6 +97,11 @@ export type AssistantEntry = {
   finish?: FinishReason | null;
   /** The agent pinned by `session.step.started.1`. */
   agent?: string | null;
+  /**
+   * `plan` when the step ran on the planner (`provider-catalog` → Planner and
+   * executor models); absent otherwise.
+   */
+  model_role?: string | null;
   /** Time of `session.step.started.1`. */
   started_ms?: number | null;
   /** Time of `session.step.ended.1` or `session.step.failed.1`; null while running. */
@@ -4988,6 +4993,11 @@ export type Session = {
   usage_limit?: UsageLimitWait | null;
   /** The model fallback in effect (`provider-catalog` → Model fallback chain). */
   fallback?: ModelFallback | null;
+  /**
+   * `plan` while the planner is the Session's active model (`provider-catalog` →
+   * Planner and executor models); absent otherwise.
+   */
+  model_role?: string | null;
 };
 
 export type SessionContext = {

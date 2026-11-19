@@ -175,6 +175,10 @@ pub struct AssistantEntry {
     /// The agent pinned by `session.step.started.1`.
     #[serde(default)]
     pub agent: Option<String>,
+    /// `plan` when the step ran on the planner (`provider-catalog` → Planner and
+    /// executor models); absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_role: Option<String>,
     /// Time of `session.step.started.1`.
     #[serde(default)]
     pub started_ms: Option<i64>,
@@ -542,6 +546,10 @@ pub struct SessionState {
     pub(crate) selection_revision: i64,
     #[serde(skip)]
     pub(crate) mode_default_pending: bool,
+    /// An explicit model switch overrode the planner for this plan phase
+    /// (`provider-catalog` → Planner and executor models).
+    #[serde(skip)]
+    pub(crate) plan_suspended: bool,
     pub last_seq: i64,
     pub inbox: Vec<InboxRow>,
     pub entries: Vec<Entry>,
@@ -825,6 +833,7 @@ impl SessionState {
             model_selection: super::selection::ModelSelection::explicit(info.model.clone()),
             selection_revision: -1,
             mode_default_pending: false,
+            plan_suspended: false,
             info,
             last_seq: -1,
             inbox: Vec::new(),
@@ -1274,6 +1283,7 @@ impl SessionState {
             "session.model.switched" => {
                 let switched: Switched = decode(e)?;
                 super::fallback::switched(&mut self.fallback, &switched);
+                super::planner::model_switched(self, &switched);
                 self.info.model = switched.to.clone();
                 if !switched.automatic {
                     self.model_selection = super::selection::ModelSelection::explicit(switched.to);
@@ -1282,6 +1292,7 @@ impl SessionState {
             "session.mode.switched" => {
                 self.info.mode = decode::<Switched>(e)?.to;
                 self.mode_default_pending = false;
+                super::planner::mode_switched(self);
             }
             "session.output_style.switched" => {
                 self.info.output_style = decode::<super::events::StyleSwitched>(e)?.to;
@@ -1532,6 +1543,7 @@ impl SessionState {
             provider: s.provider,
             model: s.model,
             agent: Some(agent),
+            model_role: s.model_role,
             started_ms: Some(time_ms),
             ..AssistantEntry::default()
         }));

@@ -59,6 +59,10 @@ pub struct Session {
     /// The model fallback in effect (`provider-catalog` → Model fallback chain).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback: Option<crate::runtime::ModelFallback>,
+    /// `plan` while the planner is the Session's active model (`provider-catalog` →
+    /// Planner and executor models); absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_role: Option<String>,
 }
 
 /// A history entry with the tool calls it made.
@@ -480,6 +484,7 @@ pub(super) fn session(state: &AppState, s: SessionState) -> Session {
         untrusted_content,
         usage_limit: s.usage_wait.pending.clone(),
         fallback: state.runtime.model_fallback(&s),
+        model_role: state.runtime.model_role(&s).map(str::to_owned),
         effective_mode,
         pending_mode,
         status: status.into(),

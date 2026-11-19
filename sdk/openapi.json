@@ -5917,6 +5917,13 @@
               }
             ],
             "description": "The model fallback in effect (`provider-catalog` → Model fallback chain)."
+          },
+          "model_role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`plan` while the planner is the Session's active model (`provider-catalog` →\nPlanner and executor models); absent otherwise."
           }
         },
         "required": [
@@ -9976,6 +9983,13 @@
             ],
             "description": "The agent pinned by `session.step.started.1`.",
             "default": null
+          },
+          "model_role": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`plan` when the step ran on the planner (`provider-catalog` → Planner and\nexecutor models); absent otherwise."
           },
           "started_ms": {
             "type": [

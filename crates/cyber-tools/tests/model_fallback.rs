@@ -283,3 +283,36 @@ async fn without_a_chain_the_failure_stands() {
         "test/main"
     );
 }
+
+/// `provider-catalog` → Planner and executor models: an active fallback outranks the
+/// planner, and the Session stays on it while it lasts, in plan mode or not.
+#[tokio::test]
+async fn a_failing_planner_falls_back_and_the_fallback_outranks_it() {
+    let (flow, _) = flow(
+        Vec::new(),
+        vec![
+            (
+                "test/planner",
+                vec![error(ErrorKind::Authentication, "invalid key")],
+            ),
+            (
+                "test/backup",
+                vec![text("planned on backup"), text("again")],
+            ),
+        ],
+        CHAIN,
+    );
+    let id = flow.session("plan").await;
+    answered(&flow, &id, "plan").await;
+    let recorded = fallbacks(&flow, &id);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0]["from"], "test/planner");
+    assert_eq!(recorded[0]["to"], "test/backup");
+
+    answered(&flow, &id, "more").await;
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.info.model, "test/backup");
+    assert_eq!(flow.requests("test/planner").len(), 1);
+    assert_eq!(flow.requests("test/backup").len(), 2);
+    assert_eq!(flow.runtime.model_role(&state), None);
+}

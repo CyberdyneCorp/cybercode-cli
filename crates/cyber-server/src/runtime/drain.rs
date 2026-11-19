@@ -580,7 +580,8 @@ async fn boundary(
     let now = inner.now_ms();
     let mut prepared = {
         let state = handle.state.lock().await;
-        let mut selected = inner.resolve_selection(&state.info, &state.effective_selection(now))?;
+        let mut selected =
+            inner.resolve_selection(&state.info, &inner.turn_selection(&state, now))?;
         if let Some(model) = state.boundary_command_model(continue_tools) {
             selected = inner.resolve_selection(
                 &state.info,
@@ -600,7 +601,7 @@ async fn boundary(
         let selection = state
             .command_model()
             .map(|model| super::selection::ModelSelection::explicit(model.into()))
-            .unwrap_or_else(|| state.effective_selection(now));
+            .unwrap_or_else(|| inner.turn_selection(&state, now));
         let selected = inner.resolve_selection(&state.info, &selection)?;
         prepared.model = selected.model;
         prepared.steps = selected.steps;
@@ -1324,6 +1325,7 @@ impl Inner {
             message_id: message_id.clone(),
             provider: resolved.provider.clone(),
             model: resolved.model.clone(),
+            model_role: self.step_role(&state, resolved),
             tools: !defs.is_empty(),
             snapshot,
             origin,
