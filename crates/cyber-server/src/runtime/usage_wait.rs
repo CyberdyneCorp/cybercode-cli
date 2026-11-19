@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cyber_core::usage_limit::{self, NoWait, UsageLimitSettings, WaitFacts, WaitMode, WaitPlan};
-use cyber_llm::LlmError;
+use cyber_llm::{LlmError, OverCap, RetryPolicy, Sleeper};
 use cyber_store::{EventRegistry, NewEvent, StoredEvent};
 use futures::future::BoxFuture;
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
@@ -313,6 +313,65 @@ impl Inner {
                 deadline: deadline.filter(|_| matches!(reason, NoWait::PastDeadline { .. })),
             },
         })
+    }
+
+    /// The retry policy of a Turn on `provider` (`provider-catalog` → Gemini error and
+    /// quota classification): the provider's wait cap, and for an unattended run the
+    /// whole of a longer advised delay, as one announced attempt on the wait clock,
+    /// within `usage_limit.max_wait` and before every wall deadline.
+    pub(super) async fn retry_policy(&self, handle: &Handle, provider: &str) -> RetryPolicy {
+        let mut policy = self.options.retry.clone();
+        if let Some(cap) = self.resolver.retry_after_cap(provider) {
+            policy.retry_after_cap = cap;
+        }
+        if let Some(up_to) = self.full_wait_bound(handle).await {
+            let clock = self.wait_clock();
+            policy.over_cap = OverCap::Wait {
+                up_to,
+                sleeper: Sleeper::new(move |duration| clock.sleep(duration)),
+            };
+        }
+        policy
+    }
+
+    /// How long an unattended run may wait an advised delay; `None` when the run is
+    /// attended or `usage_limit.mode` is `never`.
+    async fn full_wait_bound(&self, handle: &Handle) -> Option<Duration> {
+        let directory = handle.state.lock().await.info.directory.clone();
+        let settings = self.tools.usage_limit_settings(&directory).ok()?;
+        let unattended = match settings.mode {
+            WaitMode::Never => false,
+            WaitMode::Always => true,
+            WaitMode::Unattended => {
+                self.unattended(handle).await || self.background_job(handle).await
+            }
+        };
+        if !unattended {
+            return None;
+        }
+        let mut bound = Duration::from_secs(settings.max_wait_seconds);
+        // An unreadable deadline fails safe: no long wait.
+        if let Some(deadline) = self.wall_deadline(handle).await.ok()? {
+            let left = deadline.at_ms.saturating_sub(self.wait_clock().now_ms());
+            bound = bound.min(Duration::from_millis(u64::try_from(left).unwrap_or(0)));
+        }
+        Some(bound)
+    }
+
+    /// Whether the Session is the child of a background Job: nobody watches it, and its
+    /// parent is not blocked on it.
+    async fn background_job(&self, handle: &Handle) -> bool {
+        let id = handle.state.lock().await.info.id.clone();
+        self.store
+            .read(move |db| {
+                Ok(db
+                    .query_row("SELECT 1 FROM job WHERE child_id=?1 LIMIT 1", [id], |_| {
+                        Ok(())
+                    })
+                    .optional()?
+                    .is_some())
+            })
+            .unwrap_or(false)
     }
 
     /// Whether the Session has no interactive owner (design → Who is unattended): a

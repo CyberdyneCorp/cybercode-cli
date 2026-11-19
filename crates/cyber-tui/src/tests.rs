@@ -3880,14 +3880,19 @@ fn login_commands_start_openai_and_refuse_google() {
         app.completion = None;
         app.on_key(key(KeyCode::Enter))
     };
-    assert!(submit(&mut app, "/login google").is_empty());
-    assert!(
-        app.toast
-            .as_ref()
-            .unwrap()
-            .0
-            .starts_with("Google subscription login is not supported")
-    );
+    for alias in ["/login google", "/login gemini"] {
+        assert!(
+            submit(&mut app, alias).is_empty(),
+            "{alias}: no request, nothing stored"
+        );
+        let toast = &app.toast.as_ref().unwrap().0;
+        assert!(
+            toast.starts_with("Google subscription login is not supported")
+                && toast.contains("Gemini API key from AI Studio")
+                && !toast.contains("await"),
+            "{toast}"
+        );
+    }
     assert!(submit(&mut app, "/login anthropic").is_empty());
     assert!(
         app.toast

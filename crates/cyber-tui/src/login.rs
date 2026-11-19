@@ -231,8 +231,10 @@ impl App {
 
 fn refusal(target: Target, name: &str) -> String {
     match target {
+        // Google's consumer-plan terms forbid third-party use of their OAuth
+        // (`provider-credentials` → Google subscription login refused).
         Target::Google => {
-            "Google subscription login is not supported, and Gemini models await a native Gemini adapter"
+            "Google subscription login is not supported; use a Gemini API key from AI Studio (GEMINI_API_KEY)"
                 .into()
         }
         _ => format!(

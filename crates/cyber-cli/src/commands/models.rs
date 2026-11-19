@@ -57,11 +57,14 @@ pub fn run(args: ModelsArgs, ctx: &Context, global: &GlobalArgs) -> Result<(), C
             "origin": loaded.origin,
             "default": default,
             "roles": roles(&config),
-            "models": rows.iter().map(row_json).collect::<Vec<_>>(),
+            "models": rows
+                .iter()
+                .map(|row| row_json(row, catalog.hint(row.model)))
+                .collect::<Vec<_>>(),
         }));
     }
     for row in &rows {
-        println!("{}", line(row, args.verbose));
+        println!("{}", line(row, catalog.hint(row.model), args.verbose));
     }
     Ok(())
 }
@@ -83,10 +86,13 @@ fn roles(config: &Value) -> Value {
     Value::Object(map)
 }
 
-fn line(row: &Listing<'_>, verbose: bool) -> String {
+fn line(row: &Listing<'_>, hint: Option<String>, verbose: bool) -> String {
     let mut text = row.model_ref.clone();
     if let Availability::Unavailable(reason) = &row.availability {
-        text.push_str(&format!("  ({reason})"));
+        match hint {
+            Some(hint) => text.push_str(&format!("  ({reason}; {hint})")),
+            None => text.push_str(&format!("  ({reason})")),
+        }
     }
     if verbose {
         let m = row.model;
@@ -105,7 +111,7 @@ fn line(row: &Listing<'_>, verbose: bool) -> String {
     text
 }
 
-fn row_json(row: &Listing<'_>) -> Value {
+fn row_json(row: &Listing<'_>, hint: Option<String>) -> Value {
     let m = row.model;
     let (available, reason) = match &row.availability {
         Availability::Available => (true, Value::Null),
@@ -116,6 +122,7 @@ fn row_json(row: &Listing<'_>) -> Value {
         "name": m.name,
         "available": available,
         "reason": reason,
+        "hint": hint,
         "limits": m.limits,
         "cost": m.cost,
         "capabilities": m.capabilities,

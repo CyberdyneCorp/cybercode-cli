@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::catalog::profile::{ReasoningCarrier, VerbosityLevel};
+use crate::catalog::profile::{ReasoningCarrier, ThinkingParam, VerbosityLevel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -316,8 +316,9 @@ pub struct LlmRequest {
     pub routing: Option<Routing>,
 }
 
-/// Responses request fields from the model's profile and capabilities
-/// (`provider-catalog` → Responses request shaping). Other protocols ignore them.
+/// Protocol request fields from the model's profile and capabilities
+/// (`provider-catalog` → Responses request shaping, Gemini thinking configuration,
+/// Gemini thought signatures). A protocol ignores the fields that are not its own.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Shaping {
     /// The model reasons, so its encrypted reasoning is requested back.
@@ -339,6 +340,12 @@ pub struct Shaping {
     /// (`builtin-tools` → Freeform apply_patch).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub freeform_patch: bool,
+    /// Gemini: the `thinkingConfig` field to send; unset reads it from the model ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_param: Option<ThinkingParam>,
+    /// Gemini: send the placeholder signature on current-turn calls another model made.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub signature_bypass: bool,
 }
 
 impl Shaping {

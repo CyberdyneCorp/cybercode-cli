@@ -106,6 +106,17 @@ pub enum EffortClamp {
     Fail,
 }
 
+/// Which `thinkingConfig` field a Gemini model takes
+/// (`provider-catalog` → Gemini thinking configuration).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingParam {
+    /// `thinkingLevel`, as Gemini 3 and later take.
+    Level,
+    /// `thinkingBudget`, as Gemini 2.5 takes.
+    Budget,
+}
+
 /// A model's resolved behavior profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct ModelProfile {
@@ -120,6 +131,12 @@ pub struct ModelProfile {
     /// Reasoning efforts the model accepts, lowest first.
     pub efforts: Vec<String>,
     pub effort_clamp: EffortClamp,
+    /// The Gemini thinking field; unset reads it from the model ID.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_param: Option<ThinkingParam>,
+    /// Send Gemini's documented placeholder signature on current-turn calls another
+    /// model made, instead of lowering them to text. Discouraged.
+    pub signature_bypass: bool,
 }
 
 impl Default for ModelProfile {
@@ -134,6 +151,8 @@ impl Default for ModelProfile {
             tool_output: ToolOutput::default(),
             efforts: Vec::new(),
             effort_clamp: EffortClamp::NearestLower,
+            thinking_param: None,
+            signature_bypass: false,
         }
     }
 }
@@ -164,6 +183,10 @@ pub struct ProfilePatch {
     pub efforts: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort_clamp: Option<EffortClamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_param: Option<ThinkingParam>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_bypass: Option<bool>,
 }
 
 impl Default for ProfilePatch {
@@ -185,6 +208,8 @@ impl ProfilePatch {
         truncation: None,
         efforts: None,
         effort_clamp: None,
+        thinking_param: None,
+        signature_bypass: None,
     };
 
     /// Config `providers.<p>.models.<m>.profile`. A key or value that does not parse is
@@ -207,6 +232,8 @@ impl ProfilePatch {
             truncation: parsed(output.and_then(|v| v.get("truncation"))),
             efforts: parsed(map.get("efforts")),
             effort_clamp: parsed(map.get("effort_clamp")),
+            thinking_param: parsed(map.get("thinking_param")),
+            signature_bypass: parsed(map.get("signature_bypass")),
         }
     }
 }
@@ -235,6 +262,10 @@ impl ModelProfile {
             self.efforts = sorted_efforts(efforts.iter().map(String::as_str));
         }
         set(&mut self.effort_clamp, patch.effort_clamp);
+        if let Some(param) = patch.thinking_param {
+            self.thinking_param = Some(param);
+        }
+        set(&mut self.signature_bypass, patch.signature_bypass);
     }
 }
 
@@ -358,6 +389,8 @@ pub(super) fn shaping(model: &Model) -> crate::types::Shaping {
             .flatten(),
         parallel_tool_calls: Some(profile.parallel_tool_calls),
         freeform_patch: profile.edit_tool == EditTool::FreeformPatch,
+        thinking_param: profile.thinking_param,
+        signature_bypass: profile.signature_bypass,
     }
 }
 
@@ -383,13 +416,15 @@ pub(super) fn warn_unsupported_verbosity(provider: &str, model: &Model) {
     }
 }
 
-/// Layer 1: the protocol's carrier, and the JSON patch tool for a model whose catalog
+/// Layer 1: the protocol's carrier (replayed for the whole history, which also keeps a
+/// Gemini prefix byte-stable for implicit caching), and the JSON patch tool for a model whose catalog
 /// entry prefers it (`capabilities.prefers_apply_patch`).
 fn defaults(model: &Model, kind: Option<ApiKind>) -> ModelProfile {
     let mut profile = ModelProfile::default();
     let native = match kind {
         Some(ApiKind::OpenaiResponses | ApiKind::ChatgptCodex) => Some(ReasoningCarrier::Responses),
         Some(ApiKind::Anthropic) => Some(ReasoningCarrier::Anthropic),
+        Some(ApiKind::Gemini) => Some(ReasoningCarrier::GeminiSignature),
         _ => None,
     };
     if let Some(carrier) = native {
@@ -558,6 +593,55 @@ mod tests {
         }
     }
 
+    /// The native `gemini` protocol and the compatible path differ, for one model ID,
+    /// only in how much reasoning goes back: the whole history natively (byte-stable for
+    /// implicit caching), the tool loop on the compatible path.
+    #[test]
+    fn native_and_compatible_gemini_profiles_differ_only_in_replay() {
+        let model = json!({ "tool_call": true, "reasoning": true,
+            "reasoning_options": [{"type": "effort", "values": ["low", "high"]}] });
+        let data = json!({ "google": { "npm": "@ai-sdk/google", "models": { "gemini-4-carbon": model } } });
+        let (p, m) = catalog_model(data, "google", "gemini-4-carbon");
+        let native = resolve(&p, &m);
+        let data = json!({ "corp": { "npm": "@ai-sdk/openai-compatible", "api": "https://llm.example/v1",
+            "models": { "gemini-4-carbon": model } } });
+        let (p, m) = catalog_model(data, "corp", "gemini-4-carbon");
+        let compatible = resolve(&p, &m);
+        assert_eq!(native.reasoning_carrier, ReasoningCarrier::GeminiSignature);
+        assert_eq!(native.reasoning_replay, ReasoningReplay::Always);
+        assert_eq!(compatible.reasoning_replay, ReasoningReplay::ToolLoop);
+        assert_eq!(
+            ModelProfile {
+                reasoning_replay: ReasoningReplay::ToolLoop,
+                ..native
+            },
+            compatible
+        );
+    }
+
+    /// `thinking_param` and `signature_bypass` come from config; bypass is off by default.
+    #[test]
+    fn gemini_profile_fields_come_from_config() {
+        let data = json!({ "google": { "npm": "@ai-sdk/google", "models": { "gemini-x": {} } } });
+        let (p, mut m) = catalog_model(data, "google", "gemini-x");
+        let plain = resolve(&p, &m);
+        assert_eq!(
+            (plain.thinking_param, plain.signature_bypass),
+            (None, false)
+        );
+        m.profile_config = ProfilePatch::from_config(Some(&json!({
+            "thinking_param": "budget", "signature_bypass": true,
+        })));
+        let set = resolve(&p, &m);
+        assert_eq!(
+            (set.thinking_param, set.signature_bypass),
+            (Some(ThinkingParam::Budget), true)
+        );
+        let shaping = shaping(&Model { profile: set, ..m });
+        assert_eq!(shaping.thinking_param, Some(ThinkingParam::Budget));
+        assert!(shaping.signature_bypass);
+    }
+
     #[test]
     fn catalog_metadata_wins_over_the_rules() {
         let (p, mut m) = compatible("corp", "kimi-k2");
@@ -674,5 +758,6 @@ mod tests {
         same::<EditTool>(vocabulary::EDIT_TOOL);
         same::<Truncation>(vocabulary::TRUNCATION);
         same::<EffortClamp>(vocabulary::EFFORT_CLAMP);
+        same::<ThinkingParam>(vocabulary::THINKING_PARAM);
     }
 }

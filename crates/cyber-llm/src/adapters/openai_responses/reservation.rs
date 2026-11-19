@@ -331,6 +331,7 @@ mod tests {
             verbosity: Some(VerbosityLevel::Low),
             parallel_tool_calls: Some(true),
             freeform_patch: false,
+            ..Shaping::default()
         };
         let prepared = prepare(&endpoint, request, 1000).unwrap();
         let body = super::super::build_body(&prepared.request, super::super::Backend::Api);

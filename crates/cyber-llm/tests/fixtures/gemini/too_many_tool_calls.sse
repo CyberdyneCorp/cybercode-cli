@@ -1,0 +1,2 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"fc_1","name":"read","args":{"path":"a"}},"thoughtSignature":"S4sig=="}]},"finishReason":"TOO_MANY_TOOL_CALLS","index":0}],"modelVersion":"gemini-4-carbon"}
+

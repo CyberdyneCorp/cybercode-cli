@@ -1,0 +1,2 @@
+data: {"candidates":[{"finishReason":"UNEXPECTED_TOOL_CALL","index":0}],"modelVersion":"gemini-4-carbon"}
+

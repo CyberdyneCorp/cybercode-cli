@@ -54,6 +54,9 @@ fn apply_provider(p: &mut Provider, v: &Value) {
     if let Some(idle) = v.pointer("/timeout/idle_ms").and_then(Value::as_u64) {
         p.idle_ms = Some(idle);
     }
+    if let Some(wait) = v.pointer("/retry/max_wait_ms").and_then(Value::as_u64) {
+        p.retry_max_wait_ms = Some(wait);
+    }
     if let Some(disabled) = v.get("disabled").and_then(Value::as_bool) {
         p.disabled = disabled;
     }

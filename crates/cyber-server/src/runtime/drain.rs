@@ -1085,10 +1085,11 @@ impl Inner {
         &self,
         handle: &Handle,
         message_id: &str,
-        adapter: &'a dyn cyber_llm::Adapter,
+        (adapter, provider): (&'a dyn cyber_llm::Adapter, &str),
         request: &cyber_llm::LlmRequest,
         cancel: &CancellationToken,
     ) -> Option<Result<RetryingStream<'a>, cyber_llm::LlmError>> {
+        let policy = self.retry_policy(handle, provider).await;
         // Not the cache key: a subagent's is `<root>:<agent>`.
         let session_id = handle.state.lock().await.info.id.clone();
         let (bus, message_id) = (self.bus.clone(), message_id.to_string());
@@ -1104,7 +1105,7 @@ impl Inner {
         };
         tokio::select! {
             _ = cancel.cancelled() => None,
-            r = open_with_retry(adapter, request, &self.options.retry, announce) => Some(r),
+            r = open_with_retry(adapter, request, &policy, announce) => Some(r),
         }
     }
 
@@ -1125,7 +1126,13 @@ impl Inner {
         let gated = super::budget::GatedAdapter::new(self, handle, resolved, "turn")
             .for_call(message_id.clone());
         let stream = match self
-            .open_turn(handle, &message_id, &gated, &request, cancel)
+            .open_turn(
+                handle,
+                &message_id,
+                (&gated, &resolved.provider),
+                &request,
+                cancel,
+            )
             .await
         {
             None => {

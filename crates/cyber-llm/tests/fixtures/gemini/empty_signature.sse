@@ -1,0 +1,6 @@
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"The build "}]},"index":0}],"modelVersion":"gemini-4-carbon"}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"passes."}]},"index":0}],"modelVersion":"gemini-4-carbon"}
+
+data: {"candidates":[{"content":{"role":"model","parts":[{"text":"","thoughtSignature":"S2sig=="}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":40,"candidatesTokenCount":3,"totalTokenCount":43},"modelVersion":"gemini-4-carbon"}
+

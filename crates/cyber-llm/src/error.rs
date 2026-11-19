@@ -73,6 +73,11 @@ impl LlmError {
         body: &str,
         secrets: &[&str],
     ) -> Self {
+        // A `google.rpc` body says "quota" for every 429, a per-minute limit included;
+        // its details decide, whichever protocol received it.
+        if crate::adapters::is_rpc_body(body) {
+            return crate::adapters::gemini_http_error(status, headers, body, secrets);
+        }
         let error = serde_json::from_str::<Value>(body)
             .ok()
             .and_then(|v| v.get("error").cloned())
@@ -80,7 +85,7 @@ impl LlmError {
         let kind = known_code(&error).unwrap_or_else(|| classify(status, body));
         let mut e = Self::new(kind, redact(&summarize(body), secrets));
         e.status = Some(status);
-        e.retry_after = retry_after(headers).or_else(|| advised_delay(&e.message));
+        e.retry_after = header_delay(headers).or_else(|| advised_delay(&e.message));
         e.explain(&error);
         e
     }
@@ -104,7 +109,7 @@ impl LlmError {
     }
 }
 
-const OVERFLOW: &[&str] = &[
+pub(crate) const OVERFLOW: &[&str] = &[
     "context length",
     "context_length",
     "maximum context",
@@ -250,7 +255,8 @@ fn clock_at(at: jiff::Timestamp, now: jiff::Timestamp, zone: &jiff::tz::TimeZone
     at.strftime(format).to_string()
 }
 
-fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+/// The delay `retry-after-ms` or `Retry-After` advises.
+pub(crate) fn header_delay(headers: &HeaderMap) -> Option<Duration> {
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
     if let Some(ms) = header("retry-after-ms").and_then(|v| v.trim().parse::<f64>().ok()) {
         return Some(Duration::from_secs_f64(ms.max(0.0) / 1000.0));
@@ -260,7 +266,7 @@ fn retry_after(headers: &HeaderMap) -> Option<Duration> {
         .map(|s| Duration::from_secs_f64(s.max(0.0)))
 }
 
-fn summarize(body: &str) -> String {
+pub(crate) fn summarize(body: &str) -> String {
     let message = serde_json::from_str::<serde_json::Value>(body)
         .ok()
         .and_then(|v| {

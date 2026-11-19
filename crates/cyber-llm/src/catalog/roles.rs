@@ -114,6 +114,7 @@ pub fn default_model(
         .flat_map(|p| p.models.values())
         .filter(|m| m.capabilities.tools && catalog.is_available(m))
         .filter(|m| chosen_provider(catalog, config, &m.provider_id))
+        .filter(|m| in_default_tier(catalog, m))
         .max_by(|a, b| {
             a.released_at
                 .cmp(&b.released_at)
@@ -141,15 +142,37 @@ fn chosen_provider(catalog: &Catalog, config: &Value, provider: &str) -> bool {
     !keyless || config["providers"].get(provider).is_some()
 }
 
+/// Gemini models whose names carry no tier but that are Google's strongest reasoning
+/// model of their generation.
+const GOOGLE_PRO_TIER: &[&str] = &["gemini-4-carbon"];
+
+/// `provider-catalog` → Gemini default model choice: the `google` provider offers only
+/// its Pro tier to the automatic choice, unless it has no available Pro-tier model, so
+/// a lightweight or special-purpose model is never picked on its own.
+fn in_default_tier(catalog: &Catalog, model: &super::Model) -> bool {
+    if model.provider_id != "google" || is_google_pro(model) {
+        return true;
+    }
+    let pro_available = catalog.providers.get("google").is_some_and(|google| {
+        google
+            .models
+            .values()
+            .any(|m| is_google_pro(m) && m.capabilities.tools && catalog.is_available(m))
+    });
+    !pro_available
+}
+
+fn is_google_pro(model: &super::Model) -> bool {
+    let id = model.api_id.rsplit('/').next().unwrap_or_default();
+    id.contains("-pro") || GOOGLE_PRO_TIER.contains(&id)
+}
+
 fn usable(catalog: &Catalog, value: &str) -> Result<ModelRef, CatalogError> {
     let r = ModelRef::parse(value)?;
     let (_, model) = catalog.find(&r)?;
     match catalog.availability(model) {
         super::Availability::Available => Ok(r),
-        super::Availability::Unavailable(reason) => Err(CatalogError::Unavailable {
-            model: r.base(),
-            reason: reason.into(),
-        }),
+        super::Availability::Unavailable(reason) => Err(catalog.unavailable(&r, model, reason)),
     }
 }
 

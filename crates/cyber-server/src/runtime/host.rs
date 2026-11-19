@@ -272,6 +272,12 @@ pub trait ModelResolver: Send + Sync {
     fn limits(&self) -> Vec<cyber_llm::limits::LimitReading> {
         Vec::new()
     }
+
+    /// The longest server-advised delay `provider`'s requests wait as an ordinary retry
+    /// (`providers.<id>.retry.max_wait_ms`); `None` keeps the runtime's retry policy.
+    fn retry_after_cap(&self, _provider: &str) -> Option<std::time::Duration> {
+        None
+    }
 }
 
 /// Resolution through the catalog and the user's configuration. The catalog is rebuilt by
@@ -313,6 +319,10 @@ impl CatalogResolver {
 }
 
 impl ModelResolver for CatalogResolver {
+    fn retry_after_cap(&self, provider: &str) -> Option<std::time::Duration> {
+        self.catalog().retry_after_cap(provider)
+    }
+
     fn credential_values(&self) -> Vec<String> {
         self.catalog().credential_values()
     }

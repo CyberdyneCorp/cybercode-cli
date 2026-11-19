@@ -3,6 +3,7 @@
 mod anthropic;
 mod chatgpt;
 mod copilot;
+mod gemini;
 mod openai_chat;
 mod openai_responses;
 mod scripted;
@@ -23,6 +24,8 @@ use crate::types::{Content, LlmEvent, LlmRequest, Opaque, ToolCall};
 pub use anthropic::AnthropicAdapter;
 pub use chatgpt::ChatGptAdapter;
 pub use copilot::CopilotAdapter;
+pub use gemini::{GEMINI_IDLE_TIMEOUT, GeminiAdapter, gemini_base_url, gemini_url_allowed};
+pub(crate) use gemini::{http_error as gemini_http_error, is_rpc_body};
 pub use openai_chat::OpenAiChatAdapter;
 pub use openai_responses::OpenAiResponsesAdapter;
 pub use scripted::{ScriptStep, ScriptedAdapter};
@@ -36,6 +39,8 @@ pub enum ApiKind {
     OpenaiResponses,
     OpenaiCompatible,
     Anthropic,
+    /// The Gemini API (`generateContent`), authorized by an AI Studio key.
+    Gemini,
     /// The Responses protocol at the ChatGPT subscription backend, authorized by the stored
     /// login. Never selectable from configuration or catalog data.
     ChatgptCodex,
@@ -51,15 +56,18 @@ impl ApiKind {
             "openai-responses" | "openai" => Some(Self::OpenaiResponses),
             "openai-compatible" | "openai-chat" => Some(Self::OpenaiCompatible),
             "anthropic" => Some(Self::Anthropic),
+            "gemini" | "google" | "google-genai" => Some(Self::Gemini),
             _ => None,
         }
     }
 
-    /// The SDK package named by models.dev, mapped to a P0 adapter.
+    /// The SDK package named by models.dev, mapped to a native adapter.
+    /// `@ai-sdk/google-vertex` stays unmapped (`adapter_unsupported`).
     pub fn from_npm(npm: &str) -> Option<Self> {
         match npm {
             "@ai-sdk/openai" => Some(Self::OpenaiResponses),
             "@ai-sdk/anthropic" => Some(Self::Anthropic),
+            "@ai-sdk/google" => Some(Self::Gemini),
             "@ai-sdk/openai-compatible" | "@openrouter/ai-sdk-provider" => {
                 Some(Self::OpenaiCompatible)
             }
@@ -71,6 +79,7 @@ impl ApiKind {
         match self {
             Self::OpenaiResponses => Some("https://api.openai.com/v1"),
             Self::Anthropic => Some("https://api.anthropic.com/v1"),
+            Self::Gemini => Some(gemini::DEFAULT_URL),
             Self::OpenaiCompatible => None,
             Self::ChatgptCodex => Some(crate::chatgpt::BACKEND_URL),
             Self::CopilotChat => Some(crate::copilot::API_URL),
@@ -82,6 +91,7 @@ impl ApiKind {
             Self::OpenaiResponses => "openai-responses",
             Self::OpenaiCompatible => "openai-compatible",
             Self::Anthropic => "anthropic",
+            Self::Gemini => "gemini",
             Self::ChatgptCodex => "chatgpt-codex",
             Self::CopilotChat => "copilot-chat",
         }
@@ -122,6 +132,7 @@ pub fn adapter(kind: ApiKind, endpoint: Endpoint) -> Box<dyn Adapter> {
         ApiKind::OpenaiResponses => Box::new(OpenAiResponsesAdapter::new(endpoint)),
         ApiKind::OpenaiCompatible => Box::new(OpenAiChatAdapter::new(endpoint)),
         ApiKind::Anthropic => Box::new(AnthropicAdapter::new(endpoint)),
+        ApiKind::Gemini => Box::new(GeminiAdapter::new(endpoint)),
         ApiKind::ChatgptCodex => Box::new(ChatGptAdapter::new(endpoint)),
         ApiKind::CopilotChat => Box::new(CopilotAdapter::new(endpoint)),
     }
@@ -144,6 +155,19 @@ pub struct Endpoint {
     /// How long a response stream may deliver no bytes before it fails
     /// (`provider-catalog` → Stream idle timeout); `None` waits forever.
     pub idle_timeout: Option<Duration>,
+    /// Protocol-specific error parsing and stale-connection handling.
+    pub(crate) dialect: Dialect,
+}
+
+/// How [`Endpoint::post_stream`] reads failures.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum Dialect {
+    #[default]
+    Generic,
+    /// `google.rpc` error details, and one resend when a pooled connection was stale
+    /// (`provider-catalog` → Gemini error and quota classification, Gemini stream
+    /// resilience).
+    Gemini,
 }
 
 /// The default stream idle window, `provider.timeout.idle_ms` = 300 000.
@@ -161,6 +185,7 @@ impl Endpoint {
             login: None,
             copilot: None,
             idle_timeout: Some(DEFAULT_IDLE_TIMEOUT),
+            dialect: Dialect::Generic,
         }
     }
 
@@ -200,18 +225,26 @@ impl Endpoint {
         extra: &[(String, String)],
         response_limit: Option<usize>,
     ) -> Result<reqwest::Response, LlmError> {
-        let mut req = self
-            .client
-            .post(self.url(path))
-            .header("accept", "text/event-stream")
-            .json(body);
-        for (name, value) in auth.iter().chain(&self.headers).chain(extra) {
-            req = req.header(name.as_str(), value.as_str());
+        let send = || {
+            let mut req = self
+                .client
+                .post(self.url(path))
+                .header("accept", "text/event-stream")
+                .json(body);
+            for (name, value) in auth.iter().chain(&self.headers).chain(extra) {
+                req = req.header(name.as_str(), value.as_str());
+            }
+            req.send()
+        };
+        let resp = match send().await {
+            // A pooled connection the server already closed fails before any header;
+            // one immediate resend on a new connection is not a retry.
+            Err(e) if self.dialect == Dialect::Gemini && gemini::stale_connection(&e) => {
+                send().await
+            }
+            sent => sent,
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| LlmError::from_reqwest(&e, &self.secrets()))?;
+        .map_err(|e| LlmError::from_reqwest(&e, &self.secrets()))?;
         // Rate-limited and failed responses carry the windows too.
         if let Some(sink) = &self.limits {
             sink.observe(resp.headers());
@@ -236,12 +269,10 @@ impl Endpoint {
         } else {
             resp.text().await.unwrap_or_default()
         };
-        Err(LlmError::from_http(
-            status,
-            &headers,
-            &text,
-            &self.secrets(),
-        ))
+        Err(match self.dialect {
+            Dialect::Generic => LlmError::from_http(status, &headers, &text, &self.secrets()),
+            Dialect::Gemini => gemini::http_error(status, &headers, &text, &self.secrets()),
+        })
     }
 }
 

@@ -591,3 +591,172 @@ async fn a_loop_wall_budget_before_the_reset_stops_the_loop() {
     assert_eq!(state.status, "budget_exceeded", "{state:?}");
     assert!(waits(&h, &id).is_empty());
 }
+
+// `provider-catalog` → Gemini error and quota classification: an advised delay beyond the
+// provider's retry wait cap (60 s for the scripted provider) is never shortened.
+
+/// A rate limit whose server advises waiting `minutes`.
+fn advised(minutes: u64) -> Vec<ScriptStep> {
+    vec![ScriptStep::RateLimit {
+        retry_after_ms: minutes * 60_000,
+    }]
+}
+
+/// The delays the Session's `session.retry` events announced.
+fn retries(rx: &mut tokio::sync::broadcast::Receiver<LiveEvent>) -> Vec<u64> {
+    let mut found = Vec::new();
+    while let Ok(event) = rx.try_recv() {
+        if let LiveEvent::Retry { delay_ms, .. } = event {
+            found.push(delay_ms);
+        }
+    }
+    found
+}
+
+fn last_answer(state: &cyber_server::runtime::SessionState) -> String {
+    serde_json::to_string(state.entries.last().unwrap()).unwrap()
+}
+
+/// "Advised delay beyond the cap in an interactive Session".
+#[tokio::test]
+async fn an_attended_session_fails_at_once_on_a_delay_beyond_the_cap() {
+    let clock = TestClock::skipping();
+    let h = harness(vec![advised(10), text("too late")], &clock);
+    let mut live = h.runtime.subscribe();
+    let id = h.session().await;
+    prompt(&h.runtime, &id, "hello").await;
+    h.settle(&id).await;
+    assert_eq!(h.models.requests("test/main").len(), 1, "no retry");
+    let mut errors_seen = Vec::new();
+    let mut delays = Vec::new();
+    while let Ok(event) = live.try_recv() {
+        match event {
+            LiveEvent::Error { kind, message, .. } => errors_seen.push((kind, message)),
+            LiveEvent::Retry { delay_ms, .. } => delays.push(delay_ms),
+            _ => {}
+        }
+    }
+    let (kind, message) = errors_seen.pop().expect("the Turn failed");
+    assert_eq!(kind, "rate_limit");
+    assert!(
+        message.contains("advised waiting 10m, beyond the 1m retry wait cap"),
+        "{message}"
+    );
+    assert!(delays.is_empty() && clock.sleeps.lock().unwrap().is_empty());
+}
+
+/// "Advised delay beyond the cap in exec": one `session.retry` announcing the whole
+/// delay, waited on the wait clock, then the request again.
+#[tokio::test]
+async fn an_unattended_run_waits_the_whole_advised_delay() {
+    let clock = TestClock::skipping();
+    let h = harness(vec![advised(10), text("after the wait")], &clock);
+    let mut live = h.runtime.subscribe();
+    let id = unattended(&h, None).await;
+    prompt(&h.runtime, &id, "nightly").await;
+    h.settle(&id).await;
+    assert_eq!(h.models.requests("test/main").len(), 2);
+    assert_eq!(retries(&mut live), [600_000]);
+    assert_eq!(*clock.sleeps.lock().unwrap(), [Duration::from_secs(600)]);
+    assert!(last_answer(&h.state(&id).await).contains("after the wait"));
+}
+
+/// "Background subagent Job waits": its interactive parent is not blocked and does not
+/// make the child attended.
+#[tokio::test]
+async fn a_background_subagent_job_waits_the_whole_delay() {
+    let clock = TestClock::skipping();
+    let h = harness(vec![advised(6), text("child done")], &clock);
+    let parent = h.session().await;
+    let child = h
+        .runtime
+        .create_session(CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(parent.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    h.runtime
+        .start_child_job(
+            &parent,
+            &child,
+            "worker".into(),
+            "background work".into(),
+            None,
+            Box::pin(futures::future::pending()),
+        )
+        .await
+        .unwrap();
+    prompt(&h.runtime, &child, "work").await;
+    h.settle(&child).await;
+    assert_eq!(*clock.sleeps.lock().unwrap(), [Duration::from_secs(360)]);
+    assert!(last_answer(&h.state(&child).await).contains("child done"));
+}
+
+/// "Unattended wait past a deadline" and "Waiting turned off": no wait starts.
+#[tokio::test]
+async fn no_whole_wait_past_a_deadline_or_with_waiting_off() {
+    let clock = TestClock::skipping();
+    let h = harness(vec![advised(10), advised(10)], &clock);
+    let mut live = h.runtime.subscribe();
+    let budget = Budget {
+        max_wall_seconds: Some(300.0),
+        ..Budget::default()
+    };
+    let id = unattended(&h, Some(budget)).await;
+    prompt(&h.runtime, &id, "hello").await;
+    h.settle(&id).await;
+    let (kind, message) = errors(&mut live).pop().expect("the Turn failed");
+    assert_eq!(kind, "rate_limit");
+    assert!(message.contains("advised waiting 10m"), "{message}");
+
+    *h.tools.usage_limit.lock().unwrap() = UsageLimitSettings {
+        mode: cyber_core::usage_limit::WaitMode::Never,
+        ..UsageLimitSettings::default()
+    };
+    let id = unattended(&h, None).await;
+    prompt(&h.runtime, &id, "again").await;
+    h.settle(&id).await;
+    let (kind, _) = errors(&mut live).pop().expect("the Turn failed");
+    assert_eq!(kind, "rate_limit");
+    assert_eq!(h.models.requests("test/main").len(), 2, "one attempt each");
+    assert!(clock.sleeps.lock().unwrap().is_empty());
+}
+
+/// `usage_limit.mode: "always"` waits even with someone attending.
+#[tokio::test]
+async fn mode_always_waits_in_an_attended_session() {
+    let clock = TestClock::skipping();
+    let h = harness(vec![advised(2), text("waited")], &clock);
+    *h.tools.usage_limit.lock().unwrap() = UsageLimitSettings {
+        mode: cyber_core::usage_limit::WaitMode::Always,
+        ..UsageLimitSettings::default()
+    };
+    let id = h.session().await;
+    prompt(&h.runtime, &id, "hello").await;
+    h.settle(&id).await;
+    assert_eq!(*clock.sleeps.lock().unwrap(), [Duration::from_secs(120)]);
+}
+
+/// A loop iteration in flight waits as `exec` does, in an interactive Session.
+#[tokio::test]
+async fn a_loop_iteration_waits_the_whole_advised_delay() {
+    let clock = TestClock::skipping();
+    let h = harness(vec![advised(10), text("deploy is green")], &clock);
+    let id = h.session().await;
+    let created = h
+        .runtime
+        .create_loop(&id, every_half_hour(None))
+        .await
+        .unwrap();
+    let state = first_iteration(&h, &id, &created.loop_id).await;
+    assert_eq!(
+        state.history[0].outcome,
+        cyber_server::runtime::loops::Outcome::Completed,
+        "{state:?}"
+    );
+    assert_eq!(*clock.sleeps.lock().unwrap(), [Duration::from_secs(600)]);
+}

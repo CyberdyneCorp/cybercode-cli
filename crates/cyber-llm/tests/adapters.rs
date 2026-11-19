@@ -852,8 +852,21 @@ async fn every_adapter_emits_the_same_event_types() {
         .respond_with(ok_stream(anthropic))
         .mount(&server)
         .await;
+    let gemini = sse(&[(
+        "",
+        json!({"candidates": [{"content": {"role": "model", "parts": [{"text": "hi"}]}, "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 1}}),
+    )]);
+    Mock::given(path("/v1beta/models/m-1:streamGenerateContent"))
+        .respond_with(ok_stream(gemini))
+        .mount(&server)
+        .await;
     let mut events = Vec::new();
-    for kind in [ApiKind::OpenaiCompatible, ApiKind::Anthropic] {
+    for kind in [
+        ApiKind::OpenaiCompatible,
+        ApiKind::Anthropic,
+        ApiKind::Gemini,
+    ] {
         let a = adapter(kind, Endpoint::new(server.uri(), None));
         let mut seen = Vec::new();
         collect(a.stream(request()).await.unwrap(), |e| seen.push(e.clone()))
@@ -862,6 +875,7 @@ async fn every_adapter_emits_the_same_event_types() {
         events.push(seen);
     }
     assert_eq!(events[0], events[1]);
+    assert_eq!(events[0], events[2]);
 }
 
 #[tokio::test]
@@ -984,6 +998,7 @@ async fn every_adapter_refuses_an_unresolved_attachment_before_sending() {
         ApiKind::OpenaiCompatible,
         ApiKind::OpenaiResponses,
         ApiKind::Anthropic,
+        ApiKind::Gemini,
         ApiKind::ChatgptCodex,
         ApiKind::CopilotChat,
     ] {
@@ -1119,6 +1134,7 @@ async fn golden_responses_option_set_for_a_supporting_model() {
         verbosity: Some(VerbosityLevel::Low),
         parallel_tool_calls: Some(true),
         freeform_patch: false,
+        ..Shaping::default()
     };
     let req = shaped_request(Some(Reasoning::Effort("medium".into())), shaping);
     assert_eq!(

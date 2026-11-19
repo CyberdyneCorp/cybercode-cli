@@ -1,0 +1,1 @@
+{"error":{"code":429,"message":"Your project has reached its monthly spend cap. Raise the spend cap in AI Studio to continue.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"RESOURCE_EXHAUSTED","domain":"googleapis.com"}]}}

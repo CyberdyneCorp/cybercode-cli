@@ -57,6 +57,7 @@ fn by_name(name: &str) -> Option<ModelFamily> {
 fn by_protocol(kind: Option<ApiKind>) -> Option<ModelFamily> {
     match kind? {
         ApiKind::Anthropic => Some(ModelFamily::Anthropic),
+        ApiKind::Gemini => Some(ModelFamily::Gemini),
         ApiKind::OpenaiResponses | ApiKind::ChatgptCodex => Some(ModelFamily::Openai),
         ApiKind::OpenaiCompatible | ApiKind::CopilotChat => None,
     }
