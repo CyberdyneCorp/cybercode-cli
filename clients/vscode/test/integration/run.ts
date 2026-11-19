@@ -30,12 +30,28 @@ async function holding(dir: string, secret: string): Promise<string[]> {
   return found;
 }
 
+/** Print the report's new lines while a suite runs, so a stalled run shows where it is. */
+function follow(report: string): () => Promise<void> {
+  let printed = 0;
+  const flush = async () => {
+    const text = await readFile(report, "utf8").catch(() => "");
+    if (text.length > printed) process.stdout.write(text.slice(printed));
+    printed = text.length;
+  };
+  const timer = setInterval(() => void flush(), 2000);
+  return async () => {
+    clearInterval(timer);
+    await flush();
+  };
+}
+
 async function launch(fixture: Fixture, suite: "chat" | "restricted", profile: string): Promise<void> {
   const report = join(profile, `${suite}.report`);
+  const stop = follow(report);
   try {
     await runSuite(fixture, suite, profile, report);
   } finally {
-    console.log(await readFile(report, "utf8").catch(() => "(no test report)"));
+    await stop();
   }
 }
 
@@ -100,5 +116,13 @@ async function main(): Promise<void> {
   }
   process.exit(failed ? 1 : 0);
 }
+
+// A stalled VS Code (a workbench that never opens editors) must fail the run, not hang
+// the job: the whole run is bounded.
+const limit = Number(process.env.CYBER_TEST_TIMEOUT_MS ?? 20 * 60 * 1000);
+setTimeout(() => {
+  console.error(`the integration run exceeded ${limit} ms`);
+  process.exit(1);
+}, limit).unref();
 
 void main();
