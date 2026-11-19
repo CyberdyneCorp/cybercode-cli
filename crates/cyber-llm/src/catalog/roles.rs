@@ -15,6 +15,8 @@ pub enum ModelRole {
     Evaluator,
     Compaction,
     Title,
+    /// The planner: the model a top-level Session runs on while in plan mode.
+    Plan,
 }
 
 impl ModelRole {
@@ -26,6 +28,7 @@ impl ModelRole {
             Self::Evaluator => "evaluator",
             Self::Compaction => "compaction",
             Self::Title => "title",
+            Self::Plan => "plan",
         }
     }
 
@@ -34,18 +37,19 @@ impl ModelRole {
         Self::ALL.into_iter().find(|role| role.key() == key)
     }
 
-    pub const ALL: [ModelRole; 6] = [
+    pub const ALL: [ModelRole; 7] = [
         Self::Default,
         Self::Small,
         Self::Advisor,
         Self::Evaluator,
         Self::Compaction,
         Self::Title,
+        Self::Plan,
     ];
 }
 
 /// The configured reference for a role, following the canonical fallbacks.
-/// `advisor` has no fallback: unset means disabled.
+/// `advisor` and `plan` have no fallback: unset means disabled.
 pub fn role_ref(config: &Value, role: ModelRole) -> Option<String> {
     let explicit = |key: &str| {
         config
@@ -72,7 +76,7 @@ pub fn role_ref(config: &Value, role: ModelRole) -> Option<String> {
     match role {
         ModelRole::Default => default(),
         ModelRole::Small => small().or_else(default),
-        ModelRole::Advisor => explicit("advisor"),
+        ModelRole::Advisor | ModelRole::Plan => explicit(role.key()),
         ModelRole::Evaluator | ModelRole::Compaction | ModelRole::Title => {
             explicit(role.key()).or_else(small).or_else(default)
         }
@@ -196,6 +200,12 @@ mod tests {
             Some("p/wise")
         );
         assert_eq!(tier_role_ref(&json!({}), ModelRole::Advisor), None);
+        assert_eq!(role_ref(&config, ModelRole::Plan), None);
+        let planned = json!({"model":"p/cheap","model_roles":{"plan":"p/strong"}});
+        assert_eq!(
+            role_ref(&planned, ModelRole::Plan).as_deref(),
+            Some("p/strong")
+        );
     }
 
     #[test]

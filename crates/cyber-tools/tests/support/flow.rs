@@ -81,7 +81,15 @@ impl ModelResolver for Models {
         })
     }
 
+    /// The planner is `test/planner` when a test scripts it, else unset like the real
+    /// role; every other role is a scripted stand-in.
     fn role(&self, role: ModelRole) -> Option<String> {
+        if role == ModelRole::Plan {
+            return self
+                .0
+                .contains_key("test/planner")
+                .then(|| "test/planner".into());
+        }
         Some(
             if role.key() == "title" {
                 "test/title"

@@ -266,12 +266,19 @@ fn push_reasoning(
                 text: item.text.clone(),
                 opaque: item.opaque.clone(),
             });
-        } else if !native && !item.text.is_empty() {
+        } else if !native && !item.text.is_empty() && !planner_private(a, view.target) {
             out.push(Content::Text {
                 text: item.text.clone(),
             });
         }
     }
+}
+
+/// The planner's reasoning stays with the planner: another model gets its answers and
+/// tool calls, never its reasoning (`session-runtime` → Reasoning lowering across models).
+fn planner_private(a: &AssistantEntry, target: &Replay<'_>) -> bool {
+    a.model_role.as_deref() == Some(super::planner::PLAN_ROLE)
+        && (a.provider != target.provider || a.model != target.model)
 }
 
 /// Whether the Turn's model produced `item`: its opaque state names its producer, and an

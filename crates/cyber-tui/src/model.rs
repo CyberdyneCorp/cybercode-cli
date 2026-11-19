@@ -43,6 +43,9 @@ pub struct Session {
     /// The model fallback in effect and when it ends, in Unix milliseconds
     /// (`provider-catalog` → Model fallback chain).
     pub fallback: Option<(String, i64)>,
+    /// `plan` while the planner is the active model (`provider-catalog` → Planner and
+    /// executor models).
+    pub model_role: Option<String>,
 }
 
 /// A teammate's team and member name, as `SessionInfo.team` carries it.
@@ -161,6 +164,7 @@ impl Session {
                 .as_str()
                 .zip(v["fallback"]["until_ms"].as_i64())
                 .map(|(to, until)| (to.to_owned(), until)),
+            model_role: v["model_role"].as_str().map(str::to_string),
         }
     }
 }

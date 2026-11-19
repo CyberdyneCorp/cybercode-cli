@@ -105,6 +105,58 @@ async fn plan_exit_approval_switches_the_mode() {
     support::golden(&flow.f, "plan_exit", &flow.output(&id, "c1").await);
 }
 
+/// `provider-catalog` → Planner and executor models: the planner presents the plan, and
+/// after approval the executor builds with the approved plan in its history, without the
+/// planner's reasoning.
+#[tokio::test]
+async fn an_approved_plan_hands_off_from_the_planner_to_the_executor() {
+    let mut planner = vec![
+        cyber_llm::adapters::ScriptStep::Event(cyber_llm::LlmEvent::ReasoningDelta {
+            text: "private deliberation".into(),
+        }),
+        cyber_llm::adapters::ScriptStep::Event(cyber_llm::LlmEvent::ReasoningItem {
+            text: String::new(),
+            opaque: Some(cyber_llm::Opaque::new(
+                cyber_llm::OpaqueKind::Signature,
+                "planner-signature",
+            )),
+        }),
+    ];
+    planner.extend(call("c1", "plan_exit", json!({"summary": "two steps"})));
+    let flow = Flow::with_models(
+        Fixture::new(),
+        vec![text("building")],
+        true,
+        Arc::new(NoSnapshots),
+        vec![("test/planner", vec![planner])],
+    );
+    let id = flow.session("plan").await;
+    flow.f.write(
+        &format!(".cyber/plans/{id}.md"),
+        "1. migrate\n2. backfill\n",
+    );
+    flow.prompt(&id, "plan it").await;
+    let request = flow.pending(&id).await;
+    let answers = vec![vec!["Approve and build".to_string()]];
+    flow.runtime
+        .answer_question(&request.id, QuestionReply::Answers { answers })
+        .await
+        .unwrap();
+    flow.settle(&id).await;
+
+    let state = flow.runtime.state(&id).await.unwrap();
+    assert_eq!(state.info.mode, "default");
+    assert_eq!(state.info.model, "test/main");
+    assert_eq!(flow.requests("test/planner").len(), 1);
+    let output = flow.output(&id, "c1").await;
+    assert!(output.contains("Approved plan ("), "{output}");
+    assert!(output.ends_with("1. migrate\n2. backfill"), "{output}");
+    let executor = serde_json::to_string(&flow.main.requests()[0].messages).unwrap();
+    assert!(executor.contains("2. backfill"), "{executor}");
+    assert!(!executor.contains("private deliberation"), "{executor}");
+    assert!(!executor.contains("planner-signature"), "{executor}");
+}
+
 #[tokio::test]
 async fn plan_exit_request_changes_returns_feedback_and_stays_in_plan() {
     let flow = Flow::new(

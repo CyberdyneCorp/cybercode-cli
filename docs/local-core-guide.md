@@ -122,6 +122,26 @@ List backup models in `fallback_models`, and a Turn that fails on the Session's 
 
 Not yet: per-agent and per-workflow-tier `fallback_models`, and org policy on which models a fallback may select (org model policy is planned with Cyber Account).
 
+### Planner and executor models
+
+Plan with a strong model and build with a cheaper one by naming a planner in your global configuration:
+
+```jsonc
+// ~/.config/cyber/cyber.jsonc
+{
+  "model": "openai/gpt-6-mini",
+  "model_roles": { "plan": "anthropic/claude-opus" }
+}
+```
+
+- **When:** while a top-level Session is in plan mode (Shift+Tab, `/mode plan`, `plan_enter`, `--mode plan`), its Turns run on `model_roles.plan`. When it leaves plan mode (an approved `plan_exit`, or any Mode switch), the next Turn runs on the Session's own model again. Both switches are automatic `session.model.switched.1` events; the Session's own model never changes. Without `model_roles.plan`, plan mode uses the Session's model as before.
+- **Handoff:** on approval, the `plan_exit` result carries the approved plan file's text, so the executor reads the exact plan. It also sees the planner's answers and tool calls, but never its reasoning: thinking text, signatures and encrypted reasoning stay with the planner.
+- **`/model` while planning:** takes effect at the next Turn and, as always, becomes the Session's model, so it also builds with it. The planner stays suspended until the Mode changes; entering plan mode again uses it again.
+- **Precedence:** a command's own `model` wins, then an active [fallback](#model-fallback), then the planner, then the Session's model. A fallback started by a failing planner lasts its usual `fallback.sticky_minutes`.
+- **Scope:** subagents, teammates and workflow agents keep their own models. `cyber exec` cannot approve a plan, so it never hands off; `cyber exec --mode plan` simply runs on the planner.
+- **Usage:** planner steps carry `model_role: "plan"` on `session.step.started.1` and on the message. Cost and tokens are reported per model (`/usage`, `cyber stats`, OpenTelemetry), which separates the two roles. The Session view reports `model_role: "plan"` while the planner is active, and the TUI footer shows `planner: <model>`.
+- **Known limit:** an Anthropic executor with thinking on continues the approval's tool loop from a planner answer without a native thinking block, so thinking stays off until your next message (the Messages API requires it).
+
 ### Usage limit waits
 
 When a subscription plan reports its usage limit with a reset time (ChatGPT `usage_limit_reached`), a run nobody is watching waits for the reset and then retries the Turn instead of failing:

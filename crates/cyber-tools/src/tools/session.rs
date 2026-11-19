@@ -464,6 +464,21 @@ fn require_user(ctx: &Ctx<'_>) -> Result<(), ToolError> {
     }
 }
 
+/// `permissions-modes` → plan mode: with a planner, the executor model receives the
+/// approved plan itself, not only the planner's turns that led to it.
+fn approved_plan(approved: String, file: &std::path::Path, plan: &str, summary: &str) -> String {
+    let plan = if plan.trim().is_empty() {
+        summary
+    } else {
+        plan
+    };
+    format!(
+        "{approved} Carry out this approved plan.\n\nApproved plan ({}):\n\n{}",
+        file.display(),
+        plan.trim_end()
+    )
+}
+
 const APPROVE: &str = "Approve and build";
 const APPROVE_EDITS: &str = "Approve with accept-edits";
 const APPROVE_AUTO: &str = "Approve with auto";
@@ -532,13 +547,23 @@ impl Tool for PlanExit {
                 .host
                 .runtime()
                 .ok_or_else(|| failed("plan mode is unavailable in this host"))?;
+            // Asked before the switch: the planner applies only while in plan mode.
+            let handoff = runtime
+                .planner_active(&ctx.inv.session_id)
+                .await
+                .unwrap_or(false);
             runtime
                 .switch_mode(&ctx.inv.session_id, mode)
                 .await
                 .map_err(|e| failed(e.to_string()))?;
-            Ok(format!(
+            let approved = format!(
                 "Plan approved. The session leaves plan mode and continues in {mode} mode from the next step."
-            ))
+            );
+            Ok(if handoff {
+                approved_plan(approved, &ctx.policy.plan_file, &plan, summary)
+            } else {
+                approved
+            })
         })
     }
 }

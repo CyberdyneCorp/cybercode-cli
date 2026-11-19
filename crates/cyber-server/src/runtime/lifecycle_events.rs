@@ -104,12 +104,14 @@ impl Inner {
         handle: &Handle,
         model: &str,
     ) -> Result<(), RuntimeError> {
-        // Switching to the configured model while a fallback is active ends the fallback.
+        // Switching to the configured model while a fallback is active ends the fallback,
+        // and while the planner is active it overrides the planner.
         let now = self.now_ms();
         let unchanged = |state: &super::model::SessionState| {
             !state.model_selection.agent_default
                 && state.model_selection.reference == model
                 && state.active_fallback(now).is_none()
+                && self.plan_model(state).is_none()
         };
         let pre = {
             let state = handle.state.lock().await;
@@ -153,7 +155,8 @@ impl Inner {
         let now = self.now_ms();
         let pre = {
             let state = handle.state.lock().await;
-            let selected = self.resolve_selection(&state.info, &state.effective_selection(now))?;
+            let selected =
+                self.resolve_selection(&state.info, &self.turn_selection(&state, now))?;
             if state.info.model == selected.reference {
                 return Ok(());
             }
@@ -164,7 +167,8 @@ impl Inner {
         self.observe_lifecycle(pre).await;
         let post = {
             let mut state = handle.state.lock().await;
-            let selected = self.resolve_selection(&state.info, &state.effective_selection(now))?;
+            let selected =
+                self.resolve_selection(&state.info, &self.turn_selection(&state, now))?;
             if state.info.model == selected.reference {
                 return Ok(());
             }
