@@ -148,6 +148,8 @@ impl ModelResolver for Models {
             family: cyber_core::prompts::ModelFamily::Default,
             vision: true,
             pdf: true,
+            // A model named `*-notools` is one the catalog says takes no tools.
+            tools: !model.ends_with("-notools"),
             profile: profile(provider),
         })
     }
@@ -180,6 +182,8 @@ pub enum Behavior {
     AskConfirm(String),
     /// Review a request through the real auto-mode evaluator boundary.
     Auto(String),
+    /// As `Auto`, with the reviewer's read-only workspace.
+    AutoFiles(String, ReviewFiles),
     /// Enforce a classifier block, or honor an exact runtime override grant.
     AutoBlock(String),
     /// Ask one question, then report the answer.
@@ -499,18 +503,10 @@ impl ToolHost for Tools {
                 Some(Behavior::Crash) => ToolOutcome::Crashed("panic: index out of bounds".into()),
                 Some(Behavior::Panic) => panic!("tool host defect"),
                 Some(Behavior::Auto(resource)) => {
-                    let review = AutoReview {
-                        action: "bash".into(),
-                        resources: vec![resource],
-                        tool: name,
-                        input,
-                        policy: "Only modify this repository".into(),
-                        taint: Vec::new(),
-                    };
-                    match asker.review_auto(review, cancel).await {
-                        Ok(decision) => ToolOutcome::Ok(serde_json::to_string(&decision).unwrap()),
-                        Err(_) => ToolOutcome::Failed("Auto decision could not be recorded".into()),
-                    }
+                    auto_review(&asker, name, input, resource, None, cancel).await
+                }
+                Some(Behavior::AutoFiles(resource, files)) => {
+                    auto_review(&asker, name, input, resource, Some(files), cancel).await
                 }
                 Some(Behavior::AutoBlock(resource)) => {
                     if asker.auto_override_matches(&name, &input) {
@@ -525,6 +521,7 @@ impl ToolHost for Tools {
                                 input,
                                 policy: String::new(),
                                 taint: Vec::new(),
+                                files: None,
                             },
                             cancel,
                         )
@@ -806,5 +803,29 @@ pub async fn next_error(rx: &mut tokio::sync::broadcast::Receiver<LiveEvent>) ->
         if let LiveEvent::Error { kind, message, .. } = rx.recv().await.unwrap() {
             return (kind, message);
         }
+    }
+}
+
+/// Review `resource` through the real auto-mode evaluator boundary.
+async fn auto_review(
+    asker: &Asker,
+    tool: String,
+    input: Value,
+    resource: String,
+    files: Option<ReviewFiles>,
+    cancel: CancellationToken,
+) -> ToolOutcome {
+    let review = AutoReview {
+        action: "bash".into(),
+        resources: vec![resource],
+        tool,
+        input,
+        policy: "Only modify this repository".into(),
+        taint: Vec::new(),
+        files,
+    };
+    match asker.review_auto(review, cancel).await {
+        Ok(decision) => ToolOutcome::Ok(serde_json::to_string(&decision).unwrap()),
+        Err(_) => ToolOutcome::Failed("Auto decision could not be recorded".into()),
     }
 }

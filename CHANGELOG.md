@@ -10,13 +10,16 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 
 - Computer use reports a platform-neutral capability report (schema version 2): a derived mode (`unsupported`, `capture_only`, `input_enabled`), stable reason codes, authority kind, honored selectors and the support evidence level, alongside the existing macOS fields. Receipts add platform, grant, target and frame references, a reason, cleanup state and timestamps; HTTP errors add a `reason` code. `cyber computer allow <session> --preview <id> --yes` confirms a printed review by its identifier.
 - `cyber exec --format stream-json --include-hook-events` adds a `hook_event` line for each hook that ran for the run's Session (hook ID, event, scope, outcome, decision, duration, and the tool call it guarded), before the line of what it gated. Hook input, output, reasons and environment are never included. The instance event stream carries the underlying `session.hook.receipt` summaries when asked with `include=hook_receipts`, and so does a Session's event stream (`/sessions/{id}/events`) for that Session's own receipts, which `--input-format stream-json` runs follow.
+- The `auto` reviewer can check context before deciding with read-only tools: `transcript_search` over the Session's history, and `read_file`/`grep_files` over the Location under the Session's own read rules (`.env`, `deny_read` globs, secret files and paths outside the Location stay unreadable). Results arrive as framed untrusted data; budgets are 8 calls, 16 KiB per result, 64 KiB per review and 5 s per call. A bare "yes"/"go ahead" reaches the reviewer together with the assistant question it answers. `permission.auto_decided.1` records `reviewer_tools` and `confirmation`; `cyber permissions auto show` adds `reviewer tool calls`.
 
 ### Changed
 
 - A key chord that computer use refuses (for example Command+C under an application grant) is now refused with `key_chord_refused` before anything is recorded or sent, and the grant stays armed. Before, it was recorded, failed in the native adapter, settled as an unknown operation and stopped the grant. The set of allowed and refused chords on macOS is unchanged.
+- In `auto`, a plain read under the enforced OS sandbox (`ls`, `pwd`, `echo`, `cat`, `head`, `tail` or `wc` (never `git`), no shell expansion, only operands the Session may read without asking, untainted run, not escalated or excluded) is a recorded policy allow instead of a reviewer call. Every other command is still reviewed; `classify_read_only: true` reviews these too.
 
 ### Security
 
+- Any reviewer tool failure (unknown tool, invalid arguments, a refused read, a timeout or an exhausted budget) ends the `auto` review as a fallback, never an allow.
 - A hook's block reason (stderr of an exit-2 command), JSON `reason`/`stop_reason` and failure stderr are redacted like tool output and cut to 4 KiB before they reach live hook notices and hook receipts; the tool result was already redacted but was unbounded.
 
 ## [0.1.0-beta.2] - 2026-11-12

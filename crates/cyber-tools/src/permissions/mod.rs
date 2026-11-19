@@ -14,7 +14,9 @@ pub use dry_run::{Explained, layer_name};
 pub use instructions::instruction_read_gate;
 pub use removals::{RemovalRisk, RemovalScope, bash_removal, powershell_analysis};
 pub use taint::{Risk, TAINT_BYPASS_DENIED, TAINT_NOT_PRE_APPROVED, Taint, risk};
-pub(crate) use taint::{path_argument, read_only_shell, secret_path, shell_words_or_split};
+pub(crate) use taint::{
+    path_argument, posix_words, read_only_shell, secret_path, shell_words_or_split,
+};
 
 pub use engine::{
     COLLAB_MESSAGE_SEND, COLLAB_TASK_WRITE, Decision, DecisionSource, Effect, GOAL_SET,

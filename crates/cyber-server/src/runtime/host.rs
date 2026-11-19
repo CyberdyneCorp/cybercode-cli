@@ -221,6 +221,9 @@ pub struct ResolvedModel {
     pub vision: bool,
     /// The catalog's `capabilities.pdf`: the model takes PDF input.
     pub pdf: bool,
+    /// The catalog's `capabilities.tools`: `false` when the catalog says the model takes
+    /// no tools. The auto reviewer then reviews without context tools.
+    pub tools: bool,
     /// The model's behavior profile (`provider-catalog` → Model behavior profiles).
     pub profile: cyber_llm::catalog::ModelProfile,
 }
@@ -351,6 +354,7 @@ impl ModelResolver for CatalogResolver {
             family: cyber_llm::catalog::model_family(provider, model),
             vision: model.capabilities.vision,
             pdf: model.capabilities.pdf,
+            tools: model.capabilities.tools,
             profile: model.profile.clone(),
         })
     }

@@ -11,6 +11,7 @@ mod ancestry;
 pub mod attachments;
 pub use ancestry::AncestorAuthority;
 mod auto;
+pub mod auto_context;
 mod auto_override;
 pub use auto_override::AutoOverrideReceipt;
 pub mod auto_statistics;
@@ -266,7 +267,10 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 
-pub use auto::{AutoDecision, AutoEffect, AutoReview, AutoReviewStage, TAINTED_REVIEW};
+pub use auto::{
+    AutoDecision, AutoEffect, AutoReview, AutoReviewStage, CONFIRMATION_REVIEW, TAINTED_REVIEW,
+};
+pub use auto_context::{ReviewFiles, ReviewWorkspace, ReviewerToolUse};
 pub use bus::LiveEvent;
 pub use compaction::CompactionConfig;
 pub use context::{ContextInputs, Observed as ContextObservation, base_prompt};

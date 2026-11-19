@@ -59,7 +59,10 @@ impl Tool for Bash {
             }
             let analysis = analyze(command, &workdir);
             let excluded = excluded(ctx, command);
-            authorize(ctx, command, &workdir, &analysis, excluded).await?;
+            let confined = !excluded
+                && escalation.is_none()
+                && crate::sandboxing::confines_shell(ctx, &workdir);
+            authorize_confined(ctx, command, &workdir, &analysis, excluded, confined).await?;
             if let Some(justification) = &escalation {
                 escalate(ctx, command, justification).await?;
             }
@@ -251,9 +254,23 @@ pub(super) async fn authorize(
     analysis: &Analysis,
     ask_floor: bool,
 ) -> Result<(), ToolError> {
+    authorize_confined(ctx, command, workdir, analysis, ask_floor, false).await
+}
+
+/// [`authorize`], for a `bash` tool command that `confined` says runs under the enforced
+/// OS sandbox (`permissions-modes` → Sandbox-confined commands skip auto review).
+async fn authorize_confined(
+    ctx: &Ctx<'_>,
+    command: &str,
+    workdir: &Path,
+    analysis: &Analysis,
+    ask_floor: bool,
+    confined: bool,
+) -> Result<(), ToolError> {
     let mut facts = Facts::of(command, workdir, analysis, &ctx.location, &ctx.policy.home);
     facts.ask_floor = ask_floor;
     facts.boundary = ask_floor && ctx.host.sandbox_isolates_alone();
+    facts.confined = confined;
     authorize_facts(ctx, command, workdir, analysis, facts).await
 }
 
@@ -291,6 +308,7 @@ impl Facts {
             mutates,
             ask_floor: false,
             boundary: false,
+            confined: false,
         }
     }
 
@@ -305,6 +323,7 @@ impl Facts {
             ask_floor: self.ask_floor,
             sandbox_boundary: self.boundary,
             unparseable: analysis.unparseable,
+            sandbox_confined: self.confined,
             ..Request::default()
         }
     }
@@ -321,6 +340,8 @@ pub(crate) struct Facts {
     /// The excluded command leaves the sandbox that alone isolates this process, so
     /// `bypass` asks for it too (`sandbox` → Excluded commands).
     pub boundary: bool,
+    /// The command runs under the enforced OS sandbox in the Location.
+    pub confined: bool,
 }
 
 pub(crate) async fn authorize_facts(

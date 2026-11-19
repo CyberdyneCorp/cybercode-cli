@@ -18,6 +18,8 @@ pub struct AutoStatistics {
     pub fallback: i64,
     pub classifier: i64,
     pub policy: i64,
+    /// Read-only context tool calls the reviewer made.
+    pub reviewer_tool_calls: i64,
     pub recorded_since: Option<i64>,
     pub reset_at: Option<i64>,
 }
@@ -27,8 +29,8 @@ pub fn show(store: &Store, checkout_root: &str) -> Result<AutoStatistics, StoreE
     store.read(move |db| {
         let value = db
             .query_row(
-                "SELECT allowed,blocked,fallback,classifier,policy,recorded_since,reset_at
-            FROM permission_auto_statistics WHERE checkout_root=?1",
+                "SELECT allowed,blocked,fallback,classifier,policy,recorded_since,reset_at,
+            reviewer_tool_calls FROM permission_auto_statistics WHERE checkout_root=?1",
                 [&root],
                 |row| {
                     Ok(AutoStatistics {
@@ -40,6 +42,7 @@ pub fn show(store: &Store, checkout_root: &str) -> Result<AutoStatistics, StoreE
                         policy: row.get(4)?,
                         recorded_since: row.get(5)?,
                         reset_at: row.get(6)?,
+                        reviewer_tool_calls: row.get(7)?,
                     })
                 },
             )
@@ -73,7 +76,8 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
         }
         tx.execute("INSERT INTO permission_auto_statistics(checkout_root,recorded_since,reset_at)
             VALUES (?1,?2,?2) ON CONFLICT(checkout_root) DO UPDATE SET allowed=0,blocked=0,
-            fallback=0,classifier=0,policy=0,recorded_since=excluded.recorded_since,reset_at=excluded.reset_at",
+            fallback=0,classifier=0,policy=0,reviewer_tool_calls=0,recorded_since=excluded.recorded_since,
+            reset_at=excluded.reset_at",
             params![root,event.time_ms]).map_err(|e|e.to_string())?;
         return Ok(());
     }
@@ -104,11 +108,13 @@ pub(super) fn project(tx: &Transaction<'_>, event: &StoredEvent) -> Result<(), S
     let classifier = i64::from(decision.model.is_some());
     let policy =
         i64::from(decision.model.is_none() && decision.decision != super::AutoEffect::Fallback);
+    let tools = i64::try_from(decision.reviewer_tools.len()).map_err(|e| e.to_string())?;
     tx.execute("INSERT INTO permission_auto_statistics
-        (checkout_root,allowed,blocked,fallback,classifier,policy,recorded_since)
-        VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(checkout_root) DO UPDATE SET
+        (checkout_root,allowed,blocked,fallback,classifier,policy,recorded_since,reviewer_tool_calls)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(checkout_root) DO UPDATE SET
         allowed=allowed+excluded.allowed,blocked=blocked+excluded.blocked,fallback=fallback+excluded.fallback,
-        classifier=classifier+excluded.classifier,policy=policy+excluded.policy",
-        params![root,allow,block,fallback,classifier,policy,event.time_ms]).map_err(|e|e.to_string())?;
+        classifier=classifier+excluded.classifier,policy=policy+excluded.policy,
+        reviewer_tool_calls=reviewer_tool_calls+excluded.reviewer_tool_calls",
+        params![root,allow,block,fallback,classifier,policy,event.time_ms,tools]).map_err(|e|e.to_string())?;
     Ok(())
 }

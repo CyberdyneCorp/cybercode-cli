@@ -2,6 +2,7 @@
 //! `tool-registry`, `permissions-modes`).
 
 mod auto_permissions;
+mod auto_review;
 pub mod bash_analysis;
 mod browser;
 mod budget;

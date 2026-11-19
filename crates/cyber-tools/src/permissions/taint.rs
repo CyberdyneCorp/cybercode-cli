@@ -584,6 +584,12 @@ pub(crate) fn read_only_shell(req: &Request) -> bool {
         })
 }
 
+/// The words of one POSIX simple command with quotes removed, or `None` when its quoting
+/// is unbalanced (`permissions-modes` → Sandbox-confined commands skip auto review).
+pub(crate) fn posix_words(command: &str) -> Option<Vec<String>> {
+    words(command, false)
+}
+
 /// Options of the read-only programs that write a file or run a command: git's
 /// `--output`, `--ext-diff` and `--textconv`, and ripgrep's `--pre`.
 fn writes_or_runs(word: &str) -> bool {

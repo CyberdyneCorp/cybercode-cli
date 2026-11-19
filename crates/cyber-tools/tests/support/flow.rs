@@ -70,6 +70,7 @@ impl ModelResolver for Models {
             // Scripted stand-ins take images, so delegated screenshots reach them.
             vision: true,
             pdf: false,
+            tools: true,
             profile: cyber_llm::catalog::ModelProfile {
                 edit_tool: if model == "patch" {
                     cyber_llm::catalog::EditTool::JsonPatch

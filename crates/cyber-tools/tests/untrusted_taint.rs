@@ -420,7 +420,7 @@ async fn untainted_reviews_record_tainted_false() {
     let flow = Flow::with_models(
         support::Fixture::new(),
         vec![
-            call("c1", "bash", json!({"command": "echo plain"})),
+            call("c1", "bash", json!({"command": "npm test"})),
             text("done"),
         ],
         false,

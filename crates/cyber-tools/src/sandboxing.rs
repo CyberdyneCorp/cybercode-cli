@@ -89,6 +89,18 @@ fn resolve(
     )
 }
 
+/// Whether a shell command started in `workdir` runs under the enforced OS sandbox with
+/// no direct network: the effective sandbox resolved without error, its policy is not
+/// `full-access`, its network is `proxy` or `off`, and `workdir` is the Location (`permissions-modes` → Sandbox-confined commands skip
+/// auto review). Excluded and escalated commands are the caller's to rule out.
+pub(crate) fn confines_shell(ctx: &Ctx<'_>, workdir: &Path) -> bool {
+    let sandbox = effective(ctx);
+    sandbox.error.is_none()
+        && sandbox.policy != Policy::FullAccess
+        && sandbox.network != NetworkMode::On
+        && crate::host::canonical(workdir) == crate::host::canonical(&ctx.location)
+}
+
 /// In-process binary writes retain the selected sandbox filesystem ceiling.
 /// Private storage IO is privileged host work; this check covers the source target.
 pub(crate) fn binary_edit_boundary(ctx: &Ctx<'_>, path: &Path) -> Result<(), String> {

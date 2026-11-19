@@ -217,6 +217,10 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         id: "20261118000000_ide_tokens",
         sql: include_str!("../migrations/20261118000000_ide_tokens.sql"),
     },
+    Migration {
+        id: "20261118020000_auto_reviewer_tools",
+        sql: include_str!("../migrations/20261118020000_auto_reviewer_tools.sql"),
+    },
 ];
 
 pub(crate) enum Outcome {
