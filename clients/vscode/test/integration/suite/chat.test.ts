@@ -30,6 +30,19 @@ export async function present<T>(read: () => T | undefined | Promise<T | undefin
   return (await eventually(read, (value) => value !== undefined && value !== null && value !== "", what)) as T;
 }
 
+/** `work`, or a failure naming `what` after `ms`: a stalled step must not eat the hook timeout. */
+export async function within<T>(what: string, ms: number, work: Thenable<T> | Promise<T>, detail: () => string = () => ""): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} did not finish within ${ms} ms ${detail()}`.trim())), ms);
+  });
+  try {
+    return await Promise.race([Promise.resolve(work), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function extensionApi(): Promise<TestApi> {
   const extension = vscode.extensions.getExtension<TestApi>("cyber-code.cyber");
   assert.ok(extension, "the extension is installed");
@@ -110,9 +123,10 @@ export function chatSuite(): void {
 
   suiteSetup(async () => {
     registered = registrationId();
-    api = await extensionApi();
-    await vscode.commands.executeCommand("cyber.chat.focus");
-    await eventually(() => api.chat.state.phase, (phase) => phase === "ready", "the panel to attach");
+    api = await within("activating the extension", 15_000, extensionApi());
+    const state = () => `(phase ${api.chat.state.phase}: ${api.chat.state.notice}; requests: ${api.logged.slice(-5).join(" | ")})`;
+    await within("showing the Cyber Code view", 15_000, vscode.commands.executeCommand("cyber.chat.focus"), state);
+    await within("the panel attaching", 25_000, eventually(() => api.chat.state.phase, (phase) => phase === "ready", "the panel to attach", 25_000), state);
   });
 
   test("Panel attaches to the service without starting another", async () => {

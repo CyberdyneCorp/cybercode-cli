@@ -266,6 +266,8 @@ jobs:
         run: npm run test:integration
         env:
           CYBER_E2E_BINARY: ${{ github.workspace }}/target/debug/cyber
+          # App Nap throttles the never-focused test window until API calls stall.
+          CYBER_TEST_DISABLE_APP_NAP: '1'
       - run: npm run package
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'

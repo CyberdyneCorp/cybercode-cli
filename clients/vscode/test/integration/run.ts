@@ -7,7 +7,7 @@
 import { readdir, readFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
 import { Fixture } from "./fixture";
 
@@ -57,13 +57,23 @@ async function launch(fixture: Fixture, suite: "chat" | "restricted", profile: s
 
 async function runSuite(fixture: Fixture, suite: "chat" | "restricted", root: string, report: string): Promise<void> {
   const profile = join(root, suite);
-  const trust = suite === "chat" ? ["--disable-workspace-trust"] : [];
+  const trust = suite === "restricted" ? [] : ["--disable-workspace-trust"];
+  // A fresh profile per suite: no AI features, update checks or welcome pages, and, for
+  // Restricted Mode, nothing trusted and no startup prompt.
+  const settings: Record<string, unknown> = {
+    "chat.disableAIFeatures": true,
+    "workbench.startupEditor": "none",
+    "update.mode": "none",
+    "extensions.autoUpdate": false,
+    "extensions.autoCheckUpdates": false,
+    "telemetry.telemetryLevel": "off",
+    "git.enabled": false,
+  };
   if (suite === "restricted") {
-    // A fresh profile that has trusted nothing, opening untrusted folders in Restricted
-    // Mode without the startup prompt.
-    await mkdir(join(profile, "user/User"), { recursive: true });
-    await writeFile(join(profile, "user/User/settings.json"), JSON.stringify({ "security.workspace.trust.enabled": true, "security.workspace.trust.startupPrompt": "never", "security.workspace.trust.untrustedFiles": "open" }));
+    Object.assign(settings, { "security.workspace.trust.enabled": true, "security.workspace.trust.startupPrompt": "never", "security.workspace.trust.untrustedFiles": "open" });
   }
+  await mkdir(join(profile, "user/User"), { recursive: true });
+  await writeFile(join(profile, "user/User/settings.json"), JSON.stringify(settings));
   const options = {
     version: process.env.VSCODE_VERSION ?? "stable",
     cachePath: join(extension, ".vscode-test"),
@@ -72,7 +82,7 @@ async function runSuite(fixture: Fixture, suite: "chat" | "restricted", root: st
     launchArgs: [fixture.repo, "--disable-extensions", "--skip-welcome", "--skip-release-notes", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--user-data-dir", join(profile, "user"), "--extensions-dir", join(profile, "extensions"), ...trust],
     extensionTestsEnv: { ...fixture.env, CYBER_VSCODE_TEST: "1", CYBER_TEST_SUITE: suite, CYBER_TEST_FIXTURE: JSON.stringify(fixture.info()), CYBER_TEST_REPORT: report },
   };
-  if (suite === "chat") {
+  if (suite !== "restricted") {
     await runTests(options);
     return;
   }
@@ -88,7 +98,18 @@ async function runSuite(fixture: Fixture, suite: "chat" | "restricted", root: st
   if (code !== 0) throw new Error(`the ${suite} suite failed with exit code ${code}`);
 }
 
+/**
+ * On macOS, App Nap throttles a background VS Code until API calls such as
+ * `openTextDocument` stall for a minute or more. CI runners never focus the test window,
+ * so `CYBER_TEST_DISABLE_APP_NAP=1` turns App Nap off for the VS Code bundle first.
+ */
+function disableAppNap(): void {
+  if (process.platform !== "darwin" || process.env.CYBER_TEST_DISABLE_APP_NAP !== "1") return;
+  spawnSync("defaults", ["write", "com.microsoft.VSCode", "NSAppSleepDisabled", "-bool", "YES"]);
+}
+
 async function main(): Promise<void> {
+  disableAppNap();
   const binary = process.env.CYBER_E2E_BINARY ?? join(repository, "target/debug/cyber");
   const fixture = new Fixture(binary);
   const profile = await mkdtemp(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "cyvp-"));
