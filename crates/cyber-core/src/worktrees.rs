@@ -1,6 +1,7 @@
 //! Shared configuration and names for managed worktrees.
 
 mod activity;
+mod carry;
 mod changes;
 mod includes;
 pub mod inspection;
@@ -16,6 +17,7 @@ pub use activity::{
     SnapshotConstructionKind,
 };
 pub use activity::{CheckoutRetirementFile, CheckoutRetirementPlan};
+pub use carry::{CarryPlan, DEFAULT_CARRY_LIMIT_MB, plan as plan_carry};
 pub use changes::{ChangedFile, Changes};
 pub use includes::IncludedFile;
 pub use removal::{RemovalActivity, RemovalPhase, RemovalRecord};
@@ -47,6 +49,8 @@ pub struct Settings {
     pub base: String,
     pub setup: Vec<String>,
     pub cleanup: Cleanup,
+    /// Size limit of uncommitted changes carried into an isolated child; 0 carries none.
+    pub carry_limit_mb: u64,
 }
 
 impl Default for Settings {
@@ -57,6 +61,7 @@ impl Default for Settings {
             base: "HEAD".into(),
             setup: Vec::new(),
             cleanup: Cleanup::Auto,
+            carry_limit_mb: carry::DEFAULT_CARRY_LIMIT_MB,
         }
     }
 }

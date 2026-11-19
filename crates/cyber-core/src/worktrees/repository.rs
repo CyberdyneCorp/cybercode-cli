@@ -293,10 +293,25 @@ impl Repository {
         project_id: &str,
         branch: Branch<'_>,
     ) -> io::Result<Managed> {
+        self.create_carrying(execution, settings, data, project_id, branch, None)
+            .await
+    }
+
+    /// As [`Self::create_on_branch`], then commit `carry`, the uncommitted work of the
+    /// checkout at this repository's root, on the new branch as the checkout's base.
+    pub async fn create_carrying(
+        &self,
+        execution: &dyn GitExecution,
+        settings: &Settings,
+        data: &Path,
+        project_id: &str,
+        branch: Branch<'_>,
+        carry: Option<&super::CarryPlan>,
+    ) -> io::Result<Managed> {
         let _lock = RepositoryLock::try_acquire(&self.common_dir)?.ok_or_else(|| {
             io::Error::new(io::ErrorKind::WouldBlock, "Worktree repository is busy")
         })?;
-        self.create_locked(execution, settings, data, project_id, branch)
+        self.create_locked(execution, settings, data, project_id, branch, carry)
             .await
     }
 
@@ -307,6 +322,7 @@ impl Repository {
         data: &Path,
         project_id: &str,
         branch: Branch<'_>,
+        carry: Option<&super::CarryPlan>,
     ) -> io::Result<Managed> {
         let name = branch.name;
         let branch = branch.reference.to_owned();
@@ -385,6 +401,21 @@ impl Repository {
         .await?;
         self.verify(execution, &managed).await?;
         managed.included = super::includes::copy(execution, &self.root, &managed.path).await?;
+        if let Some(plan) = carry {
+            let included = managed.included.iter().map(|file| file.path.clone());
+            let carried = super::carry::apply(
+                execution,
+                plan,
+                &self.root,
+                &managed.path,
+                &managed.base,
+                &included.collect(),
+            )
+            .await?;
+            if let Some(base) = carried {
+                managed.base = base;
+            }
+        }
         self.verify(execution, &managed).await?;
         managed.ready = true;
         replace_record(&record, &managed)?;
