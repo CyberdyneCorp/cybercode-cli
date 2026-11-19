@@ -181,10 +181,10 @@ pub enum Command {
     },
     /// Import Claude Code, Codex or OpenCode configuration: detect, preview or write.
     Import(crate::commands::import::ImportArgs),
-    /// Inspect installed language servers for the current Location.
+    /// Inspect installed language servers and the repository map for the current Location.
     Lsp {
         #[command(subcommand)]
-        cmd: crate::commands::intelligence::StatusCmd,
+        cmd: crate::commands::intelligence::LspCmd,
     },
     /// Inspect detected formatters for the current Location.
     Fmt {

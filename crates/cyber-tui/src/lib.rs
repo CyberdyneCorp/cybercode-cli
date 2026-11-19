@@ -41,6 +41,7 @@ mod progress;
 mod recap;
 mod recovery;
 mod rename;
+mod repo_map;
 mod review;
 mod rewind;
 mod runner;
@@ -115,6 +116,8 @@ mod screens_progress;
 mod screens_recap;
 #[cfg(test)]
 mod screens_rename;
+#[cfg(test)]
+mod screens_repo_map;
 #[cfg(test)]
 mod screens_settings;
 #[cfg(test)]

@@ -26,6 +26,7 @@ mod pr_links;
 pub(crate) mod process;
 #[cfg(unix)]
 mod pty;
+pub(crate) mod repo_map;
 pub(crate) mod search;
 mod session;
 #[cfg(any(windows, test))]
@@ -73,6 +74,7 @@ pub(crate) fn all() -> Vec<Box<dyn Tool>> {
         Box::new(fs::List),
         Box::new(search::Glob),
         Box::new(search::Grep),
+        Box::new(repo_map::RepoMap),
         Box::new(bash::Bash),
         Box::new(web::WebFetch),
         Box::new(websearch::WebSearch),

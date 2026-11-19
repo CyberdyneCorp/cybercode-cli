@@ -41,6 +41,10 @@ const TOOL_OUTPUT_FIELDS: &[(&str, Shape)] = &[
     ("tokens", Shape::Tokens),
     ("truncation", Shape::OneOf(TRUNCATION)),
 ];
+const REPO_MAP_FIELDS: &[(&str, Shape)] = &[
+    ("context_tokens", Shape::Tokens),
+    ("tool_tokens", Shape::Tokens),
+];
 const FIELDS: &[(&str, Shape)] = &[
     ("reasoning_replay", Shape::OneOf(REASONING_REPLAY)),
     ("reasoning_carrier", Shape::OneOf(REASONING_CARRIER)),
@@ -53,6 +57,7 @@ const FIELDS: &[(&str, Shape)] = &[
     ("effort_clamp", Shape::OneOf(EFFORT_CLAMP)),
     ("thinking_param", Shape::OneOf(THINKING_PARAM)),
     ("signature_bypass", Shape::Bool),
+    ("repo_map", Shape::Object(REPO_MAP_FIELDS)),
 ];
 
 /// `providers.<p>.timeout` (`provider-catalog` → Stream idle timeout).

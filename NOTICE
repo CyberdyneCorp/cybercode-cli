@@ -4,3 +4,17 @@ Copyright 2026 The Cyber Code Authors
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 Third-party dependencies keep their own licenses; see each crate's and npm
 package's license metadata.
+
+The repository map's tag queries (crates/cyber-tools/src/repo_map/queries/*.scm)
+are adapted from the tags.scm queries of these tree-sitter grammars, all under
+the MIT License; the grammars themselves are linked as crates:
+  tree-sitter-rust        Copyright (c) 2017 Maxim Sokolov
+  tree-sitter-python      Copyright (c) 2016 Max Brunsfeld
+  tree-sitter-javascript  Copyright (c) 2014 Max Brunsfeld
+  tree-sitter-typescript  Copyright (c) Max Brunsfeld and the tree-sitter authors
+  tree-sitter-go          Copyright (c) 2014 Max Brunsfeld
+  tree-sitter-c           Copyright (c) 2014 Max Brunsfeld
+  tree-sitter-cpp         Copyright (c) Max Brunsfeld and the tree-sitter authors
+  tree-sitter-java        Copyright (c) Ayman Nadeem and the tree-sitter authors
+The Bash and Solidity queries are written for Cyber Code. tree-sitter-solidity
+is Copyright (c) 2020 Joran Honig (MIT).

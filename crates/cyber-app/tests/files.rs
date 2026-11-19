@@ -888,6 +888,7 @@ async fn binary_private_root_is_hidden_before_drafts_exist_even_with_readable_pa
     std::fs::write(&public, "public positive control").unwrap();
     let invoke = |path: &Path, call: &str| Invocation {
         tool_output: Default::default(),
+        repo_map: Default::default(),
         registration: None,
         session_id: session.clone(),
         directory: info.directory.clone(),

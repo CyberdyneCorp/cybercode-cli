@@ -228,6 +228,10 @@ pub struct Tools {
     /// Trust-inventory answer for each delivered rule's approval generation; unknown
     /// when absent.
     pub rule_approvals: Mutex<HashMap<String, cyber_server::runtime::RuleApproval>>,
+    /// An epoch-pinned `core/repo-map` value and how long observing it takes.
+    pub pinned: Mutex<Option<(String, Duration)>>,
+    /// How many times the pinned source was observed.
+    pub pinned_observed: std::sync::atomic::AtomicUsize,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -283,6 +287,8 @@ impl Tools {
             goal_settings: Mutex::default(),
             usage_limit: Mutex::default(),
             rule_approvals: Mutex::default(),
+            pinned: Mutex::default(),
+            pinned_observed: Default::default(),
         })
     }
 
@@ -309,6 +315,27 @@ impl LocationGuard for TestLocationGuard {
 }
 
 impl ToolHost for Tools {
+    fn pinned_context_observations<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _profile: &'a cyber_llm::catalog::ModelProfile,
+    ) -> BoxFuture<'a, std::collections::BTreeMap<String, cyber_server::runtime::ContextObservation>>
+    {
+        self.pinned_observed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let pinned = self.pinned.lock().unwrap().clone();
+        Box::pin(async move {
+            let Some((text, delay)) = pinned else {
+                return Default::default();
+            };
+            tokio::time::sleep(delay).await;
+            std::collections::BTreeMap::from([(
+                "core/repo-map".to_string(),
+                cyber_server::runtime::ContextObservation::Value(text),
+            )])
+        })
+    }
+
     fn rule_approval(
         &self,
         _root: &std::path::Path,

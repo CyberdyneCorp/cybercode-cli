@@ -20,6 +20,7 @@ fn management_invocation(directory: &Path, session_id: String) -> io::Result<Inv
     let id = cyber_core::ids::new_id("call");
     Ok(Invocation {
         tool_output: Default::default(),
+        repo_map: Default::default(),
         registration: None,
         session_id,
         directory: directory.canonicalize()?.display().to_string(),

@@ -1107,6 +1107,7 @@ fn invocation(
 ) -> cyber_server::runtime::Invocation {
     cyber_server::runtime::Invocation {
         tool_output: Default::default(),
+        repo_map: Default::default(),
         registration: definition.registration.clone(),
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),
@@ -1919,6 +1920,7 @@ async fn invoke_builtin(
         .execute(
             cyber_server::runtime::Invocation {
                 tool_output: Default::default(),
+                repo_map: Default::default(),
                 registration: None,
                 session_id: turn.session_id.clone(),
                 directory: turn.directory.clone(),

@@ -309,6 +309,7 @@ pub fn defaults(allowed_dirs: &[PathBuf], primary_agent: bool) -> Vec<Rule> {
         "read",
         "glob",
         "grep",
+        "repo_map",
         "list",
         "todo",
         "skill",

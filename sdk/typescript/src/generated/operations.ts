@@ -789,6 +789,23 @@ export interface Operations {
     body: undefined;
     response: S.Located_LspTransition;
   };
+  "v1.lsp.map": {
+    path: Record<string, never>;
+    query: {
+      path?: QueryValue;
+      focus?: QueryValue;
+      symbol?: QueryValue;
+      tokens?: QueryValue;
+    };
+    body: undefined;
+    response: S.Located_RepoMapView;
+  };
+  "v1.lsp.mapRebuild": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Located_RepoMapIndex;
+  };
   "v1.lsp.reload": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -3392,6 +3409,30 @@ export const operations = {
     name: "close",
     method: "POST",
     path: "/api/v1/lsp/close",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.lsp.map": {
+    tag: "lsp",
+    name: "map",
+    method: "GET",
+    path: "/api/v1/lsp/map",
+    pathParams: [],
+    query: ["path", "focus", "symbol", "tokens"],
+    body: "none",
+    located: true,
+    unwrap: false,
+    stream: false,
+  },
+  "v1.lsp.mapRebuild": {
+    tag: "lsp",
+    name: "mapRebuild",
+    method: "POST",
+    path: "/api/v1/lsp/map/rebuild",
     pathParams: [],
     query: [],
     body: "none",
@@ -6155,6 +6196,12 @@ export function createGroups(caller: Caller) {
       /** Close and fence this Location's language servers until reload (`POST /api/v1/lsp/close`) */
       close: (options?: RequestOptions): Promise<Operations["v1.lsp.close"]["response"]> =>
         caller.call("v1.lsp.close", {}, options),
+      /** Render the Location's repository map from its local index (`GET /api/v1/lsp/map`) */
+      map: (query?: Operations["v1.lsp.map"]["query"], options?: RequestOptions): Promise<Operations["v1.lsp.map"]["response"]> =>
+        caller.call("v1.lsp.map", { query }, options),
+      /** Re-extract every file of the Location's repository index (`POST /api/v1/lsp/map/rebuild`) */
+      mapRebuild: (options?: RequestOptions): Promise<Operations["v1.lsp.mapRebuild"]["response"]> =>
+        caller.call("v1.lsp.mapRebuild", {}, options),
       /** Settle this Location's language servers and reopen lazy discovery (`POST /api/v1/lsp/reload`) */
       reload: (options?: RequestOptions): Promise<Operations["v1.lsp.reload"]["response"]> =>
         caller.call("v1.lsp.reload", {}, options),

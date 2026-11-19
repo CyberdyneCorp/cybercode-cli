@@ -428,6 +428,7 @@ pub(super) fn command_invocation(
 ) -> Invocation {
     Invocation {
         tool_output: Default::default(),
+        repo_map: Default::default(),
         registration: None,
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),

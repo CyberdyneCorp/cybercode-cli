@@ -10920,6 +10920,10 @@
             "minimum": 0,
             "description": "Withheld definitions beyond the recorded bound."
           },
+          "pinned": {
+            "type": "boolean",
+            "description": "An epoch-pinned source: observed only when a baseline is rendered and never\nreconciled within the Epoch (`system-context` → Epoch-pinned Context Sources)."
+          },
           "changed_on_disk": {
             "type": [
               "boolean",
@@ -11653,6 +11657,9 @@
           "signature_bypass": {
             "type": "boolean",
             "description": "Send Gemini's documented placeholder signature on current-turn calls another\nmodel made, instead of lowering them to text. Discouraged."
+          },
+          "repo_map": {
+            "$ref": "#/components/schemas/RepoMapBudget"
           }
         },
         "required": [
@@ -11665,7 +11672,8 @@
           "tool_output",
           "efforts",
           "effort_clamp",
-          "signature_bypass"
+          "signature_bypass",
+          "repo_map"
         ],
         "description": "A model's resolved behavior profile."
       },
@@ -11793,6 +11801,26 @@
           }
         ],
         "description": "Which `thinkingConfig` field a Gemini model takes\n(`provider-catalog` → Gemini thinking configuration)."
+      },
+      "RepoMapBudget": {
+        "type": "object",
+        "properties": {
+          "context_tokens": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "tool_tokens": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "context_tokens",
+          "tool_tokens"
+        ],
+        "description": "Repository map budgets in tokens (`provider-catalog` → Repository map budgets in\nmodel profiles): the `core/repo-map` baseline map and the `repo_map` tool's default."
       },
       "Located_PluginList": {
         "type": "object",
@@ -12757,6 +12785,172 @@
           "closed",
           "reloaded"
         ]
+      },
+      "Located_RepoMapView": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RepoMapView"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
+      },
+      "RepoMapView": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoMapFile"
+            }
+          },
+          "index": {
+            "$ref": "#/components/schemas/RepoMapIndex"
+          }
+        },
+        "required": [
+          "text",
+          "files",
+          "index"
+        ],
+        "description": "A rendered repository map."
+      },
+      "RepoMapFile": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "number",
+            "format": "double"
+          },
+          "symbols": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepoMapSymbol"
+            }
+          }
+        },
+        "required": [
+          "path",
+          "rank",
+          "symbols"
+        ],
+        "description": "A file shown in a repository map, with its PageRank and selected definitions."
+      },
+      "RepoMapSymbol": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`class`, `struct`, `enum`, `interface`, `type`, `function`, `method`,\n`constant`, `macro` or `module`."
+          },
+          "line": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "signature": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "line",
+          "signature"
+        ],
+        "description": "A repository map symbol (`code-intelligence` → Repository map inspection surfaces)."
+      },
+      "RepoMapIndex": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`complete`, `partial`, `truncated`, `stale` or `building`."
+          },
+          "files": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "symbols": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "excluded": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "description": "Excluded files by reason."
+          },
+          "languages": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "description": "Indexed files by language."
+          },
+          "refreshed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Milliseconds since the Unix epoch of the last finished refresh."
+          },
+          "build_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        },
+        "required": [
+          "status",
+          "files",
+          "symbols",
+          "excluded",
+          "languages"
+        ],
+        "description": "Repository index status. Counts only: no path, name or signature."
+      },
+      "Located_RepoMapIndex": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "$ref": "#/components/schemas/LocationInfo"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RepoMapIndex"
+          }
+        },
+        "required": [
+          "location",
+          "data"
+        ],
+        "description": "A Location-scoped response."
       },
       "Located_Vcs": {
         "type": "object",
@@ -30494,6 +30688,144 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Located_LspTransition"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lsp/map": {
+      "get": {
+        "operationId": "v1.lsp.map",
+        "summary": "Render the Location's repository map from its local index",
+        "tags": [
+          "lsp"
+        ],
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "focus",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "symbol",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tokens",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_RepoMapView"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/lsp/map/rebuild": {
+      "post": {
+        "operationId": "v1.lsp.mapRebuild",
+        "summary": "Re-extract every file of the Location's repository index",
+        "tags": [
+          "lsp"
+        ],
+        "parameters": [
+          {
+            "name": "location[directory]",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-cyber-directory",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Located_RepoMapIndex"
                 }
               }
             }

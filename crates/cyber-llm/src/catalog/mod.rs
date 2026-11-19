@@ -27,7 +27,7 @@ pub(crate) use credentials::is_loopback as is_loopback_url;
 pub use credentials::{Credential, CredentialSource};
 pub use family::model_family;
 pub use model_ref::ModelRef;
-pub use profile::{EditTool, ModelProfile, ProfilePatch, ToolOutput, Truncation};
+pub use profile::{EditTool, ModelProfile, ProfilePatch, RepoMapBudget, ToolOutput, Truncation};
 pub use roles::{ModelRole, default_model, recent_models, record_recent, role_ref, tier_role_ref};
 pub use source::{Loaded, Origin, SourceOptions, load as load_source};
 
@@ -290,7 +290,8 @@ impl Catalog {
         if let Some(configured) = inputs.config.get("providers").and_then(Value::as_object) {
             config::apply(&mut providers, configured);
         }
-        resolve_profiles(&mut providers);
+        let top_level = ProfilePatch::from_repo_map(inputs.config.get("repo_map"));
+        resolve_profiles(&mut providers, &top_level);
         let credentials = credentials::resolve_all(&providers, inputs.env);
         let features = cyber_core::features::Features::from_config(inputs.config, &BTreeMap::new());
         Self {
@@ -561,12 +562,17 @@ impl Catalog {
 }
 
 /// Resolve every model's profile once its catalog and config layers are in place.
-fn resolve_profiles(providers: &mut BTreeMap<String, Provider>) {
+fn resolve_profiles(providers: &mut BTreeMap<String, Provider>, top_level: &ProfilePatch) {
     for provider in providers.values_mut() {
         let profiles: Vec<(String, ModelProfile)> = provider
             .models
             .iter()
-            .map(|(id, model)| (id.clone(), profile::resolve(provider, model)))
+            .map(|(id, model)| {
+                (
+                    id.clone(),
+                    profile::resolve_with(provider, model, top_level),
+                )
+            })
             .collect();
         for (id, resolved) in profiles {
             if let Some(model) = provider.models.get_mut(&id) {

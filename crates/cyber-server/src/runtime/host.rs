@@ -494,6 +494,9 @@ pub struct Invocation {
     pub rules: Value,
     /// The Turn model's output budget (`tool-registry` → Profile output budgets).
     pub tool_output: cyber_llm::catalog::ToolOutput,
+    /// The Turn model's repository map budgets (`provider-catalog` → Repository map
+    /// budgets in model profiles).
+    pub repo_map: cyber_llm::catalog::RepoMapBudget,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1441,6 +1444,18 @@ pub trait ToolHost: Send + Sync {
         turn: &'a TurnContext,
     ) -> BoxFuture<'a, std::collections::BTreeMap<String, super::context::Observed>> {
         Box::pin(async move { self.context_observations(turn) })
+    }
+
+    /// Epoch-pinned Context Sources (`system-context` → Epoch-pinned Context Sources):
+    /// observed only when a baseline is rendered, for the Turn's model `profile`, and
+    /// skipped by Safe Boundary reconciliation. Only values count; anything else omits
+    /// the source from that baseline.
+    fn pinned_context_observations<'a>(
+        &'a self,
+        _turn: &'a TurnContext,
+        _profile: &'a cyber_llm::catalog::ModelProfile,
+    ) -> BoxFuture<'a, std::collections::BTreeMap<String, super::context::Observed>> {
+        Box::pin(async { std::collections::BTreeMap::new() })
     }
 
     /// Resolve `@<server>:<uri>` resource mentions in a user prompt before admission

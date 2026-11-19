@@ -1,0 +1,9 @@
+scope 0 line 1 parent None: namespace net
+scope 1 line 3 parent Some(0): class Client
+1 module net scope None: namespace net
+3 class Client scope Some(0): class Client
+5 method connect scope Some(1): void connect(int port);
+6 method port scope Some(1): int port() const
+11 method connect scope Some(0): void Client::connect(int port)
+17 function main scope None: int main()
+refs: Client=1

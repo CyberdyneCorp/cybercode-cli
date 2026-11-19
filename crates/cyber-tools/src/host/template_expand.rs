@@ -269,6 +269,7 @@ impl BuiltinHost {
         }
         let invocation = Invocation {
             tool_output: Default::default(),
+            repo_map: Default::default(),
             registration: None,
             session_id: turn.session_id.clone(),
             directory: turn.directory.clone(),
@@ -311,6 +312,7 @@ impl BuiltinHost {
 fn injection_invocation(turn: &TurnContext, command: &str, asker: &Asker) -> Invocation {
     Invocation {
         tool_output: Default::default(),
+        repo_map: Default::default(),
         registration: None,
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),

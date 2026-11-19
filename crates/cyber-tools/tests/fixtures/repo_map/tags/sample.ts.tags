@@ -1,0 +1,13 @@
+scope 0 line 1 parent None: interface Store
+scope 1 line 7 parent None: enum Mode
+scope 2 line 12 parent None: class MemoryStore implements Store
+scope 3 line 22 parent None: namespace Internal
+1 interface Store scope None: interface Store
+2 method get scope Some(0): get(key: string): string | undefined
+5 type Key scope None: type Key = string;
+7 enum Mode scope None: enum Mode
+12 class MemoryStore scope None: class MemoryStore implements Store
+13 method get scope Some(2): get(key: string): string | undefined
+18 function open scope None: function open(path: string): Store
+22 module Internal scope None: namespace Internal
+refs: MemoryStore=1 Store=2

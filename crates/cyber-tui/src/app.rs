@@ -224,6 +224,8 @@ pub enum Action {
     Export(crate::export::Request),
     /// `/output-style` (`tui` → Output style picker).
     OutputStyle(crate::output_styles::Request),
+    /// `/map`: load or rebuild the repository map.
+    RepoMap(crate::repo_map::Request),
     Language(crate::language::Request),
     /// Open a file in `$VISUAL`/`$EDITOR` (`s` on a Workflow Run: its script).
     EditFile(String),
@@ -383,6 +385,8 @@ pub enum Overlay {
     ConfirmExport(crate::export::Request),
     /// `/output-style`: the listing is `App::output_styles`.
     OutputStyles(crate::output_styles::Picker),
+    /// `/map`: the repository map view.
+    RepoMap(Box<crate::repo_map::MapView>),
     /// `/language` and the Config tab's language row.
     Language(crate::language::Picker),
     /// `/sounds`: the selected row; the settings are `App::sounds`.
@@ -1058,6 +1062,7 @@ impl App {
             Overlay::Login => self.login_key(key),
             Overlay::ConfirmExport(_) => self.confirm_export_key(key),
             Overlay::OutputStyles(_) => self.output_styles_key(key),
+            Overlay::RepoMap(_) => self.repo_map_key(key),
             Overlay::Language(_) => self.language_key(key),
             Overlay::Sounds(_) => self.sounds_key(key),
             Overlay::FileDiff { .. } => {
@@ -1886,6 +1891,7 @@ impl App {
             "rename" => self.rename_command(args),
             "export" => self.export_command(args),
             "output-style" => self.output_style_command(args),
+            "map" => self.map_command(args),
             "language" => self.language_command(args),
             "tree" => self.tree_command(),
             "label" => self.label_command(args),

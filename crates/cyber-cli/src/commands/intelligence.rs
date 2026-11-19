@@ -14,7 +14,21 @@ pub enum StatusCmd {
     Status,
 }
 
-pub fn lsp(_cmd: StatusCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+#[derive(Debug, clap::Subcommand)]
+pub enum LspCmd {
+    Status,
+    /// Show the repository map, or inspect and manage its local index.
+    Map(super::repo_map::MapArgs),
+}
+
+pub fn lsp(cmd: LspCmd, ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
+    match cmd {
+        LspCmd::Status => lsp_status(ctx, global),
+        LspCmd::Map(args) => super::repo_map::map(args, ctx, global),
+    }
+}
+
+fn lsp_status(ctx: &Context, global: &GlobalArgs) -> Result<(), CliError> {
     let config = ctx.config()?;
     let settings = LspSettings::from_config(&config.value).map_err(CliError::usage)?;
     let search = ExecutableSearch::new(&ctx.location, &ctx.paths.cache, &ctx.env);

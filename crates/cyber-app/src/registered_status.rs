@@ -1,6 +1,6 @@
 //! Read-only observation of an existing registered server, without startup or database access.
 use cyber_core::paths::Paths;
-use cyber_server::http::LspStatus;
+use cyber_server::http::{LspStatus, RepoMapIndex, RepoMapRequest, RepoMapView};
 use serde_json::Value;
 use std::{
     path::{Component, Path},
@@ -8,11 +8,19 @@ use std::{
 };
 
 const MAX_RESPONSE: usize = 1024 * 1024;
+/// A map waits up to 10 s for a running build.
+const MAP_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub async fn registered_lsp_status(
+/// One authenticated call to the registered server's `path` for `location`: its
+/// response body and the registration it was made against, or `None` without a server.
+async fn registered_call(
     paths: &Paths,
     location: &Path,
-) -> Result<Option<Vec<LspStatus>>, String> {
+    method: reqwest::Method,
+    path: &str,
+    query: &[(&str, String)],
+    timeout: Duration,
+) -> Result<Option<(Value, crate::Registration)>, String> {
     let Some(registration) = crate::read_registration(paths) else {
         if crate::registration_path(paths).exists() {
             return Err("Existing server registration is invalid".into());
@@ -28,7 +36,7 @@ pub async fn registered_lsp_status(
         return Err("Existing server credentials are empty".into());
     }
     let builder = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(timeout)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none());
     let (builder, url) = if registration.url.is_empty() {
@@ -59,13 +67,18 @@ pub async fn registered_lsp_status(
     {
         return Err("Existing server listener is invalid".into());
     }
-    url.set_path("/api/v1/lsp");
+    url.set_path(path);
+    let mut pairs = vec![(
+        "location[directory]",
+        location.to_string_lossy().into_owned(),
+    )];
+    pairs.extend(query.iter().cloned());
     let mut response = builder
         .build()
         .map_err(|_| "Cannot create status transport")?
-        .get(url)
+        .request(method, url)
         .basic_auth("cyber", Some(password.trim()))
-        .query(&[("location[directory]", location.to_string_lossy().as_ref())])
+        .query(&pairs)
         .send()
         .await
         .map_err(|_| "Existing server status is unavailable")?;
@@ -91,6 +104,28 @@ pub async fn registered_lsp_status(
     if body["location"]["directory"].as_str() != location.to_str() {
         return Err("Existing server status returned another Location".into());
     }
+    Ok(Some((body, registration)))
+}
+
+pub async fn registered_lsp_status(
+    paths: &Paths,
+    location: &Path,
+) -> Result<Option<Vec<LspStatus>>, String> {
+    let Some((body, registration)) = registered_call(
+        paths,
+        location,
+        reqwest::Method::GET,
+        "/api/v1/lsp",
+        &[],
+        Duration::from_secs(5),
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    let location = location
+        .canonicalize()
+        .map_err(|_| "Status Location is unavailable")?;
     let statuses: Vec<LspStatus> = serde_json::from_value(body["data"].clone())
         .map_err(|_| "Existing server status entries are invalid")?;
     if statuses.iter().any(|status| {
@@ -108,4 +143,58 @@ pub async fn registered_lsp_status(
         return Err("Existing server registration changed during status observation".into());
     }
     Ok(Some(statuses))
+}
+
+/// `GET /api/v1/lsp/map` on the registered server, or `None` without one.
+pub async fn registered_repo_map(
+    paths: &Paths,
+    location: &Path,
+    request: &RepoMapRequest,
+) -> Result<Option<RepoMapView>, String> {
+    let mut query: Vec<(&str, String)> = Vec::new();
+    if let Some(path) = &request.path {
+        query.push(("path", path.clone()));
+    }
+    query.extend(request.focus.iter().map(|f| ("focus", f.clone())));
+    query.extend(request.symbol.iter().map(|s| ("symbol", s.clone())));
+    if let Some(tokens) = request.tokens {
+        query.push(("tokens", tokens.to_string()));
+    }
+    let Some((body, _)) = registered_call(
+        paths,
+        location,
+        reqwest::Method::GET,
+        "/api/v1/lsp/map",
+        &query,
+        MAP_TIMEOUT,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    serde_json::from_value(body["data"].clone())
+        .map(Some)
+        .map_err(|_| "Existing server map is malformed".into())
+}
+
+/// `POST /api/v1/lsp/map/rebuild` on the registered server, or `None` without one.
+pub async fn registered_repo_map_rebuild(
+    paths: &Paths,
+    location: &Path,
+) -> Result<Option<RepoMapIndex>, String> {
+    let Some((body, _)) = registered_call(
+        paths,
+        location,
+        reqwest::Method::POST,
+        "/api/v1/lsp/map/rebuild",
+        &[],
+        MAP_TIMEOUT,
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    serde_json::from_value(body["data"].clone())
+        .map(Some)
+        .map_err(|_| "Existing server map status is malformed".into())
 }

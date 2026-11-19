@@ -2,14 +2,16 @@
 
 - [ ] 0.1 Archive `improve-model-protocol-fidelity` first, since "Repository map budgets in model profiles" extends its "Model behavior profiles". Then rebase the MODIFIED "Capability-owned tool catalog" and "Top-level keys" deltas onto the current `main` text, keeping any lines other archived changes added.
   - Check: `openspec validate add-repository-map --strict` and `python3 scripts/spec_lint.py` with no new warnings.
+  - Open: `improve-model-protocol-fidelity` still has unchecked live-key tasks (8.2a, 8.3), so it cannot be archived yet. The profile field is implemented on top of its unarchived code; the deltas validate against current `main` (`spec_lint`: 0 errors, the same 25 warnings as `main`).
 
 ## 1. Grammars and extraction
 
-- [ ] 1.1 Add pinned grammar crates for Rust, TypeScript/TSX, Go, C, C++, Java and Solidity to `crates/cyber-tools/Cargo.toml`. They must be ABI-compatible with `tree-sitter` 0.27.
+- [x] 1.1 Add pinned grammar crates for Rust, TypeScript/TSX, Go, C, C++, Java and Solidity to `crates/cyber-tools/Cargo.toml`. They must be ABI-compatible with `tree-sitter` 0.27.
   - Add a CI step that compares the stripped release binary with `main` and fails above +12 MiB.
   - Add the MIT notices to the third-party notices file.
   - Test: `grammars_load_for_every_bundled_language` parses one fixture per language.
-- [ ] 1.2 Add `repo_map/queries/<lang>.scm`, starting from each grammar's upstream `tags.scm` and writing our own for Bash and Solidity, and `repo_map/extract.rs`:
+  - Evidence: the `Binary size` CI job on PR #149 measured +10 082 272 bytes (9.6 MiB) for the stripped Linux release binary; NOTICE lists the adapted MIT queries.
+- [x] 1.2 Add `repo_map/queries/<lang>.scm`, starting from each grammar's upstream `tags.scm` and writing our own for Bash and Solidity, and `repo_map/extract.rs`:
   - kinds and container;
   - signature up to the `body` field, collapsed and capped at 160 characters;
   - no comments or docstrings;
@@ -25,14 +27,14 @@
 
 ## 2. File selection and storage
 
-- [ ] 2.1 `repo_map/walk.rs`:
+- [x] 2.1 `repo_map/walk.rs`:
   - reuse the `grep`/`glob` ignore walker and skip submodules and nested repositories;
   - the default excludes, `@generated`/`DO NOT EDIT`, `.gitattributes` linguist attributes, size and binary checks;
   - `include`/`exclude` globs, refusing globs outside the Location;
   - an exclusion reason for every skipped file.
   
   Tests: "Generated protobuf skipped", "Include overrides a default exclude", `symlink_outside_location_not_followed`, `linguist_vendored_excluded`.
-- [ ] 2.2 `repo_map/store.rs`:
+- [x] 2.2 `repo_map/store.rs`:
   - `<cache>/repo-map/index.db` with WAL, a 5 s busy timeout and mode 0600;
   - the `blobs`/`checkouts`/`files` schema with `user_version`;
   - stat-then-hash change detection and 500-file commit batches;
@@ -40,7 +42,7 @@
   - drop and rebuild on a schema version mismatch.
   
   Tests: "Second worktree reuses tags" (counts parser invocations), "Deleted cache rebuilt", `schema_mismatch_rebuilds`, `gc_evicts_least_recently_used_over_cap`, `index_file_mode_is_0600` (Unix).
-- [ ] 2.3 Build coordination:
+- [x] 2.3 Build coordination:
   - one build at a time per checkout, with joined callers;
   - the cross-process `<root_id>.lock`, and readers getting committed state while locked;
   - the `max_files`/`build_timeout_ms` limits with the `truncated`/`partial` status;
@@ -51,7 +53,7 @@
 
 ## 3. Ranking and rendering
 
-- [ ] 3.1 `repo_map/graph.rs` and `rank.rs`:
+- [x] 3.1 `repo_map/graph.rs` and `rank.rs`:
   - edges and the `m(x)` multipliers;
   - the ignore rules for short names and names defined in more than 200 files;
   - the 2 000 000-edge cap;
@@ -61,7 +63,8 @@
   - deterministic order.
   
   Tests: "Focus symbol pulls in its definition", `private_and_common_names_damped`, `unreferenced_entry_point_still_ranked`, and "Same input, same output", which runs in CI on Linux, macOS and Windows against one golden file.
-- [ ] 3.2 `repo_map/render.rs`:
+  - Done with the spec refinements of the first commit: distinctive-name boost, ubiquitous-name damping, focus-symbol personalization, focus files first (`repo_map::tests::same_input_same_output` pins `tests/fixtures/repo_map/golden_map.txt`).
+- [x] 3.2 `repo_map/render.rs`:
   - the path/row format and container lines;
   - `other files:`;
   - `ceil(bytes/4)` estimation and the binary search for the largest prefix that fits.
@@ -70,7 +73,7 @@
 
 ## 4. Freshness and Location services
 
-- [ ] 4.1 `cyber-server`:
+- [x] 4.1 `cyber-server`:
   - start the background build when Location services start, only inside a git work tree;
   - no automatic build in the home directory or a filesystem root;
   - refresh-on-use with the 10 s debounce;
@@ -78,53 +81,61 @@
   - dirty marks from `write`, `edit`, `apply_patch`, `notebook_edit` and patches through the shell.
   
   Tests: "Own edit visible immediately", "Home directory refused", `stale_when_stat_walk_exceeds_bound` (an injected slow filesystem), `non_git_location_builds_on_demand`.
+  - Evidence: `repo_map::tests::{own_edit_visible_immediately, stale_when_stat_walk_exceeds_bound, non_git_location_builds_on_demand}`, `tests/repo_map.rs::{home_directory_refused, own_edit_marks_the_index_dirty}`, `repo_map_context::tests::background_builds_only_in_git_work_trees_outside_home`. Dirty marks ride the host's file-change observation, which `write`, `edit`, `apply_patch`, `notebook_edit` and shell patches all report.
 
 ## 5. Tool and permissions
 
-- [ ] 5.1 Write `tools/repo_map.rs` with the schema, argument clamping and the header line, and with `not indexed:` notes and `No indexed files`. The tool waits at most 10 s for a build, uses the `repo_map` permission with the `grep` default rule, is offered in plan mode, and filters out files whose `read` rule ends in deny. Register it in the capability-owned catalog.
+- [x] 5.1 Write `tools/repo_map.rs` with the schema, argument clamping and the header line, and with `not indexed:` notes and `No indexed files`. The tool waits at most 10 s for a build, uses the `repo_map` permission with the `grep` default rule, is offered in plan mode, and filters out files whose `read` rule ends in deny. Register it in the capability-owned catalog.
   - Tests: "Focused map for a weak model", "Denied file hidden", "First call during the initial build", `tool_hidden_when_repo_map_disabled`, `offered_in_plan_mode`.
   - Update the tool schema bundle (`GET /api/v1/tools/schema`) snapshot.
-- [ ] 5.2 Add the Session-file personalization: the 20 most recently read or edited distinct paths, taken from settled tool calls.
+  - Evidence: `crates/cyber-tools/tests/repo_map.rs` (all five scenarios plus `paths_outside_the_location_are_refused`; "First call during the initial build" is `repo_map::tests::first_call_during_the_initial_build`). The tool schema bundle is generated from the registry at request time and has no committed snapshot; `repo_map` is in it whenever the tool is offered.
+- [x] 5.2 Add the Session-file personalization: the 20 most recently read or edited distinct paths, taken from settled tool calls.
   - Test: `recent_session_files_bias_ranking`.
+  - Recorded by the tool host as file tools read or edit (`tests/repo_map.rs::recent_session_files_bias_the_tool`); in memory, so a restarted server starts without them.
 
 ## 6. Context Source and profiles
 
-- [ ] 6.1 `cyber-core` system context:
+- [x] 6.1 `cyber-core` system context:
   - the `pinned` flag on source registration;
   - reconciliation skips pinned sources;
   - the 2 s load bound and omission without `ContextInitializationBlocked`;
   - the `pinned` marker in `/context` and the context API.
   
   Tests: "Pinned source changes mid-epoch" (asserts the byte-identical serialized prefix of two requests), "Slow pinned source at the first Turn", and `restart_replays_pinned_bytes`.
-- [ ] 6.2 Add `core/repo-map`:
+- [x] 6.2 Add `core/repo-map`:
   - the `<repository_map>` block with its data header and `</repository_map>` escaping;
   - omission rules (disabled, untrusted checkout, `read` fully denied, budget under 256, empty index) and the per-agent `read` filtering.
   
   Tests: "Map in the baseline", "Edits do not move the prefix" (compaction then a fresh map), "Untrusted checkout", `closing_tag_in_signature_escaped`.
-- [ ] 6.3 `catalog/profile.rs`:
+- [x] 6.3 `catalog/profile.rs`:
   - the `repo_map` field with family defaults;
   - config precedence (top-level over layers 1–3, per-model config over top-level);
   - window caps applied last;
   - the field in `cyber models --json`.
   
   Tests: "Small local model", "Per-model override wins over the top-level key".
-- [ ] 6.4 Config schema for `repo_map` in `cyber-core`, with invalid-value warnings. Regenerate the JSON schema.
+- [x] 6.4 Config schema for `repo_map` in `cyber-core`, with invalid-value warnings. Regenerate the JSON schema.
   - Tests: "Map turned off for a project", "Invalid budget ignored".
+  - Evidence: `config::repo_map::tests`, `tests/repo_map.rs::tool_hidden_when_repo_map_disabled`. The configuration has no committed JSON schema file to regenerate; `repo_map` joins the validated top-level keys and is not trust-sensitive.
 
 ## 7. CLI, API and TUI
 
-- [ ] 7.1 Add `GET /api/v1/lsp/map` (`v1.lsp.map`) and `POST /api/v1/lsp/map/rebuild` (`v1.lsp.mapRebuild`) with the Location envelope. Regenerate `sdk/openapi.json` and the TS SDK.
+- [x] 7.1 Add `GET /api/v1/lsp/map` (`v1.lsp.map`) and `POST /api/v1/lsp/map/rebuild` (`v1.lsp.mapRebuild`) with the Location envelope. Regenerate `sdk/openapi.json` and the TS SDK.
   - Tests: route tests for both, an OpenAPI snapshot, and an SDK type-check.
-- [ ] 7.2 Add `cyber lsp map` with `[<path>]`, `--focus`, `--symbol`, `--tokens`, `--format text|json`, `--status`, `--rebuild` and `--clear`. It uses the server when one is registered and runs in process otherwise.
+  - Evidence: `cyber-app/tests/intelligence.rs::repo_map_routes_render_and_rebuild_the_location_index`, `cyber-server` `openapi_document_is_current`, `generate_sdk.py --check` and the SDK CI type-check.
+- [x] 7.2 Add `cyber lsp map` with `[<path>]`, `--focus`, `--symbol`, `--tokens`, `--format text|json`, `--status`, `--rebuild` and `--clear`. It uses the server when one is registered and runs in process otherwise.
   - Tests: "Inspect without a server" (asserts no server process and no session database), "JSON for scripts", `clear_removes_checkout_rows`.
   - Update `docs/cli.md`.
-- [ ] 7.3 TUI `/map [<path>]`: the status header, `r` rebuild, `Enter` to open the file explorer, `Esc` to close, and the disabled message.
+  - Evidence: `cyber-cli/tests/cli.rs::{repo_map_inspect_without_a_server, repo_map_json_for_scripts, clear_removes_checkout_rows}`; the JSON equals the route's (`repo_map_routes_render_and_rebuild_the_location_index`).
+- [x] 7.3 TUI `/map [<path>]`: the status header, `r` rebuild, `Enter` to open the file explorer, `Esc` to close, and the disabled message.
   - Screen tests: "Inspect the map", "Map disabled".
+  - Evidence: `cyber-tui` `screens_repo_map::{inspect_the_map, map_disabled}`.
 
 ## 8. Privacy
 
-- [ ] 8.1 Keep paths, names and signatures out of logs and OTel. The span `repo_map.build` carries counts, durations and status only. The index is not part of exports, shares, backups or runner sync.
+- [x] 8.1 Keep paths, names and signatures out of logs and OTel. The span `repo_map.build` carries counts, durations and status only. The index is not part of exports, shares, backups or runner sync.
   - Tests: "Telemetry without code" (an in-memory exporter), `export_excludes_index`, "Untrusted checkout still mapped by the tool" (asserts no hook, formatter or LSP spawn).
+  - Evidence: `cyber-telemetry` `telemetry_without_code`, `cyber-app/tests/backup.rs::export_excludes_index`, `tests/repo_map.rs::untrusted_checkout_still_mapped_by_the_tool`. Build failures log no error text, since it can name files.
 
 ## 9. Evidence
 
@@ -135,11 +146,11 @@
 
 ## 10. Docs and checks
 
-- [ ] 10.1 Docs:
+- [x] 10.1 Docs:
   - `docs/local-core-guide.md`: the repository map, epoch-pinned sources, `core/repo-map` and the limits table;
   - a row in `docs/features.md`;
   - the ROADMAP entry.
-- [ ] 10.2 Run the gate:
+- [x] 10.2 Run the gate:
   - `cargo fmt`;
   - workspace clippy with `-D warnings`;
   - `cargo nextest run --workspace --profile ci`;
@@ -149,3 +160,4 @@
   - the binary-size gate from 1.1.
   
   Keep cognitive complexity ≤ 15 per function. The graph and the renderer must stay within that limit.
+  - Evidence: PR #149 CI is green on Linux, macOS and Windows (workspace nextest, clippy `-D warnings`, fmt, OpenAPI/SDK/CLI doc checks, OpenSpec strict, binary-size gate); `spec_lint` has 0 errors and the same warnings as `main`; clippy enforces cognitive complexity ≤ 15.

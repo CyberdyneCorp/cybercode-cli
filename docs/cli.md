@@ -44,7 +44,7 @@ cyber [OPTIONS] [COMMAND]
 - [`whoami`](#cyber-whoami): Show the current Cyber Account without exposing tokens
 - [`logout`](#cyber-logout): Remove Cyber Account credentials, keeping provider logins and local Sessions
 - [`import`](#cyber-import): Import Claude Code, Codex or OpenCode configuration: detect, preview or write
-- [`lsp`](#cyber-lsp): Inspect installed language servers for the current Location
+- [`lsp`](#cyber-lsp): Inspect installed language servers and the repository map for the current Location
 - [`fmt`](#cyber-fmt): Inspect detected formatters for the current Location
 - [`memory`](#cyber-memory): Review and edit durable project/global memory
 - [`sessions`](#cyber-sessions): List, show, rename and delete the Location's Sessions
@@ -163,7 +163,7 @@ cyber import [OPTIONS] [TOOL]
 
 ## `cyber lsp`
 
-Inspect installed language servers for the current Location
+Inspect installed language servers and the repository map for the current Location
 
 ```text
 cyber lsp [OPTIONS] <COMMAND>
@@ -172,12 +172,34 @@ cyber lsp [OPTIONS] <COMMAND>
 **Subcommands:**
 
 - [`status`](#cyber-lsp-status)
+- [`map`](#cyber-lsp-map): Show the repository map, or inspect and manage its local index
 
 ## `cyber lsp status`
 
 ```text
 cyber lsp status [OPTIONS]
 ```
+
+## `cyber lsp map`
+
+Show the repository map, or inspect and manage its local index
+
+```text
+cyber lsp map [OPTIONS] [PATH]
+```
+
+**Arguments:**
+
+- `[PATH]`: Location-relative directory or file to restrict the map to.
+
+**Options:**
+
+- `--focus <PATH>`: Center the map on this file (repeatable, up to 20)
+- `--symbol <NAME>`: Center the map on this symbol (repeatable, up to 20)
+- `--tokens <TOKENS>`: Token budget, clamped to 256-8192 (default 2048)
+- `--status`: Print the index status: files by language, exclusions, symbols, freshness, cache.
+- `--rebuild`: Re-extract every file of this checkout.
+- `--clear`: Delete this checkout's rows from the index cache.
 
 ## `cyber fmt`
 

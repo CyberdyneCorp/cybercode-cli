@@ -21,6 +21,7 @@ fn invocation(turn: &TurnContext, action: &str, path: &Path, asker: Asker) -> In
     };
     Invocation {
         tool_output: Default::default(),
+        repo_map: Default::default(),
         registration: None,
         session_id: turn.session_id.clone(),
         directory: turn.directory.clone(),

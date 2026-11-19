@@ -657,6 +657,14 @@ impl ToolHost for AppHost {
         })
     }
 
+    fn pinned_context_observations<'a>(
+        &'a self,
+        turn: &'a TurnContext,
+        profile: &'a cyber_llm::catalog::ModelProfile,
+    ) -> BoxFuture<'a, BTreeMap<String, cyber_server::runtime::ContextObservation>> {
+        Box::pin(self.builtin.pinned_context_observations_for(turn, profile))
+    }
+
     fn shell_owned(
         &self,
         directory: &str,

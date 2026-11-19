@@ -144,3 +144,40 @@ fn a_failed_backup_leaves_no_partial_bundle() {
     assert!(backup::create(&p, &tmp.path().join("missing.db"), &bundle, true).is_err());
     assert!(!bundle.exists());
 }
+
+/// `code-intelligence` → Repository map data stays local: the index cache is never part
+/// of a backup bundle, artifacts included.
+#[test]
+fn export_excludes_index() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (p, db) = seeded(tmp.path());
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("lib.rs"), "pub fn secret_algorithm() {}\n").unwrap();
+    let maps = cyber_tools::repo_map::RepoMaps::new(p.cache.clone());
+    maps.build_blocking(&repo.canonicalize().unwrap(), &Default::default(), false)
+        .unwrap();
+    assert!(p.cache.join("repo-map/index.db").exists());
+    let bundle = tmp.path().join("bundle");
+    let manifest = backup::create(&p, &db, &bundle, true).unwrap();
+    assert!(
+        manifest.files.iter().all(|f| !f.path.contains("repo-map")),
+        "{:?}",
+        manifest.files
+    );
+    let mut stack = vec![bundle];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                let bytes = std::fs::read(&path).unwrap();
+                assert!(
+                    !bytes.windows(16).any(|w| w == b"secret_algorithm"),
+                    "{path:?}"
+                );
+            }
+        }
+    }
+}

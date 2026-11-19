@@ -1,0 +1,17 @@
+scope 0 line 4 parent None: interface IToken
+scope 1 line 8 parent None: library Math
+scope 2 line 14 parent None: contract Vault is IToken
+scope 3 line 15 parent Some(2): struct Deposit
+scope 4 line 16 parent Some(2): enum State
+4 interface IToken scope None: interface IToken
+5 method transfer scope Some(0): function transfer(address to, uint256 amount) external returns (bool);
+8 module Math scope None: library Math
+9 function max scope Some(1): function max(uint256 a, uint256 b) internal pure returns (uint256)
+14 class Vault scope None: contract Vault is IToken
+15 struct Deposit scope Some(2): struct Deposit
+16 enum State scope Some(2): enum State
+17 type Deposited scope Some(2): event Deposited(address indexed from, uint256 amount);
+18 type Unauthorized scope Some(2): error Unauthorized();
+20 method onlyOwner scope Some(2): modifier onlyOwner()
+24 method transfer scope Some(2): function transfer(address to, uint256 amount) external returns (bool)
+refs: IToken=1

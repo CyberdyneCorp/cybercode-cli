@@ -119,6 +119,7 @@ impl BuiltinHost {
         request.source_directory = Some(source.directory.clone());
         let inv = Invocation {
             tool_output: Default::default(),
+            repo_map: Default::default(),
             registration: None,
             session_id: source.id.clone(),
             directory: source.directory.clone(),

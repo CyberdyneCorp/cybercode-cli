@@ -40,7 +40,8 @@ Where we stand today:
 - The kinds we keep are `class`, `struct`, `enum`, `interface` (also traits), `type`, `function`, `method`, `constant`, `macro` and `module`. Fields, locals and parameters are dropped.
 
 **References:**
-- For a language whose query has no reference captures, every `identifier`-like leaf node whose text equals a defined name counts as a reference.
+- Queries capture references as `@reference.<kind>`: calls (including method calls), type names, imported names, macros. Local variables and parameters are not captured, which keeps a variable named like a function from linking two files.
+- For a language whose query has no reference captures (Bash), every `identifier`-like leaf node whose text equals a defined name counts as a reference.
 - Matching is by name only, so it is approximate. That is acceptable, because references only feed ranking.
 
 **Signatures:**
@@ -62,14 +63,17 @@ Where we stand today:
   - For each name `x` that file A references and file B defines (A ≠ B), there is one edge A→B with weight `m(x) × sqrt(refs of x in A)`.
 - **The multiplier `m(x)`** starts at 1.0, and:
   - is multiplied by 10 when `x` is in `focus_symbols`;
+  - is multiplied by 10 when `x` is distinctive: at least 8 characters and snake_case or camelCase (`retry_policy`, `RetryPolicy`);
   - is multiplied by 0.1 when `x` starts with `_`, which marks a private name by convention;
-  - is multiplied by 0.1 when `x` is defined in more than 5 files, since common names like `new`, `get` or `init` say little.
+  - is multiplied by 0.1 when `x` is defined in more than 5 files, since common names like `new`, `get` or `init` say little;
+  - is multiplied by 0.1 when `x` is ubiquitous: referenced from at least 20 files and more than 5% of the indexed files. Without it, a project's own `map`, `clone` or `format` collects the share of every method call of the same name (measured on this repository: they filled the top of the map).
   
   Names shorter than 3 characters, and names defined in more than 200 files, are ignored.
 - **Personalization:**
-  - Each explicit `focus_paths` entry gets weight 1.0.
-  - Each of the Session's 20 most recently read or edited distinct paths gets 0.5.
-  - With none of these, the vector is uniform.
+  - Each explicit `focus_paths` entry, and each file defining a focus symbol, gets weight 1.0.
+  - Each file referencing a focus symbol, and each of the Session's 20 most recently read or edited distinct paths, gets 0.5.
+  - A file takes its largest weight. With none of these, the vector is uniform.
+  - Without the focus-symbol weights, files that reference a focus symbol would gain nothing: out-edges do not raise a file's own rank.
 - **PageRank:**
   - The damping is 0.85.
   - It stops at 100 iterations or when the L1 change is below 1e-6.
@@ -90,15 +94,15 @@ Where we stand today:
 
 ```
 src/config.rs:
-  12: pub struct Config {
+  12: pub struct Config
   40: pub fn load(path: &Path) -> Result<Config>
 src/server/mod.rs:
-  88: impl Server {
+  88: impl Server
   91:     pub async fn start(&self, cfg: Config) -> Result<()>
 ```
 
 **Rendering:**
-- Files are ordered by their best definition rank, and rows within a file by line.
+- Files are ordered by their best definition rank, and rows within a file by line. Definitions of focus-path files come first, so a focus file leads the map even when nothing references it yet.
 - When a member is selected, its enclosing container line (`impl`, `class`) is printed too, indented by 4 per nesting level and capped at 2 levels. The container line costs tokens but does not count as a selection.
 - After the ranked files, an `other files:` section lists files without selected rows, by file rank, while budget remains.
 
@@ -147,14 +151,14 @@ src/server/mod.rs:
 **Walk:** the same walker as `grep`/`glob`. It honors `.gitignore`, `.ignore`, `.git/info/exclude` and the global git excludes, skips `.git/`, and does not descend into nested repositories or submodules.
 
 **Default excludes:**
-- the directories `node_modules/`, `vendor/`, `third_party/`, `target/`, `dist/`, `build/`, `.venv/` and `__pycache__/`;
+- the directories `.cyber/` (agent configuration, not code), `node_modules/`, `vendor/`, `third_party/`, `target/`, `dist/`, `build/`, `.venv/` and `__pycache__/`;
 - `*.min.js`, `*.min.css`, `*.map`, `*.lock`, `package-lock.json`, `*.pb.go`, `*_pb2.py` and `*.generated.*`;
 - files whose first 5 lines contain `@generated` or `DO NOT EDIT`;
 - paths marked `linguist-generated` or `linguist-vendored` in `.gitattributes`;
 - files over 1 MiB, which is the LSP document budget;
 - binaries, meaning a NUL byte in the first 8 KiB.
 
-`repo_map.include` globs override the default excludes but not ignore files. `repo_map.exclude` adds to them. Every excluded file keeps its reason for `--status`.
+`repo_map.include` globs override the default excludes but not ignore files. `repo_map.exclude` adds to them. Every excluded file keeps its reason for `--status`; a default-excluded directory that no `include` glob reaches is not descended and counts once (`node_modules/`). Files hidden by ignore files are never walked, so they have no row.
 
 **Refresh:**
 - A refresh walks and stats. A file whose size or mtime changed is hashed, and when the hash changed it is extracted again. Removed files are deleted.

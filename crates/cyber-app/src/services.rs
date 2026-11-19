@@ -37,6 +37,22 @@ pub struct AppServices {
     collaboration: Arc<crate::collaboration::Collaboration>,
 }
 
+fn repo_map_error(error: cyber_tools::RepoMapError) -> cyber_server::http::ApiError {
+    match error {
+        cyber_tools::RepoMapError::Unavailable => {
+            cyber_server::http::ApiError::service_unavailable("repo_map", error.to_string())
+        }
+        cyber_tools::RepoMapError::Disabled => cyber_server::http::ApiError::new(
+            axum::http::StatusCode::CONFLICT,
+            "ConflictError",
+            error.to_string(),
+        ),
+        cyber_tools::RepoMapError::Invalid(message) => {
+            cyber_server::http::ApiError::invalid(message)
+        }
+    }
+}
+
 /// Trusted owner process resources, shared by account and collaboration adapters.
 pub struct OwnerContext {
     pub global: Arc<GlobalConfigFn>,
@@ -177,6 +193,30 @@ impl Services for AppServices {
                         "LSP Location transition is unavailable or unsettled",
                     )
                 })
+        })
+    }
+    fn repo_map(
+        &self,
+        directory: PathBuf,
+        request: cyber_server::http::RepoMapRequest,
+    ) -> BoxFuture<'_, Result<cyber_server::http::RepoMapView, cyber_server::http::ApiError>> {
+        Box::pin(async move {
+            self.host
+                .repo_map_view(&directory, request)
+                .await
+                .map_err(repo_map_error)
+        })
+    }
+    fn rebuild_repo_map(
+        &self,
+        directory: PathBuf,
+    ) -> BoxFuture<'_, Result<cyber_server::http::RepoMapIndex, cyber_server::http::ApiError>> {
+        let host = self.host.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || host.rebuild_repo_map(&directory))
+                .await
+                .map_err(|_| cyber_server::http::ApiError::unknown("rebuild did not start"))?
+                .map_err(repo_map_error)
         })
     }
     fn lsp_status(

@@ -241,6 +241,8 @@ fn session_of(event: &LiveEvent) -> Option<&str> {
         | LiveEvent::MemoryUpdated { .. }
         | LiveEvent::WorkflowProgress { .. }
         | LiveEvent::Worktree { .. }
+        // Telemetry only: no client stream carries it.
+        | LiveEvent::RepoMapBuilt { .. }
         // Only streams that ask (`include=hook_receipts`) forward it: the instance
         // stream, and a Session stream for that Session's own receipts.
         | LiveEvent::HookReceipt { .. } => None,

@@ -34,6 +34,7 @@ impl BuiltinHost {
         let call_id = cyber_core::ids::new_id("call");
         let inv = Invocation {
             tool_output: Default::default(),
+            repo_map: Default::default(),
             registration: None,
             session_id: source.id,
             directory: source.directory,

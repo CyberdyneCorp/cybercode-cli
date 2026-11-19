@@ -1,0 +1,6 @@
+scope 0 line 6 parent None: class Session(Base):
+2 constant MAX_RETRIES scope None: MAX_RETRIES = 3
+6 class Session scope None: class Session(Base):
+9 method refresh scope Some(0): def refresh(self, token):
+14 function helper scope None: def helper(value):
+refs: Base=1 helper=1

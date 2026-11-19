@@ -35,6 +35,7 @@ const KNOWN_KEYS: &[&str] = &[
     "snapshots",
     "worktrees",
     "lsp",
+    "repo_map",
     "formatters",
     "tool_output",
     "workflows",
@@ -120,6 +121,7 @@ pub fn validate(
         check_profiles(profiles, &mut issues);
     }
     super::model_profiles::check(map.get("providers"), warnings);
+    warnings.extend(super::RepoMapSettings::from_section(map.get("repo_map")).1);
     issues.extend(settings_issues(value));
     issues
 }

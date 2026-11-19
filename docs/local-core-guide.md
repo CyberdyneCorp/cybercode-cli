@@ -215,6 +215,56 @@ The profile is resolved field by field, a later layer winning: defaults by famil
 
 An unknown key or an invalid value warns, naming the key, and is ignored. When an agent, a workflow tier or a model role asks for an effort the model does not list, the nearest lower listed effort is used and one `info` log line names both; an effort you name yourself (`provider/model#xhigh`) still fails with `VariantUnavailableError`, as does any effort under `effort_clamp: "fail"`.
 
+## Repository map
+
+The repository map is a compact, ranked list of the Location's files and their key definitions (signature lines), fitted to a token budget. It answers "where is the code for this?" in one call, or none: weaker and local models often guess before they search.
+
+```
+src/server/mod.rs:
+  88: impl Server
+  91:     pub async fn start(&self, cfg: Config) -> Result<()>
+other files:
+docs/README.md
+```
+
+**How it is built.** Files come from the same ignore-aware walk as `grep` and `glob` (`.gitignore`, `.ignore`, `.git/info/exclude`, global excludes; no nested repositories or submodules; symbolic links are not followed). The directories `.cyber` (agent configuration), `node_modules`, `vendor`, `third_party`, `target`, `dist`, `build`, `.venv` and `__pycache__`, minified, lock and generated files (`*.pb.go`, `*_pb2.py`, `*.generated.*`, `@generated` or `DO NOT EDIT` in the first 5 lines, `linguist-generated`/`linguist-vendored` in `.gitattributes`), files over 1 MiB and binaries are skipped, each with its reason. Definitions and references come from tree-sitter tag queries bundled for Rust, Python, JavaScript/JSX, TypeScript, TSX, Go, C, C++, Java, Solidity and Bash; other files are listed by path only. Extraction parses files and never runs repository code or starts a language server.
+
+**How it is ranked.** Personalized PageRank runs over the graph "file A references a name file B defines", weighted by how often A uses the name, with distinctive names (8+ characters, snake_case or camelCase) and focus symbols boosted and private, widely defined or ubiquitous names (`map`, `clone`) damped. Focus paths, files defining or referencing focus symbols, and the Session's 20 most recently read or edited files personalize the rank; focus files are shown first. The output is deterministic: the same index and arguments render the same bytes on every platform.
+
+**The `repo_map` tool** takes `path` (restrict the map), `focus_paths` and `focus_symbols` (up to 20 each) and `tokens` (256–8192, default the model profile's `repo_map.tool_tokens`). It is read-only, uses the `repo_map` permission (allowed by default, like `grep`), is offered in plan mode and in untrusted checkouts, and never shows a file the agent's `read` rules deny. It refreshes the index first and waits at most 10 s for a running build, then answers from what is committed; its first line is `Repository map: <shown> of <indexed> files, <symbols> symbols, ~<tokens> tokens (index complete|partial|truncated|stale|building)`.
+
+**The `core/repo-map` Context Source** puts a small unpersonalized map (the profile's `repo_map.context_tokens`, default 1024) in the baseline as a `<repository_map>` block whose first line says it is repository data, not instructions. It is *epoch-pinned*: observed only when a baseline is rendered (Session start, a new Context Epoch such as after compaction), never reconciled at Safe Boundaries and never written as a mid-conversation update, so edits never move the cached prompt prefix; the next Epoch carries a fresh map. A pinned source that has not loaded within 2 s is left out of that Epoch instead of blocking the Turn. `/context` and `GET /api/v1/sessions/{id}/context` mark it `pinned`. It is omitted when the map is disabled or `repo_map.context` is false, in an untrusted checkout, for an agent whose `read` is fully denied, when the budget is under 256 tokens, and while the index is empty.
+
+**Budgets.** The profile's `repo_map: { context_tokens, tool_tokens }` defaults to 1024 and 2048; the top-level `repo_map.context_tokens`/`tool_tokens` override every model, and `providers.<p>.models.<m>.profile.repo_map` overrides that. Window caps apply last: `context_tokens` at most 3% of the context window (rounded down to a multiple of 128), `tool_tokens` at most 6%. A 32k-window local model gets 896 and 1966.
+
+```jsonc
+{ "repo_map": {
+  "enabled": true,          // index, tool and context source
+  "context": true,          // core/repo-map in baselines
+  "include": ["vendor/acme/**"], // overrides default excludes, not ignore files
+  "exclude": ["fixtures/**"],
+  "max_files": 50000, "max_file_bytes": 1048576, "build_timeout_ms": 120000
+} }
+```
+
+These keys are not part of the trust digest; an invalid value warns and keeps the default, and a glob reaching outside the Location is ignored.
+
+**Index and limits.** The index is a local cache at `<cache>/repo-map/index.db` (mode 0600), keyed by content hash, so worktrees of one repository share extracted tags. Delete it at any time. A Location inside a git work tree is indexed in the background when Location services start; any other directory on the first `repo_map` call or `cyber lsp map`; the home directory and filesystem roots are never indexed automatically, and a call there needs `path`. Edits through `write`, `edit`, `apply_patch`, `notebook_edit` and shell patches mark their files dirty, and a refresh runs when the last one is over 10 s old or a file is dirty.
+
+| Limit | Default | Config | When hit |
+|---|---|---|---|
+| Indexed files | 50 000 | `repo_map.max_files` | the rest is skipped in sorted walk order; index `truncated` |
+| File size | 1 MiB | `repo_map.max_file_bytes` | excluded (`too_large`) |
+| Parse time per file | 250 ms | none | listed by path only (`parse_timeout`) |
+| Build wall time | 120 s | `repo_map.build_timeout_ms` | index `partial`; the next refresh continues |
+| Refresh wait of a built index | 2 s | none | the last snapshot answers, `stale` |
+| Graph edges | 2 000 000 | none | the lowest-weight names are dropped |
+| Parser threads | `min(4, max(1, cpus/2))` | none | n/a |
+
+**Inspecting.** `cyber lsp map [<path>] [--focus <path>]... [--symbol <name>]... [--tokens <n>]` prints the map as the tool would; `--format json` prints `{text, files, index}`; `--status` prints files by language, exclusions by reason, symbols, freshness, build time and the cache's path and size; `--rebuild` re-extracts every file and `--clear` deletes the checkout's rows. The command uses the running server when one is registered and otherwise works in process without starting a server or creating the session database. The server exposes `GET /api/v1/lsp/map` and `POST /api/v1/lsp/map/rebuild`, and the TUI's `/map [<path>]` opens the map with its index status (`r` rebuilds, Enter opens the path in the file explorer).
+
+**Privacy.** The index never leaves the machine: it is not uploaded, shared, synced to runners or included in exports or backups, and telemetry gets only the `repo_map.build` span's counts, duration and status. A map that entered a transcript (a tool result or a baseline) follows that transcript's export and redaction rules.
+
 ## Secrets in tool output
 
 Secrets that show up in tool output never reach the model provider. Before a tool result goes to the model, Cyber Code replaces each secret it finds with a marker of the form `[REDACTED:<kind>]`, such as `[REDACTED:github_token]`. The marker tells the model that a value is there without showing it. The base prompt explains the marker.

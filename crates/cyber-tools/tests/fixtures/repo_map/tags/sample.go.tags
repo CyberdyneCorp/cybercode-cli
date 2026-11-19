@@ -1,0 +1,9 @@
+scope 0 line 4 parent None: Server struct {
+scope 1 line 8 parent None: Handler interface {
+4 struct Server scope None: Server struct {
+8 interface Handler scope None: Handler interface {
+12 type ID scope None: ID string
+14 constant DefaultAddr scope None: DefaultAddr = ":8080"
+16 function New scope None: func New(addr string) *Server
+20 method Start scope None: func (s *Server) Start() error
+refs: Server=3 error=2 string=3

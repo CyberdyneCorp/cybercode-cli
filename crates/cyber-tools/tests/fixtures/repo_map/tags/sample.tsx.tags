@@ -1,0 +1,4 @@
+scope 0 line 1 parent None: interface Props
+1 interface Props scope None: interface Props
+5 function Header scope None: function Header({ title }: Props)
+refs: Props=1

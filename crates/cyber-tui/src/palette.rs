@@ -163,6 +163,12 @@ const BUILTINS: &[(&str, &str, Option<&str>, bool)] = &[
         false,
     ),
     (
+        "map",
+        "repository map of files and definitions; /map <path> focuses it",
+        None,
+        true,
+    ),
+    (
         "status",
         "versions, session, model, context and servers",
         None,

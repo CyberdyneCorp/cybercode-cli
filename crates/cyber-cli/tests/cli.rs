@@ -4611,3 +4611,76 @@ fn models_json_shows_the_resolved_profile_with_a_config_override() {
     assert_eq!(kimi["reasoning_carrier"], "reasoning_content");
     assert_eq!(kimi["reasoning_replay"], "tool_loop");
 }
+
+fn map_repo(env: &Env) -> PathBuf {
+    let repo = env.repo("{}");
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(
+        repo.join("src/main.rs"),
+        "mod net;\nfn main() { net::connect_upstream(); }\n",
+    )
+    .unwrap();
+    std::fs::write(repo.join("src/net.rs"), "pub fn connect_upstream() {}\n").unwrap();
+    repo
+}
+
+/// `code-intelligence` → Repository map inspection surfaces: without a registered server
+/// the command works in process on the cache, starting no server and creating no
+/// session database.
+#[test]
+fn repo_map_inspect_without_a_server() {
+    let env = Env::new();
+    let repo = map_repo(&env);
+    let run = |args: &[&str]| env.command(args).current_dir(&repo).output().unwrap();
+    let map = run(&["lsp", "map"]);
+    assert!(map.status.success(), "{}", stderr(&map));
+    assert!(
+        stdout(&map).starts_with("Repository map: "),
+        "{}",
+        stdout(&map)
+    );
+    assert!(stdout(&map).contains("pub fn connect_upstream()"));
+    let status = run(&["lsp", "map", "--status"]);
+    assert!(status.status.success(), "{}", stderr(&status));
+    let text = stdout(&status);
+    assert!(text.contains("Index: complete"), "{text}");
+    assert!(text.contains("rust: 2"), "{text}");
+    assert!(text.contains("Cache: "), "{text}");
+    assert!(!env.root.join("cyber-home/data/cyber-dev.db").exists());
+    assert!(!env.root.join("cyber-home/data/cyber.db").exists());
+    assert!(!env.root.join("cyber-home/state/server.json").exists());
+    assert!(env.root.join("cyber-home/cache/repo-map/index.db").exists());
+}
+
+#[test]
+fn repo_map_json_for_scripts() {
+    let env = Env::new();
+    let repo = map_repo(&env);
+    let out = env
+        .command(&["lsp", "map", "--focus", "src/net.rs", "--format", "json"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let body = json(&out);
+    assert!(body["text"].as_str().unwrap().starts_with("src/net.rs:\n"));
+    assert_eq!(body["files"][0]["path"], "src/net.rs");
+    assert_eq!(body["files"][0]["symbols"][0]["name"], "connect_upstream");
+    assert_eq!(body["index"]["status"], "complete");
+    assert_eq!(body.as_object().unwrap().len(), 3, "{body}");
+}
+
+#[test]
+fn clear_removes_checkout_rows() {
+    let env = Env::new();
+    let repo = map_repo(&env);
+    let run = |args: &[&str]| env.command(args).current_dir(&repo).output().unwrap();
+    assert!(run(&["lsp", "map", "--rebuild"]).status.success());
+    let before = json(&run(&["lsp", "map", "--status", "--format", "json"]));
+    assert_eq!(before["index"]["files"], 3, "{before}");
+    let cleared = run(&["lsp", "map", "--clear"]);
+    assert!(cleared.status.success(), "{}", stderr(&cleared));
+    let after = json(&run(&["lsp", "map", "--status", "--format", "json"]));
+    assert_eq!(after["index"]["files"], 0, "{after}");
+    assert!(after["index"]["refreshed_at"].is_null(), "{after}");
+}

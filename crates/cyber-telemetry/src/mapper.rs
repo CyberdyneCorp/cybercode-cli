@@ -8,6 +8,8 @@
 //! - `cyber.session`: one activity period (a Drain) of a Session, under the workflow agent
 //!   that created it, the parent's open Turn (a subagent), or nothing (a root Session);
 //! - `cyber.turn`: from a promotion to the next Turn's promotion or `Idle`;
+//! - `repo_map.build`: one repository index build, the root of its own trace, with
+//!   counts, duration and status only;
 //! - `cyber.tool` and `cyber.hook`: under the open Turn (a hook under its tool call). A
 //!   hook admitted outside an activity period opens the session span, which a following
 //!   Turn joins and which otherwise ends with the hook.
@@ -369,8 +371,33 @@ impl Mapper {
                 session_id,
                 receipt,
             } => self.hook(session_id, receipt),
+            LiveEvent::RepoMapBuilt { build } => self.repo_map_build(build),
             _ => {}
         }
+    }
+
+    /// `repo_map.build`: never a path, name or signature (`code-intelligence` →
+    /// Repository map data stays local).
+    fn repo_map_build(&self, build: &cyber_server::runtime::RepoMapBuild) {
+        let end = SystemTime::now();
+        let start = end - Duration::from_millis(build.duration_ms);
+        let count = |key: &'static str, value: u64| {
+            KeyValue::new(key, i64::try_from(value).unwrap_or(i64::MAX))
+        };
+        let attributes = vec![
+            attribute("cyber.repo_map.status", build.status.clone()),
+            count("cyber.repo_map.files", build.files),
+            count("cyber.repo_map.symbols", build.symbols),
+            count("cyber.repo_map.parsed", build.parsed),
+            count("cyber.repo_map.duration_ms", build.duration_ms),
+        ];
+        let mut span = self
+            .tracer
+            .span_builder("repo_map.build")
+            .with_start_time(start)
+            .with_attributes(attributes)
+            .start_with_context(&self.tracer, &Context::new());
+        span.end_with_timestamp(end);
     }
 
     /// End every open span with `cyber.interrupted=true` and no status (shutdown).

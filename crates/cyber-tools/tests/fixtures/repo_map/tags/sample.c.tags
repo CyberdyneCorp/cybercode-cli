@@ -1,0 +1,9 @@
+scope 0 line 5 parent None: struct buffer
+2 macro MAX_SIZE scope None: #define MAX_SIZE 64
+3 macro SQUARE scope None: #define SQUARE(x) ((x) * (x))
+5 struct buffer scope None: struct buffer
+9 type buffer_t scope None: typedef struct buffer buffer_t;
+11 function buffer_size scope None: int buffer_size(const struct buffer *b);
+13 function compute scope None: static int compute(int value)
+17 function name_of scope None: char *name_of(int id)
+refs: SQUARE=1 buffer=2

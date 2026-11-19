@@ -335,6 +335,7 @@ impl Runtime {
                                 file_stamps: Default::default(),
                                 withheld: Vec::new(),
                                 omitted_withheld: 0,
+                                pinned: false,
                             });
                     EffectiveContextSource {
                         id: id.clone(),
@@ -635,6 +636,7 @@ mod tests {
                 .collect(),
             withheld: Vec::new(),
             omitted_withheld: 0,
+            pinned: false,
         }
     }
 
