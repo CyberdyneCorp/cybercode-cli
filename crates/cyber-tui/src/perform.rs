@@ -855,7 +855,7 @@ async fn model_prompt(
 ) -> Result<Msg, String> {
     let id = session.id.as_str();
     let body = json!({
-        "parts": parts(text, &session.directory),
+        "parts": parts(text, &session.directory, client.attached_session().is_none()),
         "delivery": delivery,
         "model": model,
     });
