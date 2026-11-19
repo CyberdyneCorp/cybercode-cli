@@ -1600,6 +1600,11 @@ export type EffectiveContextSource = {
   /** Withheld definitions beyond the recorded bound. */
   omitted_withheld?: number;
   /**
+   * An epoch-pinned source: observed only when a baseline is rendered and never
+   * reconciled within the Epoch (`system-context` → Epoch-pinned Context Sources).
+   */
+  pinned?: boolean;
+  /**
    * Whether a file this source was read from has changed size or modification time,
    * or disappeared, since it was read. The change takes effect at the next request
    * boundary. `null` when the source has no recorded stamps (it is not read from
@@ -3331,6 +3336,18 @@ export type Located_RemovedWorktree = {
 };
 
 /** A Location-scoped response. */
+export type Located_RepoMapIndex = {
+  location: LocationInfo;
+  data: RepoMapIndex;
+};
+
+/** A Location-scoped response. */
+export type Located_RepoMapView = {
+  location: LocationInfo;
+  data: RepoMapView;
+};
+
+/** A Location-scoped response. */
 export type Located_SearchResult = {
   location: LocationInfo;
   data: SearchResult;
@@ -3869,6 +3886,7 @@ export type ModelProfile = {
    * model made, instead of lowering them to text. Discouraged.
    */
   signature_bypass: boolean;
+  repo_map: RepoMapBudget;
 };
 
 /** One provider and model of the Session tree. */
@@ -4454,6 +4472,60 @@ export type ReopenSubtreeBody = {
 };
 
 export type ReplyKind = "once" | "always" | "reject";
+
+/**
+ * Repository map budgets in tokens (`provider-catalog` → Repository map budgets in
+ * model profiles): the `core/repo-map` baseline map and the `repo_map` tool's default.
+ */
+export type RepoMapBudget = {
+  context_tokens: number;
+  tool_tokens: number;
+};
+
+/** A file shown in a repository map, with its PageRank and selected definitions. */
+export type RepoMapFile = {
+  path: string;
+  rank: number;
+  symbols: RepoMapSymbol[];
+};
+
+/** Repository index status. Counts only: no path, name or signature. */
+export type RepoMapIndex = {
+  /** `complete`, `partial`, `truncated`, `stale` or `building`. */
+  status: string;
+  files: number;
+  symbols: number;
+  /** Excluded files by reason. */
+  excluded: {
+    [key: string]: number;
+  };
+  /** Indexed files by language. */
+  languages: {
+    [key: string]: number;
+  };
+  /** Milliseconds since the Unix epoch of the last finished refresh. */
+  refreshed_at?: number | null;
+  build_ms?: number | null;
+};
+
+/** A repository map symbol (`code-intelligence` → Repository map inspection surfaces). */
+export type RepoMapSymbol = {
+  name: string;
+  /**
+   * `class`, `struct`, `enum`, `interface`, `type`, `function`, `method`,
+   * `constant`, `macro` or `module`.
+   */
+  kind: string;
+  line: number;
+  signature: string;
+};
+
+/** A rendered repository map. */
+export type RepoMapView = {
+  text: string;
+  files: RepoMapFile[];
+  index: RepoMapIndex;
+};
 
 /** Server-derived child identity for approval prompts. */
 export type RequestOrigin = {
