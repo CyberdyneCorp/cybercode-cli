@@ -17,6 +17,10 @@ All notable changes to Cyber Code are recorded here. The format follows [Keep a 
 - A key chord that computer use refuses (for example Command+C under an application grant) is now refused with `key_chord_refused` before anything is recorded or sent, and the grant stays armed. Before, it was recorded, failed in the native adapter, settled as an unknown operation and stopped the grant. The set of allowed and refused chords on macOS is unchanged.
 - In `auto`, a plain read under the enforced OS sandbox (`ls`, `pwd`, `echo`, `cat`, `head`, `tail` or `wc` (never `git`), no shell expansion, only operands the Session may read without asking, untainted run, not escalated or excluded) is a recorded policy allow instead of a reviewer call. Every other command is still reviewed; `classify_read_only: true` reviews these too.
 
+### Fixed
+
+- Model-run commands no longer wait for an editor, pager or Git credential prompt: `git commit` without `-m` aborted only at the command timeout, and `git log` in a PTY waited in the pager. Shell tools, `monitor`, PTYs, background commands, worktree setup and solve checks now get `GIT_EDITOR`/`JJ_EDITOR`/`HGEDITOR`/`EDITOR`/`VISUAL=true`, `PAGER`/`GIT_PAGER`/`JJ_PAGER`/`MANPAGER=cat` and `GIT_TERMINAL_PROMPT=0`; a value set in `sandbox.env.set` is kept.
+
 ### Security
 
 - Any reviewer tool failure (unknown tool, invalid arguments, a refused read, a timeout or an exhausted budget) ends the `auto` review as a fallback, never an allow.

@@ -163,9 +163,6 @@ async fn prepare_launch(
             .retain(|(key, _)| !matches!(key.as_str(), "GH_DEBUG" | "GH_HOST" | "DEBUG"));
         prepared.env.push(("GH_HOST".into(), "github.com".into()));
         prepared.env.push(("GH_PROMPT_DISABLED".into(), "1".into()));
-        prepared
-            .env
-            .push(("GIT_TERMINAL_PROMPT".into(), "0".into()));
     }
     Ok(prepared)
 }

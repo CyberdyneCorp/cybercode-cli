@@ -279,6 +279,33 @@ async fn pty_start_needs_bash_permission_and_ends_on_eof_or_task_stop() {
     assert!(flow.runtime.pty(id).is_none());
 }
 
+/// Regression: on a terminal `git log` started the configured pager, which waits for a
+/// keypress. `GIT_PAGER=cat` prints the log and the program ends.
+#[tokio::test]
+async fn pty_git_log_does_not_wait_in_a_pager() {
+    let flow = flow(allowed());
+    let session = flow.session("default").await;
+    let repo = "mkdir w && cd w && git init -q && git config user.email t@example.com \
+ && git config user.name t && git config commit.gpgsign false \
+ && git config core.pager 'sleep 60' && git commit -q --allow-empty -m first-commit";
+    support::ok(call(&flow, &session, "bash", json!({"command": repo})).await);
+    let started = json_of(
+        &flow,
+        &session,
+        "pty_start",
+        json!({"command": "git -C w log --oneline"}),
+    )
+    .await;
+    let id = started["job_id"].as_str().unwrap();
+    let ended = settled(&flow, id).await;
+    assert_eq!(
+        (ended.status, ended.exit_code),
+        (JobStatus::Completed, Some(0))
+    );
+    let log = std::fs::read_to_string(ended.output_path.unwrap()).unwrap();
+    assert!(log.contains("first-commit"), "{log}");
+}
+
 async fn call_in(flow: &Flow, session: &str, mode: &str, name: &str, input: Value) -> ToolOutcome {
     let mut inv = flow.f.invocation(mode, name, input);
     inv.session_id = session.into();
