@@ -714,7 +714,7 @@ mod tests {
             plugins: Vec::new(),
         };
         let found = discover(&scope);
-        assert_eq!(found.skills.len(), 5);
+        assert_eq!(found.skills.len(), 6);
         assert!(found.skills.values().all(Skill::is_bundled));
         assert_eq!(found.diagnostics.len(), 2, "{:?}", found.diagnostics);
     }

@@ -196,6 +196,13 @@ Skills are reusable instruction packages (`SKILL.md` plus supporting files) that
 - **WHEN** a project defines `.cyber/skills/simplify/SKILL.md`
 - **THEN** the project version replaces the bundled one
 
+### Requirement: Scope interview skill
+(P1) The system SHALL bundle a model-invocable, inline skill `grill-me`, replaceable like the other bundled skills. Before any work it SHALL direct the agent to interview the user with the `question` tool, one question per call, each with 2-4 options whose first is the agent's recommended answer marked `(Recommended)` and with custom answers allowed. Reading the repository SHALL be the only work allowed during the interview. When the remaining decisions would not change the work, the agent SHALL summarize the agreed goal, scope, decisions, assumptions and verification, and SHALL start only after the user confirms. Where `question` is unavailable, it SHALL ask the same questions in plain text, one per reply.
+
+#### Scenario: Interview before work
+- **WHEN** the user runs `/grill-me add rate limiting to the API`
+- **THEN** the agent asks one `question` at a time, each with a recommended first option, then shows a scope summary and edits nothing until the user confirms it
+
 ### Requirement: Record to skill
 (P2) The system SHALL provide the bundled skill `record-to-skill`, which turns the current session's (or a selected range of) user-approved actions into a new `SKILL.md`. The draft SHALL include a description, ordered steps, the commands used and allowed-tools, be written to `.cyber/skills/<name>/` after the user confirms, and appear in a diff review before saving.
 

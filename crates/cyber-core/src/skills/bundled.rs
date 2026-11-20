@@ -13,6 +13,7 @@ const PACKAGES: &[(&str, &str)] = &[
         "customize-cyber",
         include_str!("bundled/customize-cyber/SKILL.md"),
     ),
+    ("grill-me", include_str!("bundled/grill-me/SKILL.md")),
 ];
 
 pub(super) fn discover() -> Discovery {
@@ -61,6 +62,7 @@ mod tests {
             [
                 "batch",
                 "customize-cyber",
+                "grill-me",
                 "review",
                 "security-review",
                 "simplify"
@@ -85,6 +87,25 @@ mod tests {
             found.skills["customize-cyber"].context,
             SkillContext::Inline
         );
+    }
+
+    /// `grill-me` interviews in the caller through `question`, one question per call with
+    /// a recommended answer, and summarizes the agreed scope before any work.
+    #[test]
+    fn grill_me_interviews_one_question_at_a_time_before_acting() {
+        let skill = &discover().skills["grill-me"];
+        assert_eq!(skill.context, SkillContext::Inline);
+        assert!(skill.agent.is_none());
+        let body = &skill.body;
+        for required in [
+            "Ask exactly one question per `question` tool call",
+            "(Recommended)",
+            "summary of the agreed scope",
+            "Start the work only after they confirm",
+            "$ARGUMENTS",
+        ] {
+            assert!(body.contains(required), "{required}: {body}");
+        }
     }
 
     /// The bundled review needs the host-resolved target, which only `/review`
@@ -123,7 +144,7 @@ mod tests {
             plugins: Vec::new(),
         };
         let initial = all(&scope);
-        assert_eq!(initial.skills.len(), 5);
+        assert_eq!(initial.skills.len(), PACKAGES.len());
         assert_eq!(std::fs::read_dir(tmp).unwrap().count(), 0);
         for name in initial.skills.keys() {
             let dir = scope.global_config_dir.join("skills").join(name);
@@ -135,14 +156,14 @@ mod tests {
             .unwrap();
         }
         let local = all(&scope);
-        assert_eq!(local.skills.len(), 5);
+        assert_eq!(local.skills.len(), PACKAGES.len());
         assert!(
             local
                 .skills
                 .values()
                 .all(|s| !s.is_bundled() && s.body.starts_with("LOCAL"))
         );
-        assert_eq!(local.diagnostics.len(), 5);
+        assert_eq!(local.diagnostics.len(), PACKAGES.len());
         assert!(
             local
                 .diagnostics
@@ -167,7 +188,7 @@ mod tests {
                 .values()
                 .filter(|s| s.directory().is_some())
                 .count(),
-            4
+            PACKAGES.len() - 1
         );
         assert!(initial.skills.values().all(Skill::is_bundled));
     }
