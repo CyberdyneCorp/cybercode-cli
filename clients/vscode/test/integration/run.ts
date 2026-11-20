@@ -8,7 +8,7 @@ import { readdir, readFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { downloadAndUnzipVSCode, runTests } from "@vscode/test-electron";
+import { downloadAndUnzipVSCode } from "@vscode/test-electron";
 import { Fixture } from "./fixture";
 
 const extension = resolve(__dirname, "../..");
@@ -74,28 +74,58 @@ async function runSuite(fixture: Fixture, suite: "chat" | "restricted", root: st
   }
   await mkdir(join(profile, "user/User"), { recursive: true });
   await writeFile(join(profile, "user/User/settings.json"), JSON.stringify(settings));
-  const options = {
-    version: process.env.VSCODE_VERSION ?? "stable",
-    cachePath: join(extension, ".vscode-test"),
-    extensionDevelopmentPath: extension,
-    extensionTestsPath: join(__dirname, "suite/index.js"),
-    launchArgs: [fixture.repo, "--disable-extensions", "--skip-welcome", "--skip-release-notes", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--user-data-dir", join(profile, "user"), "--extensions-dir", join(profile, "extensions"), ...trust],
-    extensionTestsEnv: { ...fixture.env, CYBER_VSCODE_TEST: "1", CYBER_TEST_SUITE: suite, CYBER_TEST_FIXTURE: JSON.stringify(fixture.info()), CYBER_TEST_REPORT: report },
-  };
-  if (suite !== "restricted") {
-    await runTests(options);
-    return;
-  }
-  // `runTests` always adds `--disable-workspace-trust`; Restricted Mode needs VS Code
-  // launched without it.
-  const executable = await downloadAndUnzipVSCode({ version: options.version, cachePath: options.cachePath });
-  const args = [...options.launchArgs, "--no-sandbox", "--disable-gpu-sandbox", "--disable-updates", "--no-cached-data", `--extensionTestsPath=${options.extensionTestsPath}`, `--extensionDevelopmentPath=${extension}`];
-  const code = await new Promise<number | null>((resolve, reject) => {
-    const child = spawn(executable, args, { env: { ...process.env, ...options.extensionTestsEnv }, stdio: "inherit" });
-    child.once("error", reject);
-    child.once("exit", resolve);
+  const env = { ...fixture.env, CYBER_VSCODE_TEST: "1", CYBER_TEST_SUITE: suite, CYBER_TEST_FIXTURE: JSON.stringify(fixture.info()), CYBER_TEST_REPORT: report };
+  const executable = await downloadAndUnzipVSCode({ version: process.env.VSCODE_VERSION ?? "stable", cachePath: join(extension, ".vscode-test") });
+  // VS Code is launched directly (not through `runTests`, which always disables workspace
+  // trust) so a stalled window can be killed. A test window is never focused, so the
+  // Chromium switches keep a background or covered window from being throttled.
+  const args = [
+    fixture.repo,
+    "--disable-extensions",
+    "--skip-welcome",
+    "--skip-release-notes",
+    "--no-sandbox",
+    "--disable-gpu-sandbox",
+    "--disable-updates",
+    "--no-cached-data",
+    "--disable-renderer-backgrounding",
+    "--disable-backgrounding-occluded-windows",
+    // No OS keychain: on a CI runner a keychain access prompt that nobody answers blocks
+    // the workbench before any view resolves.
+    "--use-inmemory-secretstorage",
+    "--use-mock-keychain",
+    "--user-data-dir",
+    join(profile, "user"),
+    "--extensions-dir",
+    join(profile, "extensions"),
+    ...trust,
+    `--extensionTestsPath=${join(__dirname, "suite/index.js")}`,
+    `--extensionDevelopmentPath=${extension}`,
+  ];
+  await spawnBounded(executable, args, { ...process.env, ...env }, suite);
+}
+
+/** Run VS Code until it exits; kill it and fail when the suite exceeds its time limit. */
+function spawnBounded(executable: string, args: string[], env: NodeJS.ProcessEnv, suite: string): Promise<void> {
+  const limit = Number(process.env.CYBER_TEST_SUITE_TIMEOUT_MS ?? 8 * 60 * 1000);
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(chunk));
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`the ${suite} suite did not finish within ${limit} ms; VS Code was killed`));
+    }, limit);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`the ${suite} suite failed with exit code ${code}`));
+    });
   });
-  if (code !== 0) throw new Error(`the ${suite} suite failed with exit code ${code}`);
 }
 
 /**
@@ -104,9 +134,14 @@ async function runSuite(fixture: Fixture, suite: "chat" | "restricted", root: st
  * so `CYBER_TEST_DISABLE_APP_NAP=1` turns App Nap off for the VS Code bundle first.
  */
 function disableAppNap(): void {
-  if (process.platform !== "darwin" || process.env.CYBER_TEST_DISABLE_APP_NAP !== "1") return;
+  if (!foreground()) return;
   spawnSync("defaults", ["write", "com.microsoft.VSCode", "NSAppSleepDisabled", "-bool", "YES"]);
 }
+
+function foreground(): boolean {
+  return process.platform === "darwin" && process.env.CYBER_TEST_DISABLE_APP_NAP === "1";
+}
+
 
 async function main(): Promise<void> {
   disableAppNap();
