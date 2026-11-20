@@ -183,6 +183,13 @@ impl ToolHost for AppHost {
         self.builtin.loop_settings(directory)
     }
 
+    fn schedule_policy(
+        &self,
+        directory: &str,
+    ) -> Result<cyber_server::runtime::schedules::SchedulePolicy, String> {
+        self.builtin.schedule_policy(directory)
+    }
+
     fn check(
         &self,
         directory: &str,
