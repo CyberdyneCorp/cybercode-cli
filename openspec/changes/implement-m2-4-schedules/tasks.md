@@ -21,19 +21,19 @@
 
 ## 4. Part B — persistent schedules
 
-- [ ] 4.1 Migrations `schedule` and `schedule_run`; the `schedule.created.1`, `schedule.updated.1` and `schedule.run.1` events, validation and projector.
-- [ ] 4.2 Settings `loops.jitter_seconds` and `loops.allow_bypass` (user and managed layers only), with tests that a project layer cannot enable it.
-- [ ] 4.3 Create, list, show, pause, resume, run now and remove on `Runtime`, with the gate (directory, trust, Mode) at creation.
-- [ ] 4.4 The sweep: due runs with jitter; overlap skip; the gate at run time with the `refused` outcome; new or resumed Session (switching its Mode); queued admission `schedi_<id>_<n>`.
-- [ ] 4.5 Run end at the Drain's idle exit: outcome, `noop` from `schedule_wakeup`, deltas, budget stop, notifications (Session and `DesktopNotifier`), and the `ScheduleRun` hook.
-- [ ] 4.6 Restore (interrupted runs, missed policy) and the background sweep, wired in `cyber-app` with the OS notifier.
-- [ ] 4.7 `Denied: no approver in unattended schedule` for asks in scheduled runs; the `unattended_marker` for `schedi_` runs.
-- [ ] 4.8 Routes `/api/v1/schedules…`, OpenAPI, the SDK, and HTTP tests.
-- [ ] 4.9 `cyber loops add|list|show|pause|resume|run|rm`, the service warning, refusal inside agent subprocesses, CLI tests, and `docs/cli.md`.
-- [ ] 4.10 Runtime tests: a nightly run with no client, overlap skip, jitter determinism and the next run, untrusted directory refused, bypass refused without the user opt-in, a dont-ask ask denied with the schedule message, budget stop with notification, interrupted run restore, missed run-once, and a usage-limit wait in a resumed Session.
-- [ ] 4.11 Docs: the local core guide (schedules, unattended rules, notifications), the README, and the ROADMAP M2.4 status.
+- [x] 4.1 Migrations `schedule` and `schedule_run`; the `schedule.created.1`, `schedule.updated.1` and `schedule.run.1` events, validation and projector.
+- [x] 4.2 Settings `loops.jitter_seconds` and `loops.allow_bypass` (user and managed layers only), with tests that a project layer cannot enable it.
+- [x] 4.3 Create, list, show, pause, resume, run now and remove on `Runtime`, with the gate (directory, trust, Mode) at creation.
+- [x] 4.4 The sweep: due runs with jitter; overlap skip; the gate at run time with the `refused` outcome; new or resumed Session (switching its Mode); queued admission `schedi_<id>_<n>`.
+- [x] 4.5 Run end at the Drain's idle exit: outcome, `noop` from `schedule_wakeup`, deltas, budget stop, notifications (Session and `DesktopNotifier`), and the `ScheduleRun` hook.
+- [x] 4.6 Restore (interrupted runs, missed policy) and the background sweep, wired in `cyber-app` with the OS notifier.
+- [x] 4.7 `Denied: no approver in unattended schedule` for asks in scheduled runs; the `unattended_marker` for `schedi_` runs.
+- [x] 4.8 Routes `/api/v1/schedules…`, OpenAPI, the SDK, and HTTP tests.
+- [x] 4.9 `cyber loops add|list|show|pause|resume|run|rm`, the service warning, refusal inside agent subprocesses, CLI tests, and `docs/cli.md`.
+- [x] 4.10 Runtime tests: a nightly run with no client, overlap skip, jitter determinism and the next run, untrusted directory refused, bypass refused without the user opt-in, a dont-ask ask denied with the schedule message, budget stop with notification, interrupted run restore, missed run-once, and a usage-limit wait in a resumed Session.
+- [x] 4.11 Docs: the local core guide (schedules, unattended rules, notifications), the README, and the ROADMAP M2.4 status.
 
 ## 5. Verification
 
-- [ ] 5.1 `cargo fmt`, clippy with `-D warnings`, touched-crate nextest, OpenSpec validate, `spec_lint`, `spec_inventory`, and `help-markdown` equal to `docs/cli.md`.
+- [x] 5.1 `cargo fmt`, clippy with `-D warnings`, touched-crate nextest, OpenSpec validate, `spec_lint`, `spec_inventory`, and `help-markdown` equal to `docs/cli.md`.
 - [ ] 5.2 Live: a cron reminder and a nightly schedule against a real model (needs keys).

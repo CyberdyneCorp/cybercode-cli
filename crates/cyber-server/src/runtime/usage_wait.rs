@@ -524,10 +524,11 @@ impl Inner {
 }
 
 /// A Session that runs with nobody attached: created by `cyber exec`, a Workflow agent,
-/// an active Goal, a loop iteration in flight, or a teammate.
+/// an active Goal, a loop iteration in flight, a scheduled run, or a teammate.
 fn unattended_marker(state: &SessionState) -> bool {
     let info = &state.info;
     info.unattended
+        || super::schedules::scheduled_run_current(state)
         || info.workflow_run_id.is_some()
         || state.goals.active().is_some()
         || state

@@ -19,6 +19,7 @@ pub mod hooks;
 pub mod ide;
 pub mod import;
 pub mod intelligence;
+pub mod loops;
 pub mod mcp;
 pub mod mcp_browser;
 pub mod mcp_config;
@@ -126,6 +127,7 @@ pub fn run(mut cli: Cli) -> Result<(), CliError> {
         Command::Worktree { cmd } => worktrees::run(cmd, &ctx, &cli.global),
         Command::Workflows { cmd } => workflows::run(cmd, &ctx, &cli.global),
         Command::Teams { cmd } => teams::run(cmd, &ctx, &cli.global),
+        Command::Loops { cmd } => loops::run(cmd, &ctx, &cli.global),
         Command::Computer { cmd } => computer::run(cmd, &ctx, &cli.global),
         Command::Features { cmd } => features::run(cmd, &ctx, &cli.global),
         Command::Debug { cmd } => debug::run(cmd, &ctx, &cli.global),

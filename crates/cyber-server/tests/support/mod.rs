@@ -232,6 +232,9 @@ pub struct Tools {
     pub pinned: Mutex<Option<(String, Duration)>>,
     /// How many times the pinned source was observed.
     pub pinned_observed: std::sync::atomic::AtomicUsize,
+    /// What every directory's schedule gate reads (`loops-scheduling`): trusted, no
+    /// `bypass`, no jitter, unless a test changes it.
+    pub schedule_policy: Mutex<cyber_server::runtime::schedules::SchedulePolicy>,
 }
 
 pub fn def(name: &str, safety: RetrySafety, parallel: bool) -> ToolDef {
@@ -289,6 +292,10 @@ impl Tools {
             rule_approvals: Mutex::default(),
             pinned: Mutex::default(),
             pinned_observed: Default::default(),
+            schedule_policy: Mutex::new(cyber_server::runtime::schedules::SchedulePolicy {
+                trusted: true,
+                ..Default::default()
+            }),
         })
     }
 
@@ -375,6 +382,12 @@ impl ToolHost for Tools {
         Ok(self.usage_limit.lock().unwrap().clone())
     }
 
+    fn schedule_policy(
+        &self,
+        _directory: &str,
+    ) -> Result<cyber_server::runtime::schedules::SchedulePolicy, String> {
+        Ok(self.schedule_policy.lock().unwrap().clone())
+    }
     fn goal_settings(
         &self,
         _directory: &str,

@@ -50,6 +50,7 @@ ERROR_TAGS = [
     "RequestNotFoundError",
     "ReviewTargetError",
     "RewindConflictError",
+    "ScheduleNotFoundError",
     "ServiceUnavailableError",
     "BudgetExceededError",
     "BudgetUnpricedError",

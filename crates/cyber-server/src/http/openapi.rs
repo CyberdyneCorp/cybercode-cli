@@ -1424,6 +1424,66 @@ pub fn operations(g: &mut SchemaGenerator) -> Vec<Op> {
         )
         .ok::<Data<Vec<String>>>(g)
         .error::<ErrorBody>(g, 404, "SessionNotFoundError or LoopNotFoundError"),
+        op(
+            "get",
+            "/schedules",
+            "v1.schedule.list",
+            "Persistent schedules (not removed), oldest first, with their next run including jitter",
+        )
+        .ok::<Data<Vec<crate::runtime::schedules::Schedule>>>(g),
+        op(
+            "post",
+            "/schedules",
+            "v1.schedule.create",
+            "Add a persistent schedule the service runs with no client open; the directory must be trusted and `bypass` needs `loops.allow_bypass` in user or managed config",
+        )
+        .body::<crate::runtime::schedules::ScheduleRequest>(g)
+        .status(201)
+        .ok::<Data<crate::runtime::schedules::Schedule>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError, such as an invalid cron expression or a refused directory or Mode"),
+        op(
+            "get",
+            "/schedules/{scheduleID}",
+            "v1.schedule.get",
+            "A schedule with its 20 most recent runs, newest first",
+        )
+        .ok::<Data<crate::runtime::schedules::Schedule>>(g)
+        .error::<ErrorBody>(g, 404, "ScheduleNotFoundError"),
+        op(
+            "delete",
+            "/schedules/{scheduleID}",
+            "v1.schedule.remove",
+            "Remove a schedule; its run history stays and a run in flight finishes",
+        )
+        .ok::<Data<Vec<String>>>(g)
+        .error::<ErrorBody>(g, 404, "ScheduleNotFoundError"),
+        op(
+            "post",
+            "/schedules/{scheduleID}/pause",
+            "v1.schedule.pause",
+            "Pause a schedule; a run in flight finishes",
+        )
+        .ok::<Data<crate::runtime::schedules::Schedule>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError")
+        .error::<ErrorBody>(g, 404, "ScheduleNotFoundError"),
+        op(
+            "post",
+            "/schedules/{scheduleID}/resume",
+            "v1.schedule.resume",
+            "Resume a paused schedule at its next occurrence",
+        )
+        .ok::<Data<crate::runtime::schedules::Schedule>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError, such as a schedule that exceeded its budget")
+        .error::<ErrorBody>(g, 404, "ScheduleNotFoundError"),
+        op(
+            "post",
+            "/schedules/{scheduleID}/run",
+            "v1.schedule.run",
+            "Run a schedule now, outside its cron schedule, through the same unattended gate",
+        )
+        .ok::<Data<super::schedules::ScheduleRunStarted>>(g)
+        .error::<ErrorBody>(g, 400, "InvalidRequestError, such as a run already in flight")
+        .error::<ErrorBody>(g, 404, "ScheduleNotFoundError"),
         op("get","/account","v1.account.get","Current Cyber Account display claims; never returns raw tokens")
             .ok::<Data<super::account::AccountView>>(g)
             .error::<ErrorBody>(g,401,"SessionExpiredError")

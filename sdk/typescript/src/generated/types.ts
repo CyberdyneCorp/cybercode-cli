@@ -1197,6 +1197,10 @@ export type Data_Array_of_RemoteReach = {
   data: RemoteReach[];
 };
 
+export type Data_Array_of_Schedule = {
+  data: Schedule[];
+};
+
 export type Data_Array_of_SnapshotPreparation = {
   data: SnapshotPreparation[];
 };
@@ -1399,6 +1403,14 @@ export type Data_RunDetail = {
 
 export type Data_SavedScript = {
   data: SavedScript;
+};
+
+export type Data_Schedule = {
+  data: Schedule;
+};
+
+export type Data_ScheduleRunStarted = {
+  data: ScheduleRunStarted;
 };
 
 export type Data_ScopeUsage = {
@@ -4866,6 +4878,24 @@ export type RunDetail = {
   solve_evidence?: SolveEvidence | null;
 };
 
+/** One run as `show` lists it. */
+export type RunRecord = {
+  run_id: string;
+  n: number;
+  due_ms: number;
+  started_ms?: number | null;
+  ended_ms?: number | null;
+  session_id?: string | null;
+  message_id?: string | null;
+  /** A [`RunOutcome`], or `running`. */
+  outcome: string;
+  noop: boolean;
+  reason?: string | null;
+  cost: number;
+  tokens: number;
+  turns: number;
+};
+
 /** The `scope` of a Workflow Run usage report. */
 export type RunScope = "run";
 
@@ -4909,6 +4939,67 @@ export type SaveBody = {
 export type SavedScript = {
   path: string;
 };
+
+/** A schedule as the routes and the CLI show it. */
+export type Schedule = {
+  id: string;
+  name: string;
+  cron: string;
+  directory: string;
+  prompt: string;
+  agent?: string | null;
+  mode: string;
+  model: string;
+  session_id?: string | null;
+  notify: Notify;
+  missed: Missed;
+  budget?: Budget | null;
+  jitter_ms: number;
+  status: ScheduleStatus;
+  reason?: string | null;
+  /** The next run, jitter included; `None` while paused or ended. */
+  next_due_ms?: number | null;
+  /** The run in flight. */
+  inflight?: string | null;
+  runs: number;
+  cost_usd: number;
+  tokens: number;
+  turns: number;
+  created_ms: number;
+  updated_ms: number;
+  /** The most recent runs, newest first (`show` only). */
+  recent: RunRecord[];
+};
+
+/** `POST /api/v1/schedules`, `cyber loops add`. */
+export type ScheduleRequest = {
+  /** A 5-field cron expression in the service's local time zone. */
+  cron: string;
+  prompt: string;
+  /** An absolute directory; the request's Location when absent. */
+  directory?: string | null;
+  name?: string | null;
+  agent?: string | null;
+  /**
+   * `dont-ask` when absent; `bypass` needs `loops.allow_bypass` in user or managed
+   * config.
+   */
+  mode?: string | null;
+  /** The model of new run Sessions; the Location's default when absent. */
+  model?: string | null;
+  /** Resume this root Session for every run instead of creating one per run. */
+  session_id?: string | null;
+  notify?: Notify;
+  missed?: Missed;
+  budget?: Budget | null;
+};
+
+/** `POST /api/v1/schedules/{id}/run`. */
+export type ScheduleRunStarted = {
+  run_id: string;
+};
+
+export type ScheduleStatus = "active" | "paused" | "budget_exceeded" | "deleted";
 
 /** One of the usage reports a scope returns, discriminated by `scope`. */
 export type ScopeUsage = SessionUsage | RunUsageReport;

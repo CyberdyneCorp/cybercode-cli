@@ -19,8 +19,8 @@ pub(crate) use taint::{
 };
 
 pub use engine::{
-    COLLAB_MESSAGE_SEND, COLLAB_TASK_WRITE, Decision, DecisionSource, Effect, GOAL_SET,
-    MESSAGE_SEND, Mode, Policy, Request, Rule, TEAM_MANAGE, TEAM_TASK, WORKFLOW_RUN,
+    COLLAB_MESSAGE_SEND, COLLAB_TASK_WRITE, DONT_ASK_DENIAL, Decision, DecisionSource, Effect,
+    GOAL_SET, MESSAGE_SEND, Mode, Policy, Request, Rule, TEAM_MANAGE, TEAM_TASK, WORKFLOW_RUN,
     boundary_evaluate, defaults, evaluate, evaluate_all, evaluate_scoped, is_protected,
     parse_rules, slash, workflow_resource,
 };

@@ -2229,7 +2229,33 @@ In the `/goal` panel, `e` edits, `p` pauses, `r` resumes and `c` clears the sele
   - a one-shot scheduled task whose time passed ends `expired` under `skip`, and runs once under `run-once`.
 - **Hooks.** `LoopIteration` hooks receive `{loop, iteration: {n, outcome, noop, duration_ms, cost, tokens, turns, reason}}` on stdin after each iteration ends (skipped ticks excluded). They are observational.
 - **API:** `GET|POST /api/v1/sessions/{id}/loops` (`POST` takes `{"command": "5m check"}` or the parsed fields), `DELETE /api/v1/sessions/{id}/loops[/{loop_id}]`.
-- **Not yet:** persistent `cyber loops add` schedules run by the service, and `/loop` in `cyber exec`.
+- **Not yet:** `/loop` in `cyber exec`, and `cyber loops promote` (P3).
+
+### Persistent schedules (`cyber loops`)
+
+`cyber loops` schedules a prompt that the Cyber service runs on a cron schedule, even when no terminal or client is open:
+
+```text
+cyber loops add --cron "0 2 * * *" --name nightly "review last night's commits"
+cyber loops add --cron "*/30 9-18 * * 1-5" --dir ~/src/api --session ses_… --notify always "check CI"
+cyber loops add --cron @weekly --max-cost 5 --timeout 90d "summarize open issues"
+cyber loops list                      # ID, name, cron, next run (jitter included), status, runs, Mode
+cyber loops show cron_…               # settings and the 20 most recent runs
+cyber loops pause|resume|run|rm cron_…
+```
+
+- **The service runs them.** Schedules live in the database (`schedule.*` events, `schedule` and `schedule_run` tables) and the `cyber serve` process that `cyber service start` registers runs them, checking every 5 s. `add` starts the service like every resource command, and warns when it was not running: schedules run only while it runs, so start it again with `cyber service start` after a reboot or logout.
+- **Each run** creates a new Session (unattended, titled `<name> · <time>`), or resumes the root Session given with `--session` after switching it to the schedule's Mode (a busy Session skips the run). The prompt is queued input (`schedi_<id>_<n>`), so it never interrupts a Turn. Its outcome is recorded: `completed`, `failed`, `interrupted`, `refused`, `skipped_overlap` (the previous run still ran) or `skipped_missed`.
+- **Unattended Mode.** Runs use the schedule's `--mode`, `dont-ask` by default. An ask the run cannot answer is denied with `Denied: no approver in unattended schedule` and the run continues. `--mode bypass` needs `loops.allow_bypass: true` in user config (`~/.config/cyber/cyber.jsonc`) or managed policy; a project, local, environment, profile or `--config` layer cannot enable it, and the service's own `bypass` gate still applies.
+- **Only trusted directories.** The directory must exist and its checkout must be trusted (`cyber trust inspect`). Directory, trust, Mode and the `--session` target are checked when the schedule is added and again before every run: a checkout whose definitions changed after approval makes the next run `refused`, with a notification, until it is approved again.
+- **Not from the model.** `cyber loops add`, `resume` and `run` are refused inside an agent subprocess (`CYBER_SESSION_ID` set), and the routes need the owner credential that model subprocesses never receive. The model's own `cron_create` tasks stay in its Session.
+- **Jitter.** Each schedule runs a fixed offset of up to `loops.jitter_seconds` (default 60, at most 3600, `0` turns it off) after each occurrence, derived from its ID, so schedules that share a time spread out. `list` shows the next run with it.
+- **Notifications.** `--notify on_change` (default) notifies runs that fail, are refused, or complete without reporting `noop: true`; `always` every run; `never` none. A run reports `noop` by calling `schedule_wakeup` (offered during scheduled runs; its delay is ignored). Notifications go to the run's Session (TUI, remote devices) and to the desktop through the service (`osascript` on macOS, `notify-send` on Linux).
+- **Budgets.** `--max-cost`, `--max-tokens`, `--max-turns` and `--timeout` (from when the schedule was added) apply across runs, else `budgets.loop`. They are checked before and after each run; an exhausted schedule stops with `budget_exceeded` and notifies. `resume` cannot restart it: remove it and add a new one.
+- **Restarts.** A run the service stopped during ends `interrupted`. Runs missed while the service was down are skipped (`--missed skip`, the default) or one catch-up runs (`run-once`).
+- **Usage limits.** A scheduled run counts as unattended, so a usage limit with a known reset waits for it instead of failing.
+- **Events and hooks.** `schedule.run.1` records each run's start (`phase: started`), its reported `noop` (`reported`) and its end (`ended`, with outcome, duration, cost, tokens and turns). `ScheduleRun` hooks receive `{schedule: {id, name, cron, directory}, run: {run_id, n, outcome, noop, duration_ms, cost, tokens, turns, reason}}` on stdin after a run in a Session ends; they are observational.
+- **API:** `GET|POST /api/v1/schedules`, `GET|DELETE /api/v1/schedules/{id}`, `POST /api/v1/schedules/{id}/pause|resume|run`.
 
 ## Workflows (P2 M2.1)
 

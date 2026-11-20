@@ -20,12 +20,12 @@ pub(crate) const CRON_TOOLS: [&str; 3] = ["cron_create", "cron_list", "cron_dele
 
 /// Guidance shown to the model while an iteration runs (Context Source `core/loop`).
 pub(crate) const GUIDANCE_KEY: &str = "core/loop";
-pub(crate) const GUIDANCE: &str = "This prompt is an iteration of a /loop the user started. \
-Before you finish, call schedule_wakeup once: set noop to true when nothing changed since \
-the last check, and give a one-sentence reason. In a self-paced loop, delay_seconds \
-(60–3600) is the wait before the next iteration, and finishing without calling \
-schedule_wakeup ends the loop. In an interval loop the interval keeps the pace and \
-delay_seconds is ignored.";
+pub(crate) const GUIDANCE: &str = "This prompt is an iteration of a /loop or a scheduled \
+run the user set up. Before you finish, call schedule_wakeup once: set noop to true when \
+nothing changed since the last check, and give a one-sentence reason. In a self-paced loop, \
+delay_seconds (60–3600) is the wait before the next iteration, and finishing without calling \
+schedule_wakeup ends the loop. In an interval loop, a scheduled task or a scheduled run the \
+schedule keeps the pace and delay_seconds is ignored.";
 
 pub(crate) struct ScheduleWakeup;
 
@@ -56,6 +56,14 @@ impl Tool for ScheduleWakeup {
                 .host
                 .runtime()
                 .ok_or_else(|| failed("schedule_wakeup requires the runtime"))?;
+            // A scheduled run reports its `noop` and reason; its cron sets the pace.
+            if runtime
+                .report_schedule_run(&ctx.inv.session_id, text(input, "reason"), noop)
+                .await
+                .map_err(|error| failed(error.to_string()))?
+            {
+                return Ok("Recorded for this scheduled run".into());
+            }
             let ack = runtime
                 .loop_wakeup(&ctx.inv.session_id, delay, text(input, "reason"), noop)
                 .await
