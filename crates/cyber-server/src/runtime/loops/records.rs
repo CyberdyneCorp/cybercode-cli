@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use cyber_core::budget::Budget;
-use cyber_core::loops::{Missed, Overlap};
+use cyber_core::loops::{Missed, Notify, Overlap};
 use rusqlite::{Transaction, params};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,8 @@ pub const HISTORY: usize = 50;
 pub enum LoopKind {
     Interval,
     SelfPaced,
+    /// A scheduled task the model created with `cron_create` (`cron_` ID).
+    Cron,
 }
 
 /// Why a loop ended.
@@ -47,6 +49,11 @@ pub enum StopStatus {
     UntilMet,
     BudgetExceeded,
     Failed,
+    /// A one-shot scheduled task whose time passed while the server was not running
+    /// (missed-run policy `skip`).
+    Expired,
+    /// The Goal named by `--until-goal` reached a terminal status.
+    GoalEnded,
 }
 
 /// How an iteration ended.
@@ -71,6 +78,9 @@ pub struct StopConditions {
     pub for_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// `--until-goal`: the Goal whose terminal status ends the loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_goal: Option<String>,
 }
 
 /// `loop.created.1`.
@@ -84,8 +94,16 @@ pub struct Created {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interval_seconds: Option<u64>,
+    /// A recurring scheduled task's 5-field cron expression (local time).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cron: Option<String>,
+    /// A one-shot scheduled task's time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at_ms: Option<i64>,
     pub overlap: Overlap,
     pub missed: Missed,
+    #[serde(default)]
+    pub notify: Notify,
     pub stop: StopConditions,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<Budget>,
@@ -190,8 +208,13 @@ pub struct LoopState {
     pub prompt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interval_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cron: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_ms: Option<i64>,
     pub overlap: Overlap,
     pub missed: Missed,
+    pub notify: Notify,
     pub stop: StopConditions,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget: Option<Budget>,
@@ -246,8 +269,11 @@ impl LoopState {
             kind: c.kind,
             prompt: c.prompt,
             interval_seconds: c.interval_seconds,
+            cron: c.cron,
+            at_ms: c.at_ms,
             overlap: c.overlap,
             missed: c.missed,
+            notify: c.notify,
             stop: c.stop,
             budget: c.budget,
             iteration_cap: c.iteration_cap,
@@ -302,12 +328,32 @@ pub(crate) fn register(registry: &mut EventRegistry) {
 
 fn validate_created(data: &Value) -> Result<(), String> {
     let c: Created = decode(data)?;
-    if !cyber_core::loops::is_loop_id(&c.loop_id) {
-        return Err(format!("loop ID {:?} is not a lop_ ID", c.loop_id));
+    let cron = c.kind == LoopKind::Cron;
+    if cron != cyber_core::loops::is_cron_id(&c.loop_id)
+        || !cyber_core::loops::is_loop_id(&c.loop_id)
+    {
+        return Err(format!(
+            "loop ID {:?} is not a lop_ ID (cron_ for a scheduled task)",
+            c.loop_id
+        ));
     }
     let interval = c.interval_seconds.is_some();
     if interval != (c.kind == LoopKind::Interval) {
         return Err("an interval loop, and only one, has an interval".into());
+    }
+    let (has_cron, has_at) = (c.cron.is_some(), c.at_ms.is_some());
+    let timed = if cron {
+        has_cron != has_at
+    } else {
+        !has_cron && !has_at
+    };
+    if !timed {
+        return Err(
+            "a scheduled task, and only one, has either a cron expression or a time".into(),
+        );
+    }
+    if let Some(expression) = &c.cron {
+        cyber_core::cron::Cron::parse(expression)?;
     }
     if c.prompt.trim().is_empty() || c.iteration_cap == 0 {
         return Err("a loop has a prompt and an iteration cap".into());
@@ -424,6 +470,8 @@ pub fn status_name(status: StopStatus) -> &'static str {
         StopStatus::UntilMet => "until_met",
         StopStatus::BudgetExceeded => "budget_exceeded",
         StopStatus::Failed => "failed",
+        StopStatus::Expired => "expired",
+        StopStatus::GoalEnded => "goal_ended",
     }
 }
 
@@ -521,8 +569,11 @@ pub(crate) mod tests {
             kind,
             prompt: "check".into(),
             interval_seconds: (kind == LoopKind::Interval).then_some(60),
+            cron: (kind == LoopKind::Cron).then(|| "* * * * *".into()),
+            at_ms: None,
             overlap: Overlap::Skip,
             missed: Missed::Skip,
+            notify: Notify::OnChange,
             stop: StopConditions::default(),
             budget: None,
             reservation_scope_version: 0,

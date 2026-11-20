@@ -48,12 +48,14 @@ const DISTINCT_UNAVAILABLE: &[&str] = &[
     "FileChanged",
     "GoalEvaluated",
     "GoalCompleted",
+    "LoopIteration",
 ];
 
 /// Lifecycle events the runtime dispatches through its narrow host port.
 const RUNTIME_EVENTS: &[&str] = &[
     "GoalEvaluated",
     "GoalCompleted",
+    "LoopIteration",
     "Stop",
     "StopFailure",
     "UserPromptSubmit",

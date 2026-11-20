@@ -3449,7 +3449,7 @@ export type LongestSession = {
   duration_ms: number;
 };
 
-export type LoopKind = "interval" | "self_paced";
+export type LoopKind = "interval" | "self_paced" | "cron";
 
 /** A loop to create. `interval_seconds: None` makes it self-paced. */
 export type LoopSpec = {
@@ -3458,8 +3458,11 @@ export type LoopSpec = {
   max_iterations?: number | null;
   for_seconds?: number | null;
   until?: string | null;
+  /** Stop when the Session's current Goal reaches a terminal status. */
+  until_goal?: boolean;
   overlap?: Overlap;
   missed?: Missed;
+  notify?: Notify;
   budget?: Budget | null;
 };
 
@@ -3469,8 +3472,11 @@ export type LoopState = {
   kind: LoopKind;
   prompt: string;
   interval_seconds?: number | null;
+  cron?: string | null;
+  at_ms?: number | null;
   overlap: Overlap;
   missed: Missed;
+  notify: Notify;
   stop: StopConditions;
   budget?: Budget | null;
   iteration_cap: number;
@@ -3931,6 +3937,12 @@ export type NoticePolicy = {
   taint?: TaintSetting;
   bypass?: BypassSetting;
 };
+
+/**
+ * When a loop's iterations notify the user (`loops-scheduling` → Completion
+ * notifications): `on_change` notifies iterations that report `noop: false` or fail.
+ */
+export type Notify = "always" | "on_change" | "never";
 
 /** Lossless JSON decimal integer. Never accepts JSON numbers or noncanonical strings. */
 export type Offset = string;
@@ -5741,6 +5753,8 @@ export type StopConditions = {
   max_iterations?: number | null;
   for_seconds?: number | null;
   until?: string | null;
+  /** `--until-goal`: the Goal whose terminal status ends the loop. */
+  until_goal?: string | null;
 };
 
 export type StopReason = "user" | "budget" | "lead_deleted";

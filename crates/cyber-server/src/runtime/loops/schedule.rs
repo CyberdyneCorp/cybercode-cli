@@ -35,8 +35,22 @@ fn warn(what: &str, error: &RuntimeError) {
     );
 }
 
-/// The first interval tick after `now`, counted from the loop's creation.
+/// When the next iteration after `now` is due: the next interval tick, or the next
+/// occurrence of a recurring scheduled task; `None` for a self-paced loop (its wakeup
+/// paces it) and a one-shot task.
 fn next_tick(state: &LoopState, now: i64) -> Option<i64> {
+    match state.kind {
+        LoopKind::Interval => interval_tick(state, now),
+        LoopKind::Cron => state
+            .cron
+            .as_deref()
+            .and_then(|expression| super::cron::next_occurrence(expression, now)),
+        LoopKind::SelfPaced => None,
+    }
+}
+
+/// The first interval tick after `now`, counted from the loop's creation.
+fn interval_tick(state: &LoopState, now: i64) -> Option<i64> {
     let interval = i64::try_from(state.interval_seconds?)
         .ok()?
         .saturating_mul(1000);
@@ -56,6 +70,22 @@ fn stop_reason(state: &LoopState, now: i64) -> Option<(StopStatus, String)> {
         return Some((StopStatus::Duration, format!("ran for {seconds}s")));
     }
     budget_exceeded(state, now).map(|reason| (StopStatus::BudgetExceeded, reason))
+}
+
+/// `--until-goal`: the loop stops once its Goal reached a terminal status (or is gone).
+fn goal_stop(session: &SessionState, state: &LoopState) -> Option<(StopStatus, String)> {
+    let goal_id = state.stop.until_goal.as_ref()?;
+    match session.goals.goals.get(goal_id) {
+        Some(goal) if !goal.status.is_terminal() => None,
+        Some(goal) => Some((
+            StopStatus::GoalEnded,
+            format!("goal {goal_id} {}", goal.status.as_str()),
+        )),
+        None => Some((
+            StopStatus::GoalEnded,
+            format!("goal {goal_id} no longer exists"),
+        )),
+    }
 }
 
 fn budget_exceeded(state: &LoopState, now: i64) -> Option<String> {
@@ -114,7 +144,8 @@ fn totals(state: &SessionState) -> (f64, u64, u64) {
 
 /// What the locked step of a due loop decided.
 enum Due {
-    Nothing,
+    /// Nothing to admit; the records committed, if any, for follow-ups.
+    Nothing(Vec<NewEvent>),
     Run(Box<Iteration>),
 }
 
@@ -148,8 +179,12 @@ impl Runtime {
     }
 
     async fn run_due(&self, session_id: &str, loop_id: &str, now: i64) -> Result<(), RuntimeError> {
-        let Due::Run(iteration) = self.decide_due(session_id, loop_id, now).await? else {
-            return Ok(());
+        let iteration = match self.decide_due(session_id, loop_id, now).await? {
+            Due::Run(iteration) => iteration,
+            Due::Nothing(committed) => {
+                self.loop_followups(session_id, &committed).await;
+                return Ok(());
+            }
         };
         let mut until_tail = None;
         if let Some(command) = &iteration.until {
@@ -186,15 +221,15 @@ impl Runtime {
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
         let Some(lp) = state.loops.get(loop_id).filter(|l| l.active()).cloned() else {
-            return Ok(Due::Nothing);
+            return Ok(Due::Nothing(Vec::new()));
         };
         if lp.next_due_ms.is_none_or(|due| due > now) {
-            return Ok(Due::Nothing);
+            return Ok(Due::Nothing(Vec::new()));
         }
-        if let Some((status, reason)) = stop_reason(&lp, now) {
-            self.inner
-                .commit_locked(&mut state, vec![stopped(loop_id, status, reason)])?;
-            return Ok(Due::Nothing);
+        if let Some((status, reason)) = stop_reason(&lp, now).or_else(|| goal_stop(&state, &lp)) {
+            let events = vec![stopped(loop_id, status, reason)];
+            self.inner.commit_locked(&mut state, events.clone())?;
+            return Ok(Due::Nothing(events));
         }
         if lp.inflight.is_some() {
             if lp.overlap == cyber_core::loops::Overlap::Coalesce {
@@ -202,7 +237,7 @@ impl Runtime {
             }
             let skip = skipped(&lp, Outcome::SkippedOverlap, next_tick(&lp, now));
             self.inner.commit_locked(&mut state, vec![skip])?;
-            return Ok(Due::Nothing);
+            return Ok(Due::Nothing(Vec::new()));
         }
         let (cost_before, tokens_before, turns_before) = totals(&state);
         let n = lp.iterations + 1;
@@ -321,6 +356,20 @@ impl Runtime {
         if matches!(error, RuntimeError::ShuttingDown) {
             return Ok(());
         }
+        let events = self
+            .refuse_iteration(session_id, iteration, error, now)
+            .await?;
+        self.loop_followups(session_id, &events).await;
+        Ok(())
+    }
+
+    async fn refuse_iteration(
+        &self,
+        session_id: &str,
+        iteration: &Iteration,
+        error: &RuntimeError,
+        now: i64,
+    ) -> Result<Vec<NewEvent>, RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
         let Some(lp) = state
@@ -329,12 +378,9 @@ impl Runtime {
             .filter(|l| l.active())
             .cloned()
         else {
-            return Ok(());
+            return Ok(Vec::new());
         };
-        let next = match lp.kind {
-            LoopKind::Interval => next_tick(&lp, now),
-            LoopKind::SelfPaced => None,
-        };
+        let next = next_tick(&lp, now);
         let ended = records::IterationEnded {
             loop_id: lp.loop_id.clone(),
             n: iteration.n,
@@ -351,7 +397,8 @@ impl Runtime {
         if lp.failures + 1 >= MAX_FAILURES || next.is_none() {
             events.push(stopped(&lp.loop_id, StopStatus::Failed, error.to_string()));
         }
-        self.inner.commit_locked(&mut state, events).map(drop)
+        self.inner.commit_locked(&mut state, events.clone())?;
+        Ok(events)
     }
 
     async fn commit_loop(
@@ -384,8 +431,9 @@ impl Runtime {
             Ok(false) => return,
             Err(error) => return warn("reading loops failed", &RuntimeError::Store(error)),
         }
-        if let Err(error) = self.end_iterations(session_id, status, now_ms()).await {
-            warn("ending a loop iteration failed", &error);
+        match self.end_iterations(session_id, status, now_ms()).await {
+            Ok(events) => self.loop_followups(session_id, &events).await,
+            Err(error) => warn("ending a loop iteration failed", &error),
         }
         self.nudge_loops();
     }
@@ -395,7 +443,7 @@ impl Runtime {
         session_id: &str,
         status: Option<&str>,
         now: i64,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<Vec<NewEvent>, RuntimeError> {
         let handle = self.inner.handle(session_id).await?;
         let mut state = handle.state.lock().await;
         // A Turn that failed or was interrupted ends the Drain normally; its last run says so.
@@ -421,9 +469,9 @@ impl Runtime {
             events.extend(iteration_end(&state, lp, status, coalesced, now));
         }
         if !events.is_empty() {
-            self.inner.commit_locked(&mut state, events)?;
+            self.inner.commit_locked(&mut state, events.clone())?;
         }
-        Ok(())
+        Ok(events)
     }
 
     /// Run the sweep soon, without waiting for its next period.
@@ -454,19 +502,29 @@ impl Runtime {
             .read(|db| Ok(records::active_sessions(db)?))?;
         let mut changed = 0;
         for session_id in sessions {
-            let handle = self.inner.handle(&session_id).await?;
-            let mut state = handle.state.lock().await;
-            let running = self.is_running(&session_id);
-            let mut events = Vec::new();
-            for lp in state.loops.values().filter(|l| l.active()) {
-                events.extend(restored(&state, lp, running, now));
-            }
-            if !events.is_empty() {
-                changed += events.len();
-                self.inner.commit_locked(&mut state, events)?;
-            }
+            let events = self.restore_session_loops(&session_id, now).await?;
+            changed += events.len();
+            self.loop_followups(&session_id, &events).await;
         }
         Ok(changed)
+    }
+
+    async fn restore_session_loops(
+        &self,
+        session_id: &str,
+        now: i64,
+    ) -> Result<Vec<NewEvent>, RuntimeError> {
+        let handle = self.inner.handle(session_id).await?;
+        let mut state = handle.state.lock().await;
+        let running = self.is_running(session_id);
+        let mut events = Vec::new();
+        for lp in state.loops.values().filter(|l| l.active()) {
+            events.extend(restored(&state, lp, running, now));
+        }
+        if !events.is_empty() {
+            self.inner.commit_locked(&mut state, events.clone())?;
+        }
+        Ok(events)
     }
 
     /// Run the sweep every [`SWEEP_EVERY`] until shutdown.
@@ -552,8 +610,8 @@ fn iteration_end(
     };
     let wakeup = lp.wakeup.as_ref().filter(|w| w.n == inflight.n);
     let next = match lp.kind {
-        LoopKind::Interval if coalesced => Some(now),
-        LoopKind::Interval => lp.next_due_ms.or_else(|| next_tick(lp, now)),
+        LoopKind::Interval | LoopKind::Cron if coalesced => Some(now),
+        LoopKind::Interval | LoopKind::Cron => lp.next_due_ms.or_else(|| next_tick(lp, now)),
         LoopKind::SelfPaced => {
             wakeup.map(|w| now + i64::try_from(w.delay_seconds).unwrap_or(3600) * 1000)
         }
@@ -586,18 +644,30 @@ fn iteration_end(
     let mut events = vec![event(records::ITERATION_ENDED, &ended)];
     let stop = if failures >= MAX_FAILURES {
         Some((StopStatus::Failed, status.unwrap_or("failed").to_owned()))
-    } else if lp.kind == LoopKind::SelfPaced && wakeup.is_none() {
-        Some((
-            StopStatus::Completed,
-            "the iteration ended without schedule_wakeup".to_owned(),
-        ))
     } else {
-        stop_reason(&after, now)
+        completion(lp, wakeup.is_some())
+            .or_else(|| stop_reason(&after, now))
+            .or_else(|| goal_stop(state, lp))
     };
     if let Some((status, reason)) = stop {
         events.push(stopped(&lp.loop_id, status, reason));
     }
     events
+}
+
+/// Why `lp` completes after an iteration: a self-paced iteration that did not pace
+/// itself, or a one-shot scheduled task, which runs once.
+fn completion(lp: &LoopState, woken: bool) -> Option<(StopStatus, String)> {
+    match lp.kind {
+        LoopKind::SelfPaced if !woken => Some((
+            StopStatus::Completed,
+            "the iteration ended without schedule_wakeup".to_owned(),
+        )),
+        LoopKind::Cron if lp.at_ms.is_some() => {
+            Some((StopStatus::Completed, "the one-shot task ran".to_owned()))
+        }
+        _ => None,
+    }
 }
 
 /// What restoring `lp` after a restart records.
@@ -616,11 +686,25 @@ fn restored(state: &SessionState, lp: &LoopState, running: bool, now: i64) -> Ve
         return iteration_end(state, lp, Some(reason), false, now);
     }
     match lp.next_due_ms {
-        Some(due) if lp.kind == LoopKind::Interval && lp.missed == Missed::Skip && due < now => {
-            vec![skipped(lp, Outcome::SkippedMissed, next_tick(lp, now))]
-        }
+        Some(due) if lp.missed == Missed::Skip && due < now => missed_skip(lp, now),
         // `run-once`, and a self-paced wakeup that passed: the sweep runs it once.
         _ => Vec::new(),
+    }
+}
+
+/// Missed ticks under `skip`: resume at the next one; a one-shot task's single time
+/// passed, so it expires. A self-paced wakeup that passed runs once anyway.
+fn missed_skip(lp: &LoopState, now: i64) -> Vec<NewEvent> {
+    match lp.kind {
+        LoopKind::Cron if lp.at_ms.is_some() => vec![stopped(
+            &lp.loop_id,
+            StopStatus::Expired,
+            "its time passed while the server was not running".into(),
+        )],
+        LoopKind::Interval | LoopKind::Cron => {
+            vec![skipped(lp, Outcome::SkippedMissed, next_tick(lp, now))]
+        }
+        LoopKind::SelfPaced => Vec::new(),
     }
 }
 

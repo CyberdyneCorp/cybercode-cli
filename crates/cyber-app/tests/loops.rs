@@ -183,3 +183,105 @@ async fn until_runs_a_real_check_through_the_app_host() {
     assert_eq!(ended["status"], "until_met", "{ended}");
     assert_eq!(ended["iterations"], 0);
 }
+
+/// `loops-scheduling` → In-session cron tools: the real tools, offered to a root
+/// Session; `cron_delete` cannot reach a `/loop` the user started.
+#[tokio::test]
+async fn the_model_manages_scheduled_tasks_with_the_cron_tools() {
+    let app = ModeApp::start(Setup::default()).await;
+    let id = session(&app).await;
+    let at = (chrono::Utc::now() + chrono::Duration::hours(2)).to_rfc3339();
+    app.run(
+        &id,
+        &format!(r#"TOOL<<cron_create>>{{"at": "{at}", "prompt": "summarize overnight CI"}}"#),
+    )
+    .await;
+    let outputs = app.outputs(&id).await;
+    let created: Value = serde_json::from_str(&outputs[0]).unwrap_or(Value::Null);
+    let task_id = created["id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{outputs:?}"))
+        .to_owned();
+    assert!(task_id.starts_with("cron_"), "{created}");
+    assert!(created["next_run"].is_string(), "{created}");
+    let requests = app.model.requests();
+    let turn = requests.iter().find(|r| !offered(r).is_empty()).unwrap();
+    for tool in ["cron_create", "cron_list", "cron_delete"] {
+        assert!(offered(turn).contains(&tool.to_string()), "{tool}");
+    }
+
+    let (_, listed) = app
+        .send("GET", &format!("/sessions/{id}/loops"), None)
+        .await;
+    let task = &listed["data"][0];
+    assert_eq!(
+        (task["kind"].as_str(), task["loop_id"].as_str()),
+        (Some("cron"), Some(task_id.as_str()))
+    );
+    assert!(task["at_ms"].is_i64(), "{task}");
+
+    // A `/loop` of the user (here one whose check already passed) is not a task.
+    let user_loop = create(&app, &id, r#"1h --until "test -d .git" check the deploy"#).await;
+    let loop_id = user_loop["loop_id"].as_str().unwrap().to_owned();
+    app.run(&id, &format!(r#"TOOL<<cron_delete>>{{"id": "{loop_id}"}}"#))
+        .await;
+    assert_output(&app, &id, &format!("Unknown scheduled task {loop_id}")).await;
+    app.run(&id, "TOOL<<cron_list>>{}").await;
+    assert_output(&app, &id, "\"tasks\":[{\"id\":\"cron_").await;
+    app.run(&id, &format!(r#"TOOL<<cron_delete>>{{"id": "{task_id}"}}"#))
+        .await;
+    let ended = wait_loop(&app, &id, &task_id, |l| l["status"] != "active").await;
+    assert_eq!(ended["status"], "stopped");
+}
+
+/// `loops-scheduling` → Loop events and hooks: `LoopIteration` receives the loop and the
+/// iteration on stdin after `loop.iteration.ended.1` commits.
+#[tokio::test]
+async fn loop_iteration_hook_receives_the_iteration() {
+    let app = ModeApp::start(Setup {
+        config: json!({"hooks": {"LoopIteration": [{"hooks": [
+            {"type": "command", "command": "cat > iteration.json"}]}]}}),
+        ..Setup::default()
+    })
+    .await;
+    let id = session(&app).await;
+    let created = create(&app, &id, "5m --max 1 check the deploy").await;
+    let loop_id = created["loop_id"].as_str().unwrap();
+    wait_loop(&app, &id, loop_id, |l| l["status"] != "active").await;
+    let path = app.repo.join("iteration.json");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let written = loop {
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(value) = serde_json::from_str::<Value>(&text)
+        {
+            break value;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "the hook never ran");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert_eq!(
+        written["hook_event_name"]
+            .as_str()
+            .or(written["event"].as_str()),
+        Some("LoopIteration"),
+        "{written}"
+    );
+    assert_eq!(written["loop"]["loop_id"], loop_id, "{written}");
+    assert_eq!(written["iteration"]["n"], 1);
+    assert_eq!(written["iteration"]["outcome"], "completed");
+    assert_eq!(written["iteration"]["noop"], false);
+    let kinds: Vec<String> = app.events(&id).into_iter().map(|e| e.kind).collect();
+    assert!(
+        kinds.iter().any(|k| k == "loop.iteration.ended.1"),
+        "{kinds:?}"
+    );
+}
+
+/// Some settled call of the Session returned output containing `needle`.
+async fn assert_output(app: &ModeApp, id: &str, needle: &str) {
+    let outputs = app.outputs(id).await;
+    assert!(
+        outputs.iter().any(|o| o.contains(needle)),
+        "{needle}: {outputs:?}"
+    );
+}

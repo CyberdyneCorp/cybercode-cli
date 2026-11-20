@@ -249,17 +249,63 @@ fn every(seconds: u64) -> String {
 }
 
 fn short_id(loop_id: &str) -> String {
-    let ulid = loop_id.trim_start_matches("lop_");
+    let ulid = loop_id
+        .trim_start_matches("lop_")
+        .trim_start_matches("cron_");
     ulid.get(ulid.len().saturating_sub(4)..)
         .unwrap_or(ulid)
         .to_lowercase()
 }
 
-/// A picker row: the active ones stop on Enter; ended ones only inform.
-fn choice(l: &Value) -> Choice {
-    let pace = l["interval_seconds"]
+/// How a loop is paced: `every 5m`, `self-paced`, `cron 0 9 * * 1-5` or `at 09:00`.
+fn pace(l: &Value) -> String {
+    if let Some(expression) = l["cron"].as_str() {
+        return format!("cron {expression}");
+    }
+    if let Some(at) = l["at_ms"].as_i64() {
+        return format!("at {}", clock(at));
+    }
+    l["interval_seconds"]
         .as_u64()
-        .map_or("self-paced".into(), |s| format!("every {}", every(s)));
+        .map_or("self-paced".into(), |s| format!("every {}", every(s)))
+}
+
+/// A local time: `09:00` today, else `Oct 3 09:00`.
+fn clock(ms: i64) -> String {
+    use chrono::TimeZone;
+    let Some(time) = chrono::Local.timestamp_millis_opt(ms).single() else {
+        return String::new();
+    };
+    if time.date_naive() == chrono::Local::now().date_naive() {
+        time.format("%H:%M").to_string()
+    } else {
+        time.format("%b %-d %H:%M").to_string()
+    }
+}
+
+/// The stop conditions a loop was given, as `max 10, for 2h, until-goal`.
+fn stops(l: &Value) -> Vec<String> {
+    let stop = &l["stop"];
+    let mut out = Vec::new();
+    if let Some(max) = stop["max_iterations"].as_u64() {
+        out.push(format!("max {max}"));
+    }
+    if let Some(seconds) = stop["for_seconds"].as_u64() {
+        out.push(format!("for {}", every(seconds)));
+    }
+    if stop["until"].is_string() {
+        out.push("until check".into());
+    }
+    if stop["until_goal"].is_string() {
+        out.push("until-goal".into());
+    }
+    out
+}
+
+/// A picker row's detail: status, iterations, the quiet streak (so whether the last
+/// iteration was a noop), and the next run and stop conditions of an active loop; the
+/// stop reason of an ended one.
+fn detail(l: &Value, now_ms: i64) -> String {
     let status = l["status"].as_str().unwrap_or("active");
     let iterations = l["iterations"].as_u64().unwrap_or(0);
     let quiet = l["noop_streak"].as_u64().unwrap_or(0);
@@ -267,9 +313,24 @@ fn choice(l: &Value) -> Choice {
     if quiet > 0 {
         detail.push_str(&format!(" · {quiet} quiet"));
     }
+    if let Some(due) = l["next_due_ms"].as_i64().filter(|_| status == "active") {
+        detail.push_str(&format!(" · next in {}", until(due - now_ms)));
+    }
+    let stops = stops(l);
+    if status == "active" && !stops.is_empty() {
+        detail.push_str(&format!(" · {}", stops.join(", ")));
+    }
     if let Some(reason) = l["stop_reason"].as_str() {
         detail.push_str(&format!(" · {reason}"));
     }
+    detail
+}
+
+/// A picker row: the active ones stop on Enter; ended ones only inform.
+fn choice(l: &Value) -> Choice {
+    let pace = pace(l);
+    let status = l["status"].as_str().unwrap_or("active");
+    let detail = detail(l, now_ms());
     Choice {
         key: if status == "active" {
             l["loop_id"].as_str().unwrap_or_default().to_owned()
@@ -350,6 +411,32 @@ mod tests {
         assert_eq!(
             row.detail,
             "stopped · 3 iterations · 2 quiet · stopped by the user"
+        );
+    }
+
+    #[test]
+    fn scheduled_task_rows_show_the_kind_next_run_and_stops() {
+        let row = choice(&json!({"loop_id": "cron_01ABCD", "kind": "cron",
+            "cron": "0 9 * * 1-5", "status": "active", "iterations": 0, "prompt": "standup"}));
+        assert_eq!(row.key, "cron_01ABCD");
+        assert_eq!(row.label, "↻ abcd · cron 0 9 * * 1-5 · standup");
+        let detail = detail(
+            &json!({"status": "active", "iterations": 4, "noop_streak": 0, "next_due_ms": 120_000,
+                "stop": {"max_iterations": 10, "until_goal": "goal_1"}}),
+            0,
+        );
+        assert_eq!(
+            detail,
+            "active · 4 iterations · next in 2m · max 10, until-goal"
+        );
+        let one_shot = choice(
+            &json!({"loop_id": "cron_01WXYZ", "at_ms": 0, "status": "active",
+            "prompt": "remind me"}),
+        );
+        assert!(
+            one_shot.label.starts_with("↻ wxyz · at "),
+            "{}",
+            one_shot.label
         );
     }
 }

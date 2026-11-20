@@ -8,11 +8,15 @@
 //! retried admission after a crash is idempotent. [`schedule`] runs them: a background
 //! sweep admits due iterations, and the Drain's idle exit ends them.
 
+mod cron;
+mod followups;
 pub mod records;
 mod schedule;
 
 use cyber_core::loops::{LoopSettings, LoopSpec, WAKEUP_RANGE};
 use serde::Serialize;
+
+pub use cron::CronRequest;
 
 pub use records::{
     Inflight, IterationRecord, LoopKind, LoopState, Outcome, StopConditions, StopStatus,
@@ -55,6 +59,14 @@ impl Runtime {
         let loop_id = cyber_core::ids::new_id("lop");
         let now = schedule::now_ms();
         let budget = spec.budget.or(default_budget);
+        let until_goal = if spec.until_goal {
+            let current = handle.state.lock().await.goals.current.clone();
+            Some(current.ok_or_else(|| {
+                RuntimeError::Invalid("--until-goal needs a Goal in this Session".into())
+            })?)
+        } else {
+            None
+        };
         let created = records::Created {
             reservation_scope_version: u32::from(
                 budget
@@ -69,12 +81,16 @@ impl Runtime {
             },
             prompt: spec.prompt.trim().to_owned(),
             interval_seconds: spec.interval_seconds,
+            cron: None,
+            at_ms: None,
             overlap: spec.overlap,
             missed: spec.missed,
+            notify: spec.notify,
             stop: StopConditions {
                 max_iterations: spec.max_iterations,
                 for_seconds: spec.for_seconds,
                 until: spec.until,
+                until_goal,
             },
             budget,
             iteration_cap: settings.max_iterations,
@@ -194,6 +210,23 @@ impl Runtime {
             .unwrap_or(false)
     }
 
+    /// Whether `session_id` may have scheduled tasks (`cron_*` tools): a root Session
+    /// outside Workflow Runs. Reads only the index; an unknown Session has none.
+    pub fn cron_tools_offered(&self, session_id: &str) -> bool {
+        let id = session_id.to_owned();
+        self.inner
+            .store
+            .read(move |db| {
+                Ok(db
+                    .prepare(
+                        "SELECT 1 FROM session
+                         WHERE id = ?1 AND parent_id IS NULL AND workflow_run_id IS NULL",
+                    )?
+                    .exists([id])?)
+            })
+            .unwrap_or(false)
+    }
+
     /// Rebuild `session_loop` from the `loop.*` events; the number of events re-projected.
     pub fn rebuild_loops(&self) -> Result<usize, RuntimeError> {
         Ok(self.inner.store.reproject(
@@ -204,7 +237,10 @@ impl Runtime {
     }
 }
 
-fn ensure_room(state: &SessionState, settings: &LoopSettings) -> Result<(), RuntimeError> {
+pub(super) fn ensure_room(
+    state: &SessionState,
+    settings: &LoopSettings,
+) -> Result<(), RuntimeError> {
     let active = state.loops.values().filter(|l| l.active()).count() as u64;
     if active >= settings.max_per_session {
         return Err(RuntimeError::LoopLimit(settings.max_per_session));

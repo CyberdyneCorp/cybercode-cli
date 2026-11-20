@@ -15439,11 +15439,27 @@
             "format": "uint64",
             "minimum": 0
           },
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
           "overlap": {
             "$ref": "#/components/schemas/Overlap"
           },
           "missed": {
             "$ref": "#/components/schemas/Missed"
+          },
+          "notify": {
+            "$ref": "#/components/schemas/Notify"
           },
           "stop": {
             "$ref": "#/components/schemas/StopConditions"
@@ -15562,6 +15578,7 @@
           "prompt",
           "overlap",
           "missed",
+          "notify",
           "stop",
           "iteration_cap",
           "status",
@@ -15578,10 +15595,19 @@
         "description": "A loop as the Session state folds it."
       },
       "LoopKind": {
-        "type": "string",
-        "enum": [
-          "interval",
-          "self_paced"
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "interval",
+              "self_paced"
+            ]
+          },
+          {
+            "type": "string",
+            "const": "cron",
+            "description": "A scheduled task the model created with `cron_create` (`cron_` ID)."
+          }
         ]
       },
       "Overlap": {
@@ -15599,6 +15625,15 @@
           "run-once"
         ],
         "description": "What to do with ticks missed while the Session was not running."
+      },
+      "Notify": {
+        "type": "string",
+        "enum": [
+          "always",
+          "on_change",
+          "never"
+        ],
+        "description": "When a loop's iterations notify the user (`loops-scheduling` → Completion\nnotifications): `on_change` notifies iterations that report `noop: false` or fail."
       },
       "StopConditions": {
         "type": "object",
@@ -15624,6 +15659,13 @@
               "string",
               "null"
             ]
+          },
+          "until_goal": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`--until-goal`: the Goal whose terminal status ends the loop."
           }
         },
         "description": "What stops a loop besides `/loop stop`."
@@ -15803,6 +15845,10 @@
               "null"
             ]
           },
+          "until_goal": {
+            "type": "boolean",
+            "description": "Stop when the Session's current Goal reaches a terminal status."
+          },
           "overlap": {
             "$ref": "#/components/schemas/Overlap",
             "default": "skip"
@@ -15810,6 +15856,10 @@
           "missed": {
             "$ref": "#/components/schemas/Missed",
             "default": "skip"
+          },
+          "notify": {
+            "$ref": "#/components/schemas/Notify",
+            "default": "on_change"
           },
           "budget": {
             "anyOf": [
