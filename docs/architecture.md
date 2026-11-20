@@ -9,6 +9,7 @@ flowchart TD
     Client --> Api["Public server API"]
     Web["Local web dashboard"] --> Api
     Sdk["TypeScript SDK"] --> Api
+    Vscode["VS Code extension (IDE token)"] --> Sdk
     Mcp["MCP clients"] --> Api
     Api --> Runtime["Durable Session runtime"]
     Runtime --> Store["SQLite WAL and one writer"]
@@ -33,4 +34,4 @@ flowchart LR
     Model --> Done["Finish turn"]
 ```
 
-Built with Rust, tokio, axum, rusqlite and ratatui, with TypeScript for the browser client and SDK. See the [server lifecycle guide](local-core-guide.md#background-server-and-rebuilds), [storage decision](decisions/0001-storage-architecture.md) and [dashboard security/access guide](web-dashboard.md).
+Built with Rust, tokio, axum, rusqlite and ratatui, with TypeScript for the browser client, the VS Code extension and the SDK. The [VS Code extension](vscode-extension.md) reaches the server through the SDK with a scoped local IDE token, over the Unix socket or loopback only. See the [server lifecycle guide](local-core-guide.md#background-server-and-rebuilds), [storage decision](decisions/0001-storage-architecture.md) and [dashboard security/access guide](web-dashboard.md).

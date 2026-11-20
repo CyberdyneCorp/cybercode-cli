@@ -1,0 +1,217 @@
+{
+  "name": "cyber",
+  "displayName": "Cyber Code",
+  "description": "Chat with Cyber Code Sessions, review proposed edits in the diff editor and answer approvals without leaving VS Code.",
+  "version": "0.1.0-beta.2",
+  "publisher": "cyber-code",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CyberdyneCorp/cybercode-cli",
+    "directory": "clients/vscode"
+  },
+  "engines": {
+    "vscode": "^1.95.0",
+    "node": ">=20"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode Cyber Code does not start the server, create Sessions, send prompts or answer approvals.",
+      "restrictedConfigurations": [
+        "cyber.autoStartServer"
+      ]
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "cyber",
+          "title": "Cyber Code",
+          "icon": "media/cyber.svg"
+        }
+      ]
+    },
+    "views": {
+      "cyber": [
+        {
+          "type": "webview",
+          "id": "cyber.chat",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "cyber.insertSelectionMention",
+        "title": "Insert Selection Mention",
+        "category": "Cyber"
+      },
+      {
+        "command": "cyber.reviewSessionChanges",
+        "title": "Review Session Changes",
+        "category": "Cyber"
+      },
+      {
+        "command": "cyber.openSessionInTerminal",
+        "title": "Open Session in Terminal",
+        "category": "Cyber"
+      },
+      {
+        "command": "cyber.newTerminalSession",
+        "title": "New Terminal Session",
+        "category": "Cyber"
+      },
+      {
+        "command": "cyber.createIdeToken",
+        "title": "Create IDE Token",
+        "category": "Cyber"
+      },
+      {
+        "command": "cyber.review.accept",
+        "title": "Accept",
+        "category": "Cyber",
+        "icon": "$(check)"
+      },
+      {
+        "command": "cyber.review.acceptAlways",
+        "title": "Accept Always",
+        "category": "Cyber",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "cyber.review.reject",
+        "title": "Reject",
+        "category": "Cyber",
+        "icon": "$(close)"
+      },
+      {
+        "command": "cyber.review.rejectWithFeedback",
+        "title": "Reject with Feedback",
+        "category": "Cyber",
+        "icon": "$(comment-discussion)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "cyber.review.accept",
+          "when": "cyber.reviewPending",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cyber.review.acceptAlways",
+          "when": "cyber.reviewPending && cyber.reviewAlways",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cyber.review.reject",
+          "when": "cyber.reviewPending",
+          "group": "navigation@3"
+        },
+        {
+          "command": "cyber.review.rejectWithFeedback",
+          "when": "cyber.reviewPending",
+          "group": "navigation@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cyber.review.accept",
+          "when": "cyber.reviewPending"
+        },
+        {
+          "command": "cyber.review.acceptAlways",
+          "when": "cyber.reviewPending && cyber.reviewAlways"
+        },
+        {
+          "command": "cyber.review.reject",
+          "when": "cyber.reviewPending"
+        },
+        {
+          "command": "cyber.review.rejectWithFeedback",
+          "when": "cyber.reviewPending"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cyber.insertSelectionMention",
+        "key": "alt+k",
+        "mac": "alt+k",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "Cyber Code",
+      "properties": {
+        "cyber.executablePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Absolute path of the `cyber` executable. Empty uses `cyber` on `PATH`. Workspace settings cannot change it."
+        },
+        "cyber.autoStartServer": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "always",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Ask once whether to start the background server.",
+            "Start the background server without asking.",
+            "Never start it; the panel offers Start server instead."
+          ],
+          "default": "ask",
+          "scope": "machine",
+          "markdownDescription": "Whether to start the Cyber Code background server when none is running. The server keeps running after VS Code closes."
+        },
+        "cyber.includeEditorContext": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Attach the active file and selection to prompts. The server reads it through its `read` permission checks."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test scripts",
+    "test": "node scripts/build.mjs --tests && node --test \"out/unit/*.test.js\"",
+    "test:integration": "node scripts/build.mjs --tests && node out/integration/run.js",
+    "package": "node scripts/build.mjs --production && vsce package --no-dependencies --out cyber-$npm_package_version.vsix"
+  },
+  "dependencies": {
+    "@cyber-code/sdk": "file:../../sdk/typescript",
+    "undici": "6.21.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.28.0",
+    "@types/mocha": "10.0.10",
+    "@types/node": "20.17.57",
+    "@types/vscode": "1.95.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "3.4.2",
+    "esbuild": "0.25.5",
+    "eslint": "9.28.0",
+    "eslint-plugin-sonarjs": "3.0.2",
+    "mocha": "11.5.0",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.33.1"
+  }
+}

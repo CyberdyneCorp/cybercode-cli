@@ -211,6 +211,72 @@ jobs:
         env:
           CYBER_BIN: ${{ github.workspace }}/target/debug/cyber
 
+  # `editor-integration` → Extension packaging and CI: build, typecheck, lint, unit tests,
+  # @vscode/test-electron against the cyber binary built here with a scripted loopback
+  # model, and the .vsix as an artifact.
+  vscode-extension:
+    name: VS Code extension (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    defaults:
+      run:
+        working-directory: clients/vscode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: clients/vscode/package-lock.json
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # pinned commit
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: vscode-extension
+      - name: Sandbox prerequisites
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y bubblewrap xvfb
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: Build the cyber binary
+        working-directory: .
+        run: cargo build --locked -p cyber-cli --bin cyber && cargo build --locked -p cyber-sandbox --bin cyber-sandbox-exec
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - name: Integration tests (xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:integration
+        env:
+          CYBER_E2E_BINARY: ${{ github.workspace }}/target/debug/cyber
+      - name: Integration tests
+        if: runner.os == 'macOS'
+        run: npm run test:integration
+        env:
+          CYBER_E2E_BINARY: ${{ github.workspace }}/target/debug/cyber
+          # App Nap throttles the never-focused test window until API calls stall.
+          CYBER_TEST_DISABLE_APP_NAP: '1'
+      - run: npm run package
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: cyber-vscode-extension
+          path: clients/vscode/cyber-*.vsix
+          if-no-files-found: error
+          retention-days: 7
+
   specs:
     name: OpenSpec
     # Freeze the shell-evaluation toolchain: its mkdir exit status is a lock primitive.

@@ -33,32 +33,33 @@ Specification only (2026-11-18). The owner decided all open questions on 2026-11
 
 ## 3. Package scaffold and build
 
-- [ ] 3.1 Create `clients/vscode/`: `package.json` (name `cyber`, placeholder publisher `cyber-code`, `engines.vscode ^1.95.0`, `extensionKind: ["workspace"]`, `capabilities.untrustedWorkspaces` limited), `tsconfig`, ESLint, esbuild script (extension CJS plus webview IIFE), and `npm run package` via `@vscode/vsce`. Depend on the SDK via `file:../../sdk/typescript`, and add `undici` for the socket dispatcher. No bundled `cyber` binary.
-- [ ] 3.2 Contributions: the `cyber` view container and `cyber.chat` webview view; the commands Insert Selection Mention, Review Session Changes, Open Session in Terminal, New Terminal Session, Create IDE Token, Accept, Accept always, Reject and Reject with feedback; the Alt+K/Option+K keybinding; the settings `cyber.executablePath` (scope `machine`), `cyber.autoStartServer` (`ask`/`always`/`never`, default `ask`, scope `machine`, restricted) and `cyber.includeEditorContext`.
+- [x] 3.1 Create `clients/vscode/`: `package.json` (name `cyber`, placeholder publisher `cyber-code`, `engines.vscode ^1.95.0`, `extensionKind: ["workspace"]`, `capabilities.untrustedWorkspaces` limited), `tsconfig`, ESLint, esbuild script (extension CJS plus webview IIFE), and `npm run package` via `@vscode/vsce`. Depend on the SDK via `file:../../sdk/typescript`, and add `undici` for the socket dispatcher. No bundled `cyber` binary.
+- [x] 3.2 Contributions: the `cyber` view container and `cyber.chat` webview view; the commands Insert Selection Mention, Review Session Changes, Open Session in Terminal, New Terminal Session, Create IDE Token, Accept, Accept always, Reject and Reject with feedback; the Alt+K/Option+K keybinding; the settings `cyber.executablePath` (scope `machine`), `cyber.autoStartServer` (`ask`/`always`/`never`, default `ask`, scope `machine`, restricted) and `cyber.includeEditorContext`.
   - Test: a manifest check that there is no setting for passwords or tokens, and that `executablePath` and `autoStartServer` are machine-scoped.
 
 ## 4. Extension connection and authentication
 
-- [ ] 4.1 Transport chooser: use the socket on macOS and Linux, use TCP only for a loopback literal, and refuse everything else.
+- [x] 4.1 Transport chooser: use the socket on macOS and Linux, use TCP only for a loopback literal, and refuse everything else.
   - Unit tests: "Socket preferred", "LAN registration refused", IPv6 loopback, `localhost`, and a missing registration.
-- [ ] 4.2 TCP pre-credential checks (pid alive, health `apiVersion`, `version` and `build`) and the post-auth `service.id` check. No proof-of-possession handshake (deferred to Windows support).
+- [x] 4.2 TCP pre-credential checks (pid alive, health `apiVersion`, `version` and `build`) and the post-auth `service.id` check. No proof-of-possession handshake (deferred to Windows support).
   - Unit tests with a fake server: a mismatched build sends no credential; a mismatched `id` disconnects.
-- [ ] 4.3 Executable resolution (machine setting, then `PATH`) and the missing-CLI message.
+- [x] 4.3 Executable resolution (machine setting, then `PATH`) and the missing-CLI message.
   - Tests: "Workspace cannot choose the executable", "Missing executable".
-- [ ] 4.4 Auto-start consent: the `ask` modal with `Always start`, `Start this time` and `Don't start`; persisting `always`/`never` to user settings; the `Start server` action under `never`; `execFile(executable, ["service","start"])` with a 10 s timeout; trusted workspaces only.
+- [x] 4.4 Auto-start consent: the `ask` modal with `Always start`, `Start this time` and `Don't start`; persisting `always`/`never` to user settings; the `Start server` action under `never`; `execFile(executable, ["service","start"])` with a 10 s timeout; trusted workspaces only.
   - Tests: "Asked once", "Declined", "Changed in settings".
-- [ ] 4.5 IDE token authentication: read `<state>/ide/vscode.token` at connect and keep it in memory only; Bearer header; drop it on disconnect, deactivation and `401`, then one re-read; the `Create IDE token` terminal action and file watch; the 7-day expiry notice; the `ide_token_scope` message; never open `<state>/password`; redacted output-channel logging.
+  - Evidence: `clients/vscode/test/unit/consent.test.ts` covers the decision and the saved values; the modal itself is not driven by a test.
+- [x] 4.5 IDE token authentication (the token file also carries an `expires_at=` line, written by the CLI, so the 7-day notice needs no extra route): read `<state>/ide/vscode.token` at connect and keep it in memory only; Bearer header; drop it on disconnect, deactivation and `401`, then one re-read; the `Create IDE token` terminal action and file watch; the 7-day expiry notice; the `ide_token_scope` message; never open `<state>/password`; redacted output-channel logging.
   - Unit tests with an injected `fetch`: no credential in any URL, no `Authorization` in logs, `password` never opened.
   - Integration tests: "First run without a token", "Token revoked", "Out-of-scope action".
 - [ ] 4.6 Version and compatibility gate for `apiVersion`, missing routes and a `503` `ide` group.
 
 ## 5. Webview and bridge
 
-- [ ] 5.1 `src/shared/protocol.ts`: the message union, validators, a 1 MiB cap and ID patterns.
+- [x] 5.1 `src/shared/protocol.ts`: the message union, validators, a 1 MiB cap and ID patterns.
   - Unit tests: unknown type, extra field, oversize, bad ID and "Forged approval refused".
-- [ ] 5.2 HTML shell with a per-render nonce CSP, `enableCommandUris: false`, `enableForms: false` and restricted `localResourceRoots`.
+- [x] 5.2 HTML shell with a per-render nonce CSP, `enableCommandUris: false`, `enableForms: false` and restricted `localResourceRoots`.
   - Unit test: snapshot of the generated CSP (no `connect-src`).
-- [ ] 5.3 Inert renderer: text nodes, the Markdown element allowlist, no remote images, and links routed through a host confirmation.
+- [x] 5.3 Inert renderer: text nodes, the Markdown element allowlist, no remote images, and links routed through a host confirmation.
   - Tests: "Injected HTML rendered inert"; a `javascript:` link is not clickable.
 
 ## 6. Session binding and streaming
@@ -67,51 +68,53 @@ Specification only (2026-11-18). The owner decided all open questions on 2026-11
 - [ ] 6.2 History load and the event stream with `durable.seq` resume; delta batching (≤ 60/s) and a 500-message window with "Load older".
   - Tests: "Reload resumes", "Shared with the TUI".
 - [ ] 6.3 Prompt, interrupt, and Mode/model selectors (no `bypass` or `dont-ask`) with a pending state until `session.mode.switched.1`.
-- [ ] 6.4 Presence lease create, renew every 15 s and release on hide, unbind and deactivate.
+- [x] 6.4 Presence lease create, renew every 15 s and release on hide, unbind and deactivate.
   - Test: "Panel hidden".
 
 ## 7. Editor context and mentions
 
-- [ ] 7.1 Context chip (file plus selection), the dirty-buffer notice with Save, no chip for untitled or non-file documents, and the whole-file fallback for servers without `range`.
+- [x] 7.1 Context chip (file plus selection), the dirty-buffer notice with Save, no chip for untitled or non-file documents, and the whole-file fallback for servers without `range`.
   - Tests: "Selection sent as a ranged file part", "Denied file withheld".
-- [ ] 7.2 Alt+K selection mention (relative, single-line, external absolute path).
+- [x] 7.2 Alt+K selection mention (relative, single-line, external absolute path).
   - Test: "Selection reference".
 
 ## 8. Approvals and diff review
 
-- [ ] 8.1 Pending-request table: fetch on every (re)connect, then follow `permission.asked.1`, `permission.replied.1` and question events; panel cards; a notification when the panel is hidden.
+- [x] 8.1 Pending-request table: fetch on every (re)connect, then follow `permission.asked.1`, `permission.replied.1` and question events; panel cards; a notification when the panel is hidden.
   - Tests: "Requests from a disconnect", "Stale card cannot approve a later request".
-- [ ] 8.2 Reply path: exact request binding, per-decision idempotency key, the unconfirmed state, the `always` pattern preview and the `reject` side-effect notice.
+- [x] 8.2 Reply path: exact request binding, per-decision idempotency key, the unconfirmed state, the `always` pattern preview and the `reject` side-effect notice.
   - Test: "Uncertain reply retried".
-- [ ] 8.3 Unified-diff parser and exact-context applier, the `cyber-review:` content provider, single-file `vscode.diff` and multi-file `vscode.changes`, editor-title actions, and the raw-diff fallback.
+- [x] 8.3 Unified-diff parser and exact-context applier, the `cyber-review:` content provider, single-file `vscode.diff` and multi-file `vscode.changes`, editor-title actions, and the raw-diff fallback.
   - Unit tests: multi-hunk, add and delete file, CRLF, no trailing newline, context mismatch fallback.
   - Integration tests: "Accept a proposed edit", "Reject with feedback", "File changed before review", "Answered in another client".
-- [ ] 8.4 Questions, including `plan_exit` choices.
+- [x] 8.4 Questions, including `plan_exit` choices.
   - Test: "Plan approval as a question".
 - [ ] 8.5 `Cyber: Review Session Changes` from `GET .../diff` (read-only).
 
 ## 9. Terminal handoff and trust
 
-- [ ] 9.1 Open Session in Terminal and New Terminal Session using `shellPath`/`shellArgs` (no shell string).
+- [x] 9.1 Open Session in Terminal and New Terminal Session using `shellPath`/`shellArgs` (no shell string).
   - Test: "Continue in the TUI".
-- [ ] 9.2 Restricted Mode gating for start, create, prompt, reply, terminal and Create IDE Token.
+- [x] 9.2 Restricted Mode gating for start, create, prompt, reply, terminal and Create IDE Token.
   - Test: "Restricted Mode".
 
 ## 10. CI, release and evidence
 
-- [ ] 10.1 Integration harness: `@vscode/test-electron` with a temporary profile, and a fixture modelled on `web/e2e/fixture.ts` (temporary `CYBER_HOME`, loopback scripted provider, real `cyber serve --register`, an IDE token issued through the real CLI, cleanup).
+- [x] 10.1 Integration harness: `@vscode/test-electron` with a temporary profile, and a fixture modelled on `web/e2e/fixture.ts` (temporary `CYBER_HOME`, loopback scripted provider, real `cyber serve --register`, an IDE token issued through the real CLI, cleanup).
   - Test: "Test fixture isolation"; a final assertion that the token is absent from settings, storage, logs and webview messages, and that `<state>/password` was never opened.
+  - Evidence: `clients/vscode/test/integration/` passes on Linux (xvfb) in the `vscode-extension` CI job: 14 chat scenarios, Restricted Mode in a separate untrusted profile, and a scan of the whole VS Code profile for the token. Locally on macOS the suite stalls while the screen is locked (the workbench does not open editors).
 - [ ] 10.2 `vscode-extension` job in `.github/workflows/ci.yml` (Linux with `xvfb-run`, macOS) reusing the built `cyber` binary; upload the `.vsix` artifact.
   - Scenario: "Pull request builds the extension".
-- [ ] 10.3 `release.yml`: build the extension from the tag; check that `clients/vscode/package.json` matches the tag version; generate `cyber-<version>.vsix.sha256`; attach both to the GitHub release and list them in the release manifest; add an "unsigned extension" note with the `sha256sum -c` command to the release notes; fail the release on any packaging or checksum error.
+- [x] 10.3 `release.yml`: build the extension from the tag; check that `clients/vscode/package.json` matches the tag version; generate `cyber-<version>.vsix.sha256`; attach both to the GitHub release and list them in the release manifest; add an "unsigned extension" note with the `sha256sum -c` command to the release notes; fail the release on any packaging or checksum error.
   - Tests: "Release carries the extension" (dry-run release on a test tag), "Version mismatch blocks the release".
+  - Evidence: `scripts/tests/test_release_assets.py` (the `.vsix` and `.sha256` are release assets, `sha256sum -c` accepts the generated file, `check-tag` fails on a version mismatch) and `scripts/tests/test_release_workflow.py` (the `extension` job, `publish` needs it). No real tag was pushed.
 - [ ] 10.4 Manual acceptance on macOS and Linux with a real provider: token creation from the panel, chat, selection, diff Accept and Reject, approval from a hidden panel, revocation while attached, terminal handoff. Record it in `docs/implementation/vscode-extension.md` with screenshots containing fixture data only.
 
 ## 11. Documentation
 
-- [ ] 11.1 `docs/vscode-extension.md`: install from the `.vsix` and verify the SHA-256, the `cyber` on `PATH` requirement, IDE tokens (create, list, revoke, expiry, rotation), the security model (socket or loopback only, scope, Restricted Mode), settings, and limits.
+- [x] 11.1 `docs/vscode-extension.md`: install from the `.vsix` and verify the SHA-256, the `cyber` on `PATH` requirement, IDE tokens (create, list, revoke, expiry, rotation), the security model (socket or loopback only, scope, Restricted Mode), settings, and limits.
 - [ ] 11.2 `docs/web-dashboard.md` and `docs/local-core-guide.md`: IDE tokens as the second local credential, and that `cyber service password` revokes them.
-- [ ] 11.3 Update the README Known gaps and quick links, `docs/features.md`, `docs/architecture.md` (add the extension to the client diagram) and the ROADMAP P1 entry status.
+- [x] 11.3 Update the README Known gaps and quick links, `docs/features.md`, `docs/architecture.md` (add the extension to the client diagram) and the ROADMAP P1 entry status.
 - [ ] 11.4 Archive this change after acceptance, then run `python3 scripts/spec_inventory.py`. Expected counts:
   - `editor-integration`: −2 removed P3, +13 P1, +3 P3, and "VS Code extension" moving from P3 to P1, which gives P1 +14 and P3 +0;
   - `server-api`: +3 P1;

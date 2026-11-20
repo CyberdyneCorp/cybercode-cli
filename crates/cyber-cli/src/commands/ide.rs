@@ -135,7 +135,8 @@ async fn create(
         .as_str()
         .ok_or_else(|| CliError::runtime("the server returned no token"))?;
     let path = token_path(&ctx.paths.state, name);
-    write_token(&path, token)?;
+    let expires = issued["expires_at"].as_str().unwrap_or_default();
+    write_token(&path, token, expires)?;
     let summary = json!({
         "id": issued["id"],
         "client": issued["client"],
@@ -154,8 +155,10 @@ async fn create(
     Ok(())
 }
 
-/// Write `token` atomically with mode 0600 inside a 0700 directory.
-fn write_token(path: &Path, token: &str) -> Result<(), CliError> {
+/// Write `token` and its expiry atomically with mode 0600 inside a 0700 directory: the
+/// token on the first line, then `expires_at=<RFC 3339>` so a client can warn before it
+/// expires.
+fn write_token(path: &Path, token: &str, expires_at: &str) -> Result<(), CliError> {
     let dir = path.parent().expect("the token file has a directory");
     std::fs::create_dir_all(dir)?;
     #[cfg(unix)]
@@ -163,8 +166,11 @@ fn write_token(path: &Path, token: &str) -> Result<(), CliError> {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
     }
-    cyber_core::trust::write_private_atomic(path, format!("{token}\n").as_bytes())
-        .map_err(|e| CliError::runtime(format!("cannot write {}: {e}", path.display())))
+    cyber_core::trust::write_private_atomic(
+        path,
+        format!("{token}\nexpires_at={expires_at}\n").as_bytes(),
+    )
+    .map_err(|e| CliError::runtime(format!("cannot write {}: {e}", path.display())))
 }
 
 async fn list(client: &Client, global: &GlobalArgs) -> Result<(), CliError> {

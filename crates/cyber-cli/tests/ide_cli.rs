@@ -54,11 +54,13 @@ impl Home {
         self.state().join("ide/vscode.token")
     }
 
+    /// The token line of the file; the second line is `expires_at=<RFC 3339>`.
     fn token(&self) -> String {
-        std::fs::read_to_string(self.token_file())
-            .unwrap()
-            .trim()
-            .to_string()
+        let text = std::fs::read_to_string(self.token_file()).unwrap();
+        let mut lines = text.lines();
+        let token = lines.next().unwrap().to_string();
+        assert!(lines.next().unwrap().starts_with("expires_at=20"), "{text}");
+        token
     }
 
     /// The registered server's base URL.
