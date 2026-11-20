@@ -367,7 +367,7 @@ fn status_of(team: &Value) -> String {
 
 /// Columns `(header, right-aligned)` as wide as their widest cell, two spaces apart; the
 /// last column is not padded.
-fn print_table(columns: &[(&str, bool)], rows: Vec<Vec<String>>) {
+pub(crate) fn print_table(columns: &[(&str, bool)], rows: Vec<Vec<String>>) {
     let widths: Vec<usize> = columns
         .iter()
         .enumerate()

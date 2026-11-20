@@ -760,3 +760,43 @@ async fn a_loop_iteration_waits_the_whole_advised_delay() {
     );
     assert_eq!(*clock.sleeps.lock().unwrap(), [Duration::from_secs(600)]);
 }
+
+/// `loops-scheduling` → Usage limit waits in loop iterations: a scheduled run that resumes
+/// an attended Session makes it unattended while it runs, so it waits for the reset.
+#[tokio::test]
+async fn a_scheduled_run_waits_for_the_reset_and_completes() {
+    let clock = TestClock::skipping();
+    let h = harness(vec![limit(10), text("nightly review done")], &clock);
+    let id = h.session().await;
+    let schedule = h
+        .runtime
+        .create_schedule(cyber_server::runtime::schedules::ScheduleRequest {
+            cron: "0 2 * * *".into(),
+            prompt: "review last night's commits".into(),
+            directory: Some(h.repo.display().to_string()),
+            model: Some("test/main".into()),
+            session_id: Some(id.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    h.runtime.run_schedule_now(&schedule.id).await.unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let run = loop {
+        h.settle(&id).await;
+        let shown = h.runtime.schedule(&schedule.id, true).unwrap();
+        if shown.recent.first().is_some_and(|r| r.outcome != "running") {
+            break shown.recent[0].clone();
+        }
+        assert!(tokio::time::Instant::now() < deadline, "{shown:?}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert_eq!(run.outcome, "completed", "{run:?}");
+    assert_eq!(
+        kinds(&waits(&h, &id)),
+        [
+            "session.usage_limit.waiting.1",
+            "session.usage_limit.resumed.1"
+        ]
+    );
+}

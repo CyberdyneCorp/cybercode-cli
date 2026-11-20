@@ -15888,6 +15888,364 @@
           "data"
         ]
       },
+      "Data_Array_of_Schedule": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Schedule"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Schedule": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "cron": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notify": {
+            "$ref": "#/components/schemas/Notify"
+          },
+          "missed": {
+            "$ref": "#/components/schemas/Missed"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "jitter_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScheduleStatus"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next_due_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The next run, jitter included; `None` while paused or ended."
+          },
+          "inflight": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The run in flight."
+          },
+          "runs": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "recent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunRecord"
+            },
+            "description": "The most recent runs, newest first (`show` only)."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "cron",
+          "directory",
+          "prompt",
+          "mode",
+          "model",
+          "notify",
+          "missed",
+          "jitter_ms",
+          "status",
+          "runs",
+          "cost_usd",
+          "tokens",
+          "turns",
+          "created_ms",
+          "updated_ms",
+          "recent"
+        ],
+        "description": "A schedule as the routes and the CLI show it."
+      },
+      "ScheduleStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "paused",
+          "budget_exceeded",
+          "deleted"
+        ]
+      },
+      "RunRecord": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "n": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "due_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "started_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "ended_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "description": "A [`RunOutcome`], or `running`."
+          },
+          "noop": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cost": {
+            "type": "number",
+            "format": "double"
+          },
+          "tokens": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "turns": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "run_id",
+          "n",
+          "due_ms",
+          "outcome",
+          "noop",
+          "cost",
+          "tokens",
+          "turns"
+        ],
+        "description": "One run as `show` lists it."
+      },
+      "ScheduleRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cron": {
+            "type": "string",
+            "description": "A 5-field cron expression in the service's local time zone."
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "directory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "An absolute directory; the request's Location when absent.",
+            "default": null
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`dont-ask` when absent; `bypass` needs `loops.allow_bypass` in user or managed\nconfig.",
+            "default": null
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The model of new run Sessions; the Location's default when absent.",
+            "default": null
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Resume this root Session for every run instead of creating one per run.",
+            "default": null
+          },
+          "notify": {
+            "$ref": "#/components/schemas/Notify",
+            "default": "on_change"
+          },
+          "missed": {
+            "$ref": "#/components/schemas/Missed",
+            "default": "skip"
+          },
+          "budget": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Budget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "cron",
+          "prompt"
+        ],
+        "description": "`POST /api/v1/schedules`, `cyber loops add`."
+      },
+      "Data_Schedule": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Schedule"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "Data_ScheduleRunStarted": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ScheduleRunStarted"
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "ScheduleRunStarted": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "description": "`POST /api/v1/schedules/{id}/run`."
+      },
       "Data_AccountView": {
         "type": "object",
         "properties": {
@@ -32647,6 +33005,412 @@
           },
           "404": {
             "description": "SessionNotFoundError or LoopNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules": {
+      "get": {
+        "operationId": "v1.schedule.list",
+        "summary": "Persistent schedules (not removed), oldest first, with their next run including jitter",
+        "tags": [
+          "schedule"
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_Schedule"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "v1.schedule.create",
+        "summary": "Add a persistent schedule the service runs with no client open; the directory must be trusted and `bypass` needs `loops.allow_bypass` in user or managed config",
+        "tags": [
+          "schedule"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Schedule"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError, such as an invalid cron expression or a refused directory or Mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{scheduleID}": {
+      "get": {
+        "operationId": "v1.schedule.get",
+        "summary": "A schedule with its 20 most recent runs, newest first",
+        "tags": [
+          "schedule"
+        ],
+        "parameters": [
+          {
+            "name": "scheduleID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Schedule"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ScheduleNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "v1.schedule.remove",
+        "summary": "Remove a schedule; its run history stays and a run in flight finishes",
+        "tags": [
+          "schedule"
+        ],
+        "parameters": [
+          {
+            "name": "scheduleID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Array_of_string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ScheduleNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{scheduleID}/pause": {
+      "post": {
+        "operationId": "v1.schedule.pause",
+        "summary": "Pause a schedule; a run in flight finishes",
+        "tags": [
+          "schedule"
+        ],
+        "parameters": [
+          {
+            "name": "scheduleID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Schedule"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ScheduleNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{scheduleID}/resume": {
+      "post": {
+        "operationId": "v1.schedule.resume",
+        "summary": "Resume a paused schedule at its next occurrence",
+        "tags": [
+          "schedule"
+        ],
+        "parameters": [
+          {
+            "name": "scheduleID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_Schedule"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError, such as a schedule that exceeded its budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ScheduleNotFoundError",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Tagged error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schedules/{scheduleID}/run": {
+      "post": {
+        "operationId": "v1.schedule.run",
+        "summary": "Run a schedule now, outside its cron schedule, through the same unattended gate",
+        "tags": [
+          "schedule"
+        ],
+        "parameters": [
+          {
+            "name": "scheduleID",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Data_ScheduleRunStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "InvalidRequestError, such as a run already in flight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ScheduleNotFoundError",
             "content": {
               "application/json": {
                 "schema": {

@@ -180,7 +180,7 @@ Cyber Code has working features in each area below, but it is not at full featur
 Other limits to consider:
 
 - **Acceptance is ongoing:** the full local-model baseline, Windows enforcement and several P1 migration, memory and code-intelligence paths remain open.
-- **Automation has edges:** [reserved budgets](docs/reserved-budgets.md) currently support bounded official OpenAI Responses requests; ChatGPT/Copilot subscription models use soft token/time controls. Finished-agent transcript retention and persistent scheduling are separate roadmap items; agent teams and the project hub are experimental.
+- **Automation has edges:** [reserved budgets](docs/reserved-budgets.md) currently support bounded official OpenAI Responses requests; ChatGPT/Copilot subscription models use soft token/time controls. Finished-agent transcript retention is a separate roadmap item; persistent schedules (`cyber loops`) run only while the Cyber service runs, which has no launchd/systemd unit yet; agent teams and the project hub are experimental.
 - **The native Gemini adapter is experimental:** off until `features.gemini` is set; tested against recorded protocol shapes only. A live tool-loop run with a key, the live coding baseline, Vertex AI and stored Gemini keys (`cyber providers login google`) remain.
 - **Native computer use is experimental:** macOS 14+ only, off by default; controlled capture, input and Stop passed. Other layouts, live OS revocation and release signing remain unverified.
 - **Remote access is private:** physical-device certificate trust is an operator check. Relay, paired Devices and mobile apps remain roadmap work.

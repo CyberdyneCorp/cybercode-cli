@@ -92,9 +92,9 @@ The tables are not named `schedule_occurrence`, which the reserved-budget collec
 
 | Event | Payload |
 |---|---|
-| `schedule.created.1` | `{schedule_id, name, cron, directory, prompt, agent?, mode, target: new_session\|{session_id}, notify, missed, budget?, jitter_ms, created_ms, next_due_ms}` |
+| `schedule.created.1` | `{schedule_id, name, cron, directory, prompt, agent?, mode, model, session_id?, notify, missed, budget?, jitter_ms, created_ms, next_due_ms}`; no `session_id` creates a new Session per run |
 | `schedule.updated.1` | `{schedule_id, status: active\|paused\|budget_exceeded\|deleted, reason?, next_due_ms?}` |
-| `schedule.run.1` | `{schedule_id, run_id, n, phase: started\|reported\|ended, due_ms, session_id?, message_id?, outcome?, noop, duration_ms, cost, tokens, turns, reason?, next_due_ms?}` |
+| `schedule.run.1` | `{schedule_id, run_id, n, phase: started\|reported\|ended, due_ms, session_id?, message_id?, outcome?, noop, duration_ms, cost, tokens, turns, cost_before, tokens_before, turns_before, reason?, next_due_ms?}` |
 
 `schedule.run.1` is the single durable run record the spec names:
 
@@ -110,8 +110,8 @@ The tables are not named `schedule_occurrence`, which the reserved-budget collec
 2. A schedule with a run in flight records `skipped_overlap` and moves on.
 3. Otherwise the gate runs (decision 7). When it refuses, the run ends `refused` with the reason.
 4. The target Session is prepared:
-   - `new_session`: a new root Session in `directory`, with the schedule's agent and Mode, `unattended: true`, and the title `<name> · <local time>`;
-   - `session_id`: the Session must exist, be a root Session in `directory`, and not be archived. When its Mode differs from the schedule's, it is switched first.
+   - no `session_id`: a new root Session in `directory`, with the schedule's agent, model (the Location's default at `add` unless `--model`) and Mode, `unattended: true`, and the title `<name> · <local time>`;
+   - `session_id`: the Session must exist, be a root Session in `directory`, and not be archived (checked by the gate). A Session that is running skips the run (`skipped_overlap`). Otherwise it is switched to the schedule's Mode first.
 5. The prompt is admitted queued with `source: "loop"` and the deterministic ID `schedi_<schedule>_<n>`, so a retry after a crash is idempotent.
 6. The Drain's idle exit (`schedules_drain_ended`, next to the loop hook) ends the run:
    - the outcome comes from the Drain status;
@@ -126,7 +126,7 @@ The tables are not named `schedule_occurrence`, which the reserved-budget collec
 - A run that was never promoted stays queued.
 - A due time that passed while the server was down follows the schedule's `missed` policy, as interval loops do: `skip` records `skipped_missed` and moves to the next occurrence; `run-once` runs once.
 
-**Next run with jitter.** `jitter_ms` is fixed when the schedule is created: the first 8 bytes of SHA-256 of the ID, modulo `loops.jitter_seconds × 1000` (default 60 s; `0` disables it). It is stored, so it never changes. The next run is `cron.next_after(now − jitter) + jitter`, which is always in the future. `list` and `show` print it.
+**Next run with jitter.** `jitter_ms` is fixed when the schedule is created: the first 8 bytes of SHA-256 of the ID, modulo `loops.jitter_seconds × 1000` (default 60 s, capped at 3600 s; `0` disables it). It is stored, so it never changes. The next run is `cron.next_after(now − jitter) + jitter`, which is always in the future. `list` and `show` print it.
 
 **CLI** (`cyber loops`, through the background server like `cyber teams`):
 

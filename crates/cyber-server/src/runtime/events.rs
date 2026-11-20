@@ -657,6 +657,7 @@ pub fn registry() -> EventRegistry {
     super::memory::register(&mut registry);
     super::messaging::records::register(&mut registry);
     super::loops::records::register(&mut registry);
+    super::schedules::records::register(&mut registry);
     super::teams::records::register(&mut registry);
     super::goals::records::register(&mut registry);
     super::usage_wait::register(&mut registry);
@@ -665,6 +666,7 @@ pub fn registry() -> EventRegistry {
     registry.projector(project);
     registry.projector(super::messaging::records::project);
     registry.projector(super::loops::records::project);
+    registry.projector(super::schedules::records::project);
     registry.projector(super::teams::records::project);
     registry.projector(super::goals::records::project);
     registry.projector(super::usage_wait::project);

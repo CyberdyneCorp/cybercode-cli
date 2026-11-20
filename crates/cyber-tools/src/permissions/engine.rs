@@ -471,6 +471,8 @@ pub struct Policy {
 }
 
 const PLAN_DENY: &str = "Plan mode is read-only. Present the plan with plan_exit.";
+/// What `dont-ask` turns an ask into (`permissions-modes` → dont-ask mode).
+pub const DONT_ASK_DENIAL: &str = "Not pre-approved (dont-ask mode)";
 
 impl Policy {
     pub(crate) fn skill_tool_denial(&self, tool: &str) -> Option<String> {
@@ -628,7 +630,7 @@ impl Policy {
             .mode_ceiling(req, mode)
             .unwrap_or_else(|| self.apply_mode(req, effect, mode));
         if mode == Mode::DontAsk && decision == Decision::Ask {
-            Decision::Deny("Not pre-approved (dont-ask mode)".into())
+            Decision::Deny(DONT_ASK_DENIAL.into())
         } else {
             decision
         }
@@ -678,9 +680,7 @@ impl Policy {
             (Mode::AcceptEdits, Effect::Ask) if req.file_edit && self.inside_location(req) => {
                 Decision::Allow
             }
-            (Mode::DontAsk, Effect::Ask) => {
-                Decision::Deny("Not pre-approved (dont-ask mode)".into())
-            }
+            (Mode::DontAsk, Effect::Ask) => Decision::Deny(DONT_ASK_DENIAL.into()),
             (_, Effect::Ask) => Decision::Ask,
         }
     }

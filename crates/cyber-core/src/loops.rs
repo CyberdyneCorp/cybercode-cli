@@ -348,6 +348,8 @@ pub struct LoopSettings {
     pub max_iterations: u64,
     pub max_per_session: u64,
     pub until_timeout_seconds: u64,
+    /// The largest deterministic offset of a persistent schedule's runs; 0 turns it off.
+    pub jitter_seconds: u64,
 }
 
 impl Default for LoopSettings {
@@ -356,8 +358,24 @@ impl Default for LoopSettings {
             max_iterations: 500,
             max_per_session: 50,
             until_timeout_seconds: 60,
+            jitter_seconds: 60,
         }
     }
+}
+
+/// The longest jitter accepted, so a schedule's runs stay within its period.
+pub const MAX_JITTER_SECONDS: u64 = 3600;
+
+/// `loops.allow_bypass` (`loops-scheduling` → Unattended Mode for schedules): true only
+/// when the merged value is `true` and the layer that set it is user (`global:`) or
+/// managed (`managed:`) configuration. A project, local, environment, profile or
+/// command-line layer cannot enable it, and anything unexpected reads as false.
+pub fn allow_bypass(config: &Value, sources: &std::collections::BTreeMap<String, String>) -> bool {
+    const POINTER: &str = "/loops/allow_bypass";
+    config.pointer(POINTER) == Some(&Value::Bool(true))
+        && sources
+            .get(POINTER)
+            .is_some_and(|label| label.starts_with("global:") || label.starts_with("managed:"))
 }
 
 impl LoopSettings {
@@ -375,6 +393,10 @@ impl LoopSettings {
             max_iterations: number("max_iterations", defaults.max_iterations),
             max_per_session: number("max_per_session", defaults.max_per_session),
             until_timeout_seconds: number("until_timeout_seconds", defaults.until_timeout_seconds),
+            jitter_seconds: loops
+                .and_then(|l| l.get("jitter_seconds"))
+                .and_then(Value::as_u64)
+                .map_or(defaults.jitter_seconds, |s| s.min(MAX_JITTER_SECONDS)),
         }
     }
 }
@@ -514,5 +536,40 @@ mod tests {
         let s = LoopSettings::from_config(&serde_json::json!({"loops": {"max_iterations": 7}}));
         assert_eq!(s.max_iterations, 7);
         assert_eq!(s.max_per_session, 50);
+        assert_eq!(s.jitter_seconds, 60);
+        let off = LoopSettings::from_config(&serde_json::json!({"loops": {"jitter_seconds": 0}}));
+        assert_eq!(off.jitter_seconds, 0);
+        let capped =
+            LoopSettings::from_config(&serde_json::json!({"loops": {"jitter_seconds": 99999}}));
+        assert_eq!(capped.jitter_seconds, MAX_JITTER_SECONDS);
+    }
+
+    #[test]
+    fn only_user_or_managed_config_allows_bypass() {
+        let on = serde_json::json!({"loops": {"allow_bypass": true}});
+        let from = |label: &str| {
+            std::iter::once(("/loops/allow_bypass".to_owned(), label.to_owned())).collect()
+        };
+        assert!(allow_bypass(
+            &on,
+            &from("global:/home/u/.config/cyber/cyber.jsonc")
+        ));
+        assert!(allow_bypass(&on, &from("managed:/etc/cyber/managed.json")));
+        for label in [
+            "project:/repo/cyber.jsonc",
+            "project:/repo/.cyber/cyber.local.jsonc",
+            "env:CYBER_CONFIG_CONTENT",
+            "profile:fast",
+            "cli:--config",
+            "default",
+        ] {
+            assert!(!allow_bypass(&on, &from(label)), "{label}");
+        }
+        let off = serde_json::json!({"loops": {"allow_bypass": "true"}});
+        assert!(
+            !allow_bypass(&off, &from("global:/x")),
+            "only the boolean true"
+        );
+        assert!(!allow_bypass(&on, &Default::default()), "an unknown source");
     }
 }

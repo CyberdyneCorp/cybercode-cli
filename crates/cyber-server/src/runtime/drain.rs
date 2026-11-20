@@ -138,6 +138,8 @@ async fn went_idle(runtime: super::Runtime, id: &str, (hops, status): (u32, Opti
     runtime.inner.release_attachment_cache(id).await;
     // `loops-scheduling`: the iterations this Drain ran end now.
     runtime.loops_drain_ended(id, status.as_deref()).await;
+    // `loops-scheduling` → Persistent local schedules: the scheduled runs it ran end now.
+    runtime.schedules_drain_ended(id, status.as_deref()).await;
     // `cross-session-messaging` → Idle notifications: the Session went idle.
     runtime.drain_ended(id, hops, status).await;
     // `agent-teams` → Idle notifications: a teammate's lead hears that it went idle.

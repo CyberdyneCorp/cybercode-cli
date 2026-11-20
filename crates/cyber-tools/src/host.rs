@@ -1291,6 +1291,26 @@ impl ToolHost for BuiltinHost {
         ))
     }
 
+    fn schedule_policy(
+        &self,
+        directory: &str,
+    ) -> Result<cyber_server::runtime::schedules::SchedulePolicy, String> {
+        // Fail closed: without the checkout resolver there is no trust to check.
+        let config = self
+            .hook_config
+            .get()
+            .ok_or("Refused: checkout trust is unavailable on this host")?;
+        let resolved = (config.resolve)(Path::new(directory))
+            .map_err(|error| format!("Refused: the configuration of {directory}: {error}"))?;
+        let settings = cyber_core::loops::LoopSettings::from_config(&resolved.value);
+        Ok(cyber_server::runtime::schedules::SchedulePolicy {
+            trusted: resolved.trust.trusted,
+            allow_bypass: cyber_core::loops::allow_bypass(&resolved.value, &resolved.sources),
+            jitter_seconds: settings.jitter_seconds,
+            budget: cyber_core::budget::Budget::from_config(&resolved.value, "loop")?,
+        })
+    }
+
     fn check(
         &self,
         directory: &str,
@@ -1692,11 +1712,13 @@ impl ToolHost for BuiltinHost {
                         .get_or_init(|| tools::messaging::enabled(self, Path::new(&turn.directory)))
             })
             .filter(|d| {
-                // `loops-scheduling`: only while an iteration of an active loop runs.
+                // `loops-scheduling`: only while an iteration of an active loop, or a
+                // scheduled run, runs.
                 d.spec.name != tools::loops::NAME
-                    || self
-                        .runtime()
-                        .is_some_and(|runtime| runtime.loop_iteration_running(&turn.session_id))
+                    || self.runtime().is_some_and(|runtime| {
+                        runtime.loop_iteration_running(&turn.session_id)
+                            || runtime.schedule_run_running(&turn.session_id)
+                    })
             })
             .filter(|d| {
                 // `loops-scheduling`: scheduled tasks belong to root, non-workflow Sessions.
@@ -2562,7 +2584,8 @@ impl Ctx<'_> {
                 permissions::DecisionSource::Taint => "taint",
                 permissions::DecisionSource::Rules => "rule",
             };
-            return Err(self.denied(&req, source, deny_message(&reason)).await);
+            let message = self.schedule_denial(&reason).await;
+            return Err(self.denied(&req, source, message).await);
         }
         // A tainted run's risky action: no allow approves it alone, a hook's included.
         let held = self.policy.taint_holds(&req);
@@ -2673,6 +2696,22 @@ impl Ctx<'_> {
 
     /// The denial error, after PermissionDenied hooks on an armed attempt; a merged
     /// `retry` is kept for the caller, never applied here.
+    /// The model-visible text of a policy denial: an ask `dont-ask` turned into a denial
+    /// during a scheduled run says no approver exists there (`loops-scheduling` →
+    /// Unattended Mode for schedules).
+    async fn schedule_denial(&self, reason: &str) -> String {
+        let unapproved =
+            self.policy.mode == Mode::DontAsk && reason == permissions::DONT_ASK_DENIAL;
+        match self.host.runtime() {
+            Some(runtime)
+                if unapproved && runtime.scheduled_run_active(&self.inv.session_id).await =>
+            {
+                cyber_server::runtime::schedules::NO_SCHEDULE_APPROVER.to_owned()
+            }
+            _ => deny_message(reason),
+        }
+    }
+
     async fn denied(&self, req: &Request, source: &str, message: String) -> ToolError {
         if !self
             .denial
@@ -2798,6 +2837,9 @@ impl Ctx<'_> {
                             .is_some() =>
                     {
                         cyber_server::runtime::NO_WORKFLOW_APPROVER.to_owned()
+                    }
+                    Some(runtime) if runtime.scheduled_run_active(&self.inv.session_id).await => {
+                        cyber_server::runtime::schedules::NO_SCHEDULE_APPROVER.to_owned()
                     }
                     _ => unattended(self.policy.mode),
                 };

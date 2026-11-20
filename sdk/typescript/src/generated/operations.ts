@@ -1146,6 +1146,48 @@ export interface Operations {
     body: S.QuestionReplyBody;
     response: void;
   };
+  "v1.schedule.create": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: S.ScheduleRequest;
+    response: S.Schedule;
+  };
+  "v1.schedule.get": {
+    path: { scheduleID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Schedule;
+  };
+  "v1.schedule.list": {
+    path: Record<string, never>;
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Schedule[];
+  };
+  "v1.schedule.pause": {
+    path: { scheduleID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Schedule;
+  };
+  "v1.schedule.remove": {
+    path: { scheduleID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: string[];
+  };
+  "v1.schedule.resume": {
+    path: { scheduleID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.Schedule;
+  };
+  "v1.schedule.run": {
+    path: { scheduleID: string };
+    query: Record<string, never>;
+    body: undefined;
+    response: S.ScheduleRunStarted;
+  };
   "v1.service.get": {
     path: Record<string, never>;
     query: Record<string, never>;
@@ -4052,6 +4094,90 @@ export const operations = {
     unwrap: false,
     stream: false,
   },
+  "v1.schedule.create": {
+    tag: "schedule",
+    name: "create",
+    method: "POST",
+    path: "/api/v1/schedules",
+    pathParams: [],
+    query: [],
+    body: "required",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.schedule.get": {
+    tag: "schedule",
+    name: "get",
+    method: "GET",
+    path: "/api/v1/schedules/{scheduleID}",
+    pathParams: ["scheduleID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.schedule.list": {
+    tag: "schedule",
+    name: "list",
+    method: "GET",
+    path: "/api/v1/schedules",
+    pathParams: [],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.schedule.pause": {
+    tag: "schedule",
+    name: "pause",
+    method: "POST",
+    path: "/api/v1/schedules/{scheduleID}/pause",
+    pathParams: ["scheduleID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.schedule.remove": {
+    tag: "schedule",
+    name: "remove",
+    method: "DELETE",
+    path: "/api/v1/schedules/{scheduleID}",
+    pathParams: ["scheduleID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.schedule.resume": {
+    tag: "schedule",
+    name: "resume",
+    method: "POST",
+    path: "/api/v1/schedules/{scheduleID}/resume",
+    pathParams: ["scheduleID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
+  "v1.schedule.run": {
+    tag: "schedule",
+    name: "run",
+    method: "POST",
+    path: "/api/v1/schedules/{scheduleID}/run",
+    pathParams: ["scheduleID"],
+    query: [],
+    body: "none",
+    located: false,
+    unwrap: true,
+    stream: false,
+  },
   "v1.service.get": {
     tag: "service",
     name: "get",
@@ -6378,6 +6504,29 @@ export function createGroups(caller: Caller) {
       reply: (sessionID: string, requestID: string, body: Operations["v1.question.reply"]["body"], options?: RequestOptions): Promise<Operations["v1.question.reply"]["response"]> =>
         caller.call("v1.question.reply", { path: { sessionID, requestID }, body }, options),
     },
+    schedule: {
+      /** Add a persistent schedule the service runs with no client open; the directory must be trusted and `bypass` needs `loops.allow_bypass` in user or managed config (`POST /api/v1/schedules`) */
+      create: (body: Operations["v1.schedule.create"]["body"], options?: RequestOptions): Promise<Operations["v1.schedule.create"]["response"]> =>
+        caller.call("v1.schedule.create", { body }, options),
+      /** A schedule with its 20 most recent runs, newest first (`GET /api/v1/schedules/{scheduleID}`) */
+      get: (scheduleID: string, options?: RequestOptions): Promise<Operations["v1.schedule.get"]["response"]> =>
+        caller.call("v1.schedule.get", { path: { scheduleID } }, options),
+      /** Persistent schedules (not removed), oldest first, with their next run including jitter (`GET /api/v1/schedules`) */
+      list: (options?: RequestOptions): Promise<Operations["v1.schedule.list"]["response"]> =>
+        caller.call("v1.schedule.list", {}, options),
+      /** Pause a schedule; a run in flight finishes (`POST /api/v1/schedules/{scheduleID}/pause`) */
+      pause: (scheduleID: string, options?: RequestOptions): Promise<Operations["v1.schedule.pause"]["response"]> =>
+        caller.call("v1.schedule.pause", { path: { scheduleID } }, options),
+      /** Remove a schedule; its run history stays and a run in flight finishes (`DELETE /api/v1/schedules/{scheduleID}`) */
+      remove: (scheduleID: string, options?: RequestOptions): Promise<Operations["v1.schedule.remove"]["response"]> =>
+        caller.call("v1.schedule.remove", { path: { scheduleID } }, options),
+      /** Resume a paused schedule at its next occurrence (`POST /api/v1/schedules/{scheduleID}/resume`) */
+      resume: (scheduleID: string, options?: RequestOptions): Promise<Operations["v1.schedule.resume"]["response"]> =>
+        caller.call("v1.schedule.resume", { path: { scheduleID } }, options),
+      /** Run a schedule now, outside its cron schedule, through the same unattended gate (`POST /api/v1/schedules/{scheduleID}/run`) */
+      run: (scheduleID: string, options?: RequestOptions): Promise<Operations["v1.schedule.run"]["response"]> =>
+        caller.call("v1.schedule.run", { path: { scheduleID } }, options),
+    },
     service: {
       /** The listening server's identity, build and running work (`GET /api/v1/service`) */
       get: (options?: RequestOptions): Promise<Operations["v1.service.get"]["response"]> =>
@@ -6877,6 +7026,7 @@ export const errorTags = [
   "RequestNotFoundError",
   "ReviewTargetError",
   "RewindConflictError",
+  "ScheduleNotFoundError",
   "ServiceUnavailableError",
   "BudgetExceededError",
   "BudgetUnpricedError",
@@ -7012,6 +7162,10 @@ export function isReviewTargetError(err: unknown): err is TaggedError<"ReviewTar
 
 export function isRewindConflictError(err: unknown): err is TaggedError<"RewindConflictError"> {
   return hasTag(err, "RewindConflictError");
+}
+
+export function isScheduleNotFoundError(err: unknown): err is TaggedError<"ScheduleNotFoundError"> {
+  return hasTag(err, "ScheduleNotFoundError");
 }
 
 export function isServiceUnavailableError(err: unknown): err is TaggedError<"ServiceUnavailableError"> {

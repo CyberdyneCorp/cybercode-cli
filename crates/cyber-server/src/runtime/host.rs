@@ -1352,6 +1352,17 @@ pub trait ToolHost: Send + Sync {
         Ok((cyber_core::loops::LoopSettings::default(), None))
     }
 
+    /// What the unattended gate of a persistent schedule needs about `directory`
+    /// (`loops-scheduling` → Unattended Mode for schedules): checkout trust, whether user
+    /// or managed config allows `bypass`, the jitter and the `budgets.loop` default. A host
+    /// that cannot tell refuses, so schedules never run on assumptions.
+    fn schedule_policy(
+        &self,
+        _directory: &str,
+    ) -> Result<super::schedules::SchedulePolicy, String> {
+        Err("Refused: this host cannot check a directory for unattended schedules".into())
+    }
+
     /// `usage_limit` at the Location (`configuration` → Usage limit settings).
     fn usage_limit_settings(
         &self,

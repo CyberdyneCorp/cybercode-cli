@@ -5,6 +5,7 @@
 pub mod account;
 pub mod backup;
 pub mod collaboration;
+pub mod desktop_notifier;
 pub mod git_text;
 mod host;
 pub mod peer_discovery;
@@ -206,6 +207,28 @@ fn peer_lookup(global: Arc<services::GlobalConfigFn>, paths: Paths) -> Arc<host:
 /// The enabled remotes, read from user config on every listing like [`peer_lookup`].
 fn peer_names(global: Arc<services::GlobalConfigFn>) -> Arc<host::PeerNames> {
     Arc::new(move || peer_tokens::enabled_names(&global()?))
+}
+
+/// Session loops: end iterations a stopped server cut off, apply the missed-run policy,
+/// then admit due iterations every 5 s (`loops-scheduling`). Persistent schedules run only
+/// in the service (`loops-scheduling` → Persistent local schedules): end runs a stopped
+/// service cut off, apply the missed-run policy, then start due runs every 5 s, notifying
+/// on the desktop.
+async fn recover_loops_and_schedules(
+    runtime: &cyber_server::runtime::Runtime,
+    served: bool,
+) -> Result<(), String> {
+    runtime.recover_loops().await.map_err(|e| e.to_string())?;
+    runtime.spawn_loop_sweep();
+    if served {
+        runtime.set_desktop_notifier(Arc::new(desktop_notifier::OsNotifier));
+        runtime
+            .recover_schedules()
+            .await
+            .map_err(|e| e.to_string())?;
+        runtime.spawn_schedule_sweep();
+    }
+    Ok(())
 }
 
 pub fn config_loader(paths: Paths, home: PathBuf) -> Arc<ConfigFn> {
@@ -450,10 +473,7 @@ impl App {
         // teams a restart left stopping finish stopping (`agent-teams` → Idle
         // notifications, Shutdown and resume).
         runtime.recover_teams().await.map_err(|e| e.to_string())?;
-        // Session loops: end iterations a stopped server cut off, apply the missed-run
-        // policy, then admit due iterations every 5 s (`loops-scheduling`).
-        runtime.recover_loops().await.map_err(|e| e.to_string())?;
-        runtime.spawn_loop_sweep();
+        recover_loops_and_schedules(&runtime, served).await?;
         // Outcomes of messages held on peers, polled from the times the store keeps, so
         // polling resumes after a restart (`cross-session-messaging` → Peer outcome
         // tracking).

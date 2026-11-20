@@ -55,6 +55,7 @@ cyber [OPTIONS] [COMMAND]
 - [`computer`](#cyber-computer): Inspect, set up, arm and stop experimental native computer control
 - [`features`](#cyber-features): List the feature registry; enable or disable a feature in config
 - [`workflows`](#cyber-workflows): List saved Workflows; run, inspect and control Workflow Runs
+- [`loops`](#cyber-loops): Persistent schedules the Cyber service runs even when no client is open
 - [`worktree`](#cyber-worktree): List, remove and prune managed Git worktrees of the current repository
 - [`debug`](#cyber-debug): Inspect resolved paths, configuration and build information
 - [`models`](#cyber-models): List models from the catalog, available first
@@ -1365,6 +1366,121 @@ cyber workflows logs [OPTIONS] <RUN_ID>
 **Arguments:**
 
 - `<RUN_ID>`
+
+## `cyber loops`
+
+Persistent schedules the Cyber service runs even when no client is open
+
+```text
+cyber loops [OPTIONS] <COMMAND>
+```
+
+**Subcommands:**
+
+- [`add`](#cyber-loops-add): Add a schedule the Cyber service runs even when no client is open
+- [`list`](#cyber-loops-list): Schedules with their next run (jitter included)
+- [`show`](#cyber-loops-show): A schedule and its recent runs
+- [`pause`](#cyber-loops-pause): Stop running a schedule until it is resumed; a run in flight finishes
+- [`resume`](#cyber-loops-resume): Resume a paused schedule at its next occurrence
+- [`run`](#cyber-loops-run): Run a schedule now, outside its cron schedule
+- [`rm`](#cyber-loops-rm): Remove a schedule; its run history stays in the database
+
+## `cyber loops add`
+
+Add a schedule the Cyber service runs even when no client is open
+
+```text
+cyber loops add [OPTIONS] --cron <CRON> <PROMPT>
+```
+
+**Arguments:**
+
+- `<PROMPT>`: The prompt (or `/command`) each run sends.
+
+**Options:**
+
+- `--cron <CRON>`: A 5-field cron expression in local time: minute hour day-of-month month day-of-week.
+- `--name <NAME>`: A name shown in listings and notifications (default: the ID)
+- `--dir <DIR>`: The directory runs work in (default: the current Location). Its checkout must be trusted.
+- `--agent <AGENT>`: The agent of run Sessions.
+- `--mode <MODE>`: The Mode runs use (default dont-ask). `bypass` needs `loops.allow_bypass` in user or managed config.
+- `--model <MODEL>`: The model of new run Sessions (default: the Location's default model)
+- `--new-session`: Create a new Session for every run (the default)
+- `--session <SESSION>`: Resume this root Session for every run instead.
+- `--notify <NOTIFY>`: When to notify: always, on_change (default) or never. Values: `always`, `on_change`, `never`.
+- `--missed <MISSED>`: Runs missed while the service was not running: skip (default) or run-once. Values: `skip`, `run-once`.
+- `--max-cost <MAX_COST>`: Stop the schedule once its runs cost this many USD in total.
+- `--max-tokens <MAX_TOKENS>`: Stop once its runs used this many tokens in total.
+- `--max-turns <MAX_TURNS>`: Stop once its runs made this many model calls in total.
+- `--timeout <TIMEOUT>`: Stop this long after the schedule was added (e.g. 30d)
+
+## `cyber loops list`
+
+Schedules with their next run (jitter included)
+
+```text
+cyber loops list [OPTIONS]
+```
+
+## `cyber loops show`
+
+A schedule and its recent runs
+
+```text
+cyber loops show [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`: The schedule's `cron_` ID.
+
+## `cyber loops pause`
+
+Stop running a schedule until it is resumed; a run in flight finishes
+
+```text
+cyber loops pause [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`: The schedule's `cron_` ID.
+
+## `cyber loops resume`
+
+Resume a paused schedule at its next occurrence
+
+```text
+cyber loops resume [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`: The schedule's `cron_` ID.
+
+## `cyber loops run`
+
+Run a schedule now, outside its cron schedule
+
+```text
+cyber loops run [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`: The schedule's `cron_` ID.
+
+## `cyber loops rm`
+
+Remove a schedule; its run history stays in the database
+
+```text
+cyber loops rm [OPTIONS] <ID>
+```
+
+**Arguments:**
+
+- `<ID>`: The schedule's `cron_` ID.
 
 ## `cyber worktree`
 

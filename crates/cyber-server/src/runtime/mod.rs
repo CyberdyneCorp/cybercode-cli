@@ -92,6 +92,7 @@ mod jobs;
 pub mod loops;
 mod names;
 mod output_style;
+pub mod schedules;
 pub mod teams;
 pub use handoff::Handoff;
 mod process_jobs;
@@ -402,6 +403,8 @@ pub enum RuntimeError {
     /// The Session already has `loops.max_per_session` active loops.
     #[error("LoopLimitError: Scheduled task limit reached ({0})")]
     LoopLimit(u64),
+    #[error("ScheduleNotFoundError: no schedule {0}")]
+    ScheduleNotFound(String),
     /// A feature the Location's configuration leaves off (`agent-teams` → Feature flag);
     /// nothing was written.
     #[error("FeatureDisabledError: {0}")]
@@ -983,6 +986,12 @@ pub(crate) struct Inner {
     workflow_relaunch: std::sync::OnceLock<Arc<dyn workflow_recovery::WorkflowRelaunch>>,
     /// Set once the `workflow.run.progress` publisher runs.
     workflow_progress: std::sync::OnceLock<()>,
+    /// Shows a scheduled run's notification on the desktop (`loops-scheduling` →
+    /// Completion notifications); the served App sets the OS one.
+    desktop_notifier: std::sync::OnceLock<Arc<dyn schedules::DesktopNotifier>>,
+    /// Set once this runtime runs persistent schedules (`spawn_schedule_sweep`): only the
+    /// service does, so an in-process App never runs them a second time.
+    schedules_on: std::sync::atomic::AtomicBool,
     pub(crate) waiters: StdMutex<Vec<requests::Waiter>>,
     /// The last background update check (`installation-upgrade`).
     update_status: StdMutex<Option<UpdateStatus>>,
@@ -1090,6 +1099,8 @@ impl Runtime {
             attachments: std::sync::OnceLock::new(),
             workflow_relaunch: std::sync::OnceLock::new(),
             workflow_progress: std::sync::OnceLock::new(),
+            desktop_notifier: std::sync::OnceLock::new(),
+            schedules_on: std::sync::atomic::AtomicBool::new(false),
             waiters: StdMutex::default(),
             wait_clock: std::sync::OnceLock::new(),
             settlement_probe: std::sync::OnceLock::new(),

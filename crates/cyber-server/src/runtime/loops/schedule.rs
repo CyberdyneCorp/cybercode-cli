@@ -317,15 +317,28 @@ impl Runtime {
         session_id: &str,
         iteration: &Iteration,
     ) -> Result<Admission, RuntimeError> {
-        let message_id = Some(iteration.started.message_id.clone());
+        let message_id = iteration.started.message_id.clone();
+        self.prompt_admission(session_id, &iteration.prompt, message_id)
+            .await
+    }
+
+    /// A queued `source: "loop"` admission of a loop or scheduled run's prompt under
+    /// `message_id`; a `/command` prompt is planned as the command route plans it.
+    pub(crate) async fn prompt_admission(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        message_id: String,
+    ) -> Result<Admission, RuntimeError> {
+        let message_id = Some(message_id);
         let plain = || Admission {
             message_id: message_id.clone(),
             source: "loop".into(),
             resume: true,
             output_schema: None,
-            ..Admission::text(iteration.prompt.clone(), Delivery::Queue)
+            ..Admission::text(prompt.to_owned(), Delivery::Queue)
         };
-        let Some(command) = iteration.prompt.strip_prefix('/') else {
+        let Some(command) = prompt.strip_prefix('/') else {
             return Ok(plain());
         };
         let (name, arguments) = command
@@ -556,7 +569,7 @@ impl Runtime {
 
     /// Admit an iteration like a typed prompt (templates, `@` mentions, UserPromptSubmit
     /// with `source: "loop"`) with its `loop.iteration.started` record in the same commit.
-    async fn admit_loop_iteration(
+    pub(crate) async fn admit_loop_iteration(
         &self,
         session_id: &str,
         admission: Admission,

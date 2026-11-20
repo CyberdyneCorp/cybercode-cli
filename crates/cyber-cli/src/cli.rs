@@ -233,6 +233,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: WorkflowsCmd,
     },
+    /// Persistent schedules the Cyber service runs even when no client is open.
+    Loops {
+        #[command(subcommand)]
+        cmd: crate::commands::loops::LoopsCmd,
+    },
     /// List, remove and prune managed Git worktrees of the current repository.
     Worktree {
         #[command(subcommand)]
