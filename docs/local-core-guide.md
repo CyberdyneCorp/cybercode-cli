@@ -2198,8 +2198,9 @@ In the `/goal` panel, `e` edits, `p` pauses, `r` resumes and `c` clears the sele
 /loop watch CI until it is green          # self-paced: the model calls schedule_wakeup
 /loop 2m --max 20 --for 1h --until "curl -sf https://staging/health" poll staging
 /loop 10m --overlap coalesce --missed run-once --max-cost 2 summarize new issues
+/loop 15m --until-goal --notify never check progress   # ends when the Session's Goal ends
 /loop list                                # Enter on a row stops that loop
-/loop stop [lop_… | all]
+/loop stop [lop_… | cron_… | all]
 ```
 
 - **Iterations are queued input** (`source: "loop"`), so they never interrupt a running Turn; they run when the Session would otherwise go idle. If an iteration is still running when the next tick comes, the tick is skipped (`--overlap skip`, the default) or one tick waits behind it (`coalesce`). A slow iteration never makes ticks drift: the next one is the next multiple of the interval since the loop started.
@@ -2210,15 +2211,25 @@ In the `/goal` panel, `e` edits, `p` pauses, `r` resumes and `c` clears the sele
   - `--for <duration>`.
   - `--until "<command>"`, run before each iteration, sandboxed in the Location without a permission prompt, like `!` (timeout `loops.until_timeout_seconds`, default 60). The loop stops the first time it exits 0.
   - A budget: `--max-cost`, `--max-tokens`, `--max-turns` or `--timeout`, else `budgets.loop`. It is checked between iterations.
+  - `--until-goal`: the Session's current Goal (active or paused) is recorded when the loop starts, and the loop stops with status `goal_ended` once that Goal is met, impossible, cleared or over budget. Without a current Goal the loop is rejected.
   - 3 failed iterations in a row.
   - `/loop stop`.
-- **Limits.** A Session holds at most `loops.max_per_session` (default 50) active loops.
+- **Notifications.** `--notify on_change` (the default) notifies when an iteration reports `noop: false` or fails, `always` notifies every iteration, `never` none. A loop that stops `failed` or `budget_exceeded` notifies unless `never`. They are Session notifications (TUI toast, desktop while unfocused, remote devices), limited to 10 per hour per Session.
+- **Limits.** A Session holds at most `loops.max_per_session` (default 50) active loops and scheduled tasks together (`Scheduled task limit reached (50)`).
+- **Scheduled tasks (`cron_create`, `cron_list`, `cron_delete`).** The model can schedule a prompt for later in its own Session:
+  - `cron_create {cron: "0 9 * * 1-5", prompt}` runs at each occurrence of a 5-field cron expression in the user's local time (`*`, ranges, steps, lists, `JAN`–`DEC`, `SUN`–`SAT`, `@daily`…; when both day fields are set, either matches);
+  - `cron_create {at: "2026-10-03T09:00", prompt}` runs once (local time, or RFC 3339; within one year);
+  - optional `missed` (`skip`, `run-once`) and `notify`;
+  - a task is a Loop of kind `cron` with a `cron_` ID: it shows in `/loop list` (`cron 0 9 * * 1-5`, `at 09:00`, next run) and `/loop stop` ends it; `cron_delete` stops only `cron_` tasks, never a `/loop` you started;
+  - the tools are offered only to root Sessions outside Workflow Runs, and nothing the model calls creates a persistent schedule.
 - **Restarts.** Loops are `loop.*` events on the Session's stream (`session_loop` indexes their due times), so they survive a server restart:
   - an iteration cut off by the restart ends `interrupted`;
   - missed ticks are skipped (`--missed skip`) or one catch-up runs (`run-once`);
-  - a self-paced loop whose wakeup passed runs once.
+  - a self-paced loop whose wakeup passed runs once;
+  - a one-shot scheduled task whose time passed ends `expired` under `skip`, and runs once under `run-once`.
+- **Hooks.** `LoopIteration` hooks receive `{loop, iteration: {n, outcome, noop, duration_ms, cost, tokens, turns, reason}}` on stdin after each iteration ends (skipped ticks excluded). They are observational.
 - **API:** `GET|POST /api/v1/sessions/{id}/loops` (`POST` takes `{"command": "5m check"}` or the parsed fields), `DELETE /api/v1/sessions/{id}/loops[/{loop_id}]`.
-- **Not yet:** in-session cron tools, persistent `cyber loops add` schedules run by the service, notifications, the `LoopIteration` hook, `--until-goal` (not yet connected to Session goals) and `/loop` in `cyber exec`.
+- **Not yet:** persistent `cyber loops add` schedules run by the service, and `/loop` in `cyber exec`.
 
 ## Workflows (P2 M2.1)
 

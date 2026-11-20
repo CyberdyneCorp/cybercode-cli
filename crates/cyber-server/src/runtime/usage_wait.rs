@@ -448,7 +448,12 @@ impl Inner {
                     reason: reason.into(),
                 };
                 let stop = event(super::loops::records::STOPPED, &stopped);
-                self.commit(handle, vec![stop]).await.map(drop)
+                self.commit(handle, vec![stop.clone()]).await?;
+                let session_id = handle.state.lock().await.info.id.clone();
+                if let Some(inner) = self.me.upgrade() {
+                    Runtime { inner }.loop_followups(&session_id, &[stop]).await;
+                }
+                Ok(())
             }
         }
     }

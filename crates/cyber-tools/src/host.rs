@@ -1699,6 +1699,13 @@ impl ToolHost for BuiltinHost {
                         .is_some_and(|runtime| runtime.loop_iteration_running(&turn.session_id))
             })
             .filter(|d| {
+                // `loops-scheduling`: scheduled tasks belong to root, non-workflow Sessions.
+                !tools::loops::CRON_TOOLS.contains(&d.spec.name.as_str())
+                    || self
+                        .runtime()
+                        .is_some_and(|runtime| runtime.cron_tools_offered(&turn.session_id))
+            })
+            .filter(|d| {
                 // `agent-teams`: only while `teams` is on, and to a lead or a non-member.
                 tools::team::offered(
                     self,

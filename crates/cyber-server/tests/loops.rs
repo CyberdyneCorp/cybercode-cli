@@ -371,3 +371,406 @@ async fn an_iteration_cut_off_by_a_restart_ends_interrupted() {
     assert_eq!(state.next_due_ms, Some(created.created_ms + 60_000));
     h.tools.release.notify_one();
 }
+
+// ---- In-session cron tasks, --until-goal and notifications (`implement-m2-4-schedules`).
+
+use cyber_core::loops::Notify;
+use cyber_server::runtime::loops::{CronRequest, LoopKind};
+
+fn rfc3339(ms: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms)
+        .unwrap()
+        .to_rfc3339()
+}
+
+fn at(prompt: &str, at_ms: i64) -> CronRequest {
+    CronRequest {
+        at: Some(rfc3339(at_ms)),
+        prompt: prompt.into(),
+        ..CronRequest::default()
+    }
+}
+
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// The notification events of a Session, as `title: body`.
+fn notices(h: &Harness, id: &str) -> Vec<String> {
+    h.store
+        .read_events(id, -1, 500)
+        .unwrap()
+        .events
+        .into_iter()
+        .filter(|e| e.kind == "session.notification.sent.1")
+        .map(|e| format!("{}: {}", e.data["title"], e.data["body"]))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_one_shot_reminder_runs_at_its_time_then_completes() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("CI was green overnight")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    let when = now_ms() + 3_600_000;
+    let task = h
+        .runtime
+        .create_cron(&id, at("summarize overnight CI", when))
+        .await
+        .unwrap();
+    assert!(task.loop_id.starts_with("cron_"), "{}", task.loop_id);
+    assert_eq!((task.kind, task.at_ms), (LoopKind::Cron, Some(when)));
+    let due = task.next_due_ms.unwrap();
+    assert_eq!(
+        h.runtime.sweep_loops(due - 1).await.unwrap(),
+        0,
+        "not due yet"
+    );
+    assert_eq!(h.runtime.sweep_loops(due).await.unwrap(), 1);
+    let ended = wait_for(&h, &id, &task.loop_id, |l| !l.active()).await;
+    assert_eq!(ended.status, "completed");
+    assert_eq!(ended.iterations, 1);
+    let state = h.state(&id).await;
+    let row = state
+        .inbox
+        .iter()
+        .find(|r| r.message_id.starts_with("loopi_cron_"))
+        .unwrap();
+    assert_eq!(row.source, "loop");
+    assert!(
+        transcript(&h.models.requests("test/main")[0]).contains("summarize overnight CI"),
+        "the prompt was admitted"
+    );
+    // An iteration that reported nothing quiet notifies under the default `on_change`.
+    let sent = notices(&h, &id);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(sent[0].contains("Scheduled task"), "{sent:?}");
+}
+
+#[tokio::test]
+async fn a_recurring_task_is_due_at_its_next_local_occurrence() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let before = now_ms();
+    let task = h
+        .runtime
+        .create_cron(
+            &id,
+            CronRequest {
+                cron: Some("0 9 * * 1-5".into()),
+                prompt: "standup notes".into(),
+                ..CronRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+    let expected = cyber_core::cron::Cron::parse("0 9 * * 1-5")
+        .unwrap()
+        .next_after(
+            chrono::DateTime::from_timestamp_millis(before).unwrap(),
+            &chrono::Local,
+        )
+        .unwrap()
+        .timestamp_millis();
+    assert_eq!(task.next_due_ms, Some(expected));
+    assert_eq!(task.cron.as_deref(), Some("0 9 * * 1-5"));
+    let listed = h.runtime.cron_tasks(&id).await.unwrap();
+    assert_eq!(listed.len(), 1);
+}
+
+#[tokio::test]
+async fn invalid_schedules_are_rejected_with_the_reason() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let bad = |request: CronRequest| {
+        let runtime = h.runtime.clone();
+        let id = id.clone();
+        async move {
+            runtime
+                .create_cron(&id, request)
+                .await
+                .unwrap_err()
+                .to_string()
+        }
+    };
+    let error = bad(CronRequest {
+        cron: Some("61 * * * *".into()),
+        prompt: "x".into(),
+        ..CronRequest::default()
+    })
+    .await;
+    assert!(
+        error.contains("Invalid cron expression \"61 * * * *\""),
+        "{error}"
+    );
+    let error = bad(at("x", now_ms() - 60_000)).await;
+    assert!(error.contains("at must be in the future"), "{error}");
+    let error = bad(CronRequest {
+        cron: Some("* * * * *".into()),
+        at: Some(rfc3339(now_ms() + 60_000)),
+        prompt: "x".into(),
+        ..CronRequest::default()
+    })
+    .await;
+    assert!(error.contains("exactly one of cron"), "{error}");
+    assert!(h.state(&id).await.loops.is_empty());
+}
+
+#[tokio::test]
+async fn loops_and_scheduled_tasks_share_the_per_session_cap() {
+    let h = Harness::new(Setup::default());
+    let id = h.session().await;
+    let later = now_ms() + 86_400_000;
+    for n in 0..50 {
+        h.runtime
+            .create_cron(&id, at(&format!("task {n}"), later))
+            .await
+            .unwrap();
+    }
+    let error = h
+        .runtime
+        .create_cron(&id, at("one more", later))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "LoopLimitError: Scheduled task limit reached (50)"
+    );
+    let error = h
+        .runtime
+        .create_loop(&id, every(60, "and a loop"))
+        .await
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::LoopLimit(50)), "{error}");
+}
+
+#[tokio::test]
+async fn cron_delete_stops_only_scheduled_tasks() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("checked")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    let user_loop = h
+        .runtime
+        .create_loop(&id, every(300, "deploy"))
+        .await
+        .unwrap();
+    h.settle(&id).await;
+    let error = h
+        .runtime
+        .delete_cron(&id, &user_loop.loop_id)
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("Unknown scheduled task"),
+        "{error}"
+    );
+    assert!(loop_state(&h, &id, &user_loop.loop_id).await.active());
+    let task = h
+        .runtime
+        .create_cron(&id, at("later", now_ms() + 3_600_000))
+        .await
+        .unwrap();
+    h.runtime.delete_cron(&id, &task.loop_id).await.unwrap();
+    assert_eq!(loop_state(&h, &id, &task.loop_id).await.status, "stopped");
+    assert!(h.runtime.cron_tasks(&id).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn scheduled_tasks_belong_to_root_sessions() {
+    let h = Harness::new(Setup::default());
+    let root = h.session().await;
+    let child = h
+        .runtime
+        .create_session(cyber_server::runtime::CreateSession {
+            directory: h.repo.display().to_string(),
+            model: "test/main".into(),
+            parent_id: Some(root.clone()),
+            ..Default::default()
+        })
+        .await
+        .unwrap()
+        .id;
+    assert!(h.runtime.cron_tools_offered(&root));
+    assert!(!h.runtime.cron_tools_offered(&child));
+    let error = h
+        .runtime
+        .create_cron(&child, at("x", now_ms() + 3_600_000))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("root Sessions"), "{error}");
+}
+
+#[tokio::test]
+async fn missed_scheduled_tasks_follow_the_policy_after_a_restart() {
+    for missed in [Missed::Skip, Missed::RunOnce] {
+        let h = Harness::new(Setup {
+            scripts: vec![("test/main", vec![text("caught up")])],
+            ..Setup::default()
+        });
+        let id = h.session().await;
+        let when = now_ms() + 3_600_000;
+        let once = h
+            .runtime
+            .create_cron(
+                &id,
+                CronRequest {
+                    missed,
+                    ..at("reminder", when)
+                },
+            )
+            .await
+            .unwrap();
+        let daily = h
+            .runtime
+            .create_cron(
+                &id,
+                CronRequest {
+                    cron: Some("0 2 * * *".into()),
+                    prompt: "nightly".into(),
+                    missed: Missed::Skip,
+                    ..CronRequest::default()
+                },
+            )
+            .await
+            .unwrap();
+        // The server was down past both due times.
+        let now = once.next_due_ms.unwrap().max(daily.next_due_ms.unwrap()) + 60_000;
+        let restarted = h.restart();
+        restarted.recover_loops_at(now).await.unwrap();
+        let state = restarted.state(&id).await.unwrap();
+        let recurring = &state.loops[&daily.loop_id];
+        assert_eq!(
+            recurring.history.back().unwrap().outcome,
+            Outcome::SkippedMissed
+        );
+        assert!(recurring.next_due_ms.unwrap() > now);
+        let reminder = &state.loops[&once.loop_id];
+        match missed {
+            Missed::Skip => {
+                assert_eq!(reminder.status, "expired");
+                assert_eq!(restarted.sweep_loops(now).await.unwrap(), 0);
+            }
+            Missed::RunOnce => {
+                assert!(reminder.active());
+                assert_eq!(restarted.sweep_loops(now).await.unwrap(), 1);
+                tokio::time::timeout(Duration::from_secs(30), restarted.wait_idle(&id))
+                    .await
+                    .unwrap();
+                let after = restarted.state(&id).await.unwrap().loops[&once.loop_id].clone();
+                assert_eq!((after.status.as_str(), after.iterations), ("completed", 1));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn until_goal_stops_the_loop_once_the_goal_ends() {
+    let h = Harness::new(Setup {
+        scripts: vec![
+            (
+                "test/main",
+                vec![
+                    tools(&[("c1", "write", "{}")]),
+                    text("goal work"),
+                    text("loop work"),
+                ],
+            ),
+            (
+                "test/evaluator",
+                vec![text("{\"verdict\": \"not_met\", \"reason\": \"x\"}")],
+            ),
+        ],
+        roles: vec![("evaluator", "test/evaluator")],
+        ..Setup::default()
+    });
+    h.tools.set("write", Behavior::Gated);
+    let id = h.session().await;
+    let no_goal = LoopSpec {
+        until_goal: true,
+        ..every(60, "watch")
+    };
+    let error = h
+        .runtime
+        .create_loop(&id, no_goal.clone())
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("--until-goal needs a Goal"),
+        "{error}"
+    );
+
+    let goal = h
+        .runtime
+        .set_goal(
+            &id,
+            cyber_server::runtime::goals::GoalRequest {
+                condition: "the build is green".into(),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    h.tools.started.notified().await;
+    let created = h.runtime.create_loop(&id, no_goal).await.unwrap();
+    assert_eq!(
+        created.stop.until_goal.as_deref(),
+        Some(goal.goal_id.as_str())
+    );
+    h.runtime.clear_goals(&id, None).await.unwrap();
+    h.tools.release.notify_one();
+    let ended = wait_for(&h, &id, &created.loop_id, |l| !l.active()).await;
+    assert_eq!(ended.status, "goal_ended");
+    assert_eq!(
+        ended.stop_reason.as_deref(),
+        Some(format!("goal {} cleared", goal.goal_id).as_str())
+    );
+}
+
+#[tokio::test]
+async fn notify_never_keeps_iterations_and_stops_quiet() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("1")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    let spec = LoopSpec {
+        notify: Notify::Never,
+        budget: Some(Budget {
+            max_turns: Some(1),
+            ..Budget::default()
+        }),
+        ..every(60, "quiet")
+    };
+    let created = h.runtime.create_loop(&id, spec).await.unwrap();
+    let ended = wait_for(&h, &id, &created.loop_id, |l| !l.active()).await;
+    assert_eq!(ended.status, "budget_exceeded");
+    assert!(notices(&h, &id).is_empty());
+}
+
+#[tokio::test]
+async fn a_budget_stop_notifies_once() {
+    let h = Harness::new(Setup {
+        scripts: vec![("test/main", vec![text("1")])],
+        ..Setup::default()
+    });
+    let id = h.session().await;
+    let spec = LoopSpec {
+        budget: Some(Budget {
+            max_turns: Some(1),
+            ..Budget::default()
+        }),
+        ..every(60, "spend")
+    };
+    let created = h.runtime.create_loop(&id, spec).await.unwrap();
+    wait_for(&h, &id, &created.loop_id, |l| !l.active()).await;
+    let sent = notices(&h, &id);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(
+        sent[0].contains("stopped (budget_exceeded): max_turns 1/1"),
+        "{sent:?}"
+    );
+}

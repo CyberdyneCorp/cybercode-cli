@@ -2,9 +2,9 @@
 //! server so both accept and reject exactly the same commands.
 //!
 //! ```text
-//! /loop [<interval>] [--max N] [--for <dur>] [--until "<cmd>"] [--overlap skip|coalesce]
-//!       [--missed skip|run-once] [--max-cost USD] [--max-tokens N] [--max-turns N]
-//!       [--timeout <dur>] <prompt or /command>
+//! /loop [<interval>] [--max N] [--for <dur>] [--until "<cmd>"] [--until-goal]
+//!       [--overlap skip|coalesce] [--missed skip|run-once] [--notify always|on_change|never]
+//!       [--max-cost USD] [--max-tokens N] [--max-turns N] [--timeout <dur>] <prompt or /command>
 //! /loop list
 //! /loop stop [<loop_id>|all]
 //! ```
@@ -45,6 +45,39 @@ pub enum Missed {
     RunOnce,
 }
 
+/// When a loop's iterations notify the user (`loops-scheduling` → Completion
+/// notifications): `on_change` notifies iterations that report `noop: false` or fail.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Notify {
+    Always,
+    #[default]
+    OnChange,
+    Never,
+}
+
+impl Notify {
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "always" => Some(Self::Always),
+            "on_change" | "on-change" => Some(Self::OnChange),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+
+    /// Whether an iteration or run that ended with `failed` and `noop` notifies.
+    pub fn notifies(self, failed: bool, noop: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::OnChange => failed || !noop,
+            Self::Never => false,
+        }
+    }
+}
+
 /// A loop to create. `interval_seconds: None` makes it self-paced.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -58,10 +91,15 @@ pub struct LoopSpec {
     pub for_seconds: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// Stop when the Session's current Goal reaches a terminal status.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub until_goal: bool,
     #[serde(default)]
     pub overlap: Overlap,
     #[serde(default)]
     pub missed: Missed,
+    #[serde(default)]
+    pub notify: Notify,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<Budget>,
 }
@@ -145,6 +183,11 @@ fn create(args: &str) -> Result<LoopSpec, String> {
         let Some(flag) = word.strip_prefix("--").filter(|f| !f.is_empty()) else {
             break;
         };
+        if flag == "until-goal" {
+            spec.until_goal = true;
+            rest = after;
+            continue;
+        }
         let (value, after) = take_value(after).ok_or_else(|| format!("--{flag} needs a value"))?;
         apply_flag(&mut spec, flag, &value)?;
         rest = after;
@@ -173,6 +216,9 @@ fn apply_flag(spec: &mut LoopSpec, flag: &str, value: &str) -> Result<(), String
                 "run-once" => Missed::RunOnce,
                 _ => return Err("--missed is skip or run-once".into()),
             }
+        }
+        "notify" => {
+            spec.notify = Notify::parse(value).ok_or("--notify is always, on_change or never")?;
         }
         "max-cost" => {
             let usd = value
@@ -252,11 +298,26 @@ fn looks_like_duration(word: &str) -> bool {
         && word.bytes().any(|b| b.is_ascii_alphabetic())
 }
 
-/// Whether `text` has the shape of a loop ID.
+/// Whether `text` has the shape of a loop ID: `lop_` (`/loop`) or `cron_` (a scheduled
+/// task).
 pub fn is_loop_id(text: &str) -> bool {
-    text.strip_prefix("lop_").is_some_and(|rest| {
+    has_id_shape(text, "lop_") || is_cron_id(text)
+}
+
+/// Whether `text` has the shape of a scheduled task or schedule ID (`cron_`).
+pub fn is_cron_id(text: &str) -> bool {
+    has_id_shape(text, "cron_")
+}
+
+fn has_id_shape(text: &str, prefix: &str) -> bool {
+    text.strip_prefix(prefix).is_some_and(|rest| {
         !rest.is_empty() && rest.len() <= 64 && rest.bytes().all(|b| b.is_ascii_alphanumeric())
     })
+}
+
+/// The error when a Session's loops and scheduled tasks reach `loops.max_per_session`.
+pub fn limit_error(max: u64) -> String {
+    format!("Scheduled task limit reached ({max})")
 }
 
 /// The first whitespace-separated word and the rest.
@@ -401,6 +462,24 @@ mod tests {
     }
 
     #[test]
+    fn until_goal_and_notify() {
+        let s = spec("5m --until-goal --notify never check CI");
+        assert!(s.until_goal);
+        assert_eq!(s.notify, Notify::Never);
+        assert_eq!(s.prompt, "check CI");
+        assert_eq!(spec("5m check").notify, Notify::OnChange);
+        assert_eq!(
+            parse("5m --notify loud x").unwrap_err(),
+            "--notify is always, on_change or never"
+        );
+        assert!(Notify::OnChange.notifies(true, true));
+        assert!(Notify::OnChange.notifies(false, false));
+        assert!(!Notify::OnChange.notifies(false, true));
+        assert!(Notify::Always.notifies(false, true));
+        assert!(!Notify::Never.notifies(true, false));
+    }
+
+    #[test]
     fn list_and_stop() {
         assert_eq!(parse("list").unwrap(), LoopCommand::List);
         assert_eq!(parse("stop").unwrap(), LoopCommand::Stop(None));
@@ -410,6 +489,10 @@ mod tests {
             LoopCommand::Stop(Some("lop_01ABC".into()))
         );
         assert_eq!(parse("stop nope").unwrap_err(), "Unknown loop nope");
+        assert_eq!(
+            parse("stop cron_01ABC").unwrap(),
+            LoopCommand::Stop(Some("cron_01ABC".into()))
+        );
         // "list" followed by text is a prompt, not the subcommand.
         assert_eq!(spec("list the open PRs").prompt, "list the open PRs");
     }
