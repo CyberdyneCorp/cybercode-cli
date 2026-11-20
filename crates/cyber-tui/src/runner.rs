@@ -75,6 +75,7 @@ pub(crate) async fn start(
     app.welcome = prefs.welcome;
     app.explorer.icons = prefs.explorer_icons;
     app.notifications = prefs.notifications;
+    app.title_command = crate::title_command::TitleCommand::new(prefs.title_command);
     app.home = env("HOME").or_else(|| env("USERPROFILE"));
     app.sounds =
         crate::sound::Sounds::detect(prefs.sounds, prefs.sound_limits, env, sound_cache(env));
@@ -316,6 +317,8 @@ async fn event_loop(
     while !app.quit {
         native_presence.sync(client, &app.session, app.computer.supported);
         sync_mouse(&mut std::io::stdout(), app.mouse_capture());
+        app.title_command
+            .poll(&app.session, std::time::Instant::now());
         set_title(app);
         app.progress_sync();
         draw_frame(terminal, app)?;
@@ -1189,8 +1192,12 @@ fn edit_externally(terminal: &mut Term, text: &str) -> String {
 /// `cyber · <title> · <status>`. The title is server data, often written by a model, and
 /// goes into an OSC 0 sequence that ratatui does not filter: a BEL or ESC in it would end
 /// the sequence and reach the terminal as its own (an OSC 52 clipboard write, a screen
-/// clear), so control characters are removed.
+/// clear), so control characters are removed. A `tui.title.command` title, already
+/// cleaned the same way, replaces it.
 fn window_title(app: &App) -> String {
+    if let Some(title) = app.title_command.title() {
+        return title;
+    }
     let status = if app.session.running {
         "running"
     } else {
@@ -1234,6 +1241,28 @@ mod mode_tests {
             }),
         );
         assert!(app.directory.rows().next().is_none());
+    }
+
+    /// `tui.title.command`: its printed title replaces the built-in one once it ran.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn window_title_shows_the_title_commands_output() {
+        let mut app = app();
+        app.session.title = "Fix login".into();
+        app.session.directory = std::env::temp_dir().display().to_string();
+        assert_eq!(window_title(&app), "cyber · Fix login · idle");
+        app.title_command = crate::title_command::TitleCommand::new(Some(
+            r#"sed -n 's/.*"title":"\([^"]*\)".*/[\1]/p'"#.into(),
+        ));
+        app.title_command
+            .poll(&app.session, std::time::Instant::now());
+        for _ in 0..200 {
+            if app.title_command.title().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(window_title(&app), "[Fix login]");
     }
 
     #[test]

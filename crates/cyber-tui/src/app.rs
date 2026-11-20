@@ -567,6 +567,8 @@ pub struct App {
     pub watch: crate::workflow_watch::Watch,
     /// `tui.notifications`.
     pub notifications: crate::osc::Notifications,
+    /// `tui.title.command`.
+    pub title_command: crate::title_command::TitleCommand,
     /// `tui.sounds`, the detected player and the throttle.
     pub sounds: crate::sound::Sounds,
     /// Permission and question requests already alerted for.
@@ -670,6 +672,7 @@ impl App {
             language: None,
             watch: Default::default(),
             notifications: Default::default(),
+            title_command: Default::default(),
             sounds: Default::default(),
             input_alerts: Default::default(),
             #[cfg(test)]

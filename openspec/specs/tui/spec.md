@@ -523,11 +523,19 @@ At 80 columns, phase and elapsed time SHALL be dropped. Below 60 columns, each r
 - **fullscreen**: alternate screen with mouse support and stable memory. The TUI SHALL capture the mouse unless `tui.mouse` is `off`: a wheel notch SHALL scroll the transcript by 3 lines, or move Up/Down in a panel that scrolls or lists, and prompts and confirmations SHALL ignore the wheel. (P1) The wheel SHALL act on the pane under the pointer: on the main screen it SHALL do nothing over the sidebar and scroll the transcript elsewhere, and in the file explorer it SHALL follow File explorer. (P1) Left clicks SHALL act as Mouse clicks defines. With `tui.mouse: off` the terminal keeps the mouse for its own selection and scrollback, and the TUI SHALL handle neither the wheel nor clicks
 - **inline**: append-only scrollback with a repaintable footer, like Codex and OpenCode mini
 
-The system SHALL copy selections with OSC 52 when the native clipboard is unavailable. It SHALL set the terminal title to `cyber · <session name> · <status>` (configurable by `tui.title.fields`). On exit it SHALL print a summary with tokens, cost and the resume command `cyber -r <name|id>`.
+The system SHALL copy selections with OSC 52 when the native clipboard is unavailable. It SHALL set the terminal title to `cyber · <session name> · <status>` (configurable by `tui.title.fields`). When the global `tui.jsonc` sets `title.command`, the system SHALL run it through the platform shell in the Session's directory, outside the agent sandbox, with Session state as JSON on stdin (`session_id`, `title`, `status`, `directory`, `model`, `agent`, `mode`, `cost_usd`, `input_tokens`, `output_tokens`). The run SHALL be in the background, only when that state changed, at most once every 300 ms, and killed after 1 second. The first non-empty stdout line, without control characters and cut to 200 characters, SHALL be the title. A failure, a timeout or empty output SHALL keep the built-in title. A project `tui.jsonc` SHALL NOT set `title.command`: its value SHALL be ignored with a warning. On exit it SHALL print a summary with tokens, cost and the resume command `cyber -r <name|id>`.
 
 #### Scenario: Exit summary
 - **WHEN** the user quits a Session named `auth-refactor`
 - **THEN** the terminal shows the total cost and tokens, and `Resume with: cyber -r auth-refactor`
+
+#### Scenario: Custom title command
+- **WHEN** the global `tui.jsonc` sets `title.command` to `~/.config/cyber/title.sh` and the script prints `auth · idle`
+- **THEN** the script receives the Session state JSON on stdin and the terminal title becomes `auth · idle`
+
+#### Scenario: Project title command ignored
+- **WHEN** a repository's `.cyber/tui.jsonc` sets `title.command`
+- **THEN** the command never runs and the TUI shows a warning
 
 #### Scenario: Clipboard over SSH
 - **WHEN** the user copies a code block over SSH with no native clipboard available
