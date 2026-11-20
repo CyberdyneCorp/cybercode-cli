@@ -96,6 +96,20 @@ fn succeeded(out: &Output) {
     );
 }
 
+/// `cyber loops run <id>`, then the schedule once that run completed.
+fn run_until_completed(env: &Served, id: &str) -> Value {
+    succeeded(&env.cyber(&["loops", "run", id]));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let shown = env.json(&["loops", "show", id]);
+        if shown["recent"][0]["outcome"] == "completed" {
+            return shown;
+        }
+        assert!(Instant::now() < deadline, "{shown:#}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[test]
 fn schedules_are_added_run_and_managed_through_the_service() {
     let env = Served::new();
@@ -145,17 +159,7 @@ fn schedules_are_added_run_and_managed_through_the_service() {
     succeeded(&again);
     assert!(!stderr(&again).contains("warning"), "{}", stderr(&again));
 
-    let started = env.cyber(&["loops", "run", &id]);
-    succeeded(&started);
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let shown = loop {
-        let shown = env.json(&["loops", "show", &id]);
-        if shown["recent"][0]["outcome"] == "completed" {
-            break shown;
-        }
-        assert!(Instant::now() < deadline, "{shown:#}");
-        std::thread::sleep(Duration::from_millis(100));
-    };
+    let shown = run_until_completed(&env, &id);
     assert_eq!(shown["runs"], 1);
     assert!(shown["recent"][0]["session_id"].is_string(), "{shown:#}");
 
