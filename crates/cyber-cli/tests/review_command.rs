@@ -1034,16 +1034,23 @@ fn the_review_workflow_reports_target_errors_and_clean_trees_without_a_run() {
 
 /// A budget that stops the review run exits 4 and still prints its partial findings:
 /// the reviewer answers after the wall-clock budget, so no verifier starts.
+///
+/// The budget must expire after the reviewer asked the provider and before it answers.
+/// Its clock also covers the reviewer's start (admission, child Session, first request),
+/// which took over 2 s on a loaded macOS runner: with a 2 s budget the run stopped
+/// before the reviewer asked, with no findings. A 20 s budget leaves room for the
+/// start, and holding the answer 25 s after the request puts it after the budget
+/// whenever the request came in time.
 #[test]
 fn a_budget_stopped_review_workflow_exits_4_with_partial_findings() {
     let provider = Provider::start(Script {
         result: unsorted(),
-        delay: Duration::from_secs(4),
+        delay: Duration::from_secs(25),
         read_first: None,
     });
     let env = Env::new(&provider);
     env.write("a.rs", "changed\n");
-    let output = env.workflow_review(&["--format", "json", "--timeout", "2s"]);
+    let output = env.workflow_review(&["--format", "json", "--timeout", "20s"]);
     let detail = describe(&output, &provider);
     assert_eq!(output.status.code(), Some(4), "{detail}");
     let result = result(&output, &detail);
