@@ -293,6 +293,7 @@ impl Runtime {
                     resources: Vec::new(),
                     untrusted: None,
                     output_schema: None,
+                    model: None,
                 };
                 let promoted = Promoted { message_id };
                 self.inner

@@ -3484,6 +3484,7 @@ mod queue_head_tests {
             untrusted: None,
             output_schema: None,
             structured: None,
+            model: None,
         }
     }
 

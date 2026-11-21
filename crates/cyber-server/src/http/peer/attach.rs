@@ -377,6 +377,7 @@ pub(super) async fn prompt(
         resume: true,
         source: None,
         format: None,
+        model: None,
     };
     crate::http::sessions::submit_prompt(&peer.app, &id, prompt).await
 }

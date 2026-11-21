@@ -546,6 +546,7 @@ impl Inner {
                         resources: Vec::new(),
                         untrusted: None,
                         output_schema: None,
+                        model: None,
                     },
                 ),
                 event(

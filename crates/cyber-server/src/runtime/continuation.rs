@@ -31,7 +31,7 @@ impl Runtime {
         files: Vec<FilePart>,
     ) -> Result<Receipt, RuntimeError> {
         self.inner.ensure_admission_open(id)?;
-        self.check_output_schema(id, &admission).await?;
+        self.check_prompt_options(id, &admission).await?;
         let lifecycle = self.inner.open().await?;
         let handle = self.inner.handle(id).await?;
         let state = handle.state.lock().await.clone();
@@ -127,6 +127,7 @@ impl Runtime {
                         resources: attachments.resources,
                         untrusted: attachments.untrusted,
                         output_schema: None,
+                        model: admission.model,
                     },
                 ),
             ],

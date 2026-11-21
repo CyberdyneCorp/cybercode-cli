@@ -195,3 +195,30 @@ async fn sessions_with_a_parent_keep_their_own_model() {
     assert_eq!(steps(&h, &child), vec![("test/main".into(), None)]);
     assert!(h.models.requests("other/main").is_empty());
 }
+
+/// A prompt's own `model` (`/model <name> <prompt>`) answers that prompt even in a plan
+/// phase, without suspending the planner: the next plan-mode prompt is on the planner.
+#[tokio::test]
+async fn a_one_shot_prompt_model_in_plan_mode_keeps_the_planner() {
+    let h = Harness::new(planner_setup(vec![
+        ("other/main", vec![text("plan one"), text("plan two")]),
+        ("spare/main", vec![text("second opinion")]),
+    ]));
+    let id = session_in(&h, "plan", None).await;
+    ask(&h, &id, "plan the migration").await;
+    let mut once = Admission::text("what would you change?", Delivery::Queue);
+    once.model = Some("spare/main".into());
+    h.runtime.admit(&id, once).await.unwrap();
+    h.settle(&id).await;
+    let state = h.state(&id).await;
+    assert_eq!(h.runtime.model_role(&state), Some(PLAN_ROLE));
+    ask(&h, &id, "refine it").await;
+    assert_eq!(
+        steps(&h, &id),
+        vec![
+            ("other/main".into(), Some("plan".into())),
+            ("spare/main".into(), None),
+            ("other/main".into(), Some("plan".into())),
+        ]
+    );
+}

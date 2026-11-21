@@ -845,6 +845,27 @@ async fn submit_prompt(
     Ok(Msg::Done)
 }
 
+/// `/model <provider/model> <prompt>`: the prompt's `model` answers it alone.
+async fn model_prompt(
+    client: &Client,
+    session: &Session,
+    model: &str,
+    text: &str,
+    delivery: &str,
+) -> Result<Msg, String> {
+    let id = session.id.as_str();
+    let body = json!({
+        "parts": parts(text, &session.directory, client.attached_session().is_none()),
+        "delivery": delivery,
+        "model": model,
+    });
+    client
+        .post(&format!("/sessions/{id}/prompt"), body)
+        .await
+        .map_err(prompt_refusal)?;
+    Ok(Msg::Done)
+}
+
 /// A refused prompt as the server words it, without the error tag.
 fn prompt_refusal(e: cyber_client::ClientError) -> String {
     match e {
@@ -1007,7 +1028,8 @@ pub async fn perform_owned(
         | Action::RepoMap(_)
         | Action::LoadUpdate
         | Action::ResumeAtReset
-        | Action::Export(_) => scheduled(client, session, action).await,
+        | Action::Export(_)
+        | Action::ModelPrompt { .. } => scheduled(client, session, action).await,
         Action::SaveTheme(_)
         | Action::SaveProjectTheme(_)
         | Action::SavePreference { .. }
@@ -1028,9 +1050,11 @@ async fn scheduled(client: &Client, session: &Session, action: Action) -> Result
         Action::ComputerStatus | Action::ComputerStop => {
             crate::computer::perform(client, session, action).await
         }
-        Action::Branch(_) | Action::Export(_) | Action::LoadUpdate | Action::ResumeAtReset => {
-            session_requests(client, session, action).await
-        }
+        Action::Branch(_)
+        | Action::Export(_)
+        | Action::LoadUpdate
+        | Action::ResumeAtReset
+        | Action::ModelPrompt { .. } => session_requests(client, session, action).await,
         Action::Loop(request) => crate::loops::perform(client, request).await,
         Action::Team(request) => crate::team::perform(client, session, request).await,
         Action::Collaboration(request) => {
@@ -1060,8 +1084,8 @@ async fn preferences(client: &Client, action: Action) -> Result<Msg, String> {
     }
 }
 
-/// The branch tree (`/tree`, `/label`), `/export`, the update check and
-/// `/resume-at-reset`.
+/// The branch tree (`/tree`, `/label`), `/export`, the update check,
+/// `/resume-at-reset` and `/model <provider/model> <prompt>`.
 async fn session_requests(
     client: &Client,
     session: &Session,
@@ -1072,6 +1096,11 @@ async fn session_requests(
         Action::Export(request) => crate::export::perform(client, request).await,
         Action::LoadUpdate => crate::update::perform(client).await,
         Action::ResumeAtReset => crate::usage_wait::perform(client, &session.id).await,
+        Action::ModelPrompt {
+            model,
+            text,
+            delivery,
+        } => model_prompt(client, session, &model, &text, delivery).await,
         _ => Ok(Msg::Done),
     }
 }

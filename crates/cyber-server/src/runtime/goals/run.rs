@@ -509,6 +509,7 @@ fn steer(goal: &Goal, text: String) -> NewEvent {
         resources: Vec::new(),
         untrusted: None,
         output_schema: None,
+        model: None,
     };
     event(ADMITTED, &admitted)
 }
