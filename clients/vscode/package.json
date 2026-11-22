@@ -2,7 +2,7 @@
   "name": "cyber",
   "displayName": "Cyber Code",
   "description": "Chat with Cyber Code Sessions, review proposed edits in the diff editor and answer approvals without leaving VS Code.",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0",
   "publisher": "cyber-code",
   "private": true,
   "license": "Apache-2.0",
