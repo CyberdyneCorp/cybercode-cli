@@ -2,7 +2,7 @@
 
 A model-independent coding agent with a terminal UI, local web dashboard and durable background server. Run one task, coordinate agents, or compare patches with a verified workflow—all against the same local Sessions.
 
-**Development status:** the local core and first web dashboard are implemented. Broader platform, integration and release acceptance is still in progress; see [Known gaps](#known-gaps).
+**Development status:** stable [`v0.1.0`](https://github.com/CyberdyneCorp/cybercode-cli/releases/tag/v0.1.0) was released on 2026-11-22 for macOS and Linux. The P0 local core is complete. P1 is nearly complete; the Windows sandbox and the remaining extensibility and import items are open. P2 autonomy is built: workflows and the verified library, goals, loops with cron and persistent `cyber loops` schedules, and the planner/executor model split; agent teams are experimental. P3 connectivity is starting with account login, relay and runners; the project hub is experimental. See the [roadmap](ROADMAP.md) and [Known gaps](#known-gaps).
 
 Coding-quality evidence: [GPT-6.1 Sol / ChatGPT pilot](docs/measurements/gpt61-sol-chatgpt-pilot.md), with measured outcomes and comparison limits; [stream reliability fixes and follow-up](docs/measurements/provider-stream-reliability-follow-up.md).
 
@@ -10,7 +10,7 @@ Coding-quality evidence: [GPT-6.1 Sol / ChatGPT pilot](docs/measurements/gpt61-s
 
 ## Quickstart
 
-Requires **Rust 1.89+**; SQLite is bundled. On Linux, install **bubblewrap** for sandboxed commands (`sudo apt install bubblewrap`).
+Requires **Rust 1.90+** (CI uses 1.99.1); SQLite is bundled. On Linux, install **bubblewrap** for sandboxed commands (`sudo apt install bubblewrap`).
 
 ```bash
 cargo build --locked -p cyber-cli
@@ -18,7 +18,9 @@ export OPENAI_API_KEY="your-key"
 ./target/debug/cyber
 ```
 
-OpenAI, Anthropic, GitHub Copilot and OpenAI-compatible endpoints are supported, including local model servers. The native Gemini API is experimental (`cyber features enable gemini`, then `GEMINI_API_KEY`; [guide](docs/local-core-guide.md#gemini-api)). Instead of an API key, you can sign in with a subscription:
+With [`just`](https://github.com/casey/just) installed, `just build`, `just install` (release binaries into `~/.local/bin`) and `just test` cover the usual loop; see [developer tasks](#guides-and-development).
+
+OpenAI, Anthropic, GitHub Copilot and OpenAI-compatible endpoints are supported, including local model servers. The native Gemini API is experimental (`cyber features enable gemini`, then `GEMINI_API_KEY`; [guide](docs/local-core-guide.md#gemini-api)). Instead of an API key, you can sign in with a ChatGPT or GitHub Copilot subscription; Claude subscriptions are not supported, so Anthropic models need an API key:
 
 | Subscription | Sign in | Guide |
 |---|---|---|
@@ -138,20 +140,25 @@ mindmap
       TypeScript SDK
       Signed releases and cyber upgrade
     Agents and automation
-      Subagents and worktrees partial
+      Subagents and worktrees
+      Planner and executor models
       workflows["Workflows"]
         solve["Verified solve"]
         integrations["Integration queue"]
       Goals and loops
+      Cron and persistent schedules
       Agent teams experimental
     Safety and recovery
       Permission modes
+      Auto reviewer with read-only context
       macOS and Linux sandbox
       Git snapshots
       Durable Sessions and replay
       OpenTelemetry export
     Tools and integrations
       Providers and local endpoints
+      Gemini adapter experimental
+      Repository map
       MCP client and server
       Hooks and skills
       Image and PDF input
@@ -168,18 +175,19 @@ mindmap
 
 ## Known gaps
 
-Cyber Code has working features in each area below, but it is not at full feature parity with every alternative. Checked **2026-10-24** against official documentation; this compares capabilities, not coding quality or benchmark performance. Related desktop, IDE and hosted products are distinguished from each terminal CLI.
+Cyber Code has working features in each area below, but it is not at full feature parity with every alternative. The competitor column was checked **2026-10-24** against official documentation; the Cyber Code column reflects v0.1.0. This compares capabilities, not coding quality or benchmark performance. Related desktop, IDE and hosted products are distinguished from each terminal CLI.
 
 | Compared with | What their documentation provides | What remains in Cyber Code |
 |---|---|---|
 | **OpenCode** | A broad [provider catalog](https://opencode.ai/docs/providers/), [IDE integration](https://opencode.ai/docs/ide/) and [web UI](https://opencode.ai/docs/web/). | Native provider coverage is narrower. A [VS Code extension](docs/vscode-extension.md) ships as a `.vsix` on each release; Marketplace publication, ACP for other editors and desktop clients are planned. The web dashboard is implemented, but full TUI-equivalent browser controls remain unfinished. |
 | **Claude Code CLI** | The CLI is part of a [terminal/IDE/desktop/web offering](https://code.claude.com/docs/en/overview), with [plugin marketplaces](https://code.claude.com/docs/en/discover-plugins). | A [VS Code extension](docs/vscode-extension.md) ships as an unsigned `.vsix`, without Marketplace publication, per-hunk review or other IDEs; desktop clients, plugin marketplaces and complete cross-tool configuration/plugin compatibility remain unfinished. A plugin host, SDK, skills and hooks already exist. |
-| **Codex CLI** | A [terminal coding agent](https://learn.chatgpt.com/docs/codex/cli), related IDE/cloud surfaces, and a [native Windows sandbox](https://learn.chatgpt.com/docs/windows/windows-sandbox). | Windows confinement remains partial. The VS Code extension is a first slice (no Marketplace, no ACP); desktop clients, hosted runners and paired-device Relay access are planned. Private HTTPS/SSH dashboard access already works. |
+| **Codex CLI** | A [terminal coding agent](https://learn.chatgpt.com/docs/codex/cli), related IDE/cloud surfaces, and a [native Windows sandbox](https://learn.chatgpt.com/docs/windows/windows-sandbox). | Windows confinement remains partial, so Windows builds are not released. The VS Code extension is a first slice (no Marketplace, no ACP); desktop clients are planned, and hosted runners and paired-device Relay access are early P3 work. Private HTTPS/SSH dashboard access already works. |
 | **Pi** | A deliberately small [terminal harness with TypeScript extensions, packages and an SDK](https://github.com/earendil-works/pi/tree/main/packages/coding-agent). | Cyber ships its own plugin host and SDK; package marketplaces and broader extension compatibility remain unfinished. Pi intentionally leaves features such as subagents and plan mode to extensions/packages, so its smaller core is a design choice. |
 
 Other limits to consider:
 
-- **Acceptance is ongoing:** the full local-model baseline, Windows enforcement and several P1 migration, memory and code-intelligence paths remain open.
+- **Acceptance is ongoing:** the full local-model baseline, Windows enforcement and several P1 extensibility, migration (`cyber import`), memory and code-intelligence paths remain open.
+- **Subscriptions:** sign-in covers ChatGPT and GitHub Copilot only; there is no Claude subscription login.
 - **Automation has edges:** [reserved budgets](docs/reserved-budgets.md) currently support bounded official OpenAI Responses requests; ChatGPT/Copilot subscription models use soft token/time controls. Finished-agent transcript retention is a separate roadmap item; persistent schedules (`cyber loops`) run only while the Cyber service runs, which has no launchd/systemd unit yet; agent teams and the project hub are experimental.
 - **The native Gemini adapter is experimental:** off until `features.gemini` is set; tested against recorded protocol shapes only. A live tool-loop run with a key, the live coding baseline, Vertex AI and stored Gemini keys (`cyber providers login google`) remain.
 - **Native computer use is experimental:** macOS 14+ only, off by default; controlled capture, input and Stop passed. Other layouts, live OS revocation and release signing remain unverified.
@@ -208,7 +216,7 @@ The TUI, web dashboard, VS Code extension, CLI, SDK and MCP clients call one ser
 | Find a command or planned capability | [CLI reference](docs/cli.md) · [Roadmap](ROADMAP.md) · [OpenSpec](openspec/specs) |
 | Check builds, tests or evaluations | [Development guide](docs/local-core-guide.md#build-and-development) · [Evaluation guide](eval/README.md) |
 
-Run `just` for available development tasks and `just ci` for local checks. Browse the [documentation index](docs/README.md) for the full guide set.
+**Developer tasks:** `just setup` checks your tools, `just` lists the tasks, and `just ci` runs the local equivalent of CI; `just lean <task>` builds with less disk. See [CONTRIBUTING.md](CONTRIBUTING.md#development-setup). Browse the [documentation index](docs/README.md) for the full guide set.
 
 ## Contributing and license
 

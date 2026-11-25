@@ -14,7 +14,7 @@ By contributing, you agree that your contributions are licensed under the [Apach
 
 You need:
 
-- **Rust 1.89+** (edition 2024). SQLite is bundled.
+- **Rust 1.90+** (edition 2024; CI uses 1.99.1). SQLite is bundled.
 - **Linux:** `bubblewrap` for the sandbox (`sudo apt install bubblewrap`).
 - **Node.js 22** for the web dashboard (`web/`), the TypeScript SDK (`sdk/typescript/`) and the OpenSpec CLI.
 - **[just](https://github.com/casey/just)** (optional) for the task shortcuts below.
@@ -31,15 +31,21 @@ Run `just` to list the tasks. The common ones:
 
 | Task | Command |
 |---|---|
+| Check the tools (installs cargo-nextest if missing) | `just setup` |
+| Fast type check | `just check` |
 | Format | `just fmt` |
 | Lint (fmt check + clippy, warnings are errors) | `just lint` |
-| Rust tests | `just test`, or `just test -p cyber-server` |
-| Specs (OpenSpec validation, spec lint, roadmap inventory) | `just specs` |
-| TypeScript SDK | `just sdk-test` |
-| Everything CI checks | `just ci` |
+| Rust tests | `just test`, `just test -p cyber-server`, or `just test-quick` for unit tests only |
+| Specs (OpenSpec validation pinned to CI's version, spec lint, roadmap inventory) | `just specs` |
+| `docs/cli.md` is current | `just docs-cli-check` |
+| TypeScript SDK and plugin kit | `just sdk-test` |
+| Web dashboard, VS Code extension | `just web-test`, `just vscode-test` |
+| Everything CI checks (except platform builds and browser/Electron runs) | `just ci` |
 | Linux tests in Docker | `just test-linux` |
+| Low-disk build env for any task | `just lean test` |
+| Target dir size, prune old artifacts | `just disk`, `just disk-prune 14` |
 
-Some tests start the sandbox helper. Build it once with `cargo build -p cyber-sandbox --bins` before running the whole suite. CI uses [nextest](https://nexte.st/): `cargo nextest run --workspace --profile ci`.
+Some tests start the sandbox helper; `just test` builds it first (`just sandbox-helpers`, or `cargo build -p cyber-sandbox --bins` by hand). `just test` uses [nextest](https://nexte.st/) when installed, like CI: `cargo nextest run --workspace --profile ci`.
 
 ## What CI checks
 
