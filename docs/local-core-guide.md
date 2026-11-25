@@ -7,20 +7,22 @@ Detailed commands, client behavior, limits and terminology for the implemented l
 Common tasks are in the [`justfile`](../justfile) (install [`just`](https://github.com/casey/just)); run `just` to list them:
 
 ```bash
+just setup          # check the development tools (installs cargo-nextest if missing)
 just build          # debug build: target/debug/cyber
-just ci             # local checks: lint, tests, specs, SDK (platform builds run in CI)
-just test -p cyber-server        # one crate, or `just test <name filter>`
+just ci             # local checks: lint, tests, specs, docs, SDK, dashboard, VS Code extension
+just test -p cyber-server        # one crate, or `just test <name filter>` (nextest when installed)
+just lean test      # any task with the low-disk build env (no incremental, no debug info)
 just test-linux     # the test suite on Linux in Docker (bubblewrap sandbox)
 just tui            # the TUI here;  just exec "fix the failing test"
 just sandboxed exec --ephemeral "hello"   # run with a throwaway CYBER_HOME
 just sdk-generate   # regenerate sdk/openapi.json and the TypeScript SDK
 ```
 
-`just ci` covers the recipes listed above; dashboard checks and native platform builds/tests run separately in CI. For documentation validation, use the same OpenSpec version as CI (`npm install -g @fission-ai/openspec@1.13.2`) and run `just specs`. After changing the inventory, inspect the generated ROADMAP diff before committing it.
+`just ci` mirrors the CI checks except native platform builds, the browser and Electron integration runs and the benchmark. `just specs` runs the same OpenSpec version as CI through `npx` (`@fission-ai/openspec@1.13.2`), so no global install is needed. After changing the inventory, inspect the generated ROADMAP diff before committing it.
 
 The raw commands:
 
-Requires Rust 1.89 or newer (edition 2024). SQLite is bundled.
+Requires Rust 1.90 or newer (edition 2024; CI pins 1.99.1). SQLite is bundled.
 
 ```bash
 cargo build                 # target/debug/cyber
