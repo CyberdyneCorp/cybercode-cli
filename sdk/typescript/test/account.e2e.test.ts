@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Cyber } from "../src/index.js";
+import { guardRegisteredService } from "./service-guard.js";
 import { startScriptedProvider } from "./scripted-provider.js";
 
 const binary = process.env.CYBER_BIN;
@@ -60,9 +61,11 @@ test("account SDK drives verified login, display and logout through the real ser
   mkdirSync(join(repo, ".git"), { recursive: true });
   for (const name of Object.keys(process.env)) if (name.startsWith("CYBER_") || name.startsWith("XDG_")) delete process.env[name];
   Object.assign(process.env, { HOME: join(root, "home"), CYBER_HOME: join(root, "installation"), CYBER_MODELS_PATH: join(root, "models.json") });
+  const killService = guardRegisteredService(process.env.CYBER_HOME!, binary!);
   const server = await Cyber.start({ mode: "spawn", binary, directory: repo });
   t.after(async () => {
-    await server.close();
+    await server.close().catch(() => {});
+    killService();
     await model.close();
     await new Promise<void>((resolve) => auth.close(() => resolve()));
     rmSync(root, { recursive: true, force: true });

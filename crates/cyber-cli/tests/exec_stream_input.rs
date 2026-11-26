@@ -363,6 +363,14 @@ impl Driven {
     }
 }
 
+/// A failed assertion must not leave the driver running behind the test.
+impl Drop for Driven {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 #[test]
 fn steering_a_structured_input_reports_its_superseded_error_and_the_new_inputs_value() {
     let provider = Provider::start(&[

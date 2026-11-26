@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { Cyber, readPassword, readRegistration, type EventEnvelope, type WorkflowRunHandle } from "../src/index.js";
+import { stopRegisteredService } from "./service-guard.js";
 import { startScriptedProvider, type ScriptedProvider } from "./scripted-provider.js";
 
 const binary = process.env.CYBER_BIN;
@@ -37,7 +38,11 @@ async function isolate(t: TestContext): Promise<{ repo: string; model: ScriptedP
     if (name.startsWith("CYBER_") || name.startsWith("XDG_")) delete process.env[name];
   }
   Object.assign(process.env, { HOME: join(root, "home"), CYBER_HOME: join(root, "cyber-home"), CYBER_MODELS_PATH: join(root, "models.json") });
+  const home = join(root, "cyber-home");
+  // Hooks run in registration order, so this one runs before a test's own
+  // `handle.close()`: stop the spawned service while its home still exists.
   t.after(async () => {
+    await stopRegisteredService(home, binary!);
     await model.close();
     rmSync(root, { recursive: true, force: true });
   });

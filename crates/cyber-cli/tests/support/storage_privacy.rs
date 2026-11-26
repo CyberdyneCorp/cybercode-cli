@@ -25,6 +25,13 @@ fn entries(root: &Path) -> Vec<(PathBuf, std::fs::Metadata)> {
     found
 }
 
+/// Every path below `root`, sorted, so two listings compare by content.
+fn paths(root: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = entries(root).into_iter().map(|(p, _)| p).collect();
+    paths.sort();
+    paths
+}
+
 /// No macOS ACL entry can grant another principal what the mode bits deny.
 #[cfg(target_os = "macos")]
 fn assert_no_acl(path: &Path) {
@@ -43,7 +50,10 @@ fn assert_no_acl(_: &Path) {}
 /// `journals/<restore>/stage_<n>`: a source file the restore moved aside.
 fn is_displaced_image(path: &Path) -> bool {
     let name = path.file_name().unwrap().to_string_lossy();
-    let journals = path.parent().and_then(Path::parent).and_then(Path::file_name);
+    let journals = path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name);
     name.starts_with("stage_") && journals.is_some_and(|j| j == "journals")
 }
 
@@ -118,22 +128,30 @@ fn widened_snapshot_storage_is_refused_and_conversation_work_continues() {
     std::fs::remove_dir_all(env.directory.join(".git")).unwrap();
     let id = env.exec(None, "WRITE-A");
     let global = env.root.join("cyber-home/data/snapshot/global");
-    let before: Vec<PathBuf> = entries(&global).into_iter().map(|(p, _)| p).collect();
+    let before = paths(&global);
     std::fs::set_permissions(&global, std::fs::Permissions::from_mode(0o755)).unwrap();
     env.exec(Some(&id), "WRITE-B");
     assert_eq!(env.file("b.txt").as_deref(), Some("beta\n"));
-    let after: Vec<PathBuf> = entries(&global).into_iter().map(|(p, _)| p).collect();
+    let after = paths(&global);
     assert_eq!(after, before, "nothing was written to widened storage");
     let users = env.user_ids(&id);
     let refused = exits(
-        &env.cyber(&["sessions", "rewind", &id, "--to", &users[1], "--target", "code"]),
+        &env.cyber(&[
+            "sessions", "rewind", &id, "--to", &users[1], "--target", "code",
+        ]),
         2,
     );
     assert!(refused.contains("not private"), "{refused}");
     let requests = model.requests().len();
     let preview = rewind_preview(&env, &id, &users[1], "conversation");
     assert_eq!(preview["code"], Value::Null);
-    json(&confirm_rewind(&env, &id, &users[1], "conversation", &preview));
+    json(&confirm_rewind(
+        &env,
+        &id,
+        &users[1],
+        "conversation",
+        &preview,
+    ));
     assert_eq!(env.user_ids(&id), users[..1]);
     assert_eq!(env.file("b.txt").as_deref(), Some("beta\n"));
     assert_eq!(model.requests().len(), requests);

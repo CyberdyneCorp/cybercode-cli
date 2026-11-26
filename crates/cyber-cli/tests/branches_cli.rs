@@ -169,7 +169,13 @@ impl Env {
 
 impl Drop for Env {
     fn drop(&mut self) {
+        // A graceful stop can fail (a wedged or half-killed service, a damaged
+        // registration); never leave this fixture's service running after it.
+        let registered = registered_pid(&self.root);
         let _ = self.cyber(&["service", "stop"]);
+        if let Some(pid) = registered {
+            kill_if_alive(pid);
+        }
         if std::thread::panicking() {
             self._dir.disable_cleanup(true);
             eprintln!("Preserved failed CLI fixture at {}", self.root.display());
@@ -646,6 +652,36 @@ fn reviewed_apply(env: &Env, id: &str, selection: &Value) -> Value {
 }
 fn session_revert(env: &Env, id: &str) -> Value {
     json(&env.cyber(&["api", "GET", &format!("/sessions/{id}")]))["data"]["revert"].clone()
+}
+
+/// The process ID registered in this fixture's private CYBER_HOME, if any.
+fn registered_pid(root: &std::path::Path) -> Option<u32> {
+    let path = root.join("cyber-home/state/server.json");
+    let registration: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let pid = u32::try_from(registration["pid"].as_u64()?).ok()?;
+    (pid != std::process::id()).then_some(pid)
+}
+
+/// SIGKILL `pid` if it is still this test binary's `cyber` service; best effort,
+/// for fixture teardown only. A registration left by a killed service may name a
+/// reused process ID, so the command line must be our binary's `serve`.
+fn kill_if_alive(pid: u32) {
+    let pid = pid.to_string();
+    #[cfg(unix)]
+    {
+        let Ok(shown) = Command::new("ps")
+            .args(["-o", "command=", "-p", &pid])
+            .output()
+        else {
+            return;
+        };
+        let command = String::from_utf8_lossy(&shown.stdout);
+        if command.contains(env!("CARGO_BIN_EXE_cyber")) && command.contains(" serve") {
+            let _ = Command::new("kill").args(["-KILL", &pid]).output();
+        }
+    }
+    #[cfg(windows)]
+    let _ = pid;
 }
 
 /// Only kill the service registered in this fixture's private CYBER_HOME.
