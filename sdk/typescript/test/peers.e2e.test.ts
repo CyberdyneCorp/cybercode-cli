@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { Cyber, CyberApiError, isPeerScopeError } from "../src/index.js";
+import { guardRegisteredService } from "./service-guard.js";
 import { startScriptedProvider } from "./scripted-provider.js";
 
 const binary = process.env.CYBER_BIN;
@@ -29,9 +30,11 @@ test("the peer group reaches the peer listener with a grant's token", { skip, ti
     if (name.startsWith("CYBER_") || name.startsWith("XDG_")) delete process.env[name];
   }
   Object.assign(process.env, { HOME: join(root, "home"), CYBER_HOME: join(root, "cyber-home"), CYBER_MODELS_PATH: join(root, "models.json") });
+  const killService = guardRegisteredService(process.env.CYBER_HOME!, binary!);
   const server = await Cyber.start({ mode: "spawn", binary, directory: repo });
   t.after(async () => {
-    await server.close();
+    await server.close().catch(() => {});
+    killService();
     await model.close();
     rmSync(root, { recursive: true, force: true });
   });

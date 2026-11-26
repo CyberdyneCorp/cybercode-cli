@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { Cyber, CyberApiError } from "../src/index.js";
 import { startScriptedProvider } from "./scripted-provider.js";
+import { guardRegisteredService } from "./service-guard.js";
 
 const binary = process.env.CYBER_BIN;
 const unix = process.platform === "darwin" || process.platform === "linux";
@@ -46,9 +47,15 @@ test("SDK resolves a killed partial restore and refuses stale and foreign reques
   });
 
   let close: (() => Promise<void>) | undefined;
+  // The process-cut service waits at its fixture point until it is killed, so a
+  // failure before the kill below must not leave it, or the pending CLI, running.
+  const killService = guardRegisteredService(process.env.CYBER_HOME!, binary!);
+  let cut: ReturnType<typeof spawn> | undefined;
   t.after(async () => {
     await close?.();
     try { await cli(["service", "stop"]); } catch { /* already stopped */ }
+    killService();
+    cut?.kill("SIGKILL");
     await model.close();
     rmSync(root, { recursive: true, force: true });
   });
@@ -68,6 +75,7 @@ test("SDK resolves a killed partial restore and refuses stale and foreign reques
   const pending = spawn(binary!, ["sessions", "rewind", session, "--to", first, "--target", "both", "--confirm", preview.confirmation, "--format", "json"], {
     cwd: repo, env: { ...minimal(), CYBER_TEST_PROCESS_CUT: "copy-restore-progress-recorded", CYBER_TEST_PROCESS_CUT_MARKER: marker }, stdio: "ignore",
   });
+  cut = pending;
   const exited = new Promise<void>((resolve) => pending.once("exit", () => resolve()));
   const deadline = Date.now() + 120_000;
   while (!existsSync(marker)) {

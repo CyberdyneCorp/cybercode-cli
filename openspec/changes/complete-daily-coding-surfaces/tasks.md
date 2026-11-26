@@ -10,18 +10,20 @@
 - [x] 2.1 Reconcile Three-phase revert, Rewind targets, Session branches and structured retry wording in canonical specs and overlapping deltas without deleting historical recovery evidence.
 - [x] 2.2 Add typed CLI rewind and server preview/revalidation/confirmation using existing owned revert operations; regenerate command docs and API/SDK where needed.
 - [x] 2.3 Implement TUI rewind menu, Esc-Esc, `/undo` and `/redo`, composer restoration, explicit busy interruption, conflict/exclusion/effect preview and stale-context fencing.
-- [ ] 2.4 Test code/conversation/both, snapshots disabled, inactive branches/export, external edits, busy/interrupt races, restage/clear/restart and retained unknown-effect evidence through actual clients.
+- [x] 2.4 Test code/conversation/both, snapshots disabled, inactive branches/export, external edits, busy/interrupt races, restage/clear/restart and retained unknown-effect evidence through actual clients.
 
 Task 2.4 evidence now includes real service kill/reload/restage/clear, disabled snapshots, no-Git conversation continuation/export, explicit interruption and reopened-terminal draft preservation. Native partial-replacement cuts and complete journal/recovery acceptance remain open; see implementation.md.
+
+2.4 closed 2026-11-26. The open items above are now evidenced: native partial-replacement and journal/recovery cuts are the M8 `restore_cuts`/`ordinary_cuts`/`cleanup_cuts` real-binary cases. The actual clients are the CLI (`branches_cli`), the TUI (App-level and PTY preparation driver) and the SDK: `recovery.e2e.test.ts` and the new `rewind.e2e.test.ts`. The latter drives code, conversation and both rewinds against a real server in a non-Git Location. It refuses a preview made stale by an editor write with a 409, keeps the inactive branch exportable with `--all-branches`, refuses a reused confirmation and starts no inference. Native results for the cut cases come from the post-merge main [run 45050299082](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/45050299082) of `non-git-snapshot-proof.yml` at `f477e491`: "Restore and recovery process-death cuts" passed on ubuntu-24.04, ubuntu-24.04-arm, macos-15 and macos-15-intel. Windows has no non-Git snapshots or native recovery; this is recorded as a platform limit (see 7.2), not as Windows evidence.
 
 ## 3. Non-git snapshots
 
 - [x] 3.0 Review the concrete [managed-recovery ownership protocol](managed-recovery.md), including exact native acknowledgement, legacy journal limits and two-phase reclamation, before changing recovery admission. Approved on 2026-11-06: "Approve this protocol and implement."
 
 - [x] 3.1 Add private content-addressed BLAKE3 objects and Location-bound manifests behind the snapshot interface, including ignore/size/metadata reporting and same-size/same-mtime verification.
-- [ ] 3.2 Implement conflict-aware owned restore and recoverable backups/journal, preserving Git behavior, protected paths, symlink/hardlink safety and interruption evidence.
-- [ ] 3.3 Integrate 200 MiB cap, visible unavailable/overflow state, reference-aware retention and staged/branch/recovery protections.
-- [ ] 3.4 Test real non-git editing/restoration, limits, deletes/renames, unsupported files, concurrent Session/editor changes, crashes and native filesystem privacy.
+- [x] 3.2 Implement conflict-aware owned restore and recoverable backups/journal, preserving Git behavior, protected paths, symlink/hardlink safety and interruption evidence.
+- [x] 3.3 Integrate 200 MiB cap, visible unavailable/overflow state, reference-aware retention and staged/branch/recovery protections.
+- [x] 3.4 Test real non-git editing/restoration, limits, deletes/renames, unsupported files, concurrent Session/editor changes, crashes and native filesystem privacy.
 
 3.3 progress (2026-11-14, local macOS arm64 only): a real App with a lowered
 `fallback_max_bytes` refuses `code` and `both` rewind previews over HTTP with the
@@ -49,6 +51,14 @@ rewind over a rename and delete and undoes it with `sessions checkout --code`.
 Device nodes are not exercised (they need privilege). 3.4 stays open: Linux and
 macOS Intel results, the remaining crash cuts and native filesystem privacy
 acceptance are not evidenced here.
+
+3.2–3.4 closed 2026-11-26.
+
+- **3.2:** Conflict-aware owned restore, version-3 ownership intents, retained preimages, paired keep/rollback and the journal acknowledgement are M3–M5 (all ticked). Git behavior is preserved: release builds keep the shadow-Git restore with literal paths and blob verification. Managed Git source admission stays off by the 2026-11-15 owner decision; this is a deferred opt-in, not a gap in 3.2.
+- **3.3:** The 200 MiB cap, the visible unavailable/overflow state and staged/branch/recovery protections are covered by the 2026-11-14 notes above. Reference-aware reclamation with its writer/journal/reclaim crash cuts is M6 and `cleanup_cuts`.
+- **3.4:** Native filesystem privacy is now proven through the real binary in `branches_cli` `storage_privacy::`. After capture and after a reviewed restore, every storage directory is `0700` with no macOS ACL entry, and every record is private and singly linked. Owner bytes captured from a world-readable `0644` file never become readable by others, and the restored file keeps `0644`. Storage widened to `0755` is refused: `code` rewind reports "not private", nothing is written there, and conversation work and conversation-only rewind continue. This PR adds the case to the native proof step.
+- **Platform results:** Linux x64/ARM and macOS Intel/ARM come from the main [run 45050299082](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/45050299082) for the existing steps. The new privacy step's results come from the PR run (see 7.2).
+- **Explicit limits:** Windows has no non-Git snapshots (documented in `docs/rewind.md`). Device nodes are not exercised because creating one needs privileges; FIFO and socket entries are covered.
 
 ### Managed recovery implementation and acceptance map
 
@@ -215,14 +225,28 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
 
 ## 7. Review and delivery
 
-- [ ] 7.1 Update guides, roadmap/feature evidence, original task lists and generated API/SDK/CLI artifacts for actual delivered behavior.
+- [x] 7.1 Update guides, roadmap/feature evidence, original task lists and generated API/SDK/CLI artifacts for actual delivered behavior.
   - 2026-11-14: guides and feature evidence reconciled with the §4 and §6 increments on this branch (`docs/features.md`, `docs/local-core-guide.md`; see implementation.md "Documentation and evidence reconciliation"); `docs/cli.md`, `sdk/openapi.json` and the generated SDK were verified current. Stays open: later increments, the blocked product decisions and native platform acceptance listed there.
   - Owner decision 2026-11-15 (default managed Git source admission): stays off, opt-in later via configuration once the native CI matrix is green. Verified off today (only the `native-git-acceptance` build admits it); pinned by `copy::git::tests::managed_git_source_admission_is_off_by_default`; the configuration opt-in is not implemented here. See design.md "Owner decisions 2026-11-15".
   - 2026-11-15 FIFO review notes: the non-regular-entry test is renamed `fifo_and_socket_entries_are_disclosed_unsupported_and_never_restored_or_deleted`; the new `a_captured_file_replaced_by_a_fifo_refuses_restore_and_keeps_the_fifo` exposed a partial restore when a FIFO replaced a captured file, fixed by reporting an `unsupported` current entry at a changed path as a conflict (see implementation.md "Owner decisions 2026-11-15", item 5).
   - Owner decision 2026-11-15 (construction-evidence cleanup): OpenSpec first, no code. Specified in `openspec/changes/add-construction-evidence-discard`, awaiting owner review.
-- [ ] 7.2 Run affected Rust tests, format/Clippy, SDK typecheck/tests, TUI/real-binary acceptance, strict OpenSpec/lint and relevant native/platform CI. Record skips and unperformed external checks explicitly.
+- [x] 7.2 Run affected Rust tests, format/Clippy, SDK typecheck/tests, TUI/real-binary acceptance, strict OpenSpec/lint and relevant native/platform CI. Record skips and unperformed external checks explicitly.
+  - 2026-11-26 (7.1): `docs/rewind.md`, `docs/features.md`, `docs/local-core-guide.md` and `ROADMAP.md` no longer list delivered work as unfinished. `cyber help-markdown` equals `docs/cli.md`, and `generate_sdk.py --check` is clean; no API change was made in this round.
+  - 2026-11-26 local gates (macOS arm64):
+    - fmt and workspace all-target Clippy with `-D warnings` pass.
+    - Strict OpenSpec passes 119/119, and `spec_lint` reports 0 errors.
+    - nextest `ci` passes 108/108 for `branches_cli` and `exec_stream_input` with `native-git-acceptance`.
+    - The SDK typecheck passes, and `npm test` with `CYBER_BIN` passes 149 with 2 platform-gated skips (Keychain/vault).
+  - PR #163 CI passes every check: Rust on Linux and macOS, Windows build and lint, the six release targets, the SDK, OpenSpec, the web dashboard and the VS Code extension. `non-git-snapshot-proof.yml` [run 45813287571](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/45813287571) passes on ubuntu-24.04, ubuntu-24.04-arm and macos-15, including both `storage_privacy::` cases.
+  - macOS Intel runs only after merge to main (`build-intel-mac-after-merge`). Its earlier steps passed in main [run 45050299082](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/45050299082); the new privacy step on Intel is expected from the post-merge run.
+  - Not performed, explicit limits:
+    - Windows: there are no non-Git snapshots or native recovery to test.
+    - Device nodes: creating one needs privileges.
+    - Live-provider runs: no keys are available here; every case uses the scripted provider.
 - [ ] 7.3 Use the code-review skill for substantive review, address findings and deliver reviewable PRs. Merge only when authorized; archive after accepted merge and overlap reconciliation.
-- [ ] 7.4 Verify all approved first- and second-workstream outcomes against evidence before marking the combined goal complete.
+  - 2026-11-26: The code-review skill pass over PR #163 found no blocking issue. The embedded `exec` driver runs its server in process, so killing it on drop orphans nothing. The earlier recovery-path review is recorded in implementation.md (M8). Only the owner's merge of #163 and archiving this change remain; archiving waits for the merge.
+- [x] 7.4 Verify all approved first- and second-workstream outcomes against evidence before marking the combined goal complete.
+  - 2026-11-26 (7.4): every first-workstream (§2–§3) and second-workstream (§4–§6) task is ticked with evidence in its note. The remaining limits are explicit: Windows non-Git snapshots, the managed Git opt-in (owner decision 2026-11-15), device nodes, and the owner questions recorded in implementation.md "M8 substantive code and security review". The remaining shared-Session JSONL items in `docs/local-core-guide.md` are recorded follow-ups outside the approved task list.
 
 
 Reserved-before-origin continuation: list/review/confirm/lookup operations now
