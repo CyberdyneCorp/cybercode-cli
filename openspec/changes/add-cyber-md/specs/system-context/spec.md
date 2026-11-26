@@ -112,3 +112,66 @@
 #### Scenario: Many imports
 - **WHEN** `/repo/CYBER.md` imports enough files to exceed the total instruction budget
 - **THEN** the baseline stops at the budget with a truncation notice, and a warning names each file left out
+
+#### Scenario: Complete instruction assembly is bounded
+- **WHEN** instruction files, imports, labels or omitted-file lists exceed the configured total
+- **THEN** the complete rendered instruction-file baseline (`core/instructions`) and each nested reminder SHALL fit their respective byte budgets, including labels, notices, separators and wrappers
+- **AND** only complete file labels actually delivered SHALL consume reminder identity; unlisted imports SHALL remain discoverable after their importer is labelled
+- **AND** a truncated import declaration SHALL NOT load the file named by its partial path
+
+#### Scenario: Rule review and byte identity
+- **WHEN** project rule files are discovered
+- **THEN** their exact bounded definition bytes SHALL enter the checkout trust inventory, and held or read-denied definitions SHALL NOT enter privileged model context
+- **AND** invalid frontmatter/globs SHALL NOT fall back to unscoped guidance
+- **WHEN** a definition changes and is reviewed again
+- **THEN** its new content/approval identity SHALL remain independently eligible for delivery
+
+#### Scenario: Compatible durable rule bindings
+- **WHEN** a successful matching read delivers a scoped rule
+- **THEN** its settlement SHALL retain typed project-root, definition-path, digest and approval-generation metadata separately from canonical instruction-file path markers
+- **AND** replay of historical settlements without rule bindings SHALL remain compatible
+- **AND** a reviewed definition from another checkout SHALL NOT supply rule context for the parent Session
+
+#### Scenario: Context changes while a successful read is settling
+- **GIVEN** a read started in one Location and Context Epoch
+- **WHEN** that Epoch becomes stale, is replaced or disappears, or the Session changes Location before reminder settlement
+- **THEN** the read result SHALL settle without delivering that operation's nested reminder into the new context
+- **AND** the suppressed reminder SHALL NOT consume once-per-Epoch delivery
+- **AND** nested discovery SHALL resolve current instruction settings after the successful operation instead of retaining pre-effect permission callbacks
+
+#### Scenario: Rule approval changes while a successful read is settling
+- **GIVEN** a successful read discovered a project rule under one checkout approval generation
+- **WHEN** that approval is revoked or re-reviewed, or the definition digest it authorizes changes, before the reminder settles
+- **THEN** the read result SHALL settle without delivering that operation's nested reminder
+- **AND** the suppressed rule SHALL NOT consume once-per-Epoch delivery, so a later matching read after re-approval SHALL deliver it once
+
+#### Scenario: Withdrawal of a delivered rule
+- **GIVEN** a project rule delivered in the current Context Epoch
+- **WHEN** its checkout approval is revoked or re-reviewed, or its definition changes on disk, before the next model request
+- **THEN** at that request boundary the system SHALL record one withdrawal marker in the transcript naming the rule and whether it was revoked or changed
+- **AND** from that request on, replay SHALL elide the rule's delivered block from the tool results that preceded the marker, while the stored results keep their text
+- **AND** the system SHALL NOT force a Context Epoch rebuild or compaction for the withdrawal, and the elision SHALL survive a server restart
+- **AND** a rule whose approval state is unknown SHALL stay delivered
+
+#### Scenario: Physical Location replacement during a read
+- **GIVEN** a file read started with a captured physical Location and project root
+- **WHEN** that Location or any native ancestor is replaced, removed or substituted with a link before nested discovery or settlement
+- **THEN** same-path replacement sources SHALL NOT supply reminders for the old operation
+- **AND** the operation result SHALL remain intact and its suppressed reminder SHALL NOT consume delivery in the active Epoch
+- **AND** a later operation captured against the replacement Location SHALL remain independently eligible
+
+#### Scenario: A hook rewrites the authorized read target
+- **GIVEN** a PreToolUse hook rewrites a read of a web file to an authorized database file
+- **WHEN** the built-in tool reads through its native file handle
+- **THEN** scoped rule matching SHALL use the actual physical database target
+- **AND** the settlement SHALL bind any delivered rule to that read's native root/file identities, Location, Context Epoch, operation key and dispatched attempt
+- **AND** a listing, denied operation or successful result without eligible native evidence SHALL NOT consume scoped rule delivery
+- **AND** replay SHALL NOT consume a new rule identity from a receipt mismatched to the dispatch, root, Location or Epoch
+
+#### Scenario: A patch fails after a completed file change
+- **GIVEN** a built-in patch, including one intercepted from a shell call, has several authorized file changes
+- **WHEN** the first change completes and a later precondition fails
+- **THEN** the patch SHALL retain its error status
+- **AND** rule discovery SHALL consider the verified completed effects under the shared reminder budget
+- **AND** files whose effects failed or never ran SHALL NOT supply or consume rule reminders
+- **AND** replay SHALL associate each delivered rule with a receipt for its actual operation target, Location, dispatched attempt and Context Epoch
