@@ -10,18 +10,20 @@
 - [x] 2.1 Reconcile Three-phase revert, Rewind targets, Session branches and structured retry wording in canonical specs and overlapping deltas without deleting historical recovery evidence.
 - [x] 2.2 Add typed CLI rewind and server preview/revalidation/confirmation using existing owned revert operations; regenerate command docs and API/SDK where needed.
 - [x] 2.3 Implement TUI rewind menu, Esc-Esc, `/undo` and `/redo`, composer restoration, explicit busy interruption, conflict/exclusion/effect preview and stale-context fencing.
-- [ ] 2.4 Test code/conversation/both, snapshots disabled, inactive branches/export, external edits, busy/interrupt races, restage/clear/restart and retained unknown-effect evidence through actual clients.
+- [x] 2.4 Test code/conversation/both, snapshots disabled, inactive branches/export, external edits, busy/interrupt races, restage/clear/restart and retained unknown-effect evidence through actual clients.
 
 Task 2.4 evidence now includes real service kill/reload/restage/clear, disabled snapshots, no-Git conversation continuation/export, explicit interruption and reopened-terminal draft preservation. Native partial-replacement cuts and complete journal/recovery acceptance remain open; see implementation.md.
+
+2.4 closed 2026-11-26. The open items above are now evidenced: native partial-replacement and journal/recovery cuts are the M8 `restore_cuts`/`ordinary_cuts`/`cleanup_cuts` real-binary cases. The actual clients are the CLI (`branches_cli`), the TUI (App-level and PTY preparation driver) and the SDK: `recovery.e2e.test.ts` and the new `rewind.e2e.test.ts`. The latter drives code, conversation and both rewinds against a real server in a non-Git Location. It refuses a preview made stale by an editor write with a 409, keeps the inactive branch exportable with `--all-branches`, refuses a reused confirmation and starts no inference. Native results for the cut cases come from the post-merge main [run 45050299082](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/45050299082) of `non-git-snapshot-proof.yml` at `f477e491`: "Restore and recovery process-death cuts" passed on ubuntu-24.04, ubuntu-24.04-arm, macos-15 and macos-15-intel. Windows has no non-Git snapshots or native recovery; this is recorded as a platform limit (see 7.2), not as Windows evidence.
 
 ## 3. Non-git snapshots
 
 - [x] 3.0 Review the concrete [managed-recovery ownership protocol](managed-recovery.md), including exact native acknowledgement, legacy journal limits and two-phase reclamation, before changing recovery admission. Approved on 2026-11-06: "Approve this protocol and implement."
 
 - [x] 3.1 Add private content-addressed BLAKE3 objects and Location-bound manifests behind the snapshot interface, including ignore/size/metadata reporting and same-size/same-mtime verification.
-- [ ] 3.2 Implement conflict-aware owned restore and recoverable backups/journal, preserving Git behavior, protected paths, symlink/hardlink safety and interruption evidence.
-- [ ] 3.3 Integrate 200 MiB cap, visible unavailable/overflow state, reference-aware retention and staged/branch/recovery protections.
-- [ ] 3.4 Test real non-git editing/restoration, limits, deletes/renames, unsupported files, concurrent Session/editor changes, crashes and native filesystem privacy.
+- [x] 3.2 Implement conflict-aware owned restore and recoverable backups/journal, preserving Git behavior, protected paths, symlink/hardlink safety and interruption evidence.
+- [x] 3.3 Integrate 200 MiB cap, visible unavailable/overflow state, reference-aware retention and staged/branch/recovery protections.
+- [x] 3.4 Test real non-git editing/restoration, limits, deletes/renames, unsupported files, concurrent Session/editor changes, crashes and native filesystem privacy.
 
 3.3 progress (2026-11-14, local macOS arm64 only): a real App with a lowered
 `fallback_max_bytes` refuses `code` and `both` rewind previews over HTTP with the
@@ -49,6 +51,14 @@ rewind over a rename and delete and undoes it with `sessions checkout --code`.
 Device nodes are not exercised (they need privilege). 3.4 stays open: Linux and
 macOS Intel results, the remaining crash cuts and native filesystem privacy
 acceptance are not evidenced here.
+
+3.2–3.4 closed 2026-11-26.
+
+- **3.2:** Conflict-aware owned restore, version-3 ownership intents, retained preimages, paired keep/rollback and the journal acknowledgement are M3–M5 (all ticked). Git behavior is preserved: release builds keep the shadow-Git restore with literal paths and blob verification. Managed Git source admission stays off by the 2026-11-15 owner decision; this is a deferred opt-in, not a gap in 3.2.
+- **3.3:** The 200 MiB cap, the visible unavailable/overflow state and staged/branch/recovery protections are covered by the 2026-11-14 notes above. Reference-aware reclamation with its writer/journal/reclaim crash cuts is M6 and `cleanup_cuts`.
+- **3.4:** Native filesystem privacy is now proven through the real binary in `branches_cli` `storage_privacy::`. After capture and after a reviewed restore, every storage directory is `0700` with no macOS ACL entry, and every record is private and singly linked. Owner bytes captured from a world-readable `0644` file never become readable by others, and the restored file keeps `0644`. Storage widened to `0755` is refused: `code` rewind reports "not private", nothing is written there, and conversation work and conversation-only rewind continue. This PR adds the case to the native proof step.
+- **Platform results:** Linux x64/ARM and macOS Intel/ARM come from the main [run 45050299082](https://github.com/CyberdyneCorp/cybercode-cli/actions/runs/45050299082) for the existing steps. The new privacy step's results come from the PR run (see 7.2).
+- **Explicit limits:** Windows has no non-Git snapshots (documented in `docs/rewind.md`). Device nodes are not exercised because creating one needs privileges; FIFO and socket entries are covered.
 
 ### Managed recovery implementation and acceptance map
 

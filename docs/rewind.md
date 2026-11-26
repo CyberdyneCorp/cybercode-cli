@@ -112,11 +112,15 @@ The screenshots are real terminal captures against a local scripted provider.
 The capture fixture writes the sample edit during a held Turn to exercise actual
 Git snapshots and preview rendering; it does not confirm the rewind.
 
-This implements the CLI and TUI rewind surfaces and the initial file-copy backend
-of [#93](https://github.com/CyberdyneCorp/cybercode-cli/issues/93). Managed recovery
-resolution, journal reclamation, legacy historical-exclusion limits and broader
-native acceptance remain open. Path rules/context, root structured output and
-JSONL input are also outstanding.
+This implements the CLI, TUI and SDK rewind surfaces, the file-copy backend and
+managed recovery of [#93](https://github.com/CyberdyneCorp/cybercode-cli/issues/93)
+on Linux and macOS. The native proof workflow runs the capture, restore, recovery,
+reclamation, storage-privacy and process-death cases on Linux x64/ARM and macOS
+Intel/ARM. Known limits: Windows has no non-Git snapshots or native managed
+recovery; managed Git source recovery is off in release builds (see
+[Recovering an interrupted restore from the CLI](#recovering-an-interrupted-restore-from-the-cli));
+legacy restore intents and bare Git trees keep the limits described below; and
+device nodes are not exercised, because creating one needs privileges.
 
 ## Recovery acceptance coverage
 
@@ -139,8 +143,19 @@ after origin and before intent publication, after the intent and before staging,
 directly after a progress record (for an ordinary rewind, a staged undo beside an
 inactive branch, and inside a keep/rollback), after filesystem completion with
 displaced images, after the paired recovery writer commit, and after a journal
-acknowledgement whose reply was never sent. Broader cut-point/metadata/platform acceptance and managed resolution
-remain required. Git restore has not gained this new journal.
+acknowledgement whose reply was never sent. Payload-cleanup kills and the same
+cuts in a managed Git worktree (`native-git-acceptance` builds) complete the
+matrix; all of them run on Linux x64/ARM and macOS Intel/ARM in
+`non-git-snapshot-proof.yml`. Release-build Git restore does not use this journal.
+
+Snapshot storage is owner-only through the real binary: after capture and after a
+reviewed restore, every directory under `<data>/snapshot/global` is mode `0700`
+with no macOS ACL entry, every object, manifest, journal record and lock is
+private and singly linked, and a displaced source image keeps its own mode only
+below those private directories. A source file's recorded mode is restored
+unchanged. Storage widened by someone else is refused: code rewind reports it
+`not private`, nothing new is written there, and conversation work and
+conversation-only rewind continue.
 
 ## Non-Git storage and retained restore intents
 
@@ -191,8 +206,10 @@ regular-file stages together under both exited worker lifetimes. It requires the
 exact paired receipt, both native acknowledgements, the original settlement link
 and unchanged recorded private slots. Both inventories are checked before deletion;
 interrupted cleanup resumes only through its durable plan. Both intents and lookup
-receipts remain usable afterward. Managed Git, preparation-construction, metadata/
-CAS and legacy payload reclamation remain unfinished.
+receipts remain usable afterward. Legacy restores without cleanup ownership proof
+are never reclaimed, and managed Git payload reclamation is not enabled in release
+builds. Construction evidence is removed only through the owner-only discard
+described below.
 
 Cancelled pre-effect preparations can reclaim fully prepared regular target images
 after retention when their recorded inode identities and committed intent proof
@@ -331,9 +348,9 @@ reports `cancelled_before_origin` or `cancelled_before_effects`.
 
 Created source directories, private payloads, native phase records and lifetime
 preparations remain protected for acknowledged safe cleanup. Do not edit records
-or remove evidence to force a retry. Partial acquisition recovery, owned Git
-journaling, reclamation, preparation/TUI recovery clients and broader native crash/platform
-acceptance remain unfinished.
+or remove evidence to force a retry. Release builds do not journal owned Git
+restores, and an interrupted checkout-claim acquisition stays fenced as described
+under [Interrupted checkout construction](#interrupted-checkout-construction).
 
 
 Managed checkout snapshots use an independent claim named by the snapshot's native
@@ -472,8 +489,10 @@ These commands expose the implemented managed file-copy recovery path on admitte
 Linux/macOS hosts. Ordinary managed Git source recovery remains disabled by default
 (owner decision 2026-11-15): it stays off until the native CI matrix is green and
 will then be an explicit opt-in. Today only the `native-git-acceptance` test build
-admits it; no configuration key enables it in a release build. Reference-aware
-reclamation and complete native/platform acceptance remain open.
+admits it; no configuration key enables it in a release build. File-copy journal
+reclamation is described in
+[Non-Git storage and retained restore intents](#non-git-storage-and-retained-restore-intents);
+native results come from the proof workflow on Linux x64/ARM and macOS Intel/ARM.
 
 ## Recovery in the terminal panel
 
@@ -518,7 +537,7 @@ continues to return pending candidates. History is scoped to the current Session
 creation; discovery validates the committed receipt pair and does not touch
 source files or perform native reconciliation. An absent receipt grants no
 cancellation authority: native proof must still pass review and confirmation.
-Managed Git, cleanup and complete crash/platform acceptance remain unfinished.
+Managed Git preparations exist only in `native-git-acceptance` builds.
 
 `GET /api/v1/sessions/{id}/rewind/recovery/requests?journal_id=restore_example`
 provides the read-only discovery used by the panel. It requires an exact journal,
@@ -657,5 +676,4 @@ Cancellation preserves files, transcript, retained intents, private payloads and
 independent process/checkout uncertainty. Older receipts can remain inspectable
 without gaining newer native acknowledgement authority. If source effects may
 have been admitted, use the journal's keep/rollback review instead. No force-clear
-option exists; construction stages are discarded only as described above. The TUI preparation path and remaining partial
-constructor/native-platform acceptance are still unfinished.
+option exists; construction stages are discarded only as described above.
