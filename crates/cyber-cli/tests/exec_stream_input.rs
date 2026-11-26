@@ -18,7 +18,8 @@ use serde_json::{Value, json};
 /// Answers each Turn request with the next scripted reply: `text:<answer>`, a tool
 /// call `<tool> <json arguments>` or `fail:<body>`, an HTTP 400 with that body. Title requests (no tools) get a title.
 /// A subagent's Turns (its first user message names [`CHILD_TASK`]) take the separate
-/// child script, so parent and child order cannot race.
+/// child script, so parent and child order cannot race. Requests are answered
+/// concurrently, so a gated request never blocks another Session's turn.
 struct Provider {
     url: String,
     turns: Arc<Mutex<Vec<Value>>>,
@@ -54,7 +55,13 @@ impl Provider {
         let server = thread::spawn(move || {
             while !stop.load(Ordering::SeqCst) {
                 match listener.accept() {
-                    Ok((stream, _)) => answer(stream, &seen, &scripts, &held, &stop),
+                    // Each request is answered on its own thread, so a gated child
+                    // request cannot hold back the parent's next turn.
+                    Ok((stream, _)) => {
+                        let (seen, scripts) = (seen.clone(), scripts.clone());
+                        let (held, stop) = (held.clone(), stop.clone());
+                        thread::spawn(move || answer(stream, &seen, &scripts, &held, &stop));
+                    }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
                     }
