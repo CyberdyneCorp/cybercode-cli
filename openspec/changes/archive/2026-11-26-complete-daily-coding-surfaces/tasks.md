@@ -243,7 +243,7 @@ proof/reconciliation for these cuts before claiming complete managed recovery.
     - Windows: there are no non-Git snapshots or native recovery to test.
     - Device nodes: creating one needs privileges.
     - Live-provider runs: no keys are available here; every case uses the scripted provider.
-- [ ] 7.3 Use the code-review skill for substantive review, address findings and deliver reviewable PRs. Merge only when authorized; archive after accepted merge and overlap reconciliation.
+- [x] 7.3 Use the code-review skill for substantive review, address findings and deliver reviewable PRs. Merge only when authorized; archive after accepted merge and overlap reconciliation.
   - 2026-11-26: The code-review skill pass over PR #163 found no blocking issue. The embedded `exec` driver runs its server in process, so killing it on drop orphans nothing. The earlier recovery-path review is recorded in implementation.md (M8). Only the owner's merge of #163 and archiving this change remain; archiving waits for the merge.
 - [x] 7.4 Verify all approved first- and second-workstream outcomes against evidence before marking the combined goal complete.
   - 2026-11-26 (7.4): every first-workstream (§2–§3) and second-workstream (§4–§6) task is ticked with evidence in its note. The remaining limits are explicit: Windows non-Git snapshots, the managed Git opt-in (owner decision 2026-11-15), device nodes, and the owner questions recorded in implementation.md "M8 substantive code and security review". The remaining shared-Session JSONL items in `docs/local-core-guide.md` are recorded follow-ups outside the approved task list.

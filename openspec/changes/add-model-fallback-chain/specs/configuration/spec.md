@@ -10,3 +10,12 @@
 #### Scenario: Invalid output style name
 - **WHEN** `cyber.jsonc` sets `output_style = "Bad Style"`
 - **THEN** validation fails with `ConfigInvalidError` naming `output_style`
+
+#### Scenario: Layered instruction budgets preserve instruction lists
+- **WHEN** a global configuration sets both instruction limits, a project overrides the total, and a selected profile or command-line override changes the file limit
+- **THEN** normal member precedence SHALL determine the effective limits and `instructions` arrays SHALL retain their existing concatenation semantics
+- **AND** null, noninteger, nonpositive, unknown or incompatible limit values SHALL fail validation before the configuration is usable
+
+#### Scenario: Project budgets require workspace trust
+- **WHEN** an untrusted project defines `instruction_limits`, directly or inside a profile
+- **THEN** that definition SHALL remain withheld under the existing workspace-trust digest until approved, without changing trusted global limits

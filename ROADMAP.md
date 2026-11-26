@@ -235,7 +235,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `cross-session-messaging` |  | 21 | 5 | 2 |  | 28 |
 | `cyber-account` |  |  |  | 18 |  | 18 |
 | `editor-integration` |  |  |  | 14 | 1 | 15 |
-| `exec-mode` | 11 | 8 | 2 | 1 |  | 22 |
+| `exec-mode` | 11 | 9 | 2 | 1 |  | 23 |
 | `goals` |  |  | 22 |  |  | 22 |
 | `harness-evaluation` | 7 |  | 1 |  |  | 8 |
 | `hooks` |  | 20 | 2 |  |  | 22 |
@@ -257,14 +257,14 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `runners-cloud` |  |  |  | 22 |  | 22 |
 | `sandbox` | 7 | 9 |  | 1 |  | 17 |
 | `server-api` | 26 | 7 | 2 | 3 |  | 38 |
-| `session-runtime` | 23 | 8 |  |  |  | 31 |
+| `session-runtime` | 23 | 9 |  |  |  | 32 |
 | `session-sharing` |  |  |  | 10 | 2 | 12 |
 | `skills-commands` | 14 | 6 | 1 |  |  | 21 |
-| `snapshots-checkpoints` | 12 | 3 | 1 |  |  | 16 |
-| `storage-events` | 18 | 2 |  | 2 |  | 22 |
-| `system-context` | 14 | 7 | 1 |  |  | 22 |
+| `snapshots-checkpoints` | 12 | 7 | 1 |  |  | 20 |
+| `storage-events` | 18 | 3 |  | 2 |  | 23 |
+| `system-context` | 14 | 8 | 1 |  |  | 23 |
 | `tool-registry` | 15 | 8 |  |  |  | 23 |
-| `tui` | 21 | 45 | 5 | 1 | 1 | 73 |
+| `tui` | 21 | 46 | 5 | 1 | 1 | 74 |
 | `untrusted-content` |  | 7 |  |  |  | 7 |
 | `vcs-integration` | 2 | 3 |  | 10 |  | 15 |
 | `verified-integrations` |  |  | 4 |  |  | 4 |
@@ -273,7 +273,7 @@ The editor deferral is already reflected in canonical phase tags: 14 editor requ
 | `workflows` |  |  | 36 | 2 | 1 | 39 |
 | `workspace-trust` | 4 |  |  |  |  | 4 |
 | `worktrees` |  | 12 | 4 |  |  | 16 |
-| **Total** | **346** | **380** | **143** | **180** | **15** | **1064** |
+| **Total** | **346** | **389** | **143** | **180** | **15** | **1073** |
 
 
 Most capabilities span phases. A spec is a product contract, and each phase implements the slice tagged for it. For example, `tui` has its basics in P0, rewind and modes in P1, the agent view and workflow monitor in P2, remote indicators in P3 and mods panes in P4.
